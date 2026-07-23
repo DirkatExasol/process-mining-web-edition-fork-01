@@ -80,6 +80,8 @@ def test_session_reports_unauthenticated_and_require_login(gui):
         "authenticated": False,
         "username": None,
         "isAdmin": False,
+        "displayName": None,
+        "authSource": None,
         "requireLogin": True,
     }
 

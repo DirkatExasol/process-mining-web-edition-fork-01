@@ -58,7 +58,8 @@ export function ABComparison() {
   const similarity = store.abSimilarityScore
 
   return (
-    <div className="ab-split" style={{ position: 'relative' }}>
+    <div className="ab-wrap">
+      <div className="ab-split" style={{ position: 'relative' }}>
       <ABPanel
         side="a"
         syncState={masterSync.current}
@@ -88,27 +89,30 @@ export function ABComparison() {
         notes={notes}
       />
 
+      {notes.element}
+      </div>
+
       {similarity != null && (
-        <div className="similarity-badge" style={{ top: 12 }}>
-          <span aria-hidden>⇄</span>
-          <span>Similarity</span>
-          <span
-            className="value"
-            style={{
-              color:
-                similarity >= 0.7
-                  ? 'var(--green)'
-                  : similarity <= 0.3
-                    ? 'var(--red)'
-                    : 'var(--blue)',
-            }}
-          >
-            {similarity.toFixed(2)}
-          </span>
+        <div className="ab-similarity-row">
+          <div className="similarity-badge">
+            <span aria-hidden>⇄</span>
+            <span>Similarity</span>
+            <span
+              className="value"
+              style={{
+                color:
+                  similarity >= 0.7
+                    ? 'var(--green)'
+                    : similarity <= 0.3
+                      ? 'var(--red)'
+                      : 'var(--blue)',
+              }}
+            >
+              {similarity.toFixed(2)}
+            </span>
+          </div>
         </div>
       )}
-
-      {notes.element}
     </div>
   )
 }

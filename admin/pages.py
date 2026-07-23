@@ -201,13 +201,32 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
   <div id="defaultWarn"></div>
 
   <div class="tabs">
-    <button data-tab="tls" class="sel" onclick="selectTab('tls')">TLS / SSL</button>
+    <button data-tab="appcontrol" class="sel" onclick="selectTab('appcontrol')">App Control</button>
+    <button data-tab="tls" onclick="selectTab('tls')">TLS / SSL</button>
     <button data-tab="users" onclick="selectTab('users')">Users</button>
     <button data-tab="connections" onclick="selectTab('connections')">Database Connections</button>
     <button data-tab="ldap" onclick="selectTab('ldap')">Directory (LDAP)</button>
   </div>
 
-  <div class="tabpanel sel" id="tab-tls">
+  <div class="tabpanel sel" id="tab-appcontrol">
+  <div class="card">
+    <h2>App Control</h2>
+    <p class="muted" style="margin-top:0">Operational controls for the running servers.</p>
+    <div class="row" style="flex-wrap:wrap; align-items:center; gap:12px">
+      <button class="btn primary" onclick="restartServer()" title="Rebind the app + admin listeners with the current TLS settings">↻ Restart app server</button>
+      <span class="subtle">Rebinds the main application and this admin interface in place with the current TLS mode &amp; active certificate — no terminal needed.</span>
+    </div>
+    <div class="banner info" style="margin-top:14px">
+      TLS mode and certificate changes (in the <strong>TLS / SSL</strong> tab) take effect on restart.
+      This restarts <strong>both the app and the admin interface</strong> (they share the certificate),
+      so this page may briefly drop — and if you changed the mode, the admin moves between
+      HTTP <code>:8090</code> and HTTPS <code>:8453</code>; reconnect there if it stops responding.
+    </div>
+    <div id="restartResult" class="col" style="margin-top:8px"></div>
+  </div>
+  </div><!-- /tab-appcontrol -->
+
+  <div class="tabpanel" id="tab-tls">
   <div class="card">
     <h2>TLS / SSL</h2>
     <p class="muted" style="margin-top:0">Choose how the main application (the GUI server) accepts connections.</p>
@@ -218,14 +237,9 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
         <button data-mode="required">Required (HTTPS only)</button>
       </div>
       <button class="btn primary" onclick="saveTlsMode()">Save mode</button>
-      <span class="spacer"></span>
-      <button class="btn" onclick="restartServer()" title="Rebind the app server's listeners with the current TLS settings">↻ Restart app server</button>
     </div>
     <div id="tlsPlan" class="col" style="margin-top:12px"></div>
-    <div class="banner info" id="restartNote" style="display:none">
-      TLS mode and certificate changes apply when the app server restarts.
-      <button class="btn small" onclick="restartServer()" style="margin-left:8px">↻ Restart now</button>
-    </div>
+    <p class="subtle" style="margin-top:10px">Mode &amp; certificate changes take effect after a restart — use <strong>↻ Restart app server</strong> in the <strong>App Control</strong> tab.</p>
   </div>
 
   <div class="card">
@@ -467,7 +481,7 @@ async function saveTlsMode() {
   const sel = document.querySelector('#tlsSeg button.sel');
   if (!sel) return;
   try { await api('/api/tls/mode', { method: 'POST', body: JSON.stringify({ mode: sel.dataset.mode }) });
-    toast('TLS mode saved'); $('restartNote').style.display = 'block'; await loadTls(); }
+    toast('TLS mode saved — restart in App Control to apply'); await loadTls(); }
   catch (e) { toast(e.message, true); }
 }
 document.querySelectorAll('#tlsSeg button').forEach(b => b.onclick = () => {
@@ -475,13 +489,15 @@ document.querySelectorAll('#tlsSeg button').forEach(b => b.onclick = () => {
   b.classList.add('sel');
 });
 async function restartServer() {
-  if (!confirm('Restart the app server now?\n\nIts HTTP/HTTPS listeners rebind with the current TLS settings; anyone using the main app will briefly disconnect.')) return;
+  if (!confirm('Restart now?\n\nThe app AND this admin interface rebind their HTTP/HTTPS listeners with the current TLS settings. Anyone using the app will briefly disconnect, and if you changed the TLS mode this admin page may move between :8090 (HTTP) and :8453 (HTTPS).')) return;
+  const out = $('restartResult');
+  if (out) out.innerHTML = '<span class="muted">Restarting…</span>';
   try { const r = await api('/api/restart', { method: 'POST' });
-    toast('App server restarting (pid ' + r.pid + ')…');
-    $('restartNote').style.display = 'none';
+    toast('Restarting (app pid ' + r.pid + (r.adminPid ? ', admin pid ' + r.adminPid : '') + ')…');
+    if (out) out.innerHTML = '<div class="banner info">Restart signalled. Listeners rebind with the current TLS plan; reconnect on the new address if this page stops responding.</div>';
     // Give it a moment to rebind, then refresh the endpoint view.
     setTimeout(() => loadTls().catch(() => {}), 1500);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { if (out) out.innerHTML = ''; toast(e.message, true); }
 }
 
 // ── Certificates ────────────────────────────────────────────────────────────
@@ -509,19 +525,19 @@ async function generateCert() {
     days: Number($('g_days').value), keySize: Number($('g_keysize').value), activate: $('g_activate').checked };
   try { await api('/api/certs/generate', { method: 'POST', body: JSON.stringify(body) });
     toast('Certificate generated'); $('g_name').value = $('g_cn').value = $('g_sans').value = '';
-    $('restartNote').style.display = 'block'; await loadTls(); }
+    await loadTls(); }
   catch (e) { toast(e.message, true); }
 }
 async function uploadCert() {
   const body = { name: $('u_name').value, certPem: $('u_cert').value, keyPem: $('u_key').value, activate: $('u_activate').checked };
   try { await api('/api/certs/upload', { method: 'POST', body: JSON.stringify(body) });
     toast('Certificate uploaded'); $('u_name').value = $('u_cert').value = $('u_key').value = '';
-    $('restartNote').style.display = 'block'; await loadTls(); }
+    await loadTls(); }
   catch (e) { toast(e.message, true); }
 }
 async function activateCert(id) {
   try { await api('/api/certs/' + id + '/activate', { method: 'POST' });
-    toast('Certificate activated'); $('restartNote').style.display = 'block'; await loadTls(); }
+    toast('Certificate activated'); await loadTls(); }
   catch (e) { toast(e.message, true); }
 }
 async function deleteCert(id, name) {

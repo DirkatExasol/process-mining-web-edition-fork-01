@@ -7,8 +7,9 @@
 #
 # Ports (override with PMW_* env vars):
 #   compute backend   8000
-#   admin interface   8090
+#   admin interface   8090 (HTTP)  8453 (HTTPS)
 #   GUI (HTTP)        8080     GUI (HTTPS)  8443   — TLS mode is set in the admin UI
+#   (both the GUI and the admin follow the same TLS mode + active certificate)
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -53,11 +54,10 @@ echo "→ compute backend on http://127.0.0.1:${PMW_BACKEND_PORT:-8000}"
   --port "${PMW_BACKEND_PORT:-8000}" &
 pids+=($!)
 
-echo "→ admin interface on http://127.0.0.1:${PMW_ADMIN_PORT:-8090}"
-"$VENV/uvicorn" server:app \
-  --app-dir admin \
-  --host "${PMW_ADMIN_HOST:-127.0.0.1}" \
-  --port "${PMW_ADMIN_PORT:-8090}" &
+# The admin interface uses the same TLS-aware launcher as the GUI, so it follows
+# the same TLS mode + active certificate (HTTP and/or HTTPS per the plan).
+echo "→ admin interface (HTTP ${PMW_ADMIN_PORT:-8090} / HTTPS ${PMW_ADMIN_HTTPS_PORT:-8453}, per TLS mode)"
+"$VENV/python" admin/launch.py &
 pids+=($!)
 
 if [[ "${1:-}" == "--dev" ]]; then

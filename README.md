@@ -74,8 +74,9 @@ Then open the app at <http://127.0.0.1:8080> and the admin interface at
 ```
 
 Environment overrides: `PMW_BACKEND_PORT`, `PMW_FRONTEND_PORT`,
-`PMW_FRONTEND_HTTPS_PORT`, `PMW_ADMIN_PORT`, `PMW_BACKEND_URL`, `PMW_DATA_DIR`,
-`PMW_DEFAULT_ADMIN_USER`, `PMW_DEFAULT_ADMIN_PASSWORD`, `PMW_QUERY_TIMEOUT`.
+`PMW_FRONTEND_HTTPS_PORT`, `PMW_ADMIN_PORT`, `PMW_ADMIN_HTTPS_PORT`,
+`PMW_BACKEND_URL`, `PMW_DATA_DIR`, `PMW_DEFAULT_ADMIN_USER`,
+`PMW_DEFAULT_ADMIN_PASSWORD`, `PMW_QUERY_TIMEOUT`.
 
 ## Running with Docker
 
@@ -87,8 +88,9 @@ docker compose up -d --build
 ```
 
 App → <http://localhost:8080>, admin → <http://localhost:8090>. The compose file
-publishes `8080` (HTTP), `8443` (HTTPS, once TLS is enabled) and `8090` (admin);
-the compute backend stays internal to the container.
+publishes `8080`/`8443` (app HTTP/HTTPS) and `8090`/`8453` (admin HTTP/HTTPS); the
+HTTPS ports activate once TLS is enabled in the admin. The compute backend stays
+internal to the container.
 
 - **Persistence** — everything the app must keep (the `settings`/`security`
   SQLite databases, the Fernet `secret.key`, TLS certificates and the GUI PID)
@@ -115,24 +117,30 @@ the compute backend stays internal to the container.
 
 ## Administration & TLS
 
-The admin interface at <http://127.0.0.1:8090> manages security. Sign in with the
+The admin interface at <http://127.0.0.1:8090> (and <https://127.0.0.1:8453> once
+TLS is enabled) manages security. Sign in with the
 default administrator (**Administrator / Administrator**) — you're prompted to
-change the password on first use. It is organised into four tabs: **TLS / SSL**,
-**Users**, **Database Connections** and **Directory (LDAP)**.
+change the password on first use. It is organised into five tabs: **App Control**
+(restart the servers), **TLS / SSL**, **Users**, **Database Connections** and
+**Directory (LDAP)**.
 
 **TLS / SSL.** Generate a self-signed certificate (common name + SANs, validity,
-key size) or upload your own PEM cert + key, mark one *active*, then choose how
-the main app accepts connections:
+key size) or upload your own PEM cert + key, mark one *active*, then choose the
+mode. The **GUI server and the admin interface both follow this one mode and share
+the same active certificate** — each runs under a TLS-aware launcher that binds
+HTTP and/or HTTPS accordingly:
 
-| Mode | GUI server binds |
-|---|---|
-| **Off** | HTTP only (`:8080`) |
-| **Optional** | HTTP **and** HTTPS at the same time (`:8080` + `:8443`) |
-| **Required** | HTTPS only (`:8443`) |
+| Mode | GUI server binds | Admin interface binds |
+|---|---|---|
+| **Off** | HTTP only (`:8080`) | HTTP only (`:8090`) |
+| **Optional** | HTTP **and** HTTPS (`:8080` + `:8443`) | HTTP **and** HTTPS (`:8090` + `:8453`) |
+| **Required** | HTTPS only (`:8443`) | HTTPS only (`:8453`) |
 
-TLS mode and certificate changes take effect the next time the app server starts
-(`./run.sh`). If a TLS mode needs a certificate but none is active, the GUI server
-falls back to HTTP so the app is never left unreachable.
+Changes take effect on restart — the **↻ Restart app server** button rebinds
+**both** launchers' listeners in place (no terminal needed). If a mode needs a
+certificate but none is active, each server falls back to HTTP so nothing is left
+unreachable — including the admin interface itself, so a bad certificate can't lock
+you out.
 
 **Users & sign-in.** The admin interface controls who is allowed to use the
 application: create users, enable/disable access, grant/revoke the admin role, and

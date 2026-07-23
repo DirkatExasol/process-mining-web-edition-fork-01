@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field  # noqa: E402
 
 import pages  # noqa: E402
 from app.config import (  # noqa: E402
+    ADMIN_PID_PATH,
     ADMIN_SESSION_TTL_SECS,
     FRONTEND_HTTPS_PORT,
     FRONTEND_PORT,
@@ -341,11 +342,10 @@ def api_download_cert(cert_id: str, user: User = Depends(require_admin)):
 # ── API: restart the GUI server ───────────────────────────────────────────────
 
 
-@app.post("/api/restart")
-def api_restart(user: User = Depends(require_admin)):
-    """Signal the GUI launcher (SIGHUP) to rebind its listeners with the current
-    TLS plan — applying a mode or certificate change without a terminal."""
-    if not GUI_PID_PATH.exists():
+def _signal_launcher(pid_path) -> int:
+    """SIGHUP the launcher named by its PID file so it rebinds its listeners.
+    Returns the PID; raises HTTPException on any problem."""
+    if not pid_path.exists():
         raise HTTPException(
             status_code=409,
             detail=(
@@ -354,7 +354,7 @@ def api_restart(user: User = Depends(require_admin)):
             ),
         )
     try:
-        pid = int(GUI_PID_PATH.read_text().strip())
+        pid = int(pid_path.read_text().strip())
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=500, detail="Invalid PID file.") from exc
     try:
@@ -371,7 +371,28 @@ def api_restart(user: User = Depends(require_admin)):
         raise HTTPException(
             status_code=500, detail=f"Could not signal the app server: {exc}"
         ) from exc
-    return {"ok": True, "pid": pid}
+    return pid
+
+
+@app.post("/api/restart")
+def api_restart(user: User = Depends(require_admin)):
+    """Signal the GUI *and* admin launchers (SIGHUP) to rebind their listeners with
+    the current TLS plan — applying a mode or certificate change without a terminal.
+
+    The admin interface follows the same TLS mode, so it restarts itself too: this
+    request's connection may drop and, if the mode changed, the admin moves to a
+    different scheme/port — reconnect there if this page stops responding."""
+    gui_pid = _signal_launcher(GUI_PID_PATH)
+    # Restart the admin launcher too, best-effort: signalling our own launcher tears
+    # down this very listener, so don't fail the request if the response races it.
+    admin_pid: int | None = None
+    if ADMIN_PID_PATH.exists():
+        try:
+            admin_pid = int(ADMIN_PID_PATH.read_text().strip())
+            os.kill(admin_pid, signal.SIGHUP)
+        except (ValueError, OSError):
+            admin_pid = None
+    return {"ok": True, "pid": gui_pid, "adminPid": admin_pid}
 
 
 # ── API: connections (admin-defined, assigned to users) ───────────────────────

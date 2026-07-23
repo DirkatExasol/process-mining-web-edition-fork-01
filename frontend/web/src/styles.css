@@ -1570,20 +1570,31 @@ textarea.text-input {
   color: var(--accent);
 }
 
-.similarity-badge {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+/* A/B comparison: charts fill the top, the similarity badge sits in a thin row
+   below the two flow-chart canvases (clear of the per-panel controls). */
+.ab-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ab-similarity-row {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
+  justify-content: center;
+  padding: 7px 8px;
+  border-top: 1px solid var(--separator-soft);
+  background: var(--bg-tertiary-grouped);
+}
+.similarity-badge {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
-  padding: 6px 10px;
-  border-radius: var(--radius);
+  padding: 4px 12px;
+  border-radius: 999px;
   background: var(--material);
-  backdrop-filter: blur(20px);
   box-shadow: var(--shadow-md);
-  z-index: 14;
-  pointer-events: none;
   font-size: 10px;
   color: var(--secondary);
 }

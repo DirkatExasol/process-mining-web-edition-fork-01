@@ -21,9 +21,10 @@ CERTS_DIR.mkdir(parents=True, exist_ok=True)
 ACTIVE_CERT_PATH = CERTS_DIR / "active.crt"
 ACTIVE_KEY_PATH = CERTS_DIR / "active.key"
 
-# The GUI launcher writes its PID here so the admin service can signal a restart
-# (SIGHUP → rebind listeners with the current TLS plan).
+# Each TLS-aware launcher (GUI + admin) writes its PID here so the admin service
+# can signal a restart (SIGHUP → rebind listeners with the current TLS plan).
 GUI_PID_PATH = DATA_DIR / "gui.pid"
+ADMIN_PID_PATH = DATA_DIR / "admin.pid"
 
 BACKEND_HOST = os.environ.get("PMW_BACKEND_HOST", "127.0.0.1")
 BACKEND_PORT = int(os.environ.get("PMW_BACKEND_PORT", "8000"))
@@ -36,6 +37,9 @@ FRONTEND_HTTPS_PORT = int(os.environ.get("PMW_FRONTEND_HTTPS_PORT", "8443"))
 # The administrative interface runs on its own port.
 ADMIN_HOST = os.environ.get("PMW_ADMIN_HOST", "127.0.0.1")
 ADMIN_PORT = int(os.environ.get("PMW_ADMIN_PORT", "8090"))
+# HTTPS listener port for the admin interface — it follows the same TLS mode and
+# active certificate as the main app (used when TLS is optional or required).
+ADMIN_HTTPS_PORT = int(os.environ.get("PMW_ADMIN_HTTPS_PORT", "8453"))
 
 # Admin session lifetime.
 ADMIN_SESSION_TTL_SECS = int(os.environ.get("PMW_ADMIN_SESSION_TTL", str(8 * 3600)))

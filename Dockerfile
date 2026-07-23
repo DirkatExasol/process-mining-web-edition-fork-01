@@ -45,9 +45,10 @@ RUN chmod +x run.sh
 # Drop in the SPA built in stage 1 (so run.sh finds dist and never needs Node).
 COPY --from=web /web/dist ./frontend/web/dist
 
-# 8080 = main app (HTTP), 8443 = main app (HTTPS, when TLS is enabled),
-# 8090 = admin interface. 8000 (backend) is intentionally kept internal.
-EXPOSE 8080 8443 8090
+# 8080 = main app (HTTP), 8443 = main app (HTTPS), 8090 = admin (HTTP),
+# 8453 = admin (HTTPS) — HTTPS ports activate once TLS is enabled in admin.
+# 8000 (backend) is intentionally kept internal.
+EXPOSE 8080 8443 8090 8453
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
   CMD /app/.venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)" || exit 1

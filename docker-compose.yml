@@ -9,7 +9,8 @@ services:
     ports:
       - "8080:8080"   # main application (HTTP)
       - "8443:8443"   # main application (HTTPS — active once TLS is enabled in admin)
-      - "8090:8090"   # admin interface
+      - "8090:8090"   # admin interface (HTTP)
+      - "8453:8453"   # admin interface (HTTPS — active once TLS is enabled in admin)
     environment:
       # First-run bootstrap admin — override the default password (recommended).
       # PMW_DEFAULT_ADMIN_USER: "Administrator"

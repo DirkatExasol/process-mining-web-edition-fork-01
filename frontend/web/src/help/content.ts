@@ -208,14 +208,14 @@ const administration: HelpTopic = {
       body: [
         p('A separate administration interface runs on its own port (8090 by default) and is where all security and access is configured. It has its own sign-in and admits administrators only.'),
         p('On first run it seeds a local administrator — Administrator / Administrator — and prompts you to change the password. Local admin accounts always work as a break-glass route, even if a directory is later misconfigured.'),
-        tip('The admin interface is organised into four tabs: TLS / SSL, Users, Database Connections and Directory (LDAP).'),
+        tip('The admin interface is organised into five tabs: App Control (restart the servers), TLS / SSL, Users, Database Connections and Directory (LDAP).'),
       ],
     },
     {
       heading: 'TLS / SSL',
       body: [
-        p('Choose how the main application accepts connections: Off (HTTP only), Optional (HTTP and HTTPS together) or Required (HTTPS only). Generate a self-signed certificate or upload your own PEM certificate and key, then mark one active.'),
-        p('TLS and certificate changes take effect when the app server restarts — use the ↻ Restart app server button. If a mode needs a certificate but none is active, the server falls back to HTTP so the app is never left unreachable.'),
+        p('Choose how connections are accepted: Off (HTTP only), Optional (HTTP and HTTPS together) or Required (HTTPS only). Generate a self-signed certificate or upload your own PEM certificate and key, then mark one active.'),
+        p('The main app and the admin interface both follow this one mode and share the same active certificate — the app on ports 8080/8443, the admin on 8090/8453. Changes take effect when the servers restart: the ↻ Restart app server button in the App Control tab rebinds both in place. If a mode needs a certificate but none is active, each server falls back to HTTP so nothing (including the admin itself) is left unreachable.'),
         warn('Certificate private keys are encrypted at rest. Keep the active certificate valid — an expired certificate makes HTTPS clients refuse to connect.'),
       ],
     },
