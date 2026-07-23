@@ -98,6 +98,10 @@ the compute backend stays internal to the container.
   before the first `up` (it only applies while the security database is empty).
 - The image builds the SPA in a Node stage and runs the Python services in a
   slim runtime via `run.sh`; `.dockerignore` keeps local state and secrets out.
+- **Auto-rebuild** — `docker compose watch` (or `docker compose up --watch`)
+  monitors the source directories and rebuilds the image when they change. The
+  build stays cheap because Docker's layer cache is the real "needs rebuilding?"
+  check — untouched layers are reused, so only the affected parts rebuild.
 
 ## First use
 

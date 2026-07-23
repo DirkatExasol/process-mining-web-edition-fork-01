@@ -115,7 +115,14 @@ async def auth_login(request: Request) -> Response:
             {"detail": "Invalid username or password, or the account is disabled."},
             status_code=401,
         )
-    response = JSONResponse({"username": user.username, "isAdmin": user.is_admin})
+    response = JSONResponse(
+        {
+            "username": user.username,
+            "isAdmin": user.is_admin,
+            "displayName": user.display_name,
+            "authSource": user.auth_source,
+        }
+    )
     response.set_cookie(
         SESSION_COOKIE,
         _issue_session(user.username),
@@ -142,6 +149,8 @@ async def auth_session(request: Request) -> dict:
         "authenticated": user is not None,
         "username": user.username if user else None,
         "isAdmin": user.is_admin if user else False,
+        "displayName": user.display_name if user else None,
+        "authSource": user.auth_source if user else None,
         "requireLogin": store.require_login,
     }
 

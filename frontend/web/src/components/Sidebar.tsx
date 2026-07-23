@@ -143,9 +143,24 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
           <Divider />
           <div className="theme-bar" style={{ gap: 8 }}>
             <span aria-hidden>👤</span>
-            <span className="t-caption fg-secondary truncate" title={store.authUser}>
-              {store.authUser}
-            </span>
+            {store.authDisplayName ? (
+              // Directory (LDAP/AD) accounts: real name on top, username below.
+              <div className="col" style={{ gap: 0, minWidth: 0, lineHeight: 1.2 }}>
+                <span
+                  className="t-caption fg-secondary truncate"
+                  title={store.authDisplayName}
+                >
+                  {store.authDisplayName}
+                </span>
+                <span className="t-caption2 fg-tertiary truncate" title={store.authUser}>
+                  ({store.authUser})
+                </span>
+              </div>
+            ) : (
+              <span className="t-caption fg-secondary truncate" title={store.authUser}>
+                {store.authUser}
+              </span>
+            )}
             <span className="spacer" />
             <button
               className="btn small"

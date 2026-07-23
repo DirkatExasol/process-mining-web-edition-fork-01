@@ -75,10 +75,17 @@ export const api = {
       authenticated: boolean
       username: string | null
       isAdmin: boolean
+      displayName: string | null
+      authSource: string | null
       requireLogin: boolean
     }>('/auth/session'),
   login: (username: string, password: string) =>
-    post<{ username: string; isAdmin: boolean }>('/auth/login', { username, password }),
+    post<{
+      username: string
+      isAdmin: boolean
+      displayName: string
+      authSource: string
+    }>('/auth/login', { username, password }),
   logout: () => post<{ ok: boolean }>('/auth/logout'),
 
   // ── connections ──────────────────────────────────────────────────────────

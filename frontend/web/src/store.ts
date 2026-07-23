@@ -123,6 +123,7 @@ export interface AppState {
   // ── authentication (main-app sign-in) ─────────────────────────────────────
   authChecked: boolean
   authUser: string | null
+  authDisplayName: string | null
   authIsAdmin: boolean
   requireLogin: boolean
 
@@ -355,6 +356,7 @@ const today = toISODate(new Date())
 const INITIAL_STATE: AppState = {
   authChecked: false,
   authUser: null,
+  authDisplayName: null,
   authIsAdmin: false,
   requireLogin: true,
 
@@ -708,6 +710,7 @@ export const useStore = create<Store>((set, get) => {
         // Disconnecting the database must not sign the user out of the app.
         authChecked: s.authChecked,
         authUser: s.authUser,
+        authDisplayName: s.authDisplayName,
         authIsAdmin: s.authIsAdmin,
         requireLogin: s.requireLogin,
         connections: s.connections,
@@ -725,6 +728,7 @@ export const useStore = create<Store>((set, get) => {
         set({
           authChecked: true,
           authUser: s.authenticated ? s.username : null,
+          authDisplayName: s.authenticated ? s.displayName : null,
           authIsAdmin: s.isAdmin,
           requireLogin: s.requireLogin,
         })
@@ -737,7 +741,11 @@ export const useStore = create<Store>((set, get) => {
     login: async (username, password) => {
       try {
         const result = await api.login(username, password)
-        set({ authUser: result.username, authIsAdmin: result.isAdmin })
+        set({
+          authUser: result.username,
+          authDisplayName: result.displayName || null,
+          authIsAdmin: result.isAdmin,
+        })
         return null
       } catch (error) {
         return error instanceof ApiError ? error.message : String(error)
@@ -752,6 +760,7 @@ export const useStore = create<Store>((set, get) => {
       }
       set({
         authUser: null,
+        authDisplayName: null,
         authIsAdmin: false,
         selectedProject: null,
         projects: [],

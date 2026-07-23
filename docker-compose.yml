@@ -20,3 +20,31 @@ services:
       # Persisted state (settings.sqlite3, security.sqlite3, secret.key, certs/,
       # gui.pid) — stored in ./data relative to this compose file.
       - ./data:/app/data
+
+    # ── Auto-rebuild on source changes (Compose Watch, Docker Compose ≥ 2.22) ──
+    #
+    # `docker compose watch` (or `docker compose up --watch`) monitors these
+    # paths and rebuilds the image whenever any of them change. The build itself
+    # is cheap when nothing relevant changed, because Docker's layer cache is the
+    # actual "does this need rebuilding?" check — untouched layers are reused, so
+    # only the parts affected by the change are rebuilt.
+    develop:
+      watch:
+        # Backend / admin / GUI Python sources → rebuild the image.
+        - path: ./backend
+          action: rebuild
+        - path: ./admin
+          action: rebuild
+        # Frontend (Python launcher + React SPA); node_modules/dist are outputs.
+        - path: ./frontend
+          action: rebuild
+          ignore:
+            - node_modules/
+            - dist/
+        # Dependency / build / entrypoint definitions.
+        - path: ./requirements.txt
+          action: rebuild
+        - path: ./run.sh
+          action: rebuild
+        - path: ./Dockerfile
+          action: rebuild
