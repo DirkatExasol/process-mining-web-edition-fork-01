@@ -1,0 +1,333 @@
+"""Project data endpoints — bootstrap, filtered graphs, statistics, journeys."""
+
+from __future__ import annotations
+
+import hashlib
+from datetime import datetime, timedelta
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+
+from ..db.manager import db
+from ..db.repository import ProcessRepository
+from ..models import (
+    DurationStats,
+    FilterSpec,
+    GraphResponse,
+    JourneyPath,
+    ProcessGraph,
+    Project,
+    ProjectBootstrap,
+    SampleSet,
+    StatisticsResponse,
+    StepInfo,
+    TimeGranularity,
+)
+from ..services.analytics import ab_similarity, apply_goodness_coverage
+
+router = APIRouter(prefix="/api", tags=["projects"])
+
+
+def repo(sample_set: SampleSet = SampleSet.original) -> ProcessRepository:
+    r = ProcessRepository(db)
+    r.active_sample_set = sample_set
+    return r
+
+
+def require_connection() -> None:
+    if not db.is_connected:
+        raise HTTPException(status_code=409, detail="Not connected to a database.")
+
+
+class GraphRequest(BaseModel):
+    filter: FilterSpec = FilterSpec()
+    totalJourneyCount: int | None = None
+    includeGoodness: bool = True
+    includeVariants: bool = False
+    variantLimit: int = 500
+
+
+class GraphResult(GraphResponse):
+    variants: list[JourneyPath] = []
+
+
+class StatisticsRequest(BaseModel):
+    filter: FilterSpec = FilterSpec()
+    routeLimit: int = 500
+    totalJourneyCount: int | None = None
+
+
+class SimilarityRequest(BaseModel):
+    variantsA: list[JourneyPath]
+    variantsB: list[JourneyPath]
+    graphA: ProcessGraph
+    graphB: ProcessGraph
+
+
+class StepUpdate(BaseModel):
+    bgColor: str
+    fgColor: str
+    score: int | None = None
+    shape: str = "stadium"
+    belongsTo: str | None = None
+    description: str | None = None
+
+
+class NearestDayRequest(BaseModel):
+    day: datetime
+    sampleSet: SampleSet = SampleSet.original
+
+
+# ── projects & bootstrap ─────────────────────────────────────────────────────
+
+
+@router.get("/projects", response_model=list[Project])
+async def list_projects() -> list[Project]:
+    require_connection()
+    return await repo().load_projects()
+
+
+@router.get("/projects/{project_id}/bootstrap", response_model=ProjectBootstrap)
+async def bootstrap(
+    project_id: str, sampleSet: SampleSet = SampleSet.original
+) -> ProjectBootstrap:
+    """Everything AppViewModel.selectProject() loaded before the first graph."""
+    require_connection()
+    r = repo(sampleSet)
+
+    projects = await r.load_projects()
+    project = next((p for p in projects if p.projectId == project_id), None)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    min_date, max_date = await r.load_date_bounds(project_id)
+    initial_to = max_date
+    initial_from = (max_date - timedelta(days=30)) if max_date else None
+
+    step_min, step_max = await r.load_step_count_bounds(project_id)
+    time_min, time_max = await r.load_journey_time_bounds(project_id)
+    score_min, score_max = await r.load_score_bounds(project_id)
+
+    all_steps = await r.load_all_step_names(project_id)
+    all_step_infos = await r.load_steps(project_id)
+
+    t1, t2, t3 = await r.load_meta_titles(project_id)
+    meta1 = await r.load_meta_values(project_id, "META_1") if t1 else []
+    meta2 = await r.load_meta_values(project_id, "META_2") if t2 else []
+    meta3 = await r.load_meta_values(project_id, "META_3") if t3 else []
+
+    await r.ensure_sample_set_column()
+    sample_counts = await r.load_sample_journey_counts(project_id)
+
+    # The total always counts ORIGINAL rows so it never reflects a sample's size.
+    original = repo(SampleSet.original)
+    total = await original.load_journey_count(project_id, FilterSpec())
+
+    return ProjectBootstrap(
+        project=project,
+        allSteps=all_steps,
+        allStepInfos=all_step_infos,
+        meta1Title=t1,
+        meta2Title=t2,
+        meta3Title=t3,
+        meta1Values=meta1,
+        meta2Values=meta2,
+        meta3Values=meta3,
+        totalJourneyCount=total,
+        minDate=min_date,
+        maxDate=max_date,
+        initialFromDate=initial_from,
+        initialToDate=initial_to,
+        stepCountMin=step_min,
+        stepCountMax=step_max,
+        journeyTimeBoundsMin=time_min,
+        journeyTimeBoundsMax=time_max,
+        scoreBoundsMin=score_min,
+        scoreBoundsMax=score_max,
+        sampleCounts=sample_counts,
+    )
+
+
+# ── filtered graph ───────────────────────────────────────────────────────────
+
+
+@router.post("/projects/{project_id}/graph", response_model=GraphResult)
+async def load_graph(project_id: str, request: GraphRequest) -> GraphResult:
+    """One round trip for everything a chart panel shows: graph, journey count,
+    duration KPIs, process goodness and (optionally) the variant list."""
+    require_connection()
+    f = request.filter
+    r = repo(f.sampleSet)
+
+    graph = await r.load_graph(project_id, f)
+    count = await r.load_journey_count(project_id, f)
+    durations = await r.load_journey_duration_stats(project_id, f)
+
+    goodness: float | None = None
+    if request.includeGoodness:
+        result = await r.load_process_goodness(project_id, f)
+        if result is not None:
+            raw, filtered_count = result
+            goodness = apply_goodness_coverage(
+                raw, filtered_count, request.totalJourneyCount
+            )
+
+    variants: list[JourneyPath] = []
+    if request.includeVariants:
+        try:
+            variants = await r.load_journey_paths(project_id, f, request.variantLimit)
+        except TimeoutError:
+            variants = []
+
+    return GraphResult(
+        processGraph=graph,
+        journeyCount=count,
+        durations=durations,
+        processGoodness=goodness,
+        variants=variants,
+    )
+
+
+@router.post("/projects/{project_id}/journey-paths", response_model=list[JourneyPath])
+async def journey_paths(
+    project_id: str, request: GraphRequest
+) -> list[JourneyPath]:
+    require_connection()
+    r = repo(request.filter.sampleSet)
+    try:
+        return await r.load_journey_paths(project_id, request.filter, request.variantLimit)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+
+
+@router.post("/similarity")
+def similarity(request: SimilarityRequest) -> dict[str, float | None]:
+    return {
+        "score": ab_similarity(
+            request.variantsA, request.variantsB, request.graphA, request.graphB
+        )
+    }
+
+
+# ── statistics ───────────────────────────────────────────────────────────────
+
+
+@router.post("/projects/{project_id}/statistics", response_model=StatisticsResponse)
+async def statistics(project_id: str, request: StatisticsRequest) -> StatisticsResponse:
+    require_connection()
+    f = request.filter
+    r = repo(f.sampleSet)
+
+    count = await r.load_journey_count(project_id, f)
+
+    total = request.totalJourneyCount
+    if total is None:
+        total = await repo(SampleSet.original).load_journey_count(project_id, FilterSpec())
+
+    granularity = (
+        TimeGranularity.auto(f.fromDate, f.toDate)
+        if f.fromDate and f.toDate
+        else TimeGranularity.month
+    )
+    time_series = await r.load_journey_time_series(project_id, f, granularity)
+    durations = await r.load_journey_duration_stats(project_id, f)
+    buckets = await r.load_duration_buckets(project_id, f)
+    graph = await r.load_graph(project_id, f)
+
+    try:
+        paths = await r.load_journey_paths(project_id, f, request.routeLimit)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+
+    return StatisticsResponse(
+        paths=paths,
+        durationBuckets=buckets,
+        timeSeries=time_series,
+        timeGranularity=granularity,
+        processGraph=graph,
+        journeyCount=count,
+        totalJourneyCount=total,
+        durations=durations,
+        isTruncated=len(paths) >= request.routeLimit,
+    )
+
+
+# ── individual journeys ──────────────────────────────────────────────────────
+
+
+@router.get("/projects/{project_id}/event-ids", response_model=list[str])
+async def event_ids(
+    project_id: str,
+    prefix: str = Query(""),
+    limit: int = 10,
+    sampleSet: SampleSet = SampleSet.original,
+) -> list[str]:
+    require_connection()
+    if len(prefix) < 2:
+        return []
+    return await repo(sampleSet).load_event_id_suggestions(project_id, prefix, limit)
+
+
+@router.get("/projects/{project_id}/journey")
+async def journey(
+    project_id: str,
+    eventId: str,
+    sampleSet: SampleSet = SampleSet.original,
+) -> dict[str, object]:
+    """Loads one journey. Non-hash input is MD5-hashed first, matching the Swift
+    behaviour where EVENT_ID holds the hash of a source identifier."""
+    require_connection()
+    raw = eventId.strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Event ID is required")
+    is_md5 = len(raw) == 32 and all(c in "0123456789abcdefABCDEF" for c in raw)
+    resolved = raw if is_md5 else hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+    r = repo(sampleSet)
+    graph = await r.load_journey_graph(project_id, resolved)
+    info = await r.load_journey_info(project_id, resolved)
+    return {
+        "queriedEventId": resolved,
+        "processGraph": graph.model_dump(by_alias=True),
+        "journeyCount": 0 if not graph.transitions else 1,
+        **{k: v for k, v in info.items()},
+    }
+
+
+# ── step editor ──────────────────────────────────────────────────────────────
+
+
+@router.put("/projects/{project_id}/steps/{step}")
+async def update_step(
+    project_id: str, step: str, payload: StepUpdate
+) -> dict[str, object]:
+    require_connection()
+    r = repo()
+    await r.update_step(
+        project_id,
+        step,
+        bg_color=payload.bgColor,
+        fg_color=payload.fgColor,
+        score=payload.score,
+        shape=payload.shape,
+        belongs_to=payload.belongsTo,
+        description=payload.description,
+    )
+    score_min, score_max = await r.load_score_bounds(project_id)
+    steps = await r.load_steps(project_id)
+    return {
+        "scoreBoundsMin": score_min,
+        "scoreBoundsMax": score_max,
+        "allStepInfos": {k: v.model_dump(by_alias=True) for k, v in steps.items()},
+    }
+
+
+@router.post("/projects/{project_id}/nearest-day")
+async def nearest_day(
+    project_id: str, request: NearestDayRequest
+) -> dict[str, datetime | None]:
+    require_connection()
+    found = await repo(request.sampleSet).find_nearest_day_with_data(
+        request.day, project_id
+    )
+    return {"date": found}

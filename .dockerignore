@@ -1,0 +1,19 @@
+# Keep the build context lean and never bake local state/secrets into the image.
+.git
+.gitignore
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+.venv
+**/.venv
+**/node_modules
+frontend/web/dist
+data
+**/*.sqlite3
+**/*.sqlite3-*
+**/secret.key
+**/certs
+.DS_Store
+Dockerfile
+docker-compose.yml
+.dockerignore

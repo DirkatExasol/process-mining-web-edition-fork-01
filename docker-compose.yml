@@ -1,0 +1,22 @@
+services:
+  process-mining:
+    build: .
+    image: process-mining-web:latest
+    container_name: process-mining-web
+    # tini as PID 1 → clean signal handling / no zombie processes.
+    init: true
+    restart: unless-stopped
+    ports:
+      - "8080:8080"   # main application (HTTP)
+      - "8443:8443"   # main application (HTTPS — active once TLS is enabled in admin)
+      - "8090:8090"   # admin interface
+    environment:
+      # First-run bootstrap admin — override the default password (recommended).
+      # PMW_DEFAULT_ADMIN_USER: "Administrator"
+      # PMW_DEFAULT_ADMIN_PASSWORD: "change-me"
+      # Session lifetimes, query timeout, etc. can also be set here (see README).
+      PMW_DATA_DIR: /app/data
+    volumes:
+      # Persisted state (settings.sqlite3, security.sqlite3, secret.key, certs/,
+      # gui.pid) — stored in ./data relative to this compose file.
+      - ./data:/app/data

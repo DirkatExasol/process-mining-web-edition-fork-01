@@ -1,0 +1,128 @@
+/** Launch splash and first-run legal disclaimer — ports SplashScreenView.swift
+ *  and `LegalDisclaimerView` from ContentView.swift. */
+
+import { useEffect, useState } from 'react'
+import { Divider } from './ui'
+import { Logo } from './Logo'
+
+export function SplashScreen({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 5000)
+    return () => clearTimeout(timer)
+  }, [onClose])
+
+  return (
+    <div className="scrim" style={{ background: 'rgba(0,0,0,0.25)' }} onClick={onClose}>
+      <div className="splash" onClick={(e) => e.stopPropagation()}>
+        <div className="brand-logo" style={{ width: 72, height: 72 }}>
+          <Logo />
+        </div>
+        <div className="col" style={{ gap: 2, alignItems: 'center' }}>
+          <span className="t-title3">Process Mining Demonstrator</span>
+          <span className="t-caption fg-secondary">Web edition · version 1.0.0</span>
+        </div>
+        <Divider />
+        <span className="t-footnote fg-secondary">
+          A demonstrator for log-file analysis and process mining on the Exasol
+          Analytical Database. Intended exclusively for demo and educational purposes —
+          not designed or validated for production use.
+        </span>
+        <button className="btn prominent" onClick={onClose}>
+          Continue
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const SECTIONS = [
+  {
+    heading: 'Purpose and scope',
+    body: 'This application is provided for educational and exploratory purposes only. Any productive or business-critical use is the sole responsibility of the user.',
+  },
+  {
+    heading: 'AI-generated results',
+    body: 'Process Mining Demonstrator includes AI-powered analysis features that use large language models to interpret process data. AI models can produce results that are incorrect, incomplete, or misleading.\n\nNeither the author of this application nor Exasol SE (the database vendor) accepts any liability whatsoever for decisions, conclusions, or actions taken on the basis of AI-generated results. You must independently verify every AI finding before acting on it.',
+  },
+  {
+    heading: 'Data accuracy',
+    body: 'Process maps, KPIs, journey statistics, and all other computed results depend entirely on the quality, completeness, and correctness of the data stored in your Exasol database. Neither the author nor Exasol SE accepts any liability for incorrect or misleading results arising from incomplete, erroneous, or misinterpreted source data.',
+  },
+  {
+    heading: 'Limitation of liability',
+    body: 'To the fullest extent permitted by applicable law, the author and Exasol SE expressly disclaim all warranties, express or implied, including but not limited to fitness for a particular purpose, accuracy, and non-infringement.\n\nIn no event shall the author or Exasol SE be liable for any direct, indirect, incidental, special, or consequential damages arising from the use of, or inability to use, this application or its outputs.',
+  },
+]
+
+export function LegalGate({ onAccept }: { onAccept: () => void }) {
+  const [accepted, setAccepted] = useState(false)
+
+  return (
+    <div className="scrim">
+      <div className="legal-gate" role="dialog" aria-modal="true">
+        <div className="col" style={{ alignItems: 'center', gap: 6, padding: '32px 24px 20px' }}>
+          <span style={{ fontSize: 38 }} aria-hidden>
+            ⛔️
+          </span>
+          <span className="t-title3">Legal Disclaimer</span>
+          <span className="t-subheadline fg-secondary">
+            Please read carefully before continuing
+          </span>
+        </div>
+        <Divider />
+
+        <div className="scroll-view" style={{ gap: 18 }}>
+          {SECTIONS.map((section) => (
+            <div key={section.heading} className="col" style={{ gap: 6 }}>
+              <span className="t-subheadline" style={{ fontWeight: 600 }}>
+                {section.heading}
+              </span>
+              <span
+                className="t-subheadline fg-secondary"
+                style={{ whiteSpace: 'pre-wrap' }}
+              >
+                {section.body}
+              </span>
+            </div>
+          ))}
+
+          <div className="legal-note col" style={{ gap: 8 }}>
+            <span
+              className="t-subheadline fg-orange"
+              style={{ fontWeight: 600 }}
+            >
+              🖥 Device transfer
+            </span>
+            <span className="t-subheadline">
+              Acceptance of this disclaimer is recorded for this installation. If this
+              device or account is handed to another person, the obligation to comply
+              with these terms and the acknowledgement of their content passes
+              automatically to the new user, who is bound by them from the moment they
+              first operate the application.
+            </span>
+          </div>
+        </div>
+
+        <Divider />
+        <div className="col" style={{ padding: 20, gap: 14 }}>
+          <label className="row t-subheadline" style={{ gap: 10 }}>
+            <input
+              type="checkbox"
+              checked={accepted}
+              onChange={(e) => setAccepted(e.target.checked)}
+            />
+            I have read and accept all terms stated above
+          </label>
+          <button
+            className="btn prominent"
+            style={{ padding: '12px', fontSize: 15 }}
+            disabled={!accepted}
+            onClick={onAccept}
+          >
+            Accept &amp; Continue
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
