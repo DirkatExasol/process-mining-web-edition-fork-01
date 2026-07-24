@@ -66,15 +66,34 @@ _FAVICON_LINK = (
     + '">'
 )
 
+# Resolve the persisted theme before first paint (no flash of the wrong palette).
+# 'system' follows the OS; the stored value is shared with the topbar control below.
+_THEME_BOOT = (
+    "<script>(function(){try{var t=localStorage.getItem('pmw_admin_theme')||'system';"
+    "var d=t==='system'?matchMedia('(prefers-color-scheme: dark)').matches:t==='dark';"
+    "document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>"
+)
+
 _STYLE = """
 :root {
+  /* Light is the default; the dark palette (below) mirrors the previous look and is
+     applied via data-theme, matching the main app's theme mechanism. */
+  --bg: #f2f2f7; --panel: #ffffff; --panel2: #eceef3; --fill: rgba(120,120,128,.12);
+  --fill2: rgba(120,120,128,.2); --border: rgba(60,60,67,.29); --border-soft: rgba(60,60,67,.12);
+  --text: #1c1c1e; --muted: rgba(60,60,67,.6); --tertiary: rgba(60,60,67,.3);
+  --accent: #0a84ff; --green: #248a3d; --red: #d70015; --orange: #c93400; --yellow: #b25000;
+  --radius: 10px; --shadow: 0 8px 30px rgba(0,0,0,.18);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
   --bg: #0b0b0d; --panel: #16161a; --panel2: #1d1d22; --fill: rgba(120,120,128,.16);
   --fill2: rgba(120,120,128,.28); --border: rgba(120,120,128,.28); --border-soft: rgba(120,120,128,.16);
   --text: #f2f2f7; --muted: rgba(235,235,245,.6); --tertiary: rgba(235,235,245,.3);
-  --accent: #0a84ff; --green: #32d74b; --red: #ff453a; --orange: #ff9f0a; --yellow: #ffd60a;
-  --radius: 10px; --shadow: 0 8px 30px rgba(0,0,0,.5);
-  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --green: #32d74b; --red: #ff453a; --orange: #ff9f0a; --yellow: #ffd60a;
+  --shadow: 0 8px 30px rgba(0,0,0,.5);
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; }
@@ -122,7 +141,18 @@ tr:last-child td { border-bottom: 0; }
 .pill.admin { background: rgba(10,132,255,.18); color: var(--accent); }
 .pill.active { background: rgba(50,215,75,.18); color: var(--green); }
 .pill.ldap { background: rgba(191,90,242,.18); color: #bf5af2; font-weight: 600; letter-spacing: .3px; }
-.pill.neutral { background: rgba(235,235,245,.1); color: var(--muted); }
+.pill.power { background: rgba(48,209,196,.18); color: #30d1c4; font-weight: 600; letter-spacing: .3px; }
+/* Theme-aware grey (the old near-white tint was invisible on the light card);
+   the inset outline keeps it reading as a badge without changing its size. */
+.pill.neutral { background: var(--fill2); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-soft); }
+/* Two important roles at once (admin + power / admin + user): one badge whose
+   background gently floats between the two role colours (--c1 → --c2). */
+.pill.combo { color: #fff; font-weight: 600; letter-spacing: .3px;
+  background: linear-gradient(90deg, var(--c1), var(--c2), var(--c1));
+  background-size: 220% 100%; animation: pillFloat 4s ease-in-out infinite; }
+.pill.combo .sep { opacity: .6; margin: 0 1px; font-weight: 400; }
+@keyframes pillFloat { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+@media (prefers-reduced-motion: reduce) { .pill.combo { animation: none; } }
 .u-ident { display: flex; flex-direction: column; line-height: 1.2; white-space: nowrap; }
 .u-real { font-size: 11px; color: var(--muted); margin-top: 1px; }
 .seg { display: inline-flex; background: var(--fill); border-radius: 8px; padding: 3px; gap: 3px; }
@@ -130,6 +160,8 @@ tr:last-child td { border-bottom: 0; }
 .seg button.sel { background: rgba(10,132,255,.22); color: var(--accent); font-weight: 600;
   box-shadow: inset 0 0 0 1px rgba(10,132,255,.35); }
 .seg button.sel .subtle { color: var(--accent); }
+.theme-seg { padding: 2px; }
+.theme-seg button { padding: 5px 10px; font-size: 15px; line-height: 1; }
 .banner { border-radius: var(--radius); padding: 12px 16px; margin: 14px 0; font-size: 13px; }
 .banner.warn { background: rgba(255,159,10,.12); border: 1px solid rgba(255,159,10,.4); }
 .banner.info { background: rgba(10,132,255,.1); border: 1px solid rgba(10,132,255,.3); }
@@ -162,7 +194,7 @@ def login_page(error: str = "") -> str:
     )
     return f"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-{_FAVICON_LINK}
+{_FAVICON_LINK}{_THEME_BOOT}
 <title>Administration — Sign in</title><style>{_STYLE}
 body {{ display: grid; place-items: center; min-height: 100vh; }}
 .login {{ width: min(380px, 92vw); }}
@@ -187,12 +219,17 @@ body {{ display: grid; place-items: center; min-height: 100vh; }}
 def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     return f"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-{_FAVICON_LINK}
+{_FAVICON_LINK}{_THEME_BOOT}
 <title>Administration</title><style>{_STYLE}</style></head><body>
 <div class="topbar">
   <div class="brand"><div class="logo">{_LOGO_SVG}</div>
     <div><h1>Administration</h1><div class="sub">Process Mining Demonstrator</div></div></div>
   <div class="spacer"></div>
+  <div class="seg theme-seg" id="themeSeg" title="Appearance">
+    <button data-theme-choice="system" title="System" aria-label="System theme" onclick="setTheme('system')">◐</button>
+    <button data-theme-choice="light" title="Light" aria-label="Light theme" onclick="setTheme('light')">☀</button>
+    <button data-theme-choice="dark" title="Dark" aria-label="Dark theme" onclick="setTheme('dark')">☾</button>
+  </div>
   <span class="muted">Signed in as <strong id="who">{html.escape(username)}</strong></span>
   <button class="btn small" onclick="changeOwnPassword()">Change password</button>
   <form method="post" action="/logout" style="display:inline"><button class="btn small">Log out</button></form>
@@ -286,6 +323,14 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       </label>
       <span class="subtle" id="requireLoginHint"></span>
     </div>
+    <div class="banner info" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">
+      <label class="row" style="font-size:13px; gap:8px">
+        Auto sign-out after
+        <input type="number" id="idleTimeout" min="0" max="1440" step="1" style="width:80px"> minutes of inactivity
+      </label>
+      <button class="btn small" onclick="saveIdleTimeout()">Save</button>
+      <span class="subtle" id="idleTimeoutHint"></span>
+    </div>
     <div class="row" style="margin:12px 0 6px"><div class="seg" id="userFilter"></div></div>
     <div id="userTable"></div>
     <details style="margin-top:12px"><summary>Add a user</summary>
@@ -367,13 +412,18 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <p class="muted" style="margin-top:0">When enabled, the <strong>main application</strong> also accepts sign-ins from an
       LDAP directory (search&nbsp;+&nbsp;bind). Directory users are created here automatically on first login as
       plain, enabled users — grant them a role or database connections like any other user. Local accounts always keep
-      working, and the admin panel itself stays local-only.</p>
-    <div class="banner info" style="display:flex; align-items:center; gap:12px">
+      working.</p>
+    <div class="banner info" style="display:flex; flex-direction:column; align-items:flex-start; gap:10px">
       <label class="row" style="font-size:13px; cursor:pointer">
         <input type="checkbox" id="l_enabled" style="width:auto"> Enable directory sign-in for the main app
       </label>
+      <label class="row" style="font-size:13px; cursor:pointer">
+        <input type="checkbox" id="l_adminLogin" style="width:auto"> Also allow directory sign-in to <strong>this admin interface</strong>
+      </label>
+      <p class="subtle" style="margin:0">A directory account can only reach the admin interface once it has been promoted to
+        <strong>admin</strong> in the Users tab. Local administrators always work regardless of this setting.</p>
     </div>
-    <div class="grid2" style="margin-top:14px">
+    <div class="grid2" style="margin-top:14px; border-bottom:1px solid var(--border); padding-bottom:18px; align-items:start">
       <div class="col">
         <h2 style="font-size:13px">Server</h2>
         <div class="field"><label>Server URI</label><input type="text" id="l_uri" placeholder="ldap://dir.example.com:389 or ldaps://dir.example.com:636"></div>
@@ -400,7 +450,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
         </div>
       </div>
     </div>
-    <div class="banner info" style="margin-top:8px">
+    <div class="banner info" style="margin-top:16px">
       <strong>Test a user login</strong> — resolve a directory account and verify its password
       (search&nbsp;+&nbsp;bind). Use <em>Test server connection</em> above to check the server alone.
       <div class="row" style="flex-wrap:wrap; margin-top:8px; align-items:flex-end">
@@ -429,6 +479,35 @@ _DASHBOARD_JS = r"""
 const $ = (id) => document.getElementById(id);
 let TLS = null;
 
+// ── Appearance (System / Light / Dark), analog to the main app ────────────────
+const THEME_KEY = 'pmw_admin_theme';
+function readThemePref() { try { return localStorage.getItem(THEME_KEY) || 'system'; } catch (e) { return 'system'; } }
+function applyTheme(pref) {
+  const dark = pref === 'system'
+    ? matchMedia('(prefers-color-scheme: dark)').matches
+    : pref === 'dark';
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+}
+function markThemeSel(pref) {
+  const seg = $('themeSeg'); if (!seg) return;
+  seg.querySelectorAll('button').forEach((b) =>
+    b.classList.toggle('sel', b.getAttribute('data-theme-choice') === pref));
+}
+function setTheme(pref) {
+  try { localStorage.setItem(THEME_KEY, pref); } catch (e) { /* private mode */ }
+  applyTheme(pref); markThemeSel(pref);
+}
+function initTheme() {
+  const pref = readThemePref();
+  applyTheme(pref); markThemeSel(pref);
+  try {
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (readThemePref() === 'system') applyTheme('system');
+    });
+  } catch (e) { /* Safari < 14 */ }
+}
+initTheme();
+
 function toast(msg, isErr) {
   const t = $('toast'); t.textContent = msg; t.className = 'toast show' + (isErr ? ' err' : '');
   clearTimeout(t._h); t._h = setTimeout(() => (t.className = 'toast'), 2600);
@@ -443,8 +522,10 @@ async function api(path, opts) {
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmtDate = (s) => { if (!s) return '—'; const d = new Date(s); return isNaN(d) ? '—' : d.toLocaleString(); };
 
+let BUILTIN_ADMIN = '';
 async function loadSession() {
   const s = await api('/api/session');
+  BUILTIN_ADMIN = s.builtinAdmin || '';
   $('who').textContent = s.username;
   $('defaultWarn').innerHTML = s.defaultPasswordActive
     ? '<div class="banner warn">⚠️ The <strong>Administrator</strong> account is still using its default password. Change it now with “Change password”.</div>'
@@ -452,12 +533,22 @@ async function loadSession() {
   $('requireLogin').checked = !!s.requireLogin;
   $('requireLoginHint').textContent = s.requireLogin
     ? 'Users must sign in.' : 'The app is open — no sign-in required.';
+  const idle = s.idleTimeoutMins || 0;
+  $('idleTimeout').value = idle;
+  $('idleTimeoutHint').textContent = idle > 0
+    ? 'Idle sessions are signed out after ' + idle + ' min.' : 'Disabled — sessions never time out on inactivity.';
 }
 async function saveRequireLogin() {
   const requireLogin = $('requireLogin').checked;
   try { await api('/api/access/require-login', { method: 'POST', body: JSON.stringify({ requireLogin }) });
     toast('Access updated'); await loadSession(); }
   catch (e) { toast(e.message, true); $('requireLogin').checked = !requireLogin; }
+}
+async function saveIdleTimeout() {
+  const minutes = Math.max(0, parseInt($('idleTimeout').value, 10) || 0);
+  try { await api('/api/access/idle-timeout', { method: 'POST', body: JSON.stringify({ minutes }) });
+    toast('Auto sign-out updated'); await loadSession(); }
+  catch (e) { toast(e.message, true); }
 }
 
 // ── TLS ─────────────────────────────────────────────────────────────────────
@@ -554,6 +645,22 @@ async function loadUsers() {
   USERS = await api('/api/users');
   renderUsers();
 }
+// The role cell. An administrator always carries a second base role (power, or
+// plain user) — those two important roles share one badge whose colour floats
+// between them. A non-admin shows a single pill (power supersedes user).
+function roleBadge(u) {
+  const BLUE = 'var(--accent)', TEAL = '#30d1c4', GREY = '#8e8e93';
+  const POWER_TITLE = 'May create and manage their own database connections from the app';
+  if (u.isAdmin) {
+    const second = u.isPower ? 'power' : 'user';
+    const c2 = u.isPower ? TEAL : GREY;
+    const title = u.isPower ? 'Administrator, and a power user' : 'Administrator';
+    return `<span class="pill combo" style="--c1:${BLUE}; --c2:${c2}" title="${title}">` +
+      `admin<span class="sep">·</span>${second}</span>`;
+  }
+  if (u.isPower) return `<span class="pill power" title="${POWER_TITLE}">power</span>`;
+  return '<span class="pill neutral">user</span>';
+}
 function setUserFilter(f) { USER_FILTER = f; renderUsers(); }
 function renderUsers() {
   const counts = { all: USERS.length, local: 0, ldap: 0 };
@@ -576,18 +683,21 @@ function renderUsers() {
   }
   for (const u of rows) {
     const isLdap = u.authSource === 'ldap';
+    // The built-in Administrator cannot be disabled or demoted (enforced server-side too).
+    const isBuiltin = !!BUILTIN_ADMIN && u.username.toLowerCase() === BUILTIN_ADMIN.toLowerCase();
     const nameCell = `<div class="u-ident"><strong>${esc(u.username)}</strong>` +
       (u.displayName ? `<span class="u-real">${esc(u.displayName)}</span>` : '') + `</div>`;
     h += `<tr><td>${nameCell}</td>` +
       `<td>${isLdap ? '<span class="pill ldap">LDAP</span>' : '<span class="pill neutral">local</span>'}</td>` +
-      `<td>${u.isAdmin ? '<span class="pill admin">admin</span>' : '<span class="pill neutral">user</span>'}</td>` +
+      `<td>${roleBadge(u)}</td>` +
       `<td>${u.isEnabled ? '<span class="pill on">enabled</span>' : '<span class="pill off">disabled</span>'}</td>` +
       `<td class="muted">${fmtDate(u.lastLogin)}</td>` +
       `<td style="text-align:right; white-space:nowrap">` +
-        `<button class="btn small" onclick="toggleEnabled('${esc(u.username)}',${!u.isEnabled})">${u.isEnabled ? 'Disable' : 'Enable'}</button> ` +
-        `<button class="btn small" onclick="toggleAdmin('${esc(u.username)}',${!u.isAdmin})">${u.isAdmin ? 'Remove admin' : 'Make admin'}</button> ` +
+        (isBuiltin ? '' : `<button class="btn small" onclick="toggleEnabled('${esc(u.username)}',${!u.isEnabled})">${u.isEnabled ? 'Disable' : 'Enable'}</button> `) +
+        (isBuiltin ? '' : `<button class="btn small" onclick="toggleAdmin('${esc(u.username)}',${!u.isAdmin})">${u.isAdmin ? 'Remove admin' : 'Make admin'}</button> `) +
+        (isBuiltin ? '' : `<button class="btn small" onclick="togglePower('${esc(u.username)}',${!u.isPower})">${u.isPower ? 'Remove power' : 'Make power'}</button> `) +
         (isLdap ? '' : `<button class="btn small" onclick="resetPw('${esc(u.username)}')">Reset password</button> `) +
-        `<button class="btn small danger" onclick="delUser('${esc(u.username)}')">Delete</button>` +
+        (isBuiltin ? '<span class="subtle" title="The built-in administrator cannot be disabled, demoted or deleted.">built-in admin</span>' : `<button class="btn small danger" onclick="delUser('${esc(u.username)}')">Delete</button>`) +
       `</td></tr>`;
   }
   $('userTable').innerHTML = h + '</tbody></table>';
@@ -604,6 +714,10 @@ async function toggleEnabled(u, enabled) {
 }
 async function toggleAdmin(u, isAdmin) {
   try { await api('/api/users/' + encodeURIComponent(u) + '/admin', { method: 'POST', body: JSON.stringify({ isAdmin }) });
+    toast('Updated'); await loadUsers(); } catch (e) { toast(e.message, true); }
+}
+async function togglePower(u, isPower) {
+  try { await api('/api/users/' + encodeURIComponent(u) + '/power', { method: 'POST', body: JSON.stringify({ isPower }) });
     toast('Updated'); await loadUsers(); } catch (e) { toast(e.message, true); }
 }
 async function resetPw(u) {
@@ -636,6 +750,7 @@ function selectTab(name) {
 async function loadLdap() {
   const c = await api('/api/ldap');
   $('l_enabled').checked = !!c.enabled;
+  $('l_adminLogin').checked = !!c.adminLoginEnabled;
   $('l_uri').value = c.serverURI || '';
   $('l_startTls').checked = !!c.startTLS;
   $('l_verify').checked = c.verifyCert !== false;
@@ -653,6 +768,7 @@ async function loadLdap() {
 function ldapBody() {
   const body = {
     enabled: $('l_enabled').checked,
+    adminLoginEnabled: $('l_adminLogin').checked,
     serverURI: $('l_uri').value.trim(),
     startTLS: $('l_startTls').checked,
     verifyCert: $('l_verify').checked,

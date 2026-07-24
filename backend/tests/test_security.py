@@ -84,12 +84,12 @@ def test_last_admin_cannot_be_removed(security):
 def test_second_admin_allows_demotion(security):
     store = security.store
     store.create_user("alice", "pw", is_admin=True)
-    # Now there are two admins → demoting one is allowed.
-    store.set_admin("Administrator", False)
-    assert store.get_user("Administrator").is_admin is False
-    # But the last remaining admin is again protected.
+    # Two admins → demoting the non-built-in one is allowed.
+    store.set_admin("alice", False)
+    assert store.get_user("alice").is_admin is False
+    # The built-in Administrator is always protected from demotion.
     with pytest.raises(ValueError):
-        store.set_admin("alice", False)
+        store.set_admin("Administrator", False)
 
 
 # ── TLS config & plan ─────────────────────────────────────────────────────────
@@ -319,6 +319,21 @@ def test_ldap_config_password_preserving_update(security):
     assert store.ldap_settings().bind_password == "s3cret"
     store.set_ldap_config({"enabled": True, "bindPassword": ""})
     assert store.ldap_settings().bind_password == ""
+
+
+def test_ldap_admin_login_flag_round_trips_and_requires_enabled(security):
+    store = security.store
+    # Default off, and never on unless the directory itself is enabled.
+    assert store.ldap_admin_public()["adminLoginEnabled"] is False
+    assert store.ldap_admin_login_enabled is False
+
+    store.set_ldap_config({"enabled": True, "adminLoginEnabled": True, "serverURI": "ldap://x"})
+    assert store.ldap_admin_public()["adminLoginEnabled"] is True
+    assert store.ldap_admin_login_enabled is True
+
+    # Disabling the directory disables admin sign-in even if the flag stays set.
+    store.set_ldap_config({"enabled": False, "adminLoginEnabled": True})
+    assert store.ldap_admin_login_enabled is False
     assert store.ldap_admin_public()["hasBindPassword"] is False
 
 
@@ -397,3 +412,91 @@ def test_authenticate_app_ldap_disabled_is_local_only(security, monkeypatch):
     # LDAP left disabled → the directory is never consulted.
     assert store.authenticate_app("alice", "pw") is None
     assert called["n"] == 0
+
+
+def test_idle_timeout_config_round_trips(security):
+    store = security.store
+    assert store.idle_timeout_mins == 0  # disabled by default
+    store.set_idle_timeout_mins(30)
+    assert store.idle_timeout_mins == 30
+    store.set_idle_timeout_mins(-5)  # negatives clamp to 0 (disabled)
+    assert store.idle_timeout_mins == 0
+
+
+def test_builtin_administrator_cannot_be_disabled_or_demoted(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=True)  # a second admin exists
+    # Even with another admin present, the built-in Administrator is protected.
+    with pytest.raises(ValueError):
+        store.set_enabled("Administrator", False)
+    with pytest.raises(ValueError):
+        store.set_admin("Administrator", False)
+    with pytest.raises(ValueError):  # case-insensitive
+        store.set_admin("administrator", False)
+    with pytest.raises(ValueError):  # nor deleted
+        store.delete_user("Administrator")
+    admin = store.get_user("Administrator")
+    assert admin.is_enabled and admin.is_admin  # unchanged
+
+
+# ── Power role & connection ownership ─────────────────────────────────────────
+
+
+def _owned_conn(store, owner, **overrides):
+    data = {
+        "name": "Owned",
+        "host": "db",
+        "port": 8563,
+        "username": "svc",
+        "schema": "S",
+        "password": "s3cret",
+        "owner": owner,
+        "assignments": [owner],
+    }
+    data.update(overrides)
+    return store.upsert_connection(data)
+
+
+def test_set_power_toggles_role_and_is_public(security):
+    store = security.store
+    store.create_user("pat", "pw", is_admin=False)
+    assert store.get_user("pat").is_power is False
+    store.set_power("pat", True)
+    pat = store.get_user("pat")
+    assert pat.is_power is True and pat.public()["isPower"] is True
+    store.set_power("PAT", False)  # case-insensitive
+    assert store.get_user("pat").is_power is False
+    with pytest.raises(ValueError):
+        store.set_power("nobody", True)
+
+
+def test_connections_owned_by_filters_on_owner(security):
+    store = security.store
+    store.create_user("pat", "pw", is_admin=False)
+    store.create_user("quinn", "pw", is_admin=False)
+    mine = _owned_conn(store, "pat", name="Mine")
+    _owned_conn(store, "quinn", name="Theirs")
+    owned = store.connections_owned_by("PAT")  # case-insensitive
+    assert [c.id for c in owned] == [mine.id]
+    # owner survives in the admin_public shape and is immutable across an edit.
+    assert mine.admin_public()["owner"] == "pat"
+    store.upsert_connection({"id": mine.id, "name": "Mine2", "owner": "quinn"})
+    assert store.get_connection(mine.id).owner == "pat"
+
+
+def test_can_manage_connection_enforces_ownership(security):
+    store = security.store
+    store.create_user("pat", "pw", is_admin=False)
+    store.set_power("pat", True)
+    store.create_user("quinn", "pw", is_admin=False)
+    store.set_power("quinn", True)
+    store.create_user("plain", "pw", is_admin=False)
+    conn = _owned_conn(store, "pat")
+
+    assert store.can_manage_connection(conn.id, "pat") is True
+    assert store.can_manage_connection(conn.id, "quinn") is False  # not the owner
+    assert store.can_manage_connection(conn.id, "plain") is False  # not a power user
+    assert store.can_manage_connection(conn.id, "Administrator") is True  # admin
+    # A disabled power owner loses management rights.
+    store.set_enabled("pat", False)
+    assert store.can_manage_connection(conn.id, "pat") is False

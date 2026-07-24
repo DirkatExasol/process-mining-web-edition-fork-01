@@ -187,9 +187,17 @@ const connecting: HelpTopic = {
       ],
     },
     {
+      heading: 'Power users: manage your own connections',
+      body: [
+        p('If an administrator has given your account the power role, a ＋ button appears in the Connections header. Use it to create a connection — Exasol host, credentials, optional TLS and an optional LLM server — right from the app, and to tick the users it should be assigned to.'),
+        p('You manage only the connections you create: an ✎ button appears on those cards so you can edit or delete them and change who they are assigned to. Every new connection is automatically assigned to you, so you can connect to it immediately. Passwords and API keys you enter are encrypted at rest and, once saved, are never sent back to the browser — leave those fields blank when editing to keep the stored secret unchanged.'),
+        tip('Use Test in the editor to check the database (and LLM, if set) before saving.'),
+      ],
+    },
+    {
       heading: 'No connections listed?',
       body: [
-        p('An empty Connections list means no connection has been assigned to your account yet. Ask an administrator to grant you access from the admin interface (Database Connections tab).'),
+        p('An empty Connections list means no connection has been assigned to your account yet. Ask an administrator to grant you access from the admin interface (Database Connections tab) — or, if you are a power user, create one with the ＋ button.'),
       ],
     },
   ],
@@ -224,6 +232,7 @@ const administration: HelpTopic = {
       body: [
         p('The Users tab controls who may sign in to the main application: create local users, enable or disable access, grant or revoke the admin role, and reset local passwords. Only enabled users can sign in.'),
         p('The Require sign-in toggle turns the login gate on or off for the main app (on by default). With it off, the app is open to anyone who can reach it.'),
+        def('Power role', 'Make power / Remove power grants the power badge. Power users can create and manage their own database connections from within the main app and assign them to other users — without needing access to this admin interface. They manage only the connections they create; admins still see and manage every connection.'),
         def('Source badge', 'Each user is tagged local or LDAP so you can tell built-in accounts from directory accounts at a glance; the All / Local / LDAP filter narrows the list.'),
       ],
     },
@@ -243,7 +252,9 @@ const administration: HelpTopic = {
           'Test server connection checks the server and service bind alone; Test a user login also resolves and signs in a directory account.',
           'On first successful sign-in a directory user is created locally as a plain, enabled account, so you can assign connections and, if you wish, the admin role.',
         ),
-        tip('Admin is never granted from the directory — a directory user stays a normal user until a local admin promotes them. The admin interface itself admits local admins and directory users tagged Admin.'),
+        p('While a directory is configured, the app’s sign-in panel shows a small status light — green when the directory server answers a connection test, red when it does not. The light is hidden entirely when no directory is configured.'),
+        p('By default the admin interface stays local-only. Tick “Also allow directory sign-in to this admin interface” to let directory accounts sign in here too — but only after one has been promoted to admin in the Users tab. Local administrators always work regardless, as a break-glass route.'),
+        tip('Admin is never granted from the directory — a directory user stays a normal user until a local admin promotes them.'),
       ],
     },
   ],

@@ -30,6 +30,7 @@ import {
   type FilterSpec,
   type HappyPath,
   type JourneyPath,
+  type ManagedConnection,
   type ProcessGraph,
   type ProcessNote,
   type Project,
@@ -125,10 +126,17 @@ export interface AppState {
   authUser: string | null
   authDisplayName: string | null
   authIsAdmin: boolean
+  authIsPower: boolean
   requireLogin: boolean
+  idleTimeoutMins: number
+  /** Set when the last sign-out was due to inactivity, so the login screen can say so. */
+  signedOutForInactivity: boolean
 
   // ── connection ──────────────────────────────────────────────────────────
   connections: AssignedConnection[]
+  // Power users: connections they own & may edit, and the users they can assign.
+  manageableConnections: ManagedConnection[]
+  assignableUsers: string[]
   connection: ConnectionStatus
 
   // ── projects ────────────────────────────────────────────────────────────
@@ -254,12 +262,23 @@ export interface AppActions {
 
   checkSession: () => Promise<void>
   login: (username: string, password: string) => Promise<string | null>
-  logout: () => Promise<void>
+  logout: (opts?: { inactivity?: boolean }) => Promise<void>
 
   refreshConnections: () => Promise<void>
   connectConnection: (connection: AssignedConnection) => Promise<boolean>
   disconnect: () => Promise<void>
   clearSession: () => void
+
+  // Power-user connection management (create / edit / assign, from the app).
+  refreshManageable: () => Promise<void>
+  saveManagedConnection: (
+    body: Record<string, unknown>,
+  ) => Promise<{ ok: boolean; error: string | null }>
+  deleteManagedConnection: (id: string) => Promise<boolean>
+  testManagedConnection: (
+    body: Record<string, unknown>,
+  ) => Promise<{ dbError: string | null; llmError: string | null; llmModels: string[] }>
+
 
   loadProjects: () => Promise<void>
   selectProject: (project: Project) => Promise<void>
@@ -358,9 +377,14 @@ const INITIAL_STATE: AppState = {
   authUser: null,
   authDisplayName: null,
   authIsAdmin: false,
+  authIsPower: false,
   requireLogin: true,
+  idleTimeoutMins: 0,
+  signedOutForInactivity: false,
 
   connections: [],
+  manageableConnections: [],
+  assignableUsers: [],
   connection: {
     isConnected: false,
     isLLMReachable: false,
@@ -712,14 +736,71 @@ export const useStore = create<Store>((set, get) => {
         authUser: s.authUser,
         authDisplayName: s.authDisplayName,
         authIsAdmin: s.authIsAdmin,
+        authIsPower: s.authIsPower,
         requireLogin: s.requireLogin,
+        idleTimeoutMins: s.idleTimeoutMins,
         connections: s.connections,
+        manageableConnections: s.manageableConnections,
+        assignableUsers: s.assignableUsers,
         connection: {
           ...s.connection,
           isConnected: false,
           isLLMReachable: false,
         },
       })
+    },
+
+    // ── power-user connection management ──────────────────────────────────
+
+    refreshManageable: async () => {
+      if (!(get().authIsPower || get().authIsAdmin)) {
+        set({ manageableConnections: [], assignableUsers: [] })
+        return
+      }
+      try {
+        const [manageableConnections, assignableUsers] = await Promise.all([
+          api.listManageableConnections(),
+          api.listAssignableUsers(),
+        ])
+        set({ manageableConnections, assignableUsers })
+      } catch {
+        /* leave prior lists in place if the probe fails */
+      }
+    },
+
+    saveManagedConnection: async (body) => {
+      try {
+        await api.saveManagedConnection(body)
+        await Promise.all([get().refreshManageable(), get().refreshConnections()])
+        return { ok: true, error: null }
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof ApiError ? error.message : String(error),
+        }
+      }
+    },
+
+    deleteManagedConnection: async (id) => {
+      try {
+        await api.deleteManagedConnection(id)
+        await Promise.all([get().refreshManageable(), get().refreshConnections()])
+        return true
+      } catch (error) {
+        set({
+          errorMessage: error instanceof ApiError ? error.message : String(error),
+        })
+        return false
+      }
+    },
+
+    testManagedConnection: async (body) => {
+      try {
+        return await api.testManagedConnection(body)
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : String(error)
+        return { dbError: message, llmError: null, llmModels: [] }
+      }
     },
 
     checkSession: async () => {
@@ -730,8 +811,11 @@ export const useStore = create<Store>((set, get) => {
           authUser: s.authenticated ? s.username : null,
           authDisplayName: s.authenticated ? s.displayName : null,
           authIsAdmin: s.isAdmin,
+          authIsPower: s.isPower,
           requireLogin: s.requireLogin,
+          idleTimeoutMins: s.idleTimeoutMins ?? 0,
         })
+        if (s.authenticated) void get().refreshManageable()
       } catch {
         // If the session probe fails, assume open access so the app still loads.
         set({ authChecked: true, authUser: null, requireLogin: false })
@@ -745,14 +829,17 @@ export const useStore = create<Store>((set, get) => {
           authUser: result.username,
           authDisplayName: result.displayName || null,
           authIsAdmin: result.isAdmin,
+          authIsPower: result.isPower,
+          signedOutForInactivity: false,
         })
+        void get().refreshManageable()
         return null
       } catch (error) {
         return error instanceof ApiError ? error.message : String(error)
       }
     },
 
-    logout: async () => {
+    logout: async (opts) => {
       try {
         await api.logout()
       } catch {
@@ -762,6 +849,10 @@ export const useStore = create<Store>((set, get) => {
         authUser: null,
         authDisplayName: null,
         authIsAdmin: false,
+        authIsPower: false,
+        manageableConnections: [],
+        assignableUsers: [],
+        signedOutForInactivity: opts?.inactivity ?? false,
         selectedProject: null,
         projects: [],
       })

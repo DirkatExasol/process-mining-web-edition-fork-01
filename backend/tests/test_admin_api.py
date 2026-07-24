@@ -296,7 +296,10 @@ def test_admin_login_rejects_non_admin_local(admin):
 
 def test_admin_login_accepts_ldap_tagged_admin(admin, monkeypatch):
     server, store = admin
-    store.set_ldap_config({"enabled": True, "serverURI": "ldap://x", "baseDN": "dc=x"})
+    # Directory admin sign-in must be explicitly allowed for the admin interface.
+    store.set_ldap_config(
+        {"enabled": True, "adminLoginEnabled": True, "serverURI": "ldap://x", "baseDN": "dc=x"}
+    )
     import app.services.ldap_auth as ldap_auth
     from app.services.ldap_auth import LdapUser
 
@@ -316,9 +319,42 @@ def test_admin_login_accepts_ldap_tagged_admin(admin, monkeypatch):
     assert r2.status_code == 303 and server.COOKIE in r2.cookies
 
 
-def test_admin_login_rejects_ldap_non_admin(admin, monkeypatch):
+def test_admin_login_directory_blocked_unless_enabled(admin, monkeypatch):
+    """With directory admin-login off (the default), even a promoted directory admin
+    cannot sign in to the admin panel — only local accounts are accepted."""
     server, store = admin
     store.set_ldap_config({"enabled": True, "serverURI": "ldap://x", "baseDN": "dc=x"})
+    store.provision_ldap_user("ldapadmin")
+    store.set_admin("ldapadmin", True)
+    import app.services.ldap_auth as ldap_auth
+    from app.services.ldap_auth import LdapUser
+
+    # The directory would authenticate them, but admin-login is not enabled.
+    called = {"n": 0}
+
+    def _auth(s, u, p):
+        called["n"] += 1
+        return LdapUser(username="ldapadmin")
+
+    monkeypatch.setattr(ldap_auth, "authenticate", _auth)
+    client = TestClient(server.app)
+    resp = client.post("/login", data={"username": "ldapadmin", "password": "dirpw"}, follow_redirects=False)
+    assert resp.status_code == 401 and server.COOKIE not in resp.cookies
+    assert called["n"] == 0  # local-only path never consults the directory
+
+    # Flip the switch on → the same promoted directory admin now gets in.
+    store.set_ldap_config(
+        {"enabled": True, "adminLoginEnabled": True, "serverURI": "ldap://x", "baseDN": "dc=x"}
+    )
+    r2 = client.post("/login", data={"username": "ldapadmin", "password": "dirpw"}, follow_redirects=False)
+    assert r2.status_code == 303 and server.COOKIE in r2.cookies
+
+
+def test_admin_login_rejects_ldap_non_admin(admin, monkeypatch):
+    server, store = admin
+    store.set_ldap_config(
+        {"enabled": True, "adminLoginEnabled": True, "serverURI": "ldap://x", "baseDN": "dc=x"}
+    )
     import app.services.ldap_auth as ldap_auth
     from app.services.ldap_auth import LdapUser
 
@@ -331,7 +367,9 @@ def test_admin_login_rejects_ldap_non_admin(admin, monkeypatch):
 
 def test_admin_login_wrong_ldap_password(admin, monkeypatch):
     server, store = admin
-    store.set_ldap_config({"enabled": True, "serverURI": "ldap://x", "baseDN": "dc=x"})
+    store.set_ldap_config(
+        {"enabled": True, "adminLoginEnabled": True, "serverURI": "ldap://x", "baseDN": "dc=x"}
+    )
     store.provision_ldap_user("ldapadmin")
     store.set_admin("ldapadmin", True)
     import app.services.ldap_auth as ldap_auth
@@ -340,3 +378,37 @@ def test_admin_login_wrong_ldap_password(admin, monkeypatch):
     client = TestClient(server.app)
     resp = client.post("/login", data={"username": "ldapadmin", "password": "bad"}, follow_redirects=False)
     assert resp.status_code == 401
+
+
+def test_idle_timeout_endpoint(admin):
+    server, store = admin
+    client = _login(server)
+    assert client.get("/api/session").json()["idleTimeoutMins"] == 0
+    r = client.post("/api/access/idle-timeout", json={"minutes": 15})
+    assert r.status_code == 200 and r.json()["idleTimeoutMins"] == 15
+    assert store.idle_timeout_mins == 15
+    # Negative clamps to 0 (disabled).
+    client.post("/api/access/idle-timeout", json={"minutes": -3})
+    assert store.idle_timeout_mins == 0
+
+
+def test_power_endpoint_toggles_role(admin):
+    server, store = admin
+    client = _login(server)
+    store.create_user("pat", "pw", is_admin=False)
+
+    r = client.post("/api/users/pat/power", json={"isPower": True})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert store.get_user("pat").is_power is True
+    # The users listing exposes the role for the admin UI badge/button.
+    listed = {u["username"]: u for u in client.get("/api/users").json()}
+    assert listed["pat"]["isPower"] is True
+
+    assert client.post("/api/users/pat/power", json={"isPower": False}).status_code == 200
+    assert store.get_user("pat").is_power is False
+
+
+def test_power_endpoint_requires_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    assert client.post("/api/users/pat/power", json={"isPower": True}).status_code == 401

@@ -29,6 +29,7 @@ import pages  # noqa: E402
 from app.config import (  # noqa: E402
     ADMIN_PID_PATH,
     ADMIN_SESSION_TTL_SECS,
+    DEFAULT_ADMIN_USERNAME,
     FRONTEND_HTTPS_PORT,
     FRONTEND_PORT,
     GUI_PID_PATH,
@@ -111,10 +112,14 @@ def login_get(request: Request):
 
 @app.post("/login", response_class=HTMLResponse)
 def login_post(request: Request, username: str = Form(...), password: str = Form(...)):
-    # Local accounts first (break-glass), then the directory when enabled — but the
-    # admin panel is admins only, so a valid non-admin (local or LDAP) is refused.
-    # LDAP users become admins only after a local admin tags them in the Users tab.
-    user = store.authenticate_app(username, password)
+    # Local accounts always work (break-glass). Directory accounts may sign in here
+    # only when the admin explicitly enabled it in the Directory tab — and, either way,
+    # the panel is admins only, so a valid non-admin is refused. A directory user must
+    # first be promoted to admin (Users tab) before they can get in.
+    if store.ldap_admin_login_enabled:
+        user = store.authenticate_app(username, password)  # local first, then directory
+    else:
+        user = store.authenticate(username, password)  # local-only
     if user is None or not user.is_admin:
         return HTMLResponse(
             pages.login_page("Invalid credentials, or the account is not an administrator."),
@@ -146,6 +151,8 @@ def api_session(user: User = Depends(require_admin)):
         "isAdmin": user.is_admin,
         "defaultPasswordActive": store.default_admin_password_active,
         "requireLogin": store.require_login,
+        "idleTimeoutMins": store.idle_timeout_mins,
+        "builtinAdmin": DEFAULT_ADMIN_USERNAME,
     }
 
 
@@ -157,6 +164,16 @@ class RequireLoginBody(BaseModel):
 def api_require_login(body: RequireLoginBody, user: User = Depends(require_admin)):
     store.set_require_login(body.requireLogin)
     return {"ok": True, "requireLogin": store.require_login}
+
+
+class IdleTimeoutBody(BaseModel):
+    minutes: int
+
+
+@app.post("/api/access/idle-timeout")
+def api_idle_timeout(body: IdleTimeoutBody, user: User = Depends(require_admin)):
+    store.set_idle_timeout_mins(body.minutes)
+    return {"ok": True, "idleTimeoutMins": store.idle_timeout_mins}
 
 
 @app.post("/api/self/password")
@@ -185,6 +202,10 @@ class AdminBody(BaseModel):
     isAdmin: bool
 
 
+class PowerBody(BaseModel):
+    isPower: bool
+
+
 @app.get("/api/users")
 def api_users(user: User = Depends(require_admin)):
     return [u.public() for u in store.list_users()]
@@ -211,6 +232,15 @@ def api_set_enabled(username: str, body: EnabledBody, user: User = Depends(requi
 def api_set_admin(username: str, body: AdminBody, user: User = Depends(require_admin)):
     try:
         store.set_admin(username, body.isAdmin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.post("/api/users/{username}/power")
+def api_set_power(username: str, body: PowerBody, user: User = Depends(require_admin)):
+    try:
+        store.set_power(username, body.isPower)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}
@@ -541,6 +571,7 @@ class LdapConfigBody(BaseModel):
     loginAttr: str = "uid"
     emailAttr: str = "mail"
     displayAttr: str = "cn"
+    adminLoginEnabled: bool = False
 
 
 class LdapTestBody(LdapConfigBody):
@@ -561,6 +592,7 @@ def _ldap_payload(body: LdapConfigBody) -> dict:
         "loginAttr": body.loginAttr,
         "emailAttr": body.emailAttr,
         "displayAttr": body.displayAttr,
+        "adminLoginEnabled": body.adminLoginEnabled,
     }
     if body.bindPassword is not None:
         data["bindPassword"] = body.bindPassword

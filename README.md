@@ -1,17 +1,15 @@
 # Process Mining Demonstrator — Web Edition
 
-A web port of the macOS/SwiftUI **Process Mining Demonstrator**. It connects to an
-[Exasol](https://www.exasol.com) database, reads a journey/event log, and renders
-how real cases flow through your business processes as an interactive map — with
-filtering, A/B comparison, Monte Carlo simulation, conformance checking, sampling
-and optional AI-assisted documentation.
+## **What Is Process Mining and why it matters?**
+Every transaction in your ERP, CRM, or ticketing system leaves a trace: a case ID, an activity, a timestamp. Process mining reads those event logs and reconstructs how your processes actually run — not how the flowchart says they should.
+The gap between the two is where the money sits. A purchase-to-pay process designed with five steps often has forty variants in practice: rework loops, manual workarounds, orders bouncing between departments. Process mining surfaces those variants, counts them, and attaches cost and duration to each.
+For business analysts, this replaces workshop guesswork with evidence. Rather than interviewing ten people about how they handle exceptions, you see the exceptions, ranked by frequency and impact. Which supplier causes the most payment delays? Does that extra approval step reduce errors, or just add four days?
+For process owners, the payoff is decision confidence. Quantify a bottleneck before investing in automation, then measure whether the fix worked. Conformance checking flags compliance breaches — an invoice approved by the person who raised it — across every case, not a sample.
+Process mining doesn't replace domain expertise. It gives that expertise a factual baseline, so effort targets the few variants driving most of the delay.
 
-Flow charts are drawn with [ReactFlow](https://reactflow.dev) (`@xyflow/react`,
-MIT — non-Pro features only).
-
-> **Demo & education only.** This is a demonstrator for log-file analysis and
-> process mining on the Exasol Analytical Database. It is not designed or
-> validated for production use.
+### From Transactions to Traces: Log Data as a New Source for Exasol
+Analytical workloads are usually fed by transactional systems — orders, invoices, ledger postings — which describe state. Process mining instead consumes event logs from ERP change tables, audit trails, and application journals: append-only, high-volume, semi-structured. Reconstructing process paths requires self-joins, window functions, and sequence analysis over hundreds of millions of rows, where Exasol's in-memory columnar engine keeps exploration interactive.
+***Note: this application is intended for demonstration and educational purposes only, and is not a production-ready process mining solution.***
 
 ---
 
@@ -151,16 +149,26 @@ in the admin *Users* section can turn the gate off for single-user/kiosk use
 (on by default). Passwords are scrypt-hashed; certificate private keys are
 encrypted at rest. The security store lives in `data/security.sqlite3`.
 
+**Power role.** Beyond admins, a user can be granted the **power** role
+(*Make power* / *Remove power* in the admin *Users* tab). Power users create and
+manage their **own** database connections from within the main app — a ＋ button in
+the sidebar *Connections* header opens an editor with the same DB/TLS/LLM fields and
+an assign-to-users list — and edit or delete only the connections they created (an
+✎ button on those cards). Every connection a power user creates is auto-assigned to
+them so they can connect immediately. Admins still see and manage every connection.
+The role is enforced server-side: the power endpoints reject non-power users and any
+attempt to touch a connection the caller does not own.
+
 **Database Connections.** Administrators define each connection here — the Exasol
 host/port/user/password/schema, an optional OpenAI-compatible LLM server, and TLS
-options — and **assign it to one or more users**. Each user sees and can connect to
-*only* the connections assigned to them; connection secrets never leave the admin
-interface (the main app receives host, port, schema and whether an LLM is attached,
-but no passwords or API keys). Use **Test connection** to check the database (and
-LLM) before saving. Leaving a password or API-key field blank on an existing
-connection keeps the stored value; the backend decrypts secrets only when a user
-actually connects. Connection definitions and assignments live in
-`data/security.sqlite3`.
+options — and **assign it to one or more users** (power users do the same from the
+app for their own connections). Each user sees and can connect to *only* the
+connections assigned to them; connection secrets never leave the server (the main
+app receives host, port, schema and whether an LLM is attached, but no passwords or
+API keys). Use **Test connection** to check the database (and LLM) before saving.
+Leaving a password or API-key field blank on an existing connection keeps the stored
+value; the backend decrypts secrets only when a user actually connects. Connection
+definitions, ownership and assignments live in `data/security.sqlite3`.
 
 **Directory (LDAP / Active Directory).** When enabled, the **main application** login
 also accepts directory accounts via **search + bind**: the server binds with a

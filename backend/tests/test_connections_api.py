@@ -155,3 +155,177 @@ def test_connect_missing_connection_is_404(backend):
     # No user header ⇒ open access passes the gate, but the id does not exist.
     resp = client.post("/api/connections/does-not-exist/connect")
     assert resp.status_code == 404
+
+
+# ── power users: manage & assign connections from the app ─────────────────────
+
+
+def _power(store, username="pat"):
+    store.create_user(username, "pw", is_admin=False)
+    store.set_power(username, True)
+    return username
+
+
+def test_manageable_requires_power(backend):
+    app, store, _ = backend
+    store.create_user("alice", "pw", is_admin=False)
+    client = TestClient(app)
+    # A plain user cannot reach the management surface.
+    assert (
+        client.get(
+            "/api/connections/manageable", headers={"X-PMW-User": "alice"}
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            "/api/assignable-users", headers={"X-PMW-User": "alice"}
+        ).status_code
+        == 403
+    )
+
+
+def test_power_creates_owns_and_autoassigns(backend):
+    app, store, _ = backend
+    pat = _power(store)
+    store.create_user("bob", "pw", is_admin=False)
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/connections",
+        headers={"X-PMW-User": pat},
+        json={
+            "name": "Pat's DB",
+            "host": "db",
+            "port": 8563,
+            "username": "svc",
+            "schema": "S",
+            "password": "s3cret",
+            "assignments": ["bob"],
+        },
+    )
+    assert resp.status_code == 200
+    created = resp.json()
+    assert created["owner"] == pat
+    # The creator is auto-assigned so they can use the connection immediately.
+    assert set(created["assignments"]) == {pat, "bob"}
+    assert "s3cret" not in str(created) and created["hasPassword"] is True
+
+    # It shows up in the owner's manageable list, and the owner can connect to it.
+    manageable = client.get(
+        "/api/connections/manageable", headers={"X-PMW-User": pat}
+    ).json()
+    assert [c["id"] for c in manageable] == [created["id"]]
+    assigned = client.get("/api/connections", headers={"X-PMW-User": pat}).json()
+    assert created["id"] in [c["id"] for c in assigned]
+
+
+def test_power_cannot_edit_or_delete_others_connection(backend):
+    app, store, _ = backend
+    pat = _power(store)
+    quinn = _power(store, "quinn")
+    # A connection owned by quinn.
+    conn = _make_conn(store, owner="quinn", assignments=["quinn"])
+    client = TestClient(app)
+
+    # pat may not edit quinn's connection…
+    edit = client.post(
+        "/api/connections",
+        headers={"X-PMW-User": pat},
+        json={"id": conn.id, "name": "hijack", "host": "x"},
+    )
+    assert edit.status_code == 403
+    # …nor delete it…
+    assert (
+        client.delete(
+            f"/api/connections/{conn.id}", headers={"X-PMW-User": pat}
+        ).status_code
+        == 403
+    )
+    # …nor re-assign it.
+    assert (
+        client.post(
+            f"/api/connections/{conn.id}/assignments",
+            headers={"X-PMW-User": pat},
+            json={"assignments": ["pat"]},
+        ).status_code
+        == 403
+    )
+    # pat's manageable list stays empty.
+    assert (
+        client.get(
+            "/api/connections/manageable", headers={"X-PMW-User": pat}
+        ).json()
+        == []
+    )
+
+
+def test_admin_manages_all_connections(backend):
+    app, store, _ = backend
+    store.create_user("admin", "pw", is_admin=True)
+    pat = _power(store)
+    conn = _make_conn(store, owner=pat, assignments=[pat])
+    client = TestClient(app)
+
+    # An admin sees every connection in the management surface…
+    manageable = client.get(
+        "/api/connections/manageable", headers={"X-PMW-User": "admin"}
+    ).json()
+    assert conn.id in [c["id"] for c in manageable]
+    # …and may edit one they do not own.
+    resp = client.post(
+        "/api/connections",
+        headers={"X-PMW-User": "admin"},
+        json={"id": conn.id, "name": "renamed", "host": conn.host},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "renamed"
+    # Ownership is immutable across an edit.
+    assert store.get_connection(conn.id).owner == pat
+
+
+def test_power_edit_and_delete_own_connection(backend):
+    app, store, db = backend
+    pat = _power(store)
+    client = TestClient(app)
+    created = client.post(
+        "/api/connections",
+        headers={"X-PMW-User": pat},
+        json={"name": "mine", "host": "db"},
+    ).json()
+
+    # Edit keeps ownership and applies the change.
+    edited = client.post(
+        "/api/connections",
+        headers={"X-PMW-User": pat},
+        json={"id": created["id"], "name": "mine-2", "host": "db2"},
+    ).json()
+    assert edited["owner"] == pat and edited["name"] == "mine-2"
+
+    # Delete removes it from the owner's manageable list.
+    assert (
+        client.delete(
+            f"/api/connections/{created['id']}", headers={"X-PMW-User": pat}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get(
+            "/api/connections/manageable", headers={"X-PMW-User": pat}
+        ).json()
+        == []
+    )
+
+
+def test_assignable_users_lists_only_enabled(backend):
+    app, store, _ = backend
+    pat = _power(store)
+    store.create_user("bob", "pw", is_admin=False)
+    store.create_user("carol", "pw", is_admin=False)
+    store.set_enabled("carol", False)
+    client = TestClient(app)
+
+    users = client.get(
+        "/api/assignable-users", headers={"X-PMW-User": pat}
+    ).json()
+    assert "bob" in users and pat in users and "carol" not in users

@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS connections (
     llm_url       TEXT DEFAULT '',
     llm_model     TEXT DEFAULT '',
     llm_key_enc   TEXT DEFAULT '',
+    owner         TEXT NOT NULL DEFAULT '',
     created_at    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS connection_assignments (
@@ -98,6 +99,7 @@ CREATE TABLE IF NOT EXISTS ldap_config (
     login_attr        TEXT NOT NULL DEFAULT 'uid',
     email_attr        TEXT NOT NULL DEFAULT 'mail',
     display_attr      TEXT NOT NULL DEFAULT 'cn',
+    admin_login_enabled INTEGER NOT NULL DEFAULT 0,
     updated_at        TEXT NOT NULL DEFAULT ''
 );
 """
@@ -117,6 +119,7 @@ class User:
     auth_source: str = "local"  # 'local' | 'ldap'
     email: str = ""
     display_name: str = ""
+    is_power: bool = False  # may create/manage their own DB connections from the app
 
     def public(self) -> dict:
         return {
@@ -128,6 +131,7 @@ class User:
             "authSource": self.auth_source,
             "email": self.email,
             "displayName": self.display_name,
+            "isPower": self.is_power,
         }
 
 
@@ -181,6 +185,7 @@ class Connection:
     assignments: list[str] = field(default_factory=list)
     has_password: bool = False
     has_llm_key: bool = False
+    owner: str = ""  # power user who created it from the app; '' = admin-defined
     created_at: str = ""
 
     @property
@@ -206,6 +211,7 @@ class Connection:
             "llmModel": self.llm_model,
             "hasLLMKey": self.has_llm_key,
             "assignments": self.assignments,
+            "owner": self.owner,
             "createdAt": self.created_at,
         }
 
@@ -244,9 +250,24 @@ class SecurityStore:
             ("auth_source", "auth_source TEXT NOT NULL DEFAULT 'local'"),
             ("email", "email TEXT NOT NULL DEFAULT ''"),
             ("display_name", "display_name TEXT NOT NULL DEFAULT ''"),
+            ("is_power", "is_power INTEGER NOT NULL DEFAULT 0"),
         ):
             if name not in cols:
                 self._conn.execute(f"ALTER TABLE users ADD COLUMN {ddl}")
+        # Connections gained an owner (the power user who created them; '' = admin).
+        conn_cols = {
+            r["name"] for r in self._conn.execute("PRAGMA table_info(connections)").fetchall()
+        }
+        if "owner" not in conn_cols:
+            self._conn.execute("ALTER TABLE connections ADD COLUMN owner TEXT NOT NULL DEFAULT ''")
+        # Directory sign-in to the admin interface is an explicit opt-in (default off).
+        ldap_cols = {
+            r["name"] for r in self._conn.execute("PRAGMA table_info(ldap_config)").fetchall()
+        }
+        if "admin_login_enabled" not in ldap_cols:
+            self._conn.execute(
+                "ALTER TABLE ldap_config ADD COLUMN admin_login_enabled INTEGER NOT NULL DEFAULT 0"
+            )
 
     # ── bootstrap ─────────────────────────────────────────────────────────────
 
@@ -285,6 +306,21 @@ class SecurityStore:
             self._set_config("require_login", "1" if required else "0")
             self._conn.commit()
 
+    @property
+    def idle_timeout_mins(self) -> int:
+        """Auto sign-out after this many minutes of inactivity (0 = never)."""
+        with self._lock:
+            try:
+                return max(0, int(self._get_config("idle_timeout_mins") or 0))
+            except (TypeError, ValueError):
+                return 0
+
+    def set_idle_timeout_mins(self, minutes: int) -> None:
+        minutes = max(0, int(minutes))
+        with self._lock:
+            self._set_config("idle_timeout_mins", str(minutes))
+            self._conn.commit()
+
     # ── LDAP / directory ──────────────────────────────────────────────────────
 
     def _ldap_row(self) -> sqlite3.Row | None:
@@ -314,6 +350,7 @@ class SecurityStore:
                 "loginAttr": "uid",
                 "emailAttr": "mail",
                 "displayAttr": "cn",
+                "adminLoginEnabled": False,
             }
         return {
             "enabled": bool(row["enabled"]),
@@ -328,7 +365,23 @@ class SecurityStore:
             "loginAttr": row["login_attr"],
             "emailAttr": row["email_attr"],
             "displayAttr": row["display_attr"],
+            "adminLoginEnabled": self._row_flag(row, "admin_login_enabled"),
         }
+
+    @property
+    def ldap_admin_login_enabled(self) -> bool:
+        """Whether directory accounts may sign in to the admin interface (opt-in).
+
+        Requires the directory to be enabled at all; admin rights are still enforced
+        separately (a directory user must be promoted to admin to get in)."""
+        with self._lock:
+            row = self._ldap_row()
+        return bool(row and row["enabled"] and self._row_flag(row, "admin_login_enabled"))
+
+    @staticmethod
+    def _row_flag(row: sqlite3.Row, name: str) -> bool:
+        """Read an optional boolean column that may predate a migration."""
+        return bool(row[name]) if name in row.keys() else False
 
     def ldap_settings(self):
         """Build the LdapSettings used for authentication (bind password decrypted)."""
@@ -369,8 +422,8 @@ class SecurityStore:
                 INSERT INTO ldap_config
                     (id, enabled, server_uri, start_tls, verify_cert, ca_cert, bind_dn,
                      bind_password_enc, base_dn, user_filter, login_attr, email_attr,
-                     display_attr, updated_at)
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     display_attr, admin_login_enabled, updated_at)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     enabled=excluded.enabled, server_uri=excluded.server_uri,
                     start_tls=excluded.start_tls, verify_cert=excluded.verify_cert,
@@ -378,6 +431,7 @@ class SecurityStore:
                     bind_password_enc=excluded.bind_password_enc, base_dn=excluded.base_dn,
                     user_filter=excluded.user_filter, login_attr=excluded.login_attr,
                     email_attr=excluded.email_attr, display_attr=excluded.display_attr,
+                    admin_login_enabled=excluded.admin_login_enabled,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -393,6 +447,7 @@ class SecurityStore:
                     (data.get("loginAttr") or "uid").strip(),
                     (data.get("emailAttr") or "mail").strip(),
                     (data.get("displayAttr") or "cn").strip(),
+                    int(bool(data.get("adminLoginEnabled"))),
                     _now(),
                 ),
             )
@@ -470,6 +525,7 @@ class SecurityStore:
             auth_source=(row["auth_source"] if "auth_source" in keys else "local") or "local",
             email=(row["email"] if "email" in keys else "") or "",
             display_name=(row["display_name"] if "display_name" in keys else "") or "",
+            is_power=bool(row["is_power"]) if "is_power" in keys else False,
         )
 
     def list_users(self) -> list[User]:
@@ -522,6 +578,8 @@ class SecurityStore:
         user = self.get_user(username)
         if user is None:
             raise ValueError("No such user.")
+        if not enabled and self._is_builtin_admin(username):
+            raise ValueError("The built-in Administrator account cannot be disabled.")
         if not enabled and user.is_admin:
             self._guard_last_admin(exclude=username)
         with self._lock:
@@ -535,6 +593,10 @@ class SecurityStore:
         user = self.get_user(username)
         if user is None:
             raise ValueError("No such user.")
+        if not is_admin and self._is_builtin_admin(username):
+            raise ValueError(
+                "The built-in Administrator account must remain an administrator."
+            )
         if not is_admin and user.is_admin:
             self._guard_last_admin(exclude=username)
         with self._lock:
@@ -544,10 +606,23 @@ class SecurityStore:
             )
             self._conn.commit()
 
+    def set_power(self, username: str, is_power: bool) -> None:
+        """Grant/revoke the 'power' role — may create & manage their own connections."""
+        if self.get_user(username) is None:
+            raise ValueError("No such user.")
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET is_power = ? WHERE LOWER(username) = LOWER(?)",
+                (int(is_power), username),
+            )
+            self._conn.commit()
+
     def delete_user(self, username: str) -> None:
         user = self.get_user(username)
         if user is None:
             return
+        if self._is_builtin_admin(username):
+            raise ValueError("The built-in Administrator account cannot be deleted.")
         if user.is_admin:
             self._guard_last_admin(exclude=username)
         with self._lock:
@@ -555,6 +630,10 @@ class SecurityStore:
                 "DELETE FROM users WHERE LOWER(username) = LOWER(?)", (username,)
             )
             self._conn.commit()
+
+    def _is_builtin_admin(self, username: str) -> bool:
+        """The seeded default administrator, protected from disable / demote."""
+        return username.strip().lower() == DEFAULT_ADMIN_USERNAME.lower()
 
     def _guard_last_admin(self, exclude: str) -> None:
         """Refuse an operation that would leave no enabled administrator."""
@@ -775,6 +854,7 @@ class SecurityStore:
             assignments=assignments,
             has_password=bool(row["password_enc"]),
             has_llm_key=bool(row["llm_key_enc"]),
+            owner=(row["owner"] if "owner" in row.keys() else "") or "",
             created_at=row["created_at"],
         )
 
@@ -820,6 +900,30 @@ class SecurityStore:
             ).fetchone()
         return row is not None
 
+    def connections_owned_by(self, username: str) -> list[Connection]:
+        """Connections a power user created and may edit/delete/re-assign."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM connections WHERE LOWER(owner) = LOWER(?) ORDER BY LOWER(name)",
+                (username,),
+            ).fetchall()
+            return [self._row_to_connection(r, with_secrets=False) for r in rows]
+
+    def can_manage_connection(self, conn_id: str, username: str | None) -> bool:
+        """True if `username` may edit/delete/re-assign the connection: an admin,
+        or the power user who owns it."""
+        user = self.get_user(username) if username else None
+        if user is None or not user.is_enabled:
+            return False
+        if user.is_admin:
+            return True
+        conn = self.get_connection(conn_id)
+        return (
+            user.is_power
+            and conn is not None
+            and conn.owner.strip().lower() == user.username.lower()
+        )
+
     def upsert_connection(self, data: dict) -> Connection:
         """Create or update a connection. `data` uses the admin_public field names.
         Secrets are only written when present: pass ``password`` / ``llmKey`` to set
@@ -848,8 +952,8 @@ class SecurityStore:
                 INSERT INTO connections
                     (id, name, comment, host, port, username, db_schema, use_tls,
                      cert_mode, fingerprint, min_rsa_bits, password_enc,
-                     llm_url, llm_model, llm_key_enc, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     llm_url, llm_model, llm_key_enc, owner, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name, comment=excluded.comment, host=excluded.host,
                     port=excluded.port, username=excluded.username, db_schema=excluded.db_schema,
@@ -874,6 +978,7 @@ class SecurityStore:
                     data.get("llmURL") or "",
                     data.get("llmModel") or "",
                     llm_key_enc,
+                    (data.get("owner") or "").strip(),  # only applied on INSERT (immutable after)
                     _now(),
                 ),
             )

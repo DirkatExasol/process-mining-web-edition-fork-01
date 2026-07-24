@@ -80,10 +80,29 @@ def test_session_reports_unauthenticated_and_require_login(gui):
         "authenticated": False,
         "username": None,
         "isAdmin": False,
+        "isPower": False,
         "displayName": None,
         "authSource": None,
         "requireLogin": True,
+        "idleTimeoutMins": 0,
     }
+
+
+def test_session_reports_and_refreshes_with_idle_timeout(gui):
+    server, store = gui
+    client = TestClient(server.app)
+    # Default: disabled.
+    assert client.get("/auth/session").json()["idleTimeoutMins"] == 0
+    store.set_idle_timeout_mins(20)
+    assert client.get("/auth/session").json()["idleTimeoutMins"] == 20
+
+    # Signing in issues a session; polling /auth/session slides it (re-sets cookie).
+    client.post(
+        "/auth/login", json={"username": "Administrator", "password": "Administrator"}
+    )
+    resp = client.get("/auth/session")
+    assert resp.json()["authenticated"] is True
+    assert server.SESSION_COOKIE in resp.cookies  # sliding refresh on activity
 
 
 def test_login_wrong_password_is_rejected(gui):
@@ -133,3 +152,49 @@ def test_open_access_when_login_not_required(gui):
     # No session, but the API is reachable because sign-in is not required.
     assert client.get("/api/projects").status_code == 200
     assert client.get("/auth/session").json()["requireLogin"] is False
+
+
+# ── Directory (LDAP) availability indicator ───────────────────────────────────
+
+
+def test_directory_status_not_configured_reports_unconfigured(gui):
+    server, _ = gui
+    client = TestClient(server.app)
+    # No LDAP configured ⇒ the login panel shows no indicator.
+    assert client.get("/auth/directory-status").json() == {
+        "configured": False,
+        "available": False,
+    }
+
+
+def test_directory_status_probes_when_configured(gui, monkeypatch):
+    server, store = gui
+    store.set_ldap_config({"enabled": True, "serverURI": "ldap://dir", "baseDN": "dc=x"})
+
+    import app.services.ldap_auth as ldap_auth
+
+    # Reachable — the service-bind probe succeeds.
+    monkeypatch.setattr(ldap_auth, "test_settings", lambda *a, **k: {"ok": True})
+    client = TestClient(server.app)
+    assert client.get("/auth/directory-status").json() == {
+        "configured": True,
+        "available": True,
+    }
+
+
+def test_directory_status_reports_unavailable_on_probe_failure(gui, monkeypatch):
+    server, store = gui
+    store.set_ldap_config({"enabled": True, "serverURI": "ldap://dir", "baseDN": "dc=x"})
+
+    import app.services.ldap_auth as ldap_auth
+
+    # Unreachable — the probe returns ok:false (or raises); the endpoint must not error.
+    def _boom(*a, **k):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(ldap_auth, "test_settings", _boom)
+    client = TestClient(server.app)
+    assert client.get("/auth/directory-status").json() == {
+        "configured": True,
+        "available": False,
+    }

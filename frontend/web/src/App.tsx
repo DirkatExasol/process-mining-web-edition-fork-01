@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { HelpPanel } from './components/HelpPanel'
 import { LegalGate, SplashScreen } from './components/Gates'
+import { IdleLogout } from './components/IdleLogout'
 import { LoginView } from './components/LoginView'
 import { Sidebar } from './components/Sidebar'
 import { Spinner } from './components/ui'
@@ -94,6 +95,7 @@ export function App() {
       {showHelp && <HelpPanel onClose={() => setShowHelp(false)} />}
       {showSplash && <SplashScreen onClose={() => setShowSplash(false)} />}
       <AlertHost />
+      <IdleLogout />
     </>
   )
 }

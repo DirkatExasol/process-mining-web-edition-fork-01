@@ -6,9 +6,11 @@ backend, so the browser only ever talks to this one origin.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -84,11 +86,31 @@ def _issue_session(username: str) -> str:
     return sign_session(json.dumps({"u": username}).encode("utf-8"))
 
 
+def _session_ttl() -> int:
+    """Session lifetime in seconds. When an idle timeout is configured the session
+    is a *sliding* window of that length (refreshed on each authenticated request);
+    otherwise it's the fixed absolute lifetime."""
+    idle = store.idle_timeout_mins
+    return idle * 60 if idle > 0 else SESSION_TTL_SECS
+
+
+def _set_session_cookie(response: Response, request: Request, username: str) -> None:
+    response.set_cookie(
+        SESSION_COOKIE,
+        _issue_session(username),
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+        max_age=_session_ttl(),
+        path="/",
+    )
+
+
 def _current_user(request: Request) -> User | None:
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
         return None
-    raw = read_session(token, SESSION_TTL_SECS)
+    raw = read_session(token, _session_ttl())
     if raw is None:
         return None
     try:
@@ -119,20 +141,49 @@ async def auth_login(request: Request) -> Response:
         {
             "username": user.username,
             "isAdmin": user.is_admin,
+            "isPower": user.is_power,
             "displayName": user.display_name,
             "authSource": user.auth_source,
         }
     )
-    response.set_cookie(
-        SESSION_COOKIE,
-        _issue_session(user.username),
-        httponly=True,
-        samesite="lax",
-        secure=request.url.scheme == "https",
-        max_age=SESSION_TTL_SECS,
-        path="/",
-    )
+    _set_session_cookie(response, request, user.username)
     return response
+
+
+# Brief cache so the login panel (and any re-render) doesn't re-probe the directory
+# server on every request; the probe itself runs off the event loop.
+_DIR_STATUS_TTL = 20.0
+_dir_status: dict = {"at": 0.0, "value": None}
+
+
+@app.get("/auth/directory-status")
+async def auth_directory_status() -> Response:
+    """Whether a user-directory (LDAP) server is configured and currently reachable.
+
+    Pre-auth, for the login panel's availability LED. When no directory is configured
+    it reports ``configured: false`` so the client shows nothing. Reachability is the
+    service-bind test used by the admin "Test connection" button, cached briefly and
+    run in a worker thread so a slow/unreachable server never blocks the page.
+    """
+    if not store.ldap_enabled:
+        return JSONResponse({"configured": False, "available": False})
+
+    now = time.monotonic()
+    cached = _dir_status["value"]
+    if cached is not None and now - _dir_status["at"] < _DIR_STATUS_TTL:
+        return JSONResponse(cached)
+
+    from app.services.ldap_auth import test_settings
+
+    settings = store.ldap_settings()
+    try:
+        result = await asyncio.to_thread(test_settings, settings)
+        available = bool(result.get("ok"))
+    except Exception:  # a probe must never break the login page
+        available = False
+    value = {"configured": True, "available": available}
+    _dir_status.update(at=now, value=value)
+    return JSONResponse(value)
 
 
 @app.post("/auth/logout")
@@ -143,16 +194,24 @@ async def auth_logout() -> Response:
 
 
 @app.get("/auth/session")
-async def auth_session(request: Request) -> dict:
+async def auth_session(request: Request) -> Response:
     user = _current_user(request)
-    return {
-        "authenticated": user is not None,
-        "username": user.username if user else None,
-        "isAdmin": user.is_admin if user else False,
-        "displayName": user.display_name if user else None,
-        "authSource": user.auth_source if user else None,
-        "requireLogin": store.require_login,
-    }
+    response = JSONResponse(
+        {
+            "authenticated": user is not None,
+            "username": user.username if user else None,
+            "isAdmin": user.is_admin if user else False,
+            "isPower": user.is_power if user else False,
+            "displayName": user.display_name if user else None,
+            "authSource": user.auth_source if user else None,
+            "requireLogin": store.require_login,
+            "idleTimeoutMins": store.idle_timeout_mins,
+        }
+    )
+    # Polling this (the client does so on activity) slides the idle window.
+    if user is not None:
+        _set_session_cookie(response, request, user.username)
+    return response
 
 
 @app.api_route(
@@ -202,12 +261,16 @@ async def proxy(path: str, request: Request) -> Response:
     passthrough = {
         k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP
     }
-    return Response(
+    response = Response(
         content=upstream.content,
         status_code=upstream.status_code,
         headers=passthrough,
         media_type=upstream.headers.get("content-type"),
     )
+    # Any authenticated API activity slides the idle-timeout window.
+    if user is not None:
+        _set_session_cookie(response, request, user.username)
+    return response
 
 
 @app.on_event("shutdown")

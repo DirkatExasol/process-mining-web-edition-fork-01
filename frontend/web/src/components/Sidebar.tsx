@@ -10,6 +10,7 @@ import type {
   AssignedConnection,
   FilterGroup,
   GraphStartMode,
+  ManagedConnection,
   SliderMode,
   TransitionMetric,
 } from '../types'
@@ -17,6 +18,7 @@ import { formatSecs } from '../graph/format'
 import { useSetting } from '../settings'
 import { DEFAULT_LLM_PROMPT, useStore } from '../store'
 import { BackupRestore } from './BackupRestore'
+import { ConnectionEditor } from './ConnectionEditor'
 import { Logo } from './Logo'
 import { SamplingSection } from './SamplingSection'
 import { StepEditor } from './StepEditor'
@@ -48,6 +50,11 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
   const [showBackup, setShowBackup] = useState(false)
   const [showSavePreset, setShowSavePreset] = useState(false)
   const [theme, setTheme] = useSetting<string>('app.theme')
+  // Power/admin only: the connection being created (null) or edited.
+  const [connEditor, setConnEditor] = useState<
+    { conn: ManagedConnection | null } | null
+  >(null)
+  const canManageConnections = store.authIsPower || store.authIsAdmin
 
   const toggleSection = (id: SectionId) =>
     setOpenSection((current) => (current === id ? null : id))
@@ -64,17 +71,36 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
           open={openSection === 'connections'}
           onToggle={() => toggleSection('connections')}
           trailing={
-            <button
-              className="icon-btn"
-              title="Refresh connections"
-              onClick={() => void store.refreshConnections()}
-            >
-              ↻
-            </button>
+            <>
+              {canManageConnections && (
+                <button
+                  className="icon-btn"
+                  title="New connection"
+                  onClick={() => {
+                    void store.refreshManageable()
+                    setConnEditor({ conn: null })
+                  }}
+                >
+                  ＋
+                </button>
+              )}
+              <button
+                className="icon-btn"
+                title="Refresh connections"
+                onClick={() => void store.refreshConnections()}
+              >
+                ↻
+              </button>
+            </>
           }
         />
         {openSection === 'connections' && (
-          <ConnectionsList onConnected={() => setOpenSection('projects')} />
+          <ConnectionsList
+            onConnected={() => setOpenSection('projects')}
+            onEdit={
+              canManageConnections ? (conn) => setConnEditor({ conn }) : undefined
+            }
+          />
         )}
         <Divider />
 
@@ -203,6 +229,12 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
         </button>
       </div>
 
+      {connEditor && (
+        <ConnectionEditor
+          connection={connEditor.conn}
+          onClose={() => setConnEditor(null)}
+        />
+      )}
       {showPromptEditor && (
         <PromptEditorSheet onClose={() => setShowPromptEditor(false)} />
       )}
@@ -301,11 +333,22 @@ function SubHeader({
 
 // ── Connections ──────────────────────────────────────────────────────────────
 
-function ConnectionsList({ onConnected }: { onConnected: () => void }) {
+function ConnectionsList({
+  onConnected,
+  onEdit,
+}: {
+  onConnected: () => void
+  onEdit?: (conn: ManagedConnection) => void
+}) {
   const store = useStore()
   const sorted = useMemo(
     () => [...store.connections].sort((a, b) => a.name.localeCompare(b.name)),
     [store.connections],
+  )
+  // Connections this power user owns and may edit, keyed by id.
+  const manageableById = useMemo(
+    () => new Map(store.manageableConnections.map((c) => [c.id, c])),
+    [store.manageableConnections],
   )
 
   const connectOrDisconnect = async (conn: AssignedConnection) => {
@@ -323,7 +366,9 @@ function ConnectionsList({ onConnected }: { onConnected: () => void }) {
     return (
       <div className="card-list">
         <span className="empty-hint">
-          No connections assigned to you. Ask an administrator to grant access.
+          {onEdit
+            ? 'No connections yet. Use ＋ above to create one and assign users.'
+            : 'No connections assigned to you. Ask an administrator to grant access.'}
         </span>
         {store.connection.lastError && (
           <span className="t-caption fg-red">{store.connection.lastError}</span>
@@ -361,6 +406,19 @@ function ConnectionsList({ onConnected }: { onConnected: () => void }) {
                 <span className="card-sub">LLM: {conn.llmURL || '(configured)'}</span>
               )}
             </div>
+            {onEdit && manageableById.has(conn.id) && (
+              <button
+                className="icon-btn"
+                style={{ width: 22, height: 22, color: 'var(--secondary)' }}
+                title="Edit connection"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onEdit(manageableById.get(conn.id)!)
+                }}
+              >
+                ✎
+              </button>
+            )}
             {isActive && (
               <div className="col" style={{ gap: 4, alignItems: 'center' }}>
                 <span

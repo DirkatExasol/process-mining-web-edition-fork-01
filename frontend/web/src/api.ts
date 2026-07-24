@@ -4,6 +4,7 @@ import type {
   AssignedConnection,
   ConnectionStatus,
   DatabaseServer,
+  ManagedConnection,
   DocumentationResponse,
   FilterSpec,
   GraphResult,
@@ -75,18 +76,24 @@ export const api = {
       authenticated: boolean
       username: string | null
       isAdmin: boolean
+      isPower: boolean
       displayName: string | null
       authSource: string | null
       requireLogin: boolean
+      idleTimeoutMins: number
     }>('/auth/session'),
   login: (username: string, password: string) =>
     post<{
       username: string
       isAdmin: boolean
+      isPower: boolean
       displayName: string
       authSource: string
     }>('/auth/login', { username, password }),
   logout: () => post<{ ok: boolean }>('/auth/logout'),
+  // Directory (LDAP) availability for the login panel; configured=false ⇒ show nothing.
+  directoryStatus: () =>
+    get<{ configured: boolean; available: boolean }>('/auth/directory-status'),
 
   // ── connections ──────────────────────────────────────────────────────────
   listDbServers: () => get<DatabaseServer[]>('/api/servers/db'),
@@ -110,6 +117,20 @@ export const api = {
   listConnections: () => get<AssignedConnection[]>('/api/connections'),
   connectConnection: (id: string) =>
     post<ConnectionStatus>(`/api/connections/${enc(id)}/connect`),
+
+  // Power-user connection management (create / edit / assign, from the app).
+  listManageableConnections: () =>
+    get<ManagedConnection[]>('/api/connections/manageable'),
+  listAssignableUsers: () => get<string[]>('/api/assignable-users'),
+  saveManagedConnection: (body: Record<string, unknown>) =>
+    post<ManagedConnection>('/api/connections', body),
+  deleteManagedConnection: (id: string) =>
+    del<{ ok: boolean }>(`/api/connections/${enc(id)}`),
+  testManagedConnection: (body: Record<string, unknown>) =>
+    post<{ dbError: string | null; llmError: string | null; llmModels: string[] }>(
+      '/api/connections/test',
+      body,
+    ),
   disconnect: () => post<ConnectionStatus>('/api/disconnect'),
   connectionStatus: () => get<ConnectionStatus>('/api/connection/status'),
 

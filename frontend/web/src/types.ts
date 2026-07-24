@@ -56,6 +56,28 @@ export interface AssignedConnection {
   llmURL: string | null
 }
 
+/** A connection a *power* user owns and may edit from the app (admin_public shape;
+ * secrets are represented by the hasPassword / hasLLMKey flags, never values). */
+export interface ManagedConnection {
+  id: string
+  name: string
+  comment: string
+  host: string
+  port: number
+  username: string
+  schema: string
+  useTLS: boolean
+  certModeRaw: string
+  fingerprint: string
+  minRSAKeySizeBits: number
+  hasPassword: boolean
+  llmURL: string
+  llmModel: string
+  hasLLMKey: boolean
+  assignments: string[]
+  owner: string
+}
+
 export interface Project {
   projectId: string
   title: string
