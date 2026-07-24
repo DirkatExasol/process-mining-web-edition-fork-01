@@ -24,6 +24,7 @@ from ..models import (
     TimeGranularity,
 )
 from ..services.analytics import ab_similarity, apply_goodness_coverage
+from ..store.settings import store as settings_store
 
 router = APIRouter(prefix="/api", tags=["projects"])
 
@@ -118,6 +119,12 @@ async def bootstrap(
 
     await r.ensure_sample_set_column()
     sample_counts = await r.load_sample_journey_counts(project_id)
+    # Persisted sampling strategy per sample set (so the sidebar badges reload).
+    sample_methods = {
+        s.value: settings_store.get(f"sampling.method.{s.value}.{project_id}")
+        for s in (SampleSet.sample1, SampleSet.sample2, SampleSet.sample3)
+    }
+    sample_methods = {k: v for k, v in sample_methods.items() if v}
 
     # The total always counts ORIGINAL rows so it never reflects a sample's size.
     original = repo(SampleSet.original)
@@ -145,6 +152,7 @@ async def bootstrap(
         scoreBoundsMin=score_min,
         scoreBoundsMax=score_max,
         sampleCounts=sample_counts,
+        sampleMethods=sample_methods,
     )
 
 

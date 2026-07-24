@@ -321,6 +321,22 @@ class SecurityStore:
             self._set_config("idle_timeout_mins", str(minutes))
             self._conn.commit()
 
+    @property
+    def admin_idle_timeout_mins(self) -> int:
+        """Auto sign-out of the *admin interface* after N minutes idle (0 = never).
+        Configured separately from the main app's idle timeout."""
+        with self._lock:
+            try:
+                return max(0, int(self._get_config("admin_idle_timeout_mins") or 0))
+            except (TypeError, ValueError):
+                return 0
+
+    def set_admin_idle_timeout_mins(self, minutes: int) -> None:
+        minutes = max(0, int(minutes))
+        with self._lock:
+            self._set_config("admin_idle_timeout_mins", str(minutes))
+            self._conn.commit()
+
     # ── LDAP / directory ──────────────────────────────────────────────────────
 
     def _ldap_row(self) -> sqlite3.Row | None:

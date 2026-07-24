@@ -1,0 +1,139 @@
+"""Tests for the shared structured LogStore (app.store.logs)."""
+
+from __future__ import annotations
+
+import os
+
+import pytest
+
+from app.store.logs import LEVELS, LogStore, format_line
+
+
+@pytest.fixture
+def logs(tmp_path, monkeypatch):
+    # Isolate the rotation archive directory to the temp dir (LOGS_DIR is otherwise
+    # the developer's real data/logs).
+    import app.store.logs as logs_mod
+
+    archive_dir = tmp_path / "archives"
+    archive_dir.mkdir()
+    monkeypatch.setattr(logs_mod, "LOGS_DIR", archive_dir)
+    return LogStore(path=tmp_path / "logs.sqlite3")
+
+
+def _sevs(store):
+    return [e["severity"] for e in store.query(severities=list(LEVELS), limit=100)]
+
+
+def test_severity_ladder_is_cumulative(logs):
+    assert logs.level == "ERROR"  # default: INFO+USAGE+WARN+ERROR, not DEBUG
+    for sev in LEVELS:
+        logs.record(sev, f"{sev} message")
+    # DEBUG (rank above ERROR) is dropped at the default level.
+    recorded = set(_sevs(logs))
+    assert recorded == {"INFO", "USAGE", "WARN", "ERROR"}
+
+    # Raising the max level to DEBUG records everything.
+    logs.set_level("DEBUG")
+    logs.record("DEBUG", "now on")
+    assert "DEBUG" in _sevs(logs)
+
+    # Lowering to INFO records only INFO.
+    logs.set_level("INFO")
+    logs.record("USAGE", "should be dropped")
+    logs.record("INFO", "kept")
+    assert not any(
+        e["message"] == "should be dropped" for e in logs.query(limit=100)
+    )
+
+
+def test_newest_first_and_format(logs):
+    logs.record("USAGE", "first", client_ip="1.1.1.1", username="alice", operation="login")
+    logs.record("WARN", "second", client_ip="2.2.2.2", username="bob", operation="logout")
+    entries = logs.query(limit=10)
+    assert [e["message"] for e in entries] == ["second", "first"]  # youngest on top
+    top = entries[0]
+    assert set(top) >= {"date", "time", "severity", "clientIp", "user", "operation", "message"}
+
+
+def test_format_line_matches_the_spec(logs):
+    logs.record("ERROR", "boom", client_ip="9.9.9.9", username="carol")
+    row = logs._conn.execute(
+        "SELECT ts, severity, client_ip, username, operation, message FROM log_entries"
+    ).fetchone()
+    line = format_line(row)
+    parts = line.split(" -- ")
+    # DATE -- TIME -- SEVERITY -- CLIENT-IP -- USER -- text
+    assert len(parts) == 6
+    assert parts[2] == "ERROR" and parts[3] == "9.9.9.9" and parts[4] == "carol"
+    assert parts[5] == "boom"
+
+
+def test_filters_severity_ip_operation(logs):
+    logs.set_level("DEBUG")
+    logs.record("USAGE", "login a", client_ip="10.0.0.1", username="a", operation="login")
+    logs.record("USAGE", "logout a", client_ip="10.0.0.1", username="a", operation="logout")
+    logs.record("ERROR", "err x", client_ip="10.0.0.9", operation="error")
+
+    assert len(logs.query(severities=["ERROR"])) == 1
+    assert {e["message"] for e in logs.query(operation="login")} == {"login a"}
+    assert len(logs.query(client_ip="10.0.0.1")) == 2  # LIKE substring
+    # 'level' includes everything up to it in the ladder.
+    assert len(logs.query(level="USAGE")) == 2  # INFO+USAGE only → both USAGE rows
+
+
+def test_regex_search(logs):
+    logs.set_level("DEBUG")
+    logs.record("USAGE", "user alice signed in")
+    logs.record("USAGE", "user bob signed out")
+    logs.record("WARN", "failed sign-in for 'eve'")
+
+    assert {e["message"] for e in logs.query(search="signed in")} == {"user alice signed in"}
+    assert len(logs.query(search="sign")) == 3
+    assert len(logs.query(search="^user ")) == 2  # anchored regex
+    # An invalid regex falls back to a literal substring match (never errors).
+    assert len(logs.query(search="[unclosed")) == 0
+
+
+def test_rotation_writes_archive_and_empties_store(logs):
+    logs.set_level("DEBUG")
+    logs.set_max_bytes(50_000)  # clamped minimum
+    for i in range(800):
+        logs.record("USAGE", "padding entry number %04d " % i + "x" * 60, client_ip="1.2.3.4")
+    # The live store was rotated (fewer than all 800 remain).
+    assert len(logs.query(limit=10_000)) < 800
+    import app.store.logs as logs_mod
+
+    archives = [f for f in os.listdir(logs_mod.LOGS_DIR) if f.endswith(".log")]
+    assert archives, "expected a rotated .log archive"
+    # Archive is newest-first and in the spec format.
+    text = (logs_mod.LOGS_DIR / archives[0]).read_text()
+    lines = text.splitlines()
+    assert " -- " in lines[0] and len(lines[0].split(" -- ")) == 6
+
+
+def test_config_clamps_and_round_trips(logs):
+    logs.set_level("bogus")  # invalid → default
+    assert logs.level == "ERROR"
+    logs.set_level("warn")  # case-insensitive
+    assert logs.level == "WARN"
+    logs.set_max_bytes(10)  # below the floor
+    assert logs.max_bytes >= 50_000
+    cfg = logs.config()
+    assert cfg["levels"] == list(LEVELS) and cfg["level"] == "WARN"
+
+
+def test_client_ip_extraction():
+    from app import log_events as logx
+
+    class _Req:
+        def __init__(self, headers, host):
+            self.headers = headers
+            self.client = type("C", (), {"host": host})()
+
+    # X-Forwarded-For wins and the first hop is used.
+    assert logx.client_ip(_Req({"x-forwarded-for": "9.9.9.9, 1.1.1.1"}, "127.0.0.1")) == "9.9.9.9"
+    # Falls back to the socket peer.
+    assert logx.client_ip(_Req({}, "5.5.5.5")) == "5.5.5.5"
+    # Never raises on a missing request.
+    assert logx.client_ip(None) == ""

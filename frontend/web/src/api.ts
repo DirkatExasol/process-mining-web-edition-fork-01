@@ -131,6 +131,21 @@ export const api = {
       '/api/connections/test',
       body,
     ),
+  // Create the process-mining schema + tables (needs elevated DB privileges).
+  provisionManagedSchema: (body: Record<string, unknown>) =>
+    post<{ ok: boolean; error: string | null; created: string[] }>(
+      '/api/connections/provision-schema',
+      body,
+    ),
+  // Generate the bookstore demo event log into a schema (needs elevated DB privileges).
+  generateDemoContent: (body: Record<string, unknown>) =>
+    post<{
+      ok: boolean
+      error: string | null
+      journeys: number
+      project?: string
+      message?: string
+    }>('/api/connections/generate-demo', body),
   disconnect: () => post<ConnectionStatus>('/api/disconnect'),
   connectionStatus: () => get<ConnectionStatus>('/api/connection/status'),
 

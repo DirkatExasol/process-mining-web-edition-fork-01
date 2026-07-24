@@ -10,7 +10,7 @@ import { Chevron, Unavailable } from '../components/ui'
 import { FlowChart, createSyncState, type SyncState } from '../flow/FlowChart'
 import { useSetting } from '../settings'
 import { useStore, type ABSide } from '../store'
-import type { SliderMode } from '../types'
+import { simulationFilterNotice, type SliderMode } from '../types'
 import { ChartControls } from './ChartControls'
 import { useNoteHandlers } from './useNoteHandlers'
 
@@ -294,6 +294,13 @@ function ABPanel({
           metric={metric}
           isLoading={loading}
           syncState={syncState}
+          notice={simulationFilterNotice(
+            side === 'a' ? store.abDataSourceA : store.abDataSourceB,
+          )}
+          readOnly={
+            (side === 'a' ? store.abDataSourceA : store.abDataSourceB).kind ===
+            'simulation'
+          }
           onSyncChange={onSyncChange}
           skipInitialFit={skipInitialFit}
           onNodeAction={(node, action) => {

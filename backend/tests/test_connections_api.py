@@ -329,3 +329,91 @@ def test_assignable_users_lists_only_enabled(backend):
         "/api/assignable-users", headers={"X-PMW-User": pat}
     ).json()
     assert "bob" in users and pat in users and "carol" not in users
+
+
+# ── Schema provisioning (power) ───────────────────────────────────────────────
+
+
+def test_provision_schema_requires_power(backend):
+    app, store, _ = backend
+    store.create_user("alice", "pw", is_admin=False)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/connections/provision-schema",
+        headers={"X-PMW-User": "alice"},
+        json={"host": "db", "schema": "PM"},
+    )
+    assert resp.status_code == 403
+
+
+def test_provision_schema_power_user_invokes_provisioner(backend, monkeypatch):
+    app, store, _ = backend
+    pat = _power(store)
+    import app.db.schema_ddl as ddl
+
+    seen: dict = {}
+
+    async def _fake(**kwargs):
+        seen.update(kwargs)
+        return {"ok": True, "error": None, "created": ["schema PM", "PROJECTS", "NOTES"]}
+
+    monkeypatch.setattr(ddl, "provision_process_mining_schema", _fake)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/connections/provision-schema",
+        headers={"X-PMW-User": pat},
+        json={"host": "db", "port": 8563, "username": "u", "password": "pw", "schema": "PM"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["created"] == ["schema PM", "PROJECTS", "NOTES"]
+    # The entered credentials + schema reach the provisioner.
+    assert seen["schema"] == "PM" and seen["host"] == "db" and seen["password"] == "pw"
+
+
+# ── Demo content generation (power) ───────────────────────────────────────────
+
+
+def test_generate_demo_requires_power(backend):
+    app, store, _ = backend
+    store.create_user("alice", "pw", is_admin=False)
+    client = TestClient(app)
+    resp = client.post(
+        "/api/connections/generate-demo",
+        headers={"X-PMW-User": "alice"},
+        json={"host": "db", "schema": "PM", "journeys": 100},
+    )
+    assert resp.status_code == 403
+
+
+def test_generate_demo_power_user_invokes_generator(backend, monkeypatch):
+    app, store, _ = backend
+    pat = _power(store)
+    import app.db.demo_data as demo
+
+    seen: dict = {}
+
+    async def _fake(**kwargs):
+        seen.update(kwargs)
+        return {"ok": True, "error": None, "journeys": kwargs["journeys"], "project": "x"}
+
+    monkeypatch.setattr(demo, "generate_demo_content", _fake)
+    client = TestClient(app)
+
+    # Default dataset is retail.
+    resp = client.post(
+        "/api/connections/generate-demo",
+        headers={"X-PMW-User": pat},
+        json={"host": "db", "username": "u", "password": "pw", "schema": "PM", "journeys": 250},
+    )
+    assert resp.status_code == 200 and resp.json()["journeys"] == 250
+    assert seen["dataset"] == "retail" and seen["schema"] == "PM" and seen["journeys"] == 250
+
+    # The finance dataset is selectable.
+    resp = client.post(
+        "/api/connections/generate-demo",
+        headers={"X-PMW-User": pat},
+        json={"host": "db", "password": "pw", "schema": "PM", "journeys": 100, "dataset": "finance"},
+    )
+    assert resp.status_code == 200 and seen["dataset"] == "finance"

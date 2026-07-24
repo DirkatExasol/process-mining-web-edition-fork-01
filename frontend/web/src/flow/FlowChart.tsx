@@ -97,6 +97,11 @@ export interface FlowChartProps {
   showCompliance?: boolean
   normIsMinimum?: boolean
   onEdgeTap?: (transition: ProcessTransition, screen: { x: number; y: number }) => void
+  /** Red note shown in the canvas's top-right corner (e.g. a simulation warning). */
+  notice?: string | null
+  /** Read-only source (a simulation): hide the interactive filter actions
+   *  (Require / Exclude) from the node context menu. */
+  readOnly?: boolean
 }
 
 interface MenuState {
@@ -775,6 +780,12 @@ function FlowChartInner(props: FlowChartProps) {
         </div>
       )}
 
+      {props.notice && (
+        <div className="flow-notice" role="status">
+          {props.notice}
+        </div>
+      )}
+
       {collapsedGroups.size > 0 && (
         <div
           style={{
@@ -868,24 +879,28 @@ function FlowChartInner(props: FlowChartProps) {
             style={{ left: clampX(menu.x), top: clampY(menu.y + 12) }}
           >
             <div className="p-title">{menu.node}</div>
-            <button
-              className="p-item"
-              onClick={() => {
-                onNodeAction(menu.node as string, 'include')
-                setMenu(null)
-              }}
-            >
-              ✓ Require in journeys
-            </button>
-            <button
-              className="p-item fg-red"
-              onClick={() => {
-                onNodeAction(menu.node as string, 'exclude')
-                setMenu(null)
-              }}
-            >
-              ⊖ Exclude from journeys
-            </button>
+            {!props.readOnly && (
+              <>
+                <button
+                  className="p-item"
+                  onClick={() => {
+                    onNodeAction(menu.node as string, 'include')
+                    setMenu(null)
+                  }}
+                >
+                  ✓ Require in journeys
+                </button>
+                <button
+                  className="p-item fg-red"
+                  onClick={() => {
+                    onNodeAction(menu.node as string, 'exclude')
+                    setMenu(null)
+                  }}
+                >
+                  ⊖ Exclude from journeys
+                </button>
+              </>
+            )}
             {menuHasDescription && (
               <button
                 className="p-item"

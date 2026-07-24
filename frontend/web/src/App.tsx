@@ -1,9 +1,9 @@
 /** Root shell — port of ContentView.swift: split view, theme, alert host,
- *  launch splash, legal gate and the floating help panel. */
+ *  legal gate and the floating help panel. */
 
 import { useCallback, useEffect, useState } from 'react'
 import { HelpPanel } from './components/HelpPanel'
-import { LegalGate, SplashScreen } from './components/Gates'
+import { LegalGate } from './components/Gates'
 import { IdleLogout } from './components/IdleLogout'
 import { LoginView } from './components/LoginView'
 import { Sidebar } from './components/Sidebar'
@@ -17,7 +17,6 @@ export function App() {
   const [ready, setReady] = useState(false)
   const [sidebarHidden, setSidebarHidden] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
-  const [showSplash, setShowSplash] = useState(true)
 
   // Loads everything that needs an authenticated session (settings live in the
   // backend and its API is gated when sign-in is required).
@@ -93,7 +92,6 @@ export function App() {
       </LegalGateHost>
 
       {showHelp && <HelpPanel onClose={() => setShowHelp(false)} />}
-      {showSplash && <SplashScreen onClose={() => setShowSplash(false)} />}
       <AlertHost />
       <IdleLogout />
     </>

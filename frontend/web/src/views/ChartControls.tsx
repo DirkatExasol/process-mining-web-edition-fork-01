@@ -1,6 +1,7 @@
 /** "Date & Metrics" card shared by the A-Chart, B-Chart and A/B panels —
  *  ports the controls card from ProcessMapView.swift. */
 
+import { useEffect, useRef, useState } from 'react'
 import { JourneyTimeSlider } from '../components/JourneyTimeSlider'
 import { Chevron, Divider } from '../components/ui'
 import { useStore } from '../store'
@@ -45,8 +46,6 @@ export function ChartControls({
   selectedPresetId: string | null
   onApplyPreset: (group: FilterGroup) => void
 }) {
-  const store = useStore()
-
   return (
     <div className="controls-card">
       <div className="controls-head">
@@ -54,25 +53,7 @@ export function ChartControls({
           <Chevron open={expanded} />
           Date &amp; Metrics
         </button>
-        {store.filterGroups.length > 0 && (
-          <select
-            className="select-input"
-            style={{ width: 'auto', fontSize: 10, padding: '4px 6px', marginRight: 8 }}
-            value={selectedPresetId ?? ''}
-            onChange={(e) => {
-              const group = store.filterGroups.find((g) => g.id === e.target.value)
-              if (group) onApplyPreset(group)
-            }}
-            title="Filter presets"
-          >
-            <option value="">Presets</option>
-            {store.filterGroups.map((group) => (
-              <option key={group.id} value={group.id}>
-                {group.name}
-              </option>
-            ))}
-          </select>
-        )}
+        <PresetMenu selectedPresetId={selectedPresetId} onApply={onApplyPreset} />
       </div>
 
       {expanded && (
@@ -101,6 +82,84 @@ export function ChartControls({
             ))}
           </div>
         </>
+      )}
+    </div>
+  )
+}
+
+/** Filter-preset picker with an inline manage menu: apply a preset, or delete one
+ *  via the 🗑 button on its row. Replaces the plain <select> so presets can be
+ *  removed without leaving the chart. */
+function PresetMenu({
+  selectedPresetId,
+  onApply,
+}: {
+  selectedPresetId: string | null
+  onApply: (group: FilterGroup) => void
+}) {
+  const store = useStore()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  // Alphabetical, ascending (A→Z).
+  const groups = [...store.filterGroups].sort((a, b) => a.name.localeCompare(b.name))
+  const current = groups.find((g) => g.id === selectedPresetId)
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  if (groups.length === 0) return null
+
+  return (
+    <div ref={ref} className="preset-menu-wrap">
+      <button
+        className="preset-menu-btn"
+        onClick={() => setOpen((v) => !v)}
+        title="Filter presets"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <span className="truncate">{current ? current.name : 'Presets'}</span>
+        <span aria-hidden>▾</span>
+      </button>
+      {open && (
+        <div className="preset-menu" role="menu">
+          {groups.map((group) => (
+            <div key={group.id} className="preset-menu-row">
+              <button
+                className="preset-menu-apply"
+                role="menuitem"
+                onClick={() => {
+                  onApply(group)
+                  setOpen(false)
+                }}
+              >
+                <span className="preset-menu-check" aria-hidden>
+                  {group.id === selectedPresetId ? '✓' : ''}
+                </span>
+                <span className="truncate">{group.name}</span>
+              </button>
+              <button
+                className="preset-menu-del"
+                title={`Delete “${group.name}”`}
+                aria-label={`Delete preset ${group.name}`}
+                onClick={() => store.deleteFilterGroup(group.id)}
+              >
+                🗑
+              </button>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )

@@ -278,6 +278,18 @@ export interface AppActions {
   testManagedConnection: (
     body: Record<string, unknown>,
   ) => Promise<{ dbError: string | null; llmError: string | null; llmModels: string[] }>
+  provisionSchema: (
+    body: Record<string, unknown>,
+  ) => Promise<{ ok: boolean; error: string | null; created: string[] }>
+  generateDemo: (
+    body: Record<string, unknown>,
+  ) => Promise<{
+    ok: boolean
+    error: string | null
+    journeys: number
+    project?: string
+    message?: string
+  }>
 
 
   loadProjects: () => Promise<void>
@@ -803,6 +815,24 @@ export const useStore = create<Store>((set, get) => {
       }
     },
 
+    provisionSchema: async (body) => {
+      try {
+        return await api.provisionManagedSchema(body)
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : String(error)
+        return { ok: false, error: message, created: [] }
+      }
+    },
+
+    generateDemo: async (body) => {
+      try {
+        return await api.generateDemoContent(body)
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : String(error)
+        return { ok: false, error: message, journeys: 0 }
+      }
+    },
+
     checkSession: async () => {
       try {
         const s = await api.session()
@@ -984,6 +1014,7 @@ export const useStore = create<Store>((set, get) => {
           minScoreFilter: boot.scoreBoundsMin,
           maxScoreFilter: boot.scoreBoundsMax,
           sampleCounts: boot.sampleCounts,
+          sampleMethods: boot.sampleMethods ?? {},
         })
 
         // Per-project persisted state

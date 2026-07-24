@@ -4,7 +4,7 @@
 import { useMemo } from 'react'
 import { formatDateShort, formatDurationLong } from '../graph/format'
 import { readSetting, useSetting } from '../settings'
-import { activeSampleSet, useStore, type ABSide } from '../store'
+import { useStore, type ABSide } from '../store'
 import {
   KPI_DEFAULT_ORDER,
   KPI_META,
@@ -209,11 +209,23 @@ function Tile({ id, inputs }: { id: string; inputs: TileInputs }) {
       )
     }
     case 'activeSample': {
-      const set = activeSampleSet(side ?? 'a')
-      const count = store.sampleCounts[set] ?? store.totalJourneyCount
+      // Reflect the side's actual data source: a sample set, or a Sim-A/Sim-B
+      // simulation (which otherwise leaves the stale sample-set label showing).
+      const source = (side ?? 'a') === 'a' ? store.abDataSourceA : store.abDataSourceB
+      if (source.kind === 'simulation') {
+        const result = source.slot === 'Sim-A' ? store.simResultA : store.simResultB
+        return (
+          <KpiTile
+            label={source.slot}
+            icon={meta.icon}
+            value={result?.totalJourneys?.toLocaleString() ?? '—'}
+          />
+        )
+      }
+      const count = store.sampleCounts[source.sampleSet] ?? store.totalJourneyCount
       return (
         <KpiTile
-          label={sampleShortLabel(set)}
+          label={sampleShortLabel(source.sampleSet)}
           icon={meta.icon}
           value={count?.toLocaleString() ?? '—'}
         />

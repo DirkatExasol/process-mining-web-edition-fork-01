@@ -142,6 +142,18 @@ tr:last-child td { border-bottom: 0; }
 .pill.active { background: rgba(50,215,75,.18); color: var(--green); }
 .pill.ldap { background: rgba(191,90,242,.18); color: #bf5af2; font-weight: 600; letter-spacing: .3px; }
 .pill.power { background: rgba(48,209,196,.18); color: #30d1c4; font-weight: 600; letter-spacing: .3px; }
+.pill.log-info { background: rgba(10,132,255,.16); color: var(--accent); }
+.pill.log-usage { background: rgba(50,215,75,.16); color: var(--green); }
+.pill.log-warn { background: rgba(255,159,10,.16); color: var(--orange); }
+.pill.log-error { background: rgba(255,69,58,.16); color: var(--red); }
+.pill.log-debug { background: var(--fill2); color: var(--muted); }
+#logTable table { table-layout: auto; }
+#logTable td { font-size: 12px; vertical-align: top; }
+/* Keep Date (and Time) on one line — the width they need comes off the Message
+   column, which wraps. */
+#logTable th:first-child, #logTable td:first-child { white-space: nowrap; width: 104px; }
+#logTable th:nth-child(2), #logTable td:nth-child(2) { white-space: nowrap; }
+#logTable td:last-child { word-break: break-word; }
 /* Theme-aware grey (the old near-white tint was invisible on the light card);
    the inset outline keeps it reading as a badge without changing its size. */
 .pill.neutral { background: var(--fill2); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-soft); }
@@ -189,31 +201,76 @@ details summary { cursor: pointer; font-size: 13px; color: var(--accent); paddin
 
 
 def login_page(error: str = "") -> str:
+    """The admin sign-in screen — same design as the main app's login panel
+    (`LoginView.tsx`, the master), with the Administration title."""
     err = (
-        f'<div class="banner warn">{html.escape(error)}</div>' if error else ""
+        f'<div class="login-err">{html.escape(error)}</div>' if error else ""
     )
     return f"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 {_FAVICON_LINK}{_THEME_BOOT}
 <title>Administration — Sign in</title><style>{_STYLE}
-body {{ display: grid; place-items: center; min-height: 100vh; }}
-.login {{ width: min(380px, 92vw); }}
+body {{ display: grid; place-items: center; min-height: 100vh; background: var(--bg); padding: 24px; }}
+.login-splash {{ width: min(460px, 100%); border-radius: 20px; background: var(--panel);
+  box-shadow: var(--shadow); padding: 32px 28px; display: flex; flex-direction: column;
+  align-items: center; gap: 14px; text-align: center; }}
+.login-logo {{ width: 64px; height: 64px; border-radius: 16px; display: grid; place-items: center;
+  box-shadow: 0 2px 8px rgba(10,20,60,.35); }}
+.login-logo .pm-logo {{ width: 100%; height: 100%; }}
+.login-title {{ display: flex; flex-direction: column; align-items: center; gap: 2px; }}
+.login-h1 {{ font-size: 20px; font-weight: 700; }}
+.login-sub {{ font-size: 12px; color: var(--muted); }}
+.login-form {{ display: flex; flex-direction: column; gap: 14px; width: 100%; }}
+.lfield {{ display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; }}
+.lfield label {{ font-size: 11px; color: var(--muted); }}
+.lfield input {{ width: 100%; padding: 8px 10px; font-size: 14px; border-radius: 8px;
+  border: 1px solid transparent; background: var(--fill); color: var(--text); outline: none; }}
+.lfield input:focus {{ border-color: var(--accent); }}
+.btn-prominent {{ width: 100%; padding: 10px; font-size: 15px; font-weight: 600; border-radius: 8px;
+  background: var(--accent); color: #fff; border: none; cursor: pointer; }}
+.btn-prominent:hover {{ filter: brightness(1.05); }}
+.login-err {{ width: 100%; padding: 10px 12px; border-radius: 8px; font-size: 12px; text-align: left;
+  background: rgba(255,69,58,.12); border: 1px solid rgba(255,69,58,.35); color: var(--red); }}
+.login-foot {{ font-size: 11px; color: var(--tertiary); margin: 0; }}
 </style></head><body>
-<div class="login">
-  <div class="brand" style="justify-content:center; margin-bottom:18px;">
-    <div class="logo">{_LOGO_SVG}</div>
-    <div><h1>Administration</h1><div class="sub">Process Mining Demonstrator</div></div>
+<div class="login-splash">
+  <div class="login-logo">{_LOGO_SVG}</div>
+  <div class="login-title">
+    <span class="login-h1">Administration</span>
+    <span class="login-sub">Sign in to continue</span>
   </div>
-  <form class="card col" method="post" action="/login">
-    {err}
-    <div class="field"><label>Username</label>
+  {err}
+  <form class="login-form" method="post" action="/login">
+    <div class="lfield"><label>Username</label>
       <input type="text" name="username" autocomplete="username" autofocus value="Administrator"></div>
-    <div class="field"><label>Password</label>
+    <div class="lfield"><label>Password</label>
       <input type="password" name="password" autocomplete="current-password"></div>
-    <button class="btn primary" type="submit">Sign in</button>
+    <button class="btn-prominent" type="submit">Sign in</button>
   </form>
-  <p class="subtle" style="text-align:center">Admin access only.</p>
-</div></body></html>"""
+  <div id="dirStatus" class="row" style="justify-content:center; gap:6px; display:none">
+    <span id="dirDot" style="width:8px; height:8px; border-radius:50%; flex:0 0 auto"></span>
+    <span id="dirLabel" style="font-size:12px; color:var(--muted)"></span>
+  </div>
+  <p class="login-foot">Admin access only.</p>
+</div>
+<script>
+// Directory-server availability LED — shown only when a directory is configured.
+(async function () {{
+  try {{
+    const s = await (await fetch('/api/directory-status')).json();
+    if (!s.configured) return;
+    const ok = !!s.available;
+    const color = ok ? 'var(--green)' : 'var(--red)';
+    const dot = document.getElementById('dirDot');
+    dot.style.background = color;
+    dot.style.boxShadow = '0 0 6px ' + color;
+    document.getElementById('dirLabel').textContent =
+      'Directory server ' + (ok ? 'available' : 'unavailable');
+    document.getElementById('dirStatus').style.display = 'flex';
+  }} catch (e) {{ /* never block the login screen */ }}
+}})();
+</script>
+</body></html>"""
 
 
 def dashboard_page(username: str, http_port: int, https_port: int) -> str:
@@ -243,6 +300,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <button data-tab="users" onclick="selectTab('users')">Users</button>
     <button data-tab="connections" onclick="selectTab('connections')">Database Connections</button>
     <button data-tab="ldap" onclick="selectTab('ldap')">Directory (LDAP)</button>
+    <button data-tab="logging" onclick="selectTab('logging')">Logging</button>
   </div>
 
   <div class="tabpanel sel" id="tab-appcontrol">
@@ -260,6 +318,19 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       HTTP <code>:8090</code> and HTTPS <code>:8453</code>; reconnect there if it stops responding.
     </div>
     <div id="restartResult" class="col" style="margin-top:8px"></div>
+  </div>
+  <div class="card">
+    <h2>Admin session</h2>
+    <p class="muted" style="margin-top:0">Automatically sign out of <strong>this admin interface</strong>
+      after a period of inactivity. This is separate from the main app's auto sign-out (set in the Users tab).</p>
+    <div class="banner info" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">
+      <label class="row" style="font-size:13px; gap:8px">
+        Auto sign-out after
+        <input type="number" id="adminIdleTimeout" min="0" max="1440" step="1" style="width:80px"> minutes of inactivity
+      </label>
+      <button class="btn small" onclick="saveAdminIdleTimeout()">Save</button>
+      <span class="subtle" id="adminIdleTimeoutHint"></span>
+    </div>
   </div>
   </div><!-- /tab-appcontrol -->
 
@@ -402,6 +473,19 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
         <button class="btn danger" id="c_deleteBtn" onclick="deleteConnection()" style="display:none">Delete</button>
       </div>
       <div id="c_testResult" class="col" style="margin-top:10px"></div>
+      <div class="banner info" style="margin-top:14px">
+        <div class="row" style="align-items:center; gap:10px">
+          <button class="btn" onclick="provisionSchema()">Create schema &amp; tables</button>
+          <span id="c_provisionResult" class="muted"></span>
+        </div>
+        <p class="subtle" style="margin:8px 0 0">
+          Creates the schema named above and the process-mining tables
+          (PROJECTS, JOURNEYS, STEPS, METAS, NOTES) if they don't exist, using the credentials
+          entered here. This requires a database account permitted to
+          <strong>CREATE SCHEMA</strong> and <strong>CREATE TABLE</strong> — only your database
+          administrator can grant those rights; this application cannot.
+        </p>
+      </div>
     </div>
   </div>
   </div><!-- /tab-connections -->
@@ -423,7 +507,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       <p class="subtle" style="margin:0">A directory account can only reach the admin interface once it has been promoted to
         <strong>admin</strong> in the Users tab. Local administrators always work regardless of this setting.</p>
     </div>
-    <div class="grid2" style="margin-top:14px; border-bottom:1px solid var(--border); padding-bottom:18px; align-items:start">
+    <div class="grid2" style="margin-top:14px; border-bottom:1px solid var(--border); padding-bottom:18px; align-items:stretch">
       <div class="col">
         <h2 style="font-size:13px">Server</h2>
         <div class="field"><label>Server URI</label><input type="text" id="l_uri" placeholder="ldap://dir.example.com:389 or ldaps://dir.example.com:636"></div>
@@ -443,7 +527,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
         <div class="field"><label>Base DN</label><input type="text" id="l_baseDN" placeholder="ou=people,dc=example,dc=com"></div>
         <div class="field"><label>User filter <span class="subtle">(<code>{{username}}</code> is substituted)</span></label>
           <input type="text" id="l_filter" placeholder="(uid={{username}})"></div>
-        <div class="row">
+        <div class="row" style="margin-top:auto">
           <div class="field" style="flex:1"><label>Login attribute</label><input type="text" id="l_loginAttr" placeholder="uid"></div>
           <div class="field" style="flex:1"><label>Email attribute</label><input type="text" id="l_emailAttr" placeholder="mail"></div>
           <div class="field" style="flex:1"><label>Name attribute</label><input type="text" id="l_displayAttr" placeholder="cn"></div>
@@ -465,6 +549,34 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     </div>
   </div>
   </div><!-- /tab-ldap -->
+
+  <div class="tabpanel" id="tab-logging">
+  <div class="card">
+    <div class="banner info" style="display:flex; flex-wrap:wrap; align-items:center; gap:12px">
+      <label class="row" style="font-size:13px; gap:6px">Max level logged
+        <select id="logLevel"></select>
+      </label>
+      <label class="row" style="font-size:13px; gap:6px">New file after
+        <input type="number" id="logMaxMb" min="1" max="1000" step="1" style="width:80px"> MB
+      </label>
+      <button class="btn small" onclick="saveLogConfig()">Save</button>
+      <span class="subtle">Records this severity and everything above it in the ladder
+        (INFO → USAGE → WARN → ERROR → DEBUG; DEBUG logs everything).</span>
+    </div>
+
+    <div class="row" style="flex-wrap:wrap; gap:8px; margin:12px 0 8px; align-items:center">
+      <div class="seg" id="logSeverityFilter"></div>
+      <input type="text" id="logIp" placeholder="Client IP" style="width:130px" oninput="scheduleLogReload()">
+      <select id="logOp" onchange="loadLogs()"><option value="">All operations</option></select>
+      <input type="text" id="logSearch" placeholder="Search message (regex / wildcards)…"
+        style="flex:1; min-width:180px" oninput="scheduleLogReload()">
+      <button class="btn small" onclick="loadLogs()">↻ Refresh</button>
+      <button class="btn small" onclick="downloadLog()">⬇ Download</button>
+      <button class="btn small danger" onclick="clearLogs()">Clear</button>
+    </div>
+    <div id="logTable"></div>
+  </div>
+  </div><!-- /tab-logging -->
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -537,6 +649,12 @@ async function loadSession() {
   $('idleTimeout').value = idle;
   $('idleTimeoutHint').textContent = idle > 0
     ? 'Idle sessions are signed out after ' + idle + ' min.' : 'Disabled — sessions never time out on inactivity.';
+  const adminIdle = s.adminIdleTimeoutMins || 0;
+  $('adminIdleTimeout').value = adminIdle;
+  $('adminIdleTimeoutHint').textContent = adminIdle > 0
+    ? 'You are signed out of this admin after ' + adminIdle + ' min idle.'
+    : 'Disabled — the admin session never times out on inactivity.';
+  setAdminIdle(adminIdle);
 }
 async function saveRequireLogin() {
   const requireLogin = $('requireLogin').checked;
@@ -549,6 +667,37 @@ async function saveIdleTimeout() {
   try { await api('/api/access/idle-timeout', { method: 'POST', body: JSON.stringify({ minutes }) });
     toast('Auto sign-out updated'); await loadSession(); }
   catch (e) { toast(e.message, true); }
+}
+async function saveAdminIdleTimeout() {
+  const minutes = Math.max(0, parseInt($('adminIdleTimeout').value, 10) || 0);
+  try { await api('/api/access/admin-idle-timeout', { method: 'POST', body: JSON.stringify({ minutes }) });
+    toast('Admin auto sign-out updated'); await loadSession(); }
+  catch (e) { toast(e.message, true); }
+}
+
+// ── Admin idle auto-logout ────────────────────────────────────────────────
+// Mirrors the app's IdleLogout: after N minutes without activity, sign out of
+// the admin. Activity slides the server window (a throttled /api/session poll).
+let ADMIN_IDLE_MINS = 0, _idleTimer = null, _lastPing = 0, _idleWired = false;
+function _resetIdle() {
+  clearTimeout(_idleTimer);
+  if (!ADMIN_IDLE_MINS) return;
+  _idleTimer = setTimeout(_onIdleTimeout, ADMIN_IDLE_MINS * 60000);
+  const now = Date.now();
+  if (now - _lastPing > 30000) { _lastPing = now; fetch('/api/session').catch(() => {}); }
+}
+async function _onIdleTimeout() {
+  try { await fetch('/logout', { method: 'POST' }); } catch (e) { /* cookie expires anyway */ }
+  location.href = '/login';
+}
+function setAdminIdle(mins) {
+  ADMIN_IDLE_MINS = mins || 0;
+  if (!_idleWired) {
+    _idleWired = true;
+    ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'].forEach(ev =>
+      document.addEventListener(ev, _resetIdle, { passive: true }));
+  }
+  _resetIdle();
 }
 
 // ── TLS ─────────────────────────────────────────────────────────────────────
@@ -744,6 +893,77 @@ function selectTab(name) {
     p.classList.toggle('sel', p.id === 'tab-' + name);
   if (name === 'connections') loadConnections().catch(e => toast(e.message, true));
   if (name === 'ldap') loadLdap().catch(e => toast(e.message, true));
+  if (name === 'logging') loadLogs().catch(e => toast(e.message, true));
+}
+
+// ── Logging ───────────────────────────────────────────────────────────────
+let LOG_LEVELS = [], LOG_SEVS = new Set(), _logInited = false, _logReloadTimer = null;
+
+function _logParams() {
+  const p = new URLSearchParams();
+  if (LOG_SEVS.size) p.set('severities', [...LOG_SEVS].join(','));
+  const ip = $('logIp').value.trim(); if (ip) p.set('clientIp', ip);
+  const op = $('logOp').value; if (op) p.set('operation', op);
+  const q = $('logSearch').value.trim(); if (q) p.set('search', q);
+  return p;
+}
+async function loadLogs() {
+  const params = _logParams(); params.set('limit', '500');
+  const r = await api('/api/logs?' + params.toString());
+  LOG_LEVELS = r.severities || [];
+  if (!_logInited) {
+    _logInited = true;
+    $('logLevel').innerHTML = LOG_LEVELS.map(lv => `<option value="${lv}">${lv}</option>`).join('');
+    $('logLevel').value = r.config.level;
+    $('logMaxMb').value = Math.max(1, Math.round(r.config.maxBytes / 1000000));
+  }
+  renderSeverityChips();
+  const curOp = $('logOp').value;
+  $('logOp').innerHTML = '<option value="">All operations</option>' +
+    (r.operations || []).map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('');
+  $('logOp').value = curOp;
+  renderLogRows(r.entries || []);
+}
+function renderSeverityChips() {
+  $('logSeverityFilter').innerHTML = LOG_LEVELS.map(lv =>
+    `<button class="${LOG_SEVS.size === 0 || LOG_SEVS.has(lv) ? 'sel' : ''}" onclick="toggleLogSeverity('${lv}')">${lv}</button>`
+  ).join('');
+}
+function toggleLogSeverity(lv) {
+  if (LOG_SEVS.size === 0) LOG_LEVELS.forEach(l => LOG_SEVS.add(l));  // 'all' → explicit
+  if (LOG_SEVS.has(lv)) LOG_SEVS.delete(lv); else LOG_SEVS.add(lv);
+  if (LOG_SEVS.size === LOG_LEVELS.length) LOG_SEVS.clear();          // all selected → 'all'
+  loadLogs().catch(e => toast(e.message, true));
+}
+function renderLogRows(entries) {
+  if (!entries.length) { $('logTable').innerHTML = '<p class="subtle">No matching log entries.</p>'; return; }
+  let h = '<table><thead><tr><th>Date</th><th>Time</th><th>Severity</th><th>Client IP</th><th>User</th><th>Message</th></tr></thead><tbody>';
+  for (const e of entries) {
+    h += `<tr><td class="mono">${e.date}</td><td class="mono">${e.time}</td>` +
+      `<td><span class="pill log-${e.severity.toLowerCase()}">${e.severity}</span></td>` +
+      `<td class="mono">${esc(e.clientIp || '—')}</td><td>${esc(e.user || '—')}</td>` +
+      `<td>${esc(e.message)}</td></tr>`;
+  }
+  $('logTable').innerHTML = h + '</tbody></table>';
+}
+function scheduleLogReload() {
+  clearTimeout(_logReloadTimer);
+  _logReloadTimer = setTimeout(() => loadLogs().catch(e => toast(e.message, true)), 300);
+}
+async function saveLogConfig() {
+  const level = $('logLevel').value;
+  const maxBytes = Math.max(1, parseInt($('logMaxMb').value, 10) || 1) * 1000000;
+  try { await api('/api/logs/config', { method: 'POST', body: JSON.stringify({ level, maxBytes }) });
+    toast('Logging config saved'); await loadLogs(); }
+  catch (e) { toast(e.message, true); }
+}
+async function clearLogs() {
+  if (!confirm('Clear the live log?\n\nThis empties the current log (rotated archive files are kept).')) return;
+  try { await api('/api/logs/clear', { method: 'POST' }); toast('Log cleared'); await loadLogs(); }
+  catch (e) { toast(e.message, true); }
+}
+function downloadLog() {
+  window.location = '/api/logs/download?' + _logParams().toString();
 }
 
 // ── Directory (LDAP) ──────────────────────────────────────────────────────
@@ -879,6 +1099,7 @@ function fillEditor(c) {
   $('c_llmKeyHint').textContent = c.hasLLMKey ? '(set — leave blank to keep)' : '';
   renderAssign(c.assignments);
   $('c_testResult').innerHTML = '';
+  $('c_provisionResult').textContent = '';
   $('c_deleteBtn').style.display = c.id ? 'inline-flex' : 'none';
   $('connEditor').style.display = 'block';
   $('connEditor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -957,6 +1178,31 @@ async function testConnection() {
     }
     $('c_testResult').innerHTML = h;
   } catch (e) { $('c_testResult').innerHTML = `<div class="banner warn">${esc(e.message)}</div>`; }
+}
+async function provisionSchema() {
+  const body = editorBody();
+  if (!body.schema) { toast('Enter a schema name first.', true); return; }
+  const req = {
+    host: body.host, port: body.port, username: body.username,
+    password: $('c_password').value, schema: body.schema, useTLS: body.useTLS,
+    certModeRaw: body.certModeRaw, fingerprint: body.fingerprint,
+    minRSAKeySizeBits: body.minRSAKeySizeBits,
+  };
+  const out = $('c_provisionResult');
+  out.textContent = 'Creating…'; out.style.color = '';
+  try {
+    const r = await api('/api/connections/provision-schema', { method: 'POST', body: JSON.stringify(req) });
+    if (r.ok) {
+      out.style.color = 'var(--green)';
+      out.textContent = 'Created: ' + (r.created || []).join(', ');
+    } else {
+      out.style.color = 'var(--red)';
+      out.textContent = r.error || 'Could not create the schema.';
+    }
+  } catch (e) {
+    out.style.color = 'var(--red)';
+    out.textContent = e.message;
+  }
 }
 
 loadSession().then(loadTls).then(loadUsers).catch(() => {});

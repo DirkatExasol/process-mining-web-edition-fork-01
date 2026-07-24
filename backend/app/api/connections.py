@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from .. import log_events as logx
 from ..db.manager import check_llm_reachable, db
 from ..models import ConnectionProfile, ConnectionStatus, DatabaseServer, LLMServer
 from ..services import llm as llm_service
@@ -119,10 +120,17 @@ async def test_llm_server(payload: LLMTestPayload) -> dict[str, object]:
     server = payload.server
     if not server.serverURL.strip():
         return {"error": "Enter a valid server URL.", "models": []}
-    reachable = await check_llm_reachable(server)
+    reachable = await check_llm_reachable(server)  # logs the real cause on failure
     if not reachable:
         return {"error": "Server not reachable.", "models": []}
-    models = await llm_service.list_models(server.serverURL, server.apiKey)
+    try:
+        models = await llm_service.list_models(server.serverURL, server.apiKey)
+    except Exception as exc:  # noqa: BLE001
+        logx.warn(
+            f"LLM server test failed — {server.serverURL}: {exc}",
+            operation="llm-test",
+        )
+        return {"error": str(exc), "models": []}
     return {"error": None, "models": models}
 
 
@@ -354,10 +362,71 @@ async def test_managed_connection(
     if body.llmURL.strip():
         llm = LLMServer(serverURL=body.llmURL, apiKey=body.llmKey)
         if await check_llm_reachable(llm):
-            llm_models = await llm_service.list_models(body.llmURL, body.llmKey)
+            try:
+                llm_models = await llm_service.list_models(body.llmURL, body.llmKey)
+            except Exception as exc:  # noqa: BLE001
+                llm_error = str(exc)
+                logx.warn(
+                    f"LLM server test failed — {body.llmURL}: {exc}",
+                    operation="llm-test",
+                )
         else:
-            llm_error = "LLM server not reachable."
+            llm_error = "LLM server not reachable."  # check_llm_reachable logged the cause
     return {"dbError": db_error, "llmError": llm_error, "llmModels": llm_models}
+
+
+@router.post("/connections/provision-schema")
+async def provision_managed_schema(body: ManagedConnectionTestBody, request: Request) -> dict:
+    """Create the process-mining schema + tables using the supplied credentials.
+
+    Requires elevated database privileges (CREATE SCHEMA / CREATE TABLE) that only a
+    database administrator can grant — the app cannot. Returns {ok, error, created}.
+    """
+    _require_power(request)
+    from ..db.schema_ddl import provision_process_mining_schema
+
+    return await provision_process_mining_schema(
+        host=body.host,
+        port=body.port,
+        username=body.username,
+        password=body.password,
+        schema=body.schema_,
+        use_tls=body.useTLS,
+        cert_mode=body.certModeRaw,
+        fingerprint=body.fingerprint,
+        min_rsa_bits=body.minRSAKeySizeBits,
+    )
+
+
+class DemoContentBody(ManagedConnectionTestBody):
+    journeys: int = 500
+    dataset: str = "retail"  # "retail" (Online Bookstore) | "finance" (Credit Application)
+
+
+@router.post("/connections/generate-demo")
+async def generate_demo_content(body: DemoContentBody, request: Request) -> dict:
+    """Provision the schema + tables and load a demo event log (retail or finance).
+
+    Requires elevated database privileges (CREATE SCHEMA / CREATE TABLE / INSERT) that
+    only a database administrator can grant — the app cannot. Returns
+    {ok, error, journeys, project, dataset, message}.
+    """
+    _require_power(request)
+    from ..db.demo_data import generate_demo_content as _generate
+
+    return await _generate(
+        dataset=body.dataset,
+        host=body.host,
+        port=body.port,
+        username=body.username,
+        password=body.password,
+        schema=body.schema_,
+        journeys=body.journeys,
+        use_tls=body.useTLS,
+        cert_mode=body.certModeRaw,
+        fingerprint=body.fingerprint,
+        min_rsa_bits=body.minRSAKeySizeBits,
+    )
 
 
 # ── connect / disconnect / status ────────────────────────────────────────────

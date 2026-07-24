@@ -1128,9 +1128,6 @@ function ConfigSection({
   )
   const [optimised, setOptimised] = useSetting<boolean>('graph.optimisedLayout')
   const [colorize, setColorize] = useSetting<boolean>('graph.edge.colorizeByWeight')
-  const [requireAuth, setRequireAuth] = useSetting<boolean>(
-    'security.requireAuthentication',
-  )
   const [sliderMode, setSliderMode] = useSetting<SliderMode>('slider.mode')
   const [kpisOpen, setKpisOpen] = useSetting<boolean>('sidebar.configKpisExpanded')
   const [stepsOpen, setStepsOpen] = useSetting<boolean>('sidebar.configStepsExpanded')
@@ -1190,12 +1187,6 @@ function ConfigSection({
         label="Colorise edges by weight"
         checked={colorize}
         onChange={setColorize}
-      />
-      <ToggleRow
-        icon="🔒"
-        label="Require authentication"
-        checked={requireAuth}
-        onChange={setRequireAuth}
       />
 
       <Divider />

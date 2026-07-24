@@ -377,6 +377,9 @@ class ProjectBootstrap(Base):
     scoreBoundsMin: int = 0
     scoreBoundsMax: int = 0
     sampleCounts: dict[str, int] = Field(default_factory=dict)
+    # Per-sample-set sampling strategy ('random' | 'temporal' | 'pathDiverse'),
+    # persisted so the sidebar badges survive a reload.
+    sampleMethods: dict[str, str] = Field(default_factory=dict)
 
 
 class StatisticsResponse(Base):

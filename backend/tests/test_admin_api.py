@@ -34,6 +34,12 @@ def admin(tmp_path, monkeypatch):
 
     importlib.reload(security_mod)
 
+    # Fresh log store bound to the temp data dir (log_events references the module,
+    # so this reload is picked up everywhere).
+    import app.store.logs as logs_mod
+
+    importlib.reload(logs_mod)
+
     # Load admin/server.py fresh (it lives outside the app package; its module name
     # `server` collides with the GUI server, so drop any cached copy first).
     admin_dir = Path(config.PROJECT_ROOT) / "admin"
@@ -412,3 +418,138 @@ def test_power_endpoint_requires_admin(admin):
     server, _ = admin
     client = TestClient(server.app)
     assert client.post("/api/users/pat/power", json={"isPower": True}).status_code == 401
+
+
+def test_provision_schema_requires_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    resp = client.post(
+        "/api/connections/provision-schema", json={"host": "db", "schema": "PM"}
+    )
+    assert resp.status_code == 401
+
+
+def test_provision_schema_admin_invokes_provisioner(admin, monkeypatch):
+    server, _ = admin
+    client = _login(server)
+    import app.db.schema_ddl as ddl
+
+    seen: dict = {}
+
+    async def _fake(**kwargs):
+        seen.update(kwargs)
+        return {"ok": True, "error": None, "created": ["schema PM"]}
+
+    monkeypatch.setattr(ddl, "provision_process_mining_schema", _fake)
+    resp = client.post(
+        "/api/connections/provision-schema",
+        json={"host": "db", "username": "u", "password": "pw", "schema": "PM"},
+    )
+    assert resp.status_code == 200 and resp.json()["ok"] is True
+    assert seen["schema"] == "PM"
+
+
+# ── Directory availability indicator (login screen) ───────────────────────────
+
+
+def test_admin_directory_status_unconfigured(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    # Unauthenticated endpoint; nothing configured ⇒ the login screen shows no LED.
+    assert client.get("/api/directory-status").json() == {
+        "configured": False,
+        "available": False,
+    }
+
+
+def test_admin_directory_status_available_when_reachable(admin, monkeypatch):
+    server, store = admin
+    store.set_ldap_config({"enabled": True, "serverURI": "ldap://x", "baseDN": "dc=x"})
+    import app.services.ldap_auth as ldap_auth
+
+    monkeypatch.setattr(ldap_auth, "test_settings", lambda *a, **k: {"ok": True})
+    client = TestClient(server.app)
+    assert client.get("/api/directory-status").json() == {
+        "configured": True,
+        "available": True,
+    }
+
+
+def test_admin_directory_status_unavailable_on_probe_failure(admin, monkeypatch):
+    server, store = admin
+    store.set_ldap_config({"enabled": True, "serverURI": "ldap://x", "baseDN": "dc=x"})
+    import app.services.ldap_auth as ldap_auth
+
+    def _boom(*a, **k):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(ldap_auth, "test_settings", _boom)
+    client = TestClient(server.app)
+    assert client.get("/api/directory-status").json() == {
+        "configured": True,
+        "available": False,
+    }
+
+
+def test_admin_idle_timeout_endpoint_and_sliding_session(admin):
+    server, store = admin
+    client = _login(server)
+
+    assert client.get("/api/session").json()["adminIdleTimeoutMins"] == 0
+    r = client.post("/api/access/admin-idle-timeout", json={"minutes": 20})
+    assert r.status_code == 200 and r.json()["adminIdleTimeoutMins"] == 20
+    assert store.admin_idle_timeout_mins == 20
+    # It is separate from the main app's idle timeout.
+    assert store.idle_timeout_mins == 0
+
+    # Polling the session re-issues the cookie (slides the idle window).
+    resp = client.get("/api/session")
+    assert server.COOKIE in resp.cookies
+
+    client.post("/api/access/admin-idle-timeout", json={"minutes": -5})  # clamps
+    assert store.admin_idle_timeout_mins == 0
+
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+
+def test_logs_endpoints_capture_and_filter(admin):
+    server, _ = admin
+    client = _login(server)  # a successful admin sign-in → a USAGE 'login' entry
+
+    body = client.get("/api/logs?level=DEBUG&limit=100").json()
+    assert body["config"]["levels"] == ["INFO", "USAGE", "WARN", "ERROR", "DEBUG"]
+    assert body["config"]["level"] == "ERROR"  # default
+    ops = {e["operation"] for e in body["entries"]}
+    msgs = " ".join(e["message"] for e in body["entries"])
+    assert "login" in ops and "signed in" in msgs
+    # Every entry carries the format fields.
+    top = body["entries"][0]
+    assert set(top) >= {"date", "time", "severity", "clientIp", "user", "operation", "message"}
+
+    # Config round-trips (level + max file size).
+    r = client.post("/api/logs/config", json={"level": "DEBUG", "maxBytes": 250000})
+    assert r.status_code == 200 and r.json()["config"]["level"] == "DEBUG"
+
+    # Regex search filters the message.
+    hits = client.get("/api/logs?search=signed%20in&limit=100").json()["entries"]
+    assert hits and all("signed in" in e["message"].lower() for e in hits)
+
+    # Severity filter.
+    login_only = client.get("/api/logs?operation=login&limit=100").json()["entries"]
+    assert all(e["operation"] == "login" for e in login_only)
+
+    # Download returns the DATE -- TIME -- ... format.
+    dl = client.get("/api/logs/download")
+    assert dl.status_code == 200 and " -- " in dl.text
+
+    # Clear empties the live log.
+    assert client.post("/api/logs/clear").status_code == 200
+
+
+def test_logs_endpoints_require_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    assert client.get("/api/logs").status_code == 401
+    assert client.post("/api/logs/config", json={"level": "INFO"}).status_code == 401
+    assert client.get("/api/logs/download").status_code == 401

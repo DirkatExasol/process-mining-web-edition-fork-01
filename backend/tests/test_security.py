@@ -500,3 +500,15 @@ def test_can_manage_connection_enforces_ownership(security):
     # A disabled power owner loses management rights.
     store.set_enabled("pat", False)
     assert store.can_manage_connection(conn.id, "pat") is False
+
+
+def test_admin_idle_timeout_round_trips_and_clamps(security):
+    store = security.store
+    assert store.admin_idle_timeout_mins == 0  # default: never
+    store.set_admin_idle_timeout_mins(25)
+    assert store.admin_idle_timeout_mins == 25
+    # Independent of the app's idle timeout.
+    store.set_idle_timeout_mins(5)
+    assert store.admin_idle_timeout_mins == 25 and store.idle_timeout_mins == 5
+    store.set_admin_idle_timeout_mins(-3)  # clamps to 0
+    assert store.admin_idle_timeout_mins == 0

@@ -10,6 +10,7 @@ import {
   noteTargetLabel,
   sampleLabel,
   sampleShortLabel,
+  simulationFilterNotice,
   type ProcessGraph,
   type ProcessTransition,
 } from './types'
@@ -67,6 +68,20 @@ describe('SampleSet labels', () => {
   it('formats long and short labels', () => {
     expect(sampleLabel('ORIGINAL')).toBe('Original Data')
     expect(sampleShortLabel('SAMPLE_2')).toBe('Sample 2')
+  })
+})
+
+describe('simulationFilterNotice', () => {
+  it('is null for a sample-set source', () => {
+    expect(
+      simulationFilterNotice({ kind: 'sampleSet', sampleSet: 'ORIGINAL' }),
+    ).toBeNull()
+  })
+
+  it('warns (naming the slot) for a simulation source', () => {
+    const notice = simulationFilterNotice({ kind: 'simulation', slot: 'Sim-B' })
+    expect(notice).toContain('Sim-B')
+    expect(notice).toMatch(/filtering/i)
   })
 })
 

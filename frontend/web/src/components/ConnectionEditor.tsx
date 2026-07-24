@@ -7,7 +7,7 @@
 import { useState } from 'react'
 import type { ManagedConnection } from '../types'
 import { useStore } from '../store'
-import { ConfirmSheet, Sheet } from './ui'
+import { ConfirmSheet, Sheet, Spinner } from './ui'
 
 const CERT_MODES = [
   { value: 'verify', label: 'Verify (system trust store)' },
@@ -66,6 +66,112 @@ function Field({
   )
 }
 
+/** One demo dataset: title + description, then schema · journeys · Generate in a
+ *  single row (the count is typed, not stepped). Owns its journey count + result. */
+function DemoSection({
+  icon,
+  title,
+  description,
+  schema,
+  onSchema,
+  generate,
+}: {
+  icon: string
+  title: string
+  description: string
+  schema: string
+  onSchema: (value: string) => void
+  generate: (journeys: number) => Promise<{ ok: boolean; text: string }>
+}) {
+  const [journeys, setJourneys] = useState(500)
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const run = async () => {
+    setBusy(true)
+    setResult(null)
+    setResult(await generate(journeys))
+    setBusy(false)
+  }
+
+  return (
+    <div
+      role="group"
+      aria-label={title}
+      className="col"
+      style={{
+        gap: 8,
+        padding: 12,
+        border: '1px solid var(--separator-soft)',
+        borderRadius: 10,
+        background: 'var(--bg-fill)',
+      }}
+    >
+      <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+        <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>
+          {icon}
+        </span>
+        <span className="t-caption" style={{ fontWeight: 600 }}>
+          {title}
+        </span>
+      </div>
+      <span className="t-caption2 fg-tertiary">{description}</span>
+
+      <div className="row" style={{ gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 150 }}>
+          <Field label="Schema">
+            <input
+              className="text-input"
+              value={schema}
+              placeholder="DEMO"
+              onChange={(e) => onSchema(e.target.value)}
+            />
+          </Field>
+        </div>
+        <div style={{ width: 130 }}>
+          <Field label="Journeys">
+            <input
+              className="text-input"
+              type="number"
+              min={1}
+              max={20000}
+              value={journeys}
+              onChange={(e) => setJourneys(Math.max(1, Number(e.target.value) || 0))}
+            />
+          </Field>
+        </div>
+        <button
+          className="btn prominent"
+          disabled={busy || !schema.trim() || journeys < 1}
+          onClick={() => void run()}
+        >
+          {busy ? (
+            <>
+              <Spinner /> Generating…
+            </>
+          ) : (
+            <>
+              {icon} Generate
+            </>
+          )}
+        </button>
+        {result && (
+          <span
+            className="t-caption2"
+            title={result.text}
+            style={{
+              flexBasis: '100%',
+              color: result.ok ? 'var(--green)' : 'var(--red)',
+            }}
+          >
+            {result.text}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function ConnectionEditor({
   connection,
   onClose,
@@ -94,6 +200,9 @@ export function ConnectionEditor({
     text: string
   } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  // Schema provisioning outcome.
+  const [provision, setProvision] = useState<{ ok: boolean; text: string } | null>(null)
+  const [tab, setTab] = useState<'details' | 'demo'>('details')
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) =>
     setDraft((d) => ({ ...d, [key]: value }))
@@ -154,6 +263,51 @@ export function ConnectionEditor({
     const total = llmConsidered ? 2 : 1
     const tone = failures === 0 ? 'ok' : failures >= total ? 'bad' : 'warn'
     setTestResult({ tone, text: parts.join('  ·  ') })
+  }
+
+  const runProvision = async () => {
+    setBusy(true)
+    setError(null)
+    setProvision(null)
+    const res = await store.provisionSchema({
+      host: draft.host.trim(),
+      port: draft.port,
+      username: draft.username.trim(),
+      password,
+      schema: draft.schema.trim(),
+      useTLS: draft.useTLS,
+      certModeRaw: draft.certModeRaw,
+      fingerprint: draft.fingerprint.trim(),
+      minRSAKeySizeBits: draft.minRSAKeySizeBits,
+    })
+    setBusy(false)
+    setProvision(
+      res.ok
+        ? { ok: true, text: `Created: ${res.created.join(', ')}` }
+        : { ok: false, text: res.error || 'Could not create the schema.' },
+    )
+  }
+
+  const runDemo = async (
+    dataset: 'retail' | 'finance',
+    journeys: number,
+  ): Promise<{ ok: boolean; text: string }> => {
+    const res = await store.generateDemo({
+      dataset,
+      host: draft.host.trim(),
+      port: draft.port,
+      username: draft.username.trim(),
+      password,
+      schema: draft.schema.trim(),
+      useTLS: draft.useTLS,
+      certModeRaw: draft.certModeRaw,
+      fingerprint: draft.fingerprint.trim(),
+      minRSAKeySizeBits: draft.minRSAKeySizeBits,
+      journeys,
+    })
+    return res.ok
+      ? { ok: true, text: res.message || `Created ${res.journeys} journeys.` }
+      : { ok: false, text: res.error || 'Could not generate demo content.' }
   }
 
   const save = async () => {
@@ -243,6 +397,20 @@ export function ConnectionEditor({
       <div className="col" style={{ gap: 12 }}>
         {error && <span className="t-caption fg-red">{error}</span>}
 
+        <div className="sheet-tabs">
+          <button
+            className={tab === 'details' ? 'sel' : ''}
+            onClick={() => setTab('details')}
+          >
+            Database / LLM Details
+          </button>
+          <button className={tab === 'demo' ? 'sel' : ''} onClick={() => setTab('demo')}>
+            Demo Content
+          </button>
+        </div>
+
+        {tab === 'details' && (
+        <>
         <Field label="Name">
           <input
             className="text-input"
@@ -310,6 +478,49 @@ export function ConnectionEditor({
             }}
           />
         </Field>
+
+        <div
+          className="col"
+          style={{
+            gap: 6,
+            padding: 10,
+            borderRadius: 8,
+            border: '1px solid var(--separator-soft)',
+            background: 'var(--bg-fill)',
+          }}
+        >
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <button
+              className="btn"
+              disabled={busy || !draft.schema.trim()}
+              onClick={() => void runProvision()}
+            >
+              Create schema &amp; tables
+            </button>
+            {provision && (
+              <span
+                className="t-caption2"
+                title={provision.text}
+                style={{
+                  maxWidth: 300,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  color: provision.ok ? 'var(--green)' : 'var(--red)',
+                }}
+              >
+                {provision.text}
+              </span>
+            )}
+          </div>
+          <span className="t-caption2 fg-tertiary">
+            Creates the “{draft.schema.trim() || '…'}” schema and the process-mining
+            tables (PROJECTS, JOURNEYS, STEPS, METAS, NOTES) if they don’t exist. This
+            needs a database account permitted to <strong>CREATE SCHEMA</strong> and{' '}
+            <strong>CREATE TABLE</strong> — only your database administrator can grant
+            those rights; the app cannot. Uses the credentials entered above.
+          </span>
+        </div>
 
         <label className="row" style={{ gap: 8 }}>
           <input
@@ -414,6 +625,50 @@ export function ConnectionEditor({
                 <span className="t-caption">{username}</span>
               </label>
             ))}
+          </div>
+        )}
+        </>
+        )}
+
+        {tab === 'demo' && (
+          <div className="col" style={{ gap: 16 }}>
+            <span className="t-caption2 fg-tertiary">
+              Generate a ready-made dataset into this connection’s schema — it creates the
+              schema and the process-mining tables if needed, then loads the journeys
+              (replacing only that dataset’s own project). Needs a database account
+              permitted to <strong>CREATE SCHEMA</strong>, <strong>CREATE TABLE</strong>{' '}
+              and <strong>INSERT</strong> — only your database administrator can grant
+              those; the app cannot. Uses the credentials on the Database / LLM Details
+              tab.
+            </span>
+
+            <div className="col" style={{ gap: 6 }}>
+              <span className="t-caption fg-secondary" style={{ fontWeight: 600 }}>
+                Retail
+              </span>
+              <DemoSection
+                icon="📚"
+                title="Online Bookstore"
+                description="Order lifecycle: login → browse → basket → checkout → payment → fulfilment → delivery, with a returns flow and a deliberately flaky bank-transfer path."
+                schema={draft.schema}
+                onSchema={(v) => set('schema', v)}
+                generate={(j) => runDemo('retail', j)}
+              />
+            </div>
+
+            <div className="col" style={{ gap: 6 }}>
+              <span className="t-caption fg-secondary" style={{ fontWeight: 600 }}>
+                Finance/Insurance
+              </span>
+              <DemoSection
+                icon="💶🪙"
+                title="Online Credit Application"
+                description="Bank/affiliate intake → application check (with a rework loop) → credit assessment → score- and sum-driven approval with agent-review loops, ending in payment or rejection."
+                schema={draft.schema}
+                onSchema={(v) => set('schema', v)}
+                generate={(j) => runDemo('finance', j)}
+              />
+            </div>
           </div>
         )}
       </div>

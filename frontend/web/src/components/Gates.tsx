@@ -1,39 +1,8 @@
-/** Launch splash and first-run legal disclaimer — ports SplashScreenView.swift
- *  and `LegalDisclaimerView` from ContentView.swift. */
+/** First-run legal disclaimer — ports `LegalDisclaimerView` from ContentView.swift.
+ *  (The launch splash was removed — it re-appeared on every browser refresh.) */
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Divider } from './ui'
-import { Logo } from './Logo'
-
-export function SplashScreen({ onClose }: { onClose: () => void }) {
-  useEffect(() => {
-    const timer = setTimeout(onClose, 5000)
-    return () => clearTimeout(timer)
-  }, [onClose])
-
-  return (
-    <div className="scrim" style={{ background: 'rgba(0,0,0,0.25)' }} onClick={onClose}>
-      <div className="splash" onClick={(e) => e.stopPropagation()}>
-        <div className="brand-logo" style={{ width: 72, height: 72 }}>
-          <Logo />
-        </div>
-        <div className="col" style={{ gap: 2, alignItems: 'center' }}>
-          <span className="t-title3">Process Mining Demonstrator</span>
-          <span className="t-caption fg-secondary">Web edition · version 1.0.0</span>
-        </div>
-        <Divider />
-        <span className="t-footnote fg-secondary">
-          A demonstrator for log-file analysis and process mining on the Exasol
-          Analytical Database. Intended exclusively for demo and educational purposes —
-          not designed or validated for production use.
-        </span>
-        <button className="btn prominent" onClick={onClose}>
-          Continue
-        </button>
-      </div>
-    </div>
-  )
-}
 
 const SECTIONS = [
   {

@@ -191,6 +191,9 @@ const connecting: HelpTopic = {
       body: [
         p('If an administrator has given your account the power role, a ＋ button appears in the Connections header. Use it to create a connection — Exasol host, credentials, optional TLS and an optional LLM server — right from the app, and to tick the users it should be assigned to.'),
         p('You manage only the connections you create: an ✎ button appears on those cards so you can edit or delete them and change who they are assigned to. Every new connection is automatically assigned to you, so you can connect to it immediately. Passwords and API keys you enter are encrypted at rest and, once saved, are never sent back to the browser — leave those fields blank when editing to keep the stored secret unchanged.'),
+        p('The editor has two tabs. “Database / LLM Details” holds the connection fields; it can also create a fresh process-mining schema for you — enter a schema name and the database credentials, then use “Create schema & tables” to build the schema and the required tables (PROJECTS, JOURNEYS, STEPS, METAS, NOTES) if they don’t already exist.'),
+        p('The “Demo Content” tab generates a ready-made dataset into the schema. Two are offered: a Retail dataset (📚 “Online Bookstore” — a synthetic order lifecycle with a returns flow and a flaky bank-transfer path) and a Finance/Insurance dataset (💶 “Online Credit Application” — bank/affiliate intake, an application-check rework loop, credit assessment, and score- and sum-driven approval with agent-review loops, ending in payment or rejection). For either, enter the schema and how many journeys, then Generate; it creates the schema and tables as needed and loads the journeys into that dataset’s own project (others are left untouched).'),
+        warn('Creating a schema or generating demo data needs a database account with CREATE SCHEMA / CREATE TABLE (and, for demo data, INSERT) rights. Only your database administrator can grant those — the application cannot authorise you.'),
         tip('Use Test in the editor to check the database (and LLM, if set) before saving.'),
       ],
     },
@@ -241,6 +244,8 @@ const administration: HelpTopic = {
       body: [
         p('Define each connection here — the Exasol host, port, user, password, schema and TLS options, plus an optional OpenAI-compatible LLM server — and assign it to one or more users. Each user then sees only the connections assigned to them.'),
         p('Use Test connection to verify the database (and LLM) before saving. Leaving a password or API-key field blank on an existing connection keeps the stored value. Secrets never leave the admin interface.'),
+        p('“Create schema & tables” provisions a fresh process-mining schema — it creates the named schema and the required tables (PROJECTS, JOURNEYS, STEPS, METAS, NOTES) if they are missing, using the credentials entered.'),
+        warn('This needs a database account with CREATE SCHEMA and CREATE TABLE privileges. Those can only be granted by the database administrator — the application cannot grant them.'),
       ],
     },
     {
@@ -1074,7 +1079,7 @@ const configuration: HelpTopic = {
       heading: 'KPIs, steps and preferences',
       body: [
         p('The KPIs sub-section lets you drag to reorder the KPI tiles and toggle each one on or off. The Steps sub-section is the in-app Step Editor: pick a step, then set its background/foreground colour, shape, score, group and description — changes are written straight to the STEPS table and the map redraws.'),
-        p('Backup & Restore, the LLM prompt template editor, and “Require authentication” also live in this section. Theme (System / Light / Dark) is chosen from the bar at the bottom of the sidebar.'),
+        p('Backup & Restore and the LLM prompt template editor also live in this section. Theme (System / Light / Dark) is chosen from the bar at the bottom of the sidebar. (Sign-in is now managed centrally in the admin interface, so there is no per-client authentication toggle here.)'),
       ],
     },
   ],

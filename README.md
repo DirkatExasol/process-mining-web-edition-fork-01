@@ -170,6 +170,33 @@ Leaving a password or API-key field blank on an existing connection keeps the st
 value; the backend decrypts secrets only when a user actually connects. Connection
 definitions, ownership and assignments live in `data/security.sqlite3`.
 
+**Provisioning a process-mining schema.** Both the admin connection editor and the
+power-user editor offer **Create schema & tables** — using the entered credentials it
+creates the named schema and the required tables (`PROJECTS`, `JOURNEYS`, `STEPS`,
+`METAS`, `NOTES`) if they do not already exist (idempotent, `IF NOT EXISTS`). This
+requires a database account with `CREATE SCHEMA` / `CREATE TABLE` privileges — only a
+database administrator can grant those; the application cannot. The canonical DDL lives
+in `backend/app/db/schema_ddl.py` (the same `NOTES` definition the app creates lazily).
+
+**Demo content.** The power-user connection editor has two tabs — *Database / LLM
+Details* and *Demo Content*. The Demo Content tab groups the generators into sections,
+each with schema · journeys · Generate in one row:
+
+- **Retail** — 📚 *Online Bookstore* (`BOOKSTORE` project): login → browse → basket →
+  checkout → payment → fulfilment → delivery, with a 5% returns flow and a flaky
+  bank-transfer path. A faithful port of the macOS app's generator.
+- **Finance/Insurance** — 💶 *Online Credit Application* (`CREDIT` project): bank/affiliate
+  intake → application check (with a 20% rework loop) → credit assessment (*Credit
+  Assessment* for bank, *Credit Check* for affiliate) → score-driven approval (<75% auto
+  reject, 75–90% agent review with 50% rejection, >90% auto accept) plus a senior-agent
+  step for sums over €10,000 (5% declined) → *Accepted* → *Payment to Applicant* →
+  *Payment* (payout takes up to ~7 days; higher sums take longer, affiliate is faster) or
+  *Rejected*. Metas: Applied Credit Sum · Income Class · Channel (Bank/Affiliate).
+
+Either provisions the schema + tables (if needed) and loads into that dataset's own
+project, replacing only that project's journeys. Needs `CREATE SCHEMA` / `CREATE TABLE` /
+`INSERT` rights (DBA-granted). Both generators live in `backend/app/db/demo_data.py`.
+
 **Directory (LDAP / Active Directory).** When enabled, the **main application** login
 also accepts directory accounts via **search + bind**: the server binds with a
 read-only service account (or anonymously), searches the base DN with a filter such

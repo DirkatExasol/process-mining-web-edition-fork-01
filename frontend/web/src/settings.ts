@@ -27,7 +27,6 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   'processmap.showNodeDescriptions': true,
   'processmap.kpiExpanded': true,
   'abComparison.valveOpen': true,
-  'security.requireAuthentication': false,
   'legal.accepted': false,
   'sidebar.filtersDateExpanded': true,
   'sidebar.filtersMetaExpanded': false,

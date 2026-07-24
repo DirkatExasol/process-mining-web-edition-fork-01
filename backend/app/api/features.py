@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from datetime import datetime
 
@@ -9,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from .. import log_events as logx
 from ..config import DEFAULT_LLM_PROMPT
 from ..db.manager import db
 from ..models import (
@@ -152,10 +154,69 @@ class SimulateRequest(BaseModel):
     config: SimulationConfig = SimulationConfig()
 
 
+# A run beyond this exhausts memory / crashes the process, so it is refused up
+# front rather than attempted (the user reported ~200k journeys killing the app).
+_MAX_SIM_JOURNEYS = 100_000
+# Wall-clock ceiling for a single run — a slower run is abandoned (and logged)
+# instead of hanging the request indefinitely.
+_SIM_TIMEOUT_SECS = 120.0
+
+
 @router.post("/simulate", response_model=SimulationResult)
-def simulate(request: SimulateRequest) -> SimulationResult:
+async def simulate(request: SimulateRequest) -> SimulationResult:
     step_infos = request.stepInfos or request.graph.steps
-    return simulation.simulate(request.graph, step_infos, request.config)
+    count = request.config.journeyCount
+    # Guard against an oversized run that would otherwise exhaust memory / crash.
+    if count > _MAX_SIM_JOURNEYS:
+        logx.warn(
+            f"Simulation rejected: {count} journeys exceeds the {_MAX_SIM_JOURNEYS} limit",
+            operation="simulation",
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Too many journeys to simulate ({count:,}). "
+                f"The maximum is {_MAX_SIM_JOURNEYS:,}."
+            ),
+        )
+    # Run the CPU-bound simulation off the event loop, bounded by a timeout so a
+    # pathological run surfaces as a logged error rather than a frozen request.
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                simulation.simulate, request.graph, step_infos, request.config
+            ),
+            timeout=_SIM_TIMEOUT_SECS,
+        )
+    except (asyncio.TimeoutError, TimeoutError):
+        logx.error(
+            f"Simulation timed out after {_SIM_TIMEOUT_SECS:g}s ({count} journeys)",
+            operation="simulation",
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"Simulation timed out ({count:,} journeys). Try fewer journeys."
+            ),
+        ) from None
+    except MemoryError:
+        logx.error(
+            f"Simulation ran out of memory ({count} journeys)",
+            operation="simulation",
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Simulation ran out of memory ({count:,} journeys). "
+                "Try fewer journeys."
+            ),
+        ) from None
+    except Exception as exc:  # noqa: BLE001
+        logx.error(
+            f"Simulation failed ({count} journeys): {exc.__class__.__name__}: {exc}",
+            operation="simulation",
+        )
+        raise HTTPException(status_code=500, detail=f"Simulation failed: {exc}") from exc
 
 
 # ── Happy-path conformance ───────────────────────────────────────────────────
@@ -212,6 +273,10 @@ async def documentation(
     try:
         paths = await r.load_journey_paths(project_id, request.filter, 200)
     except TimeoutError:
+        logx.warn(
+            f"AI documentation: journey-paths query timed out (project {project_id})",
+            operation="ai-doc",
+        )
         paths = []
     paths_html, paths_section = docgen.journey_paths_section(paths)
 
@@ -222,6 +287,10 @@ async def documentation(
     try:
         variants = await r.load_journey_paths(project_id, request.filter, 500)
     except TimeoutError:
+        logx.warn(
+            f"AI documentation: variants query timed out (project {project_id})",
+            operation="ai-doc",
+        )
         variants = []
     happy_md = docgen.happy_path_section(request.happyPaths, variants)
 
@@ -236,6 +305,11 @@ async def documentation(
         error = None
     except llm_service.LLMError as exc:
         answer, error = None, str(exc)
+        logx.error(
+            f"AI documentation LLM call failed (project {project_id}, "
+            f"model {server.model or '?'}): {exc}",
+            operation="ai-doc",
+        )
 
     return {
         "result": answer,

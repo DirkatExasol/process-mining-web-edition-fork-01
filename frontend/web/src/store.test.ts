@@ -29,6 +29,11 @@ vi.mock('./api', () => ({
     saveManagedConnection: vi.fn(),
     deleteManagedConnection: vi.fn(),
     testManagedConnection: vi.fn(),
+    provisionManagedSchema: vi.fn(),
+    generateDemoContent: vi.fn(),
+    bootstrap: vi.fn(),
+    graph: vi.fn(),
+    listNotes: vi.fn().mockResolvedValue([]),
   },
 }))
 
@@ -155,6 +160,50 @@ describe('testManagedConnection', () => {
   })
 })
 
+describe('provisionSchema', () => {
+  it('passes the provisioner result through', async () => {
+    mockApi.provisionManagedSchema.mockResolvedValue({
+      ok: true,
+      error: null,
+      created: ['schema PM', 'PROJECTS', 'NOTES'],
+    })
+    const r = await useStore.getState().provisionSchema({ schema: 'PM' })
+    expect(r.ok).toBe(true)
+    expect(r.created).toContain('PROJECTS')
+  })
+
+  it('maps an ApiError to a failure result (never throws)', async () => {
+    mockApi.provisionManagedSchema.mockRejectedValue(new ApiError('CREATE SCHEMA denied', 400))
+    const r = await useStore.getState().provisionSchema({ schema: 'PM' })
+    expect(r.ok).toBe(false)
+    expect(r.error).toBe('CREATE SCHEMA denied')
+    expect(r.created).toEqual([])
+  })
+})
+
+describe('generateDemo', () => {
+  it('passes the generator result through', async () => {
+    mockApi.generateDemoContent.mockResolvedValue({
+      ok: true,
+      error: null,
+      journeys: 500,
+      project: 'Online Bookstore',
+      message: 'Created 500 journeys',
+    })
+    const r = await useStore.getState().generateDemo({ schema: 'PM', journeys: 500 })
+    expect(r.ok).toBe(true)
+    expect(r.journeys).toBe(500)
+  })
+
+  it('maps an ApiError to a failure result (never throws)', async () => {
+    mockApi.generateDemoContent.mockRejectedValue(new ApiError('INSERT denied', 400))
+    const r = await useStore.getState().generateDemo({ schema: 'PM', journeys: 10 })
+    expect(r.ok).toBe(false)
+    expect(r.error).toBe('INSERT denied')
+    expect(r.journeys).toBe(0)
+  })
+})
+
 describe('auth isPower', () => {
   it('login sets authIsPower from the response', async () => {
     mockApi.login.mockResolvedValue({
@@ -185,5 +234,50 @@ describe('auth isPower', () => {
     expect(useStore.getState().authIsPower).toBe(false)
     expect(useStore.getState().manageableConnections).toEqual([])
     expect(useStore.getState().assignableUsers).toEqual([])
+  })
+})
+
+describe('selectProject sampling methods', () => {
+  const bootstrap = {
+    project: { projectId: 'BOOKSTORE', title: 'Online Bookstore', description: '' },
+    allSteps: [],
+    allStepInfos: {},
+    meta1Title: null,
+    meta2Title: null,
+    meta3Title: null,
+    meta1Values: [],
+    meta2Values: [],
+    meta3Values: [],
+    totalJourneyCount: 100,
+    minDate: null,
+    maxDate: null,
+    initialFromDate: null,
+    initialToDate: null,
+    stepCountMin: 1,
+    stepCountMax: 10,
+    journeyTimeBoundsMin: 0,
+    journeyTimeBoundsMax: 3600,
+    scoreBoundsMin: 0,
+    scoreBoundsMax: 10,
+    sampleCounts: { SAMPLE_1: 500 },
+    sampleMethods: { SAMPLE_1: 'temporal' },
+  }
+  const graph = {
+    processGraph: { steps: {}, transitions: [] },
+    journeyCount: 100,
+    durations: { minSecs: null, avgSecs: null, stdDevSecs: null, maxSecs: null },
+    processGoodness: null,
+    variants: [],
+  }
+
+  it('populates sampleMethods from the bootstrap so the badges survive a reload', async () => {
+    useStore.setState({ sampleMethods: {}, sampleCounts: {} })
+    mockApi.bootstrap.mockResolvedValue(bootstrap)
+    mockApi.graph.mockResolvedValue(graph)
+
+    await useStore.getState().selectProject(bootstrap.project)
+
+    expect(useStore.getState().sampleCounts).toEqual({ SAMPLE_1: 500 })
+    expect(useStore.getState().sampleMethods).toEqual({ SAMPLE_1: 'temporal' })
   })
 })

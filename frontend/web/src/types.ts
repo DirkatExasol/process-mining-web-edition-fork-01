@@ -384,6 +384,7 @@ export interface ProjectBootstrap {
   scoreBoundsMin: number
   scoreBoundsMax: number
   sampleCounts: Record<string, number>
+  sampleMethods: Record<string, SamplingMethod>
 }
 
 export interface StatisticsResponse {
@@ -443,6 +444,14 @@ export function abDataSourceLabel(source: ABDataSource): string {
   return source.kind === 'sampleSet'
     ? sampleShortLabel(source.sampleSet)
     : source.slot
+}
+
+/** Red canvas notice when a side shows simulation output — simulations are a
+ *  read-only what-if result and cannot drive interactive filtering / drill-down. */
+export function simulationFilterNotice(source: ABDataSource): string | null {
+  return source.kind === 'simulation'
+    ? `${source.slot}: simulation data is read-only — interactive filtering, drill-down and step editing are not available.`
+    : null
 }
 
 export interface DocumentationResponse {

@@ -1,0 +1,168 @@
+"""Canonical process-mining schema — the single source of truth for the tables
+the app reads and writes, and a helper that provisions them on demand.
+
+The source tables (PROJECTS, JOURNEYS, STEPS, METAS) normally arrive with the
+customer's data; NOTES is created lazily by the app. This module lets an operator
+(an admin, or a power user from the app) create a *fresh* schema with the full,
+empty table structure so process-mining data can be loaded into it — provided the
+database account has the CREATE SCHEMA / CREATE TABLE privileges (which only a
+database administrator can grant; the app cannot).
+
+All statements use IF NOT EXISTS so provisioning is idempotent and never disturbs
+an existing schema's data.
+"""
+
+from __future__ import annotations
+
+# Kept byte-for-byte in sync with ProcessRepository.ensure_notes_table (which
+# imports this constant), so a provisioned NOTES table matches what the app uses.
+NOTES_DDL = """
+CREATE TABLE IF NOT EXISTS NOTES (
+    ID              VARCHAR(36)   NOT NULL,
+    PROJECT_ID      VARCHAR(100)  NOT NULL,
+    NOTES_DATE      TIMESTAMP     NOT NULL,
+    EDITED_DATE     TIMESTAMP,
+    NOTE_USER       VARCHAR(200)  DEFAULT '',
+    NOTE            VARCHAR(8000) DEFAULT '',
+    IS_SHARED       BOOLEAN       DEFAULT FALSE,
+    EDITED_BY       VARCHAR(200)  DEFAULT '',
+    TARGET_TYPE     VARCHAR(10)   DEFAULT 'node',
+    TARGET_FROM     VARCHAR(500)  DEFAULT '',
+    TARGET_TO       VARCHAR(500),
+    FILTER_SNAPSHOT VARCHAR(4000),
+    PRIMARY KEY (ID)
+)
+"""
+
+_PROJECTS_DDL = """
+CREATE TABLE IF NOT EXISTS PROJECTS (
+    PROJECT_ID  VARCHAR(100)  NOT NULL,
+    TITLE       VARCHAR(500)  DEFAULT '',
+    DESCRIPTION VARCHAR(2000) DEFAULT '',
+    PRIMARY KEY (PROJECT_ID)
+)
+"""
+
+# The event log: one row per (event, step). STEP_ID orders steps that share an
+# EVENT_TIME. SAMPLE_SET tags rows copied into a sample ('ORIGINAL' = source data).
+_JOURNEYS_DDL = """
+CREATE TABLE IF NOT EXISTS JOURNEYS (
+    PROJECT_ID VARCHAR(100)  NOT NULL,
+    EVENT_ID   VARCHAR(200)  NOT NULL,
+    STEP       VARCHAR(500)  NOT NULL,
+    STEP_ID    DECIMAL(18,0),
+    EVENT_TIME TIMESTAMP     NOT NULL,
+    META_1     VARCHAR(1000),
+    META_2     VARCHAR(1000),
+    META_3     VARCHAR(1000),
+    SAMPLE_SET VARCHAR(20)   DEFAULT 'ORIGINAL'
+)
+"""
+
+# Per-step presentation and scoring, edited from the app's Step editor.
+_STEPS_DDL = """
+CREATE TABLE IF NOT EXISTS STEPS (
+    PROJECT_ID     VARCHAR(100)  NOT NULL,
+    STEP           VARCHAR(500)  NOT NULL,
+    DESCRIPTION    VARCHAR(2000) DEFAULT '',
+    BG_COLOR       VARCHAR(30)   DEFAULT '',
+    FG_COLOR       VARCHAR(30)   DEFAULT '',
+    SCORE          DECIMAL(18,2),
+    SHAPE          VARCHAR(50)   DEFAULT '',
+    END_OF_PROCESS BOOLEAN       DEFAULT FALSE,
+    BELONGS_TO     VARCHAR(500),
+    PRIMARY KEY (PROJECT_ID, STEP)
+)
+"""
+
+# Human-readable titles for the three META columns, per project.
+_METAS_DDL = """
+CREATE TABLE IF NOT EXISTS METAS (
+    PROJECT_ID   VARCHAR(100) NOT NULL,
+    META_1_TITLE VARCHAR(500) DEFAULT '',
+    META_2_TITLE VARCHAR(500) DEFAULT '',
+    META_3_TITLE VARCHAR(500) DEFAULT '',
+    PRIMARY KEY (PROJECT_ID)
+)
+"""
+
+# (name, DDL) in creation order. NOTES is included so a provisioned schema is
+# immediately complete for both reads and the app's own writes.
+PROCESS_MINING_TABLES: list[tuple[str, str]] = [
+    ("PROJECTS", _PROJECTS_DDL),
+    ("JOURNEYS", _JOURNEYS_DDL),
+    ("STEPS", _STEPS_DDL),
+    ("METAS", _METAS_DDL),
+    ("NOTES", NOTES_DDL),
+]
+
+TABLE_NAMES: list[str] = [name for name, _ in PROCESS_MINING_TABLES]
+
+
+def _quote_ident(name: str) -> str:
+    """Quote an Exasol identifier, guarding against injection in the schema name."""
+    return '"' + name.replace('"', '""') + '"'
+
+
+async def provision_process_mining_schema(
+    *,
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    schema: str,
+    use_tls: bool = False,
+    cert_mode: str = "verify",
+    fingerprint: str = "",
+    min_rsa_bits: int = 2048,
+) -> dict:
+    """Create ``schema`` (if absent) and every process-mining table inside it.
+
+    Connects with the supplied credentials, so the account must hold CREATE SCHEMA
+    and CREATE TABLE rights. Returns ``{"ok", "error", "created": [names]}`` — a
+    friendly error string on failure, with ``created`` listing what was made before
+    the failure. Idempotent: re-running against an existing schema is a no-op.
+    """
+    import asyncio
+
+    from ..models import DatabaseServer
+    from .manager import DatabaseManager, friendly_error
+
+    schema = (schema or "").strip()
+    if not schema:
+        return {"ok": False, "error": "A schema name is required.", "created": []}
+
+    # Connect WITHOUT opening the target schema — it may not exist yet.
+    server = DatabaseServer(
+        id="provision",
+        host=host,
+        port=port,
+        username=username,
+        useTLS=use_tls,
+        certModeRaw=cert_mode,
+        fingerprint=fingerprint,
+        minRSAKeySizeBits=min_rsa_bits,
+        **{"schema": ""},
+    )
+    mgr = DatabaseManager.__new__(DatabaseManager)  # no store side effects
+    ident = _quote_ident(schema)
+    created: list[str] = []
+
+    def _run() -> None:
+        conn = mgr._open(server, password)
+        try:
+            conn.execute(f"CREATE SCHEMA IF NOT EXISTS {ident}")
+            created.append(f"schema {schema}")
+            conn.execute(f"OPEN SCHEMA {ident}")
+            for name, ddl in PROCESS_MINING_TABLES:
+                conn.execute(ddl)
+                created.append(name)
+            conn.commit()
+        finally:
+            conn.close()
+
+    try:
+        await asyncio.to_thread(_run)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": friendly_error(exc), "created": created}
+    return {"ok": True, "error": None, "created": created}

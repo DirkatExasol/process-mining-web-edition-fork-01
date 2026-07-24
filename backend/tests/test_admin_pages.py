@@ -88,3 +88,48 @@ def test_dashboard_directory_admin_login_optin(dashboard):
 def test_directory_grid_shares_a_bottom_border(dashboard):
     # The Server and Service-account columns terminate on one common border.
     assert "border-bottom:1px solid var(--border)" in dashboard
+
+
+# ── Schema provisioning affordance ────────────────────────────────────────────
+
+
+def test_connection_editor_offers_schema_provisioning(dashboard):
+    assert "function provisionSchema" in dashboard
+    assert 'id="c_provisionResult"' in dashboard
+    # The privilege advisory must be present (the app cannot grant these rights).
+    assert "CREATE SCHEMA" in dashboard and "CREATE TABLE" in dashboard
+    assert "database\n          administrator can grant" in dashboard or (
+        "database administrator can grant" in " ".join(dashboard.split())
+    )
+    assert "PROJECTS, JOURNEYS, STEPS, METAS, NOTES" in dashboard
+
+
+def test_login_page_has_directory_indicator(pages):
+    html = pages.login_page()
+    assert 'id="dirStatus"' in html
+    assert "/api/directory-status" in html
+    assert "Directory server" in html
+
+
+def test_dashboard_has_admin_idle_logout(dashboard):
+    assert 'id="adminIdleTimeout"' in dashboard
+    assert "function setAdminIdle" in dashboard
+    assert "_onIdleTimeout" in dashboard  # client-side auto-logout
+    assert "/api/access/admin-idle-timeout" in dashboard
+
+
+def test_dashboard_has_logging_tab(dashboard):
+    assert 'data-tab="logging"' in dashboard and 'id="tab-logging"' in dashboard
+    assert "function loadLogs" in dashboard
+    assert "function saveLogConfig" in dashboard  # max level + max file size
+    assert 'id="logSeverityFilter"' in dashboard  # severity filter
+    assert 'id="logSearch"' in dashboard  # regex/wildcard search
+    assert "/api/logs/download" in dashboard
+
+
+def test_login_page_uses_the_app_master_design(pages):
+    html = pages.login_page()
+    assert "login-splash" in html  # the centred card, like the app's LoginView
+    assert "btn-prominent" in html  # full-width prominent Sign-in button
+    assert "Sign in to continue" in html  # master subtitle
+    assert ">Administration<" in html  # the respective title

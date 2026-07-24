@@ -5,7 +5,7 @@ import { FlowChart, type SyncState } from '../flow/FlowChart'
 import { Unavailable } from '../components/ui'
 import { useSetting } from '../settings'
 import { useStore } from '../store'
-import type { SliderMode } from '../types'
+import { simulationFilterNotice, type SliderMode } from '../types'
 import { ChartControls } from './ChartControls'
 import { useNoteHandlers } from './useNoteHandlers'
 
@@ -121,6 +121,13 @@ export function ChartView({
           metric={store.transitionMetric}
           isLoading={store.isLoading}
           syncState={syncState}
+          notice={simulationFilterNotice(
+            side === 'a' ? store.abDataSourceA : store.abDataSourceB,
+          )}
+          readOnly={
+            (side === 'a' ? store.abDataSourceA : store.abDataSourceB).kind ===
+            'simulation'
+          }
           onNodeAction={(node, action) => store.handleNodeAction(node, action)}
           notes={store.projectNotes}
           onNodeNote={notes.openNodeNotes}

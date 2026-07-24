@@ -880,25 +880,9 @@ class ProcessRepository:
     # ── NOTES table ──────────────────────────────────────────────────────────
 
     async def ensure_notes_table(self) -> None:
-        await self.db.execute_quiet(
-            """
-            CREATE TABLE IF NOT EXISTS NOTES (
-                ID              VARCHAR(36)   NOT NULL,
-                PROJECT_ID      VARCHAR(100)  NOT NULL,
-                NOTES_DATE      TIMESTAMP     NOT NULL,
-                EDITED_DATE     TIMESTAMP,
-                NOTE_USER       VARCHAR(200)  DEFAULT '',
-                NOTE            VARCHAR(8000) DEFAULT '',
-                IS_SHARED       BOOLEAN       DEFAULT FALSE,
-                EDITED_BY       VARCHAR(200)  DEFAULT '',
-                TARGET_TYPE     VARCHAR(10)   DEFAULT 'node',
-                TARGET_FROM     VARCHAR(500)  DEFAULT '',
-                TARGET_TO       VARCHAR(500),
-                FILTER_SNAPSHOT VARCHAR(4000),
-                PRIMARY KEY (ID)
-            )
-            """
-        )
+        from .schema_ddl import NOTES_DDL
+
+        await self.db.execute_quiet(NOTES_DDL)
         await self.db.execute_quiet(
             "ALTER TABLE NOTES ADD COLUMN IS_SHARED BOOLEAN DEFAULT FALSE"
         )

@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
+from . import log_events as logx
 from .api import connections, features, projects
 from .db.manager import db
 
@@ -34,6 +35,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Log unhandled failures (5xx / crashes such as an oversized simulation) and 4xx
+# gate hits. The user comes from the trusted X-PMW-User header the GUI injects.
+logx.install_request_logging(app, lambda r: r.headers.get("x-pmw-user", ""))
 
 app.include_router(connections.router)
 app.include_router(projects.router)

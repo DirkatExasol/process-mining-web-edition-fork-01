@@ -16,10 +16,17 @@ from typing import Any
 
 import pyexasol
 
+from .. import log_events as logx
 from ..models import ConnectionProfile, DatabaseServer, LLMServer
 from ..store.settings import store
 
 log = logging.getLogger(__name__)
+
+
+def _short_sql(sql: str, limit: int = 300) -> str:
+    """One-line, length-capped SQL for a log message."""
+    flat = " ".join((sql or "").split())
+    return flat if len(flat) <= limit else flat[:limit] + "…"
 
 KEY_DB_SERVERS = "database_servers"
 KEY_LLM_SERVERS = "llm_servers"
@@ -259,6 +266,11 @@ class DatabaseManager:
             msg = friendly_error(exc)
             self.last_error = msg
             self.is_connected = False
+            logx.error(
+                f"Database connection failed for {conn_def.name!r} "
+                f"({server.host}:{server.port}): {msg}",
+                operation="db-connect",
+            )
             return msg
 
         self._conn = exa
@@ -278,7 +290,13 @@ class DatabaseManager:
         try:
             await asyncio.to_thread(_probe)
         except Exception as exc:  # noqa: BLE001
-            return friendly_error(exc)
+            msg = friendly_error(exc)
+            logx.warn(
+                f"Database connection test failed for {server.host}:{server.port} "
+                f"(user {server.username or '-'}): {msg}",
+                operation="db-test",
+            )
+            return msg
         return None
 
     async def disconnect(self) -> None:
@@ -305,16 +323,36 @@ class DatabaseManager:
             rows = [list(r) for r in stmt.fetchall()] if stmt.result_type == "resultSet" else []
             return QueryResult(rows, columns)
 
-    async def execute(self, sql: str, timeout: float | None = None) -> QueryResult:
+    async def _run(
+        self, sql: str, timeout: float | None, log_errors: bool
+    ) -> QueryResult:
         coro = asyncio.to_thread(self._execute_sync, sql)
-        if timeout is None:
-            return await coro
-        return await asyncio.wait_for(coro, timeout=timeout)
+        try:
+            if timeout is None:
+                return await coro
+            return await asyncio.wait_for(coro, timeout=timeout)
+        except (asyncio.TimeoutError, TimeoutError):
+            if log_errors:
+                logx.error(
+                    f"SQL execution timed out after {timeout}s: {_short_sql(sql)}",
+                    operation="db-timeout",
+                )
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if log_errors:
+                logx.error(
+                    f"SQL execution error: {friendly_error(exc)} — SQL: {_short_sql(sql)}",
+                    operation="db-sql",
+                )
+            raise
+
+    async def execute(self, sql: str, timeout: float | None = None) -> QueryResult:
+        return await self._run(sql, timeout, log_errors=True)
 
     async def execute_quiet(self, sql: str) -> QueryResult | None:
         """Run a statement whose failure is acceptable (DDL migrations)."""
         try:
-            return await self.execute(sql)
+            return await self._run(sql, None, log_errors=False)
         except Exception:  # noqa: BLE001
             log.debug("ignored failing statement: %s", sql, exc_info=True)
             return None
@@ -382,7 +420,13 @@ async def test_db_connection(
     try:
         await asyncio.to_thread(_probe)
     except Exception as exc:  # noqa: BLE001
-        return friendly_error(exc)
+        msg = friendly_error(exc)
+        logx.warn(
+            f"Database connection test failed for {host}:{port} "
+            f"(user {username or '-'}): {msg}",
+            operation="db-test",
+        )
+        return msg
     return None
 
 
@@ -399,8 +443,18 @@ async def check_llm_reachable(server: LLMServer | None) -> bool:
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(url, headers=headers)
-        return response.status_code < 500
-    except Exception:  # noqa: BLE001
+        if response.status_code >= 500:
+            logx.warn(
+                f"LLM server not reachable: {server.serverURL} → HTTP {response.status_code}",
+                operation="llm-test",
+            )
+            return False
+        return True
+    except Exception as exc:  # noqa: BLE001 — capture the real cause before swallowing
+        logx.warn(
+            f"LLM connection error: {server.serverURL} — {exc.__class__.__name__}: {exc}",
+            operation="llm-test",
+        )
         return False
 
 

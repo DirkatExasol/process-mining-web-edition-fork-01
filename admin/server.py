@@ -6,11 +6,13 @@ by an admin session cookie; seeded with Administrator / Administrator on first r
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # local `pages` module
@@ -34,7 +36,9 @@ from app.config import (  # noqa: E402
     FRONTEND_PORT,
     GUI_PID_PATH,
 )
+from app import log_events as logx  # noqa: E402
 from app.services.certs import CertError  # noqa: E402
+from app.store.logs import LEVELS, store as log_store  # noqa: E402
 from app.store.crypto import read_session, sign_session  # noqa: E402
 from app.store.security import User, store  # noqa: E402
 
@@ -46,6 +50,8 @@ app = FastAPI(title="Process Mining Demonstrator — Administration", version="1
 
 COOKIE = "pmw_admin"
 
+logx.install_request_logging(app, lambda r: _current_user(r))
+
 
 # ── session helpers ───────────────────────────────────────────────────────────
 
@@ -54,11 +60,18 @@ def _issue_session(username: str) -> str:
     return sign_session(json.dumps({"u": username}).encode("utf-8"))
 
 
+def _admin_session_ttl() -> int:
+    """Cookie lifetime = the admin idle timeout when set (a sliding window,
+    re-issued on activity), else the absolute 8h fallback."""
+    mins = store.admin_idle_timeout_mins
+    return mins * 60 if mins > 0 else ADMIN_SESSION_TTL_SECS
+
+
 def _current_user(request: Request) -> User | None:
     token = request.cookies.get(COOKIE)
     if not token:
         return None
-    raw = read_session(token, ADMIN_SESSION_TTL_SECS)
+    raw = read_session(token, _admin_session_ttl())
     if raw is None:
         return None
     try:
@@ -85,7 +98,7 @@ def _set_cookie(response: Response, request: Request, username: str) -> None:
         httponly=True,
         samesite="lax",
         secure=request.url.scheme == "https",
-        max_age=ADMIN_SESSION_TTL_SECS,
+        max_age=_admin_session_ttl(),
         path="/",
     )
 
@@ -98,6 +111,12 @@ def index(request: Request):
     user = _current_user(request)
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    logx.usage(
+        "admin dashboard opened",
+        request=request,
+        username=user.username,
+        operation="page",
+    )
     return HTMLResponse(
         pages.dashboard_page(user.username, FRONTEND_PORT, FRONTEND_HTTPS_PORT)
     )
@@ -108,6 +127,41 @@ def login_get(request: Request):
     if _current_user(request) is not None:
         return RedirectResponse("/", status_code=303)
     return HTMLResponse(pages.login_page())
+
+
+# Brief cache so the login screen doesn't re-probe the directory on every load.
+_DIR_STATUS_TTL = 20.0
+_dir_status: dict = {"at": 0.0, "value": None}
+
+
+@app.get("/api/directory-status")
+async def api_directory_status() -> Response:
+    """Whether a directory (LDAP) server is configured and currently reachable.
+
+    Unauthenticated, for the login screen's availability LED — mirrors the main app's
+    ``/auth/directory-status``. Reports ``configured: false`` when no directory is set
+    up (the client then shows nothing); reachability is the cached service-bind probe,
+    run off the event loop so a slow server never blocks the page.
+    """
+    if not store.ldap_enabled:
+        return JSONResponse({"configured": False, "available": False})
+
+    now = time.monotonic()
+    cached = _dir_status["value"]
+    if cached is not None and now - _dir_status["at"] < _DIR_STATUS_TTL:
+        return JSONResponse(cached)
+
+    from app.services.ldap_auth import test_settings
+
+    settings = store.ldap_settings()
+    try:
+        result = await asyncio.to_thread(test_settings, settings)
+        available = bool(result.get("ok"))
+    except Exception:  # a probe must never break the login screen
+        available = False
+    value = {"configured": True, "available": available}
+    _dir_status.update(at=now, value=value)
+    return JSONResponse(value)
 
 
 @app.post("/login", response_class=HTMLResponse)
@@ -121,17 +175,36 @@ def login_post(request: Request, username: str = Form(...), password: str = Form
     else:
         user = store.authenticate(username, password)  # local-only
     if user is None or not user.is_admin:
+        logx.warn(
+            f"failed admin sign-in for username {username!r}",
+            request=request,
+            username=username,
+            operation="login",
+        )
         return HTMLResponse(
             pages.login_page("Invalid credentials, or the account is not an administrator."),
             status_code=401,
         )
+    logx.usage(
+        f"admin {user.username} signed in to the admin interface",
+        request=request,
+        username=user.username,
+        operation="login",
+    )
     response = RedirectResponse("/", status_code=303)
     _set_cookie(response, request, user.username)
     return response
 
 
 @app.post("/logout")
-def logout():
+def logout(request: Request):
+    user = _current_user(request)
+    logx.usage(
+        f"admin {user.username if user else 'unknown'} signed out",
+        request=request,
+        username=user.username if user else "",
+        operation="logout",
+    )
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(COOKIE, path="/")
     return response
@@ -145,13 +218,16 @@ class PasswordBody(BaseModel):
 
 
 @app.get("/api/session")
-def api_session(user: User = Depends(require_admin)):
+def api_session(request: Request, response: Response, user: User = Depends(require_admin)):
+    # Polling this on activity slides the admin idle window (re-issues the cookie).
+    _set_cookie(response, request, user.username)
     return {
         "username": user.username,
         "isAdmin": user.is_admin,
         "defaultPasswordActive": store.default_admin_password_active,
         "requireLogin": store.require_login,
         "idleTimeoutMins": store.idle_timeout_mins,
+        "adminIdleTimeoutMins": store.admin_idle_timeout_mins,
         "builtinAdmin": DEFAULT_ADMIN_USERNAME,
     }
 
@@ -174,6 +250,99 @@ class IdleTimeoutBody(BaseModel):
 def api_idle_timeout(body: IdleTimeoutBody, user: User = Depends(require_admin)):
     store.set_idle_timeout_mins(body.minutes)
     return {"ok": True, "idleTimeoutMins": store.idle_timeout_mins}
+
+
+@app.post("/api/access/admin-idle-timeout")
+def api_admin_idle_timeout(body: IdleTimeoutBody, user: User = Depends(require_admin)):
+    """Idle timeout for the admin interface itself — separate from the app's."""
+    store.set_admin_idle_timeout_mins(body.minutes)
+    return {"ok": True, "adminIdleTimeoutMins": store.admin_idle_timeout_mins}
+
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/logs")
+def api_logs(
+    request: Request,
+    level: str = "",
+    severities: str = "",
+    clientIp: str = "",
+    operation: str = "",
+    search: str = "",
+    limit: int = 500,
+    user: User = Depends(require_admin),
+):
+    sev_list = [s for s in severities.split(",") if s] if severities else None
+    entries = log_store.query(
+        level=level or None,
+        severities=sev_list,
+        client_ip=clientIp,
+        operation=operation,
+        search=search,
+        limit=limit,
+    )
+    return {
+        "entries": entries,
+        "config": log_store.config(),
+        "operations": log_store.operations(),
+        "severities": list(LEVELS),
+    }
+
+
+class LogConfigBody(BaseModel):
+    level: str | None = None
+    maxBytes: int | None = None
+
+
+@app.post("/api/logs/config")
+def api_logs_config(body: LogConfigBody, user: User = Depends(require_admin)):
+    if body.level is not None:
+        log_store.set_level(body.level)
+    if body.maxBytes is not None:
+        log_store.set_max_bytes(body.maxBytes)
+    logx.info(
+        f"admin {user.username} updated logging config "
+        f"(level={log_store.level}, maxBytes={log_store.max_bytes})",
+        username=user.username,
+        operation="config",
+    )
+    return {"ok": True, "config": log_store.config()}
+
+
+@app.post("/api/logs/clear")
+def api_logs_clear(user: User = Depends(require_admin)):
+    log_store.clear()
+    logx.warn(
+        f"admin {user.username} cleared the live log",
+        username=user.username,
+        operation="config",
+    )
+    return {"ok": True}
+
+
+@app.get("/api/logs/download")
+def api_logs_download(
+    level: str = "",
+    severities: str = "",
+    clientIp: str = "",
+    operation: str = "",
+    search: str = "",
+    user: User = Depends(require_admin),
+):
+    sev_list = [s for s in severities.split(",") if s] if severities else None
+    text = log_store.render(
+        level=level or None,
+        severities=sev_list,
+        client_ip=clientIp,
+        operation=operation,
+        search=search,
+        limit=5000,
+    )
+    return PlainTextResponse(
+        text,
+        headers={"Content-Disposition": 'attachment; filename="pmw-log.log"'},
+    )
 
 
 @app.post("/api/self/password")
@@ -412,6 +581,11 @@ def api_restart(user: User = Depends(require_admin)):
     The admin interface follows the same TLS mode, so it restarts itself too: this
     request's connection may drop and, if the mode changed, the admin moves to a
     different scheme/port — reconnect there if this page stops responding."""
+    logx.info(
+        f"admin {user.username} restarted the app + admin servers",
+        username=user.username,
+        operation="restart",
+    )
     gui_pid = _signal_launcher(GUI_PID_PATH)
     # Restart the admin launcher too, best-effort: signalling our own launcher tears
     # down this very listener, so don't fail the request if the response races it.
@@ -548,11 +722,40 @@ async def api_test_connection(body: ConnectionTestBody, user: User = Depends(req
     if body.llmURL.strip():
         llm = LLMServer(serverURL=body.llmURL, apiKey=body.llmKey)
         if await check_llm_reachable(llm):
-            llm_models = await llm_service.list_models(body.llmURL, body.llmKey)
+            try:
+                llm_models = await llm_service.list_models(body.llmURL, body.llmKey)
+            except Exception as exc:  # noqa: BLE001
+                llm_error = str(exc)
+                logx.warn(
+                    f"LLM server test failed — {body.llmURL}: {exc}",
+                    operation="llm-test",
+                )
         else:
-            llm_error = "LLM server not reachable."
+            llm_error = "LLM server not reachable."  # check_llm_reachable logged the cause
 
     return {"dbError": db_error, "llmError": llm_error, "llmModels": llm_models}
+
+
+@app.post("/api/connections/provision-schema")
+async def api_provision_schema(body: ConnectionTestBody, user: User = Depends(require_admin)):
+    """Create the process-mining schema + tables using the supplied credentials.
+
+    Requires elevated database privileges (CREATE SCHEMA / CREATE TABLE) that only a
+    database administrator can grant — the app cannot.
+    """
+    from app.db.schema_ddl import provision_process_mining_schema
+
+    return await provision_process_mining_schema(
+        host=body.host,
+        port=body.port,
+        username=body.username,
+        password=body.password,
+        schema=body.schema_,
+        use_tls=body.useTLS,
+        cert_mode=body.certModeRaw,
+        fingerprint=body.fingerprint,
+        min_rsa_bits=body.minRSAKeySizeBits,
+    )
 
 
 # ── LDAP / directory ──────────────────────────────────────────────────────────

@@ -16,6 +16,13 @@ SECRET_KEY_PATH = DATA_DIR / "secret.key"
 # of certificates. The active certificate is materialised to disk so uvicorn's
 # TLS listener can read it as files.
 SECURITY_DB_PATH = DATA_DIR / "security.sqlite3"
+
+# Structured application/admin log (shared by all three processes). The live log
+# is the SQLite store; rotated segments are written to LOGS_DIR as .log files.
+LOGS_DB_PATH = DATA_DIR / "logs.sqlite3"
+LOGS_DIR = DATA_DIR / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
 CERTS_DIR = DATA_DIR / "certs"
 CERTS_DIR.mkdir(parents=True, exist_ok=True)
 ACTIVE_CERT_PATH = CERTS_DIR / "active.crt"

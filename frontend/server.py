@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
+from app import log_events as logx  # noqa: E402
 from app.config import BACKEND_URL, SESSION_TTL_SECS  # noqa: E402
 from app.store.crypto import read_session, sign_session  # noqa: E402
 from app.store.security import User, store  # noqa: E402
@@ -37,6 +38,7 @@ INDEX_HTML = DIST_DIR / "index.html"
 PROXY_TIMEOUT = httpx.Timeout(300.0, connect=10.0)
 
 app = FastAPI(title="Process Mining Demonstrator — GUI Server", version="1.0.0")
+logx.install_request_logging(app, lambda r: _current_user(r))
 
 # The proxy client is created lazily and recreated if it was closed. This matters
 # because the TLS-aware launcher (frontend/launch.py) restarts uvicorn's listeners
@@ -133,10 +135,22 @@ async def auth_login(request: Request) -> Response:
     # panel deliberately stays on local-only `authenticate`.
     user = store.authenticate_app(username, password)
     if user is None:
+        logx.warn(
+            f"failed sign-in for username {username!r}",
+            request=request,
+            username=username,
+            operation="login",
+        )
         return JSONResponse(
             {"detail": "Invalid username or password, or the account is disabled."},
             status_code=401,
         )
+    logx.usage(
+        f"user {user.username} signed in ({user.auth_source})",
+        request=request,
+        username=user.username,
+        operation="login",
+    )
     response = JSONResponse(
         {
             "username": user.username,
@@ -187,7 +201,14 @@ async def auth_directory_status() -> Response:
 
 
 @app.post("/auth/logout")
-async def auth_logout() -> Response:
+async def auth_logout(request: Request) -> Response:
+    user = _current_user(request)
+    logx.usage(
+        f"user {user.username if user else 'unknown'} signed out",
+        request=request,
+        username=user.username if user else "",
+        operation="logout",
+    )
     response = JSONResponse({"ok": True})
     response.delete_cookie(SESSION_COOKIE, path="/")
     return response

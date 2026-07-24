@@ -20,6 +20,10 @@ function methodLabel(method: SamplingMethod | undefined): string | undefined {
   return SAMPLING_METHODS.find((m) => m.id === method)?.label
 }
 
+function methodIcon(method: SamplingMethod | undefined): string | undefined {
+  return SAMPLING_METHODS.find((m) => m.id === method)?.icon
+}
+
 function ChartSourcePicker({
   label,
   labelColor,
@@ -257,13 +261,27 @@ export function SamplingSection() {
                 >
                   {sampleShortLabel(slot)}
                 </span>
-                <span className="t-caption2 fg-secondary truncate">
-                  {created
-                    ? `${count.toLocaleString()} journeys${
-                        method ? ` · ${methodLabel(method)}` : ''
-                      }`
-                    : 'Not created'}
-                </span>
+                {created ? (
+                  <span
+                    className="row"
+                    style={{ gap: 6, flexWrap: 'wrap', rowGap: 2 }}
+                  >
+                    <span className="t-caption2 fg-secondary">
+                      {count.toLocaleString()} journeys
+                    </span>
+                    {method && (
+                      <span
+                        className="sample-method-tag"
+                        title={`Sampling strategy: ${methodLabel(method)}`}
+                      >
+                        <span aria-hidden>{methodIcon(method)}</span>
+                        {methodLabel(method)}
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  <span className="t-caption2 fg-secondary truncate">Not created</span>
+                )}
               </div>
               {created ? (
                 <button
