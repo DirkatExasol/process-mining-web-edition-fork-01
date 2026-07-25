@@ -184,7 +184,7 @@ each with schema · journeys · Generate in one row:
 
 - **Retail** — 📚 *Online Bookstore* (`BOOKSTORE` project): login → browse → basket →
   checkout → payment → fulfilment → delivery, with a 5% returns flow and a flaky
-  bank-transfer path. A faithful port of the macOS app's generator.
+  bank-transfer path.
 - **Finance/Insurance** — 💶 *Online Credit Application* (`CREDIT` project): bank/affiliate
   intake → application check (with a 20% rework loop) → credit assessment (*Credit
   Assessment* for bank, *Credit Check* for affiliate) → score-driven approval (<75% auto
@@ -206,9 +206,8 @@ the dataset prefix plus a **1-based, zero-padded 6-digit sequence number**:
 | Online Bookstore | `BOOKSTORE` | `ORD-%06d` → `ORD-000001`, `ORD-000002`, … | `md5("ORD-000001")` = `4c2a8…` |
 | Online Credit Application | `CREDIT` | `CRA-%06d` → `CRA-000001`, `CRA-000002`, … | `md5("CRA-000001")` = `9f1b3…` |
 
-The hash is the UTF-8 MD5 lowercase hex digest (`hashlib.md5(raw).hexdigest()`), matching
-the macOS app. To reproduce a specific ID from the shell: `printf 'ORD-%06d' 1 | md5`
-(or `md5sum` on Linux).
+The hash is the UTF-8 MD5 lowercase hex digest (`hashlib.md5(raw).hexdigest()`). To
+reproduce a specific ID from the shell: `printf 'ORD-%06d' 1 | md5` (or `md5sum` on Linux).
 
 **Directory (LDAP / Active Directory).** When enabled, the **main application** login
 also accepts directory accounts via **search + bind**: the server binds with a
@@ -242,14 +241,13 @@ Environment overrides: `PMW_ADMIN_PORT` (8090), `PMW_FRONTEND_HTTPS_PORT` (8443)
 
 Reads from `PROJECTS`, `JOURNEYS`, `STEPS`, `METAS` (all required). A `NOTES`
 table and the `JOURNEYS.SAMPLE_SET` column are created automatically on first use
-if the connecting user has the necessary rights. The schema is identical to the
-macOS app — see the in-app **Help → Database setup** chapter or `ARCHITECTURE.md`.
+if the connecting user has the necessary rights. The schema is documented in the
+in-app **Help → Database setup** chapter and `ARCHITECTURE.md`.
 
 ## Tests
 
-The suite mirrors the macOS app's two test targets: pure model & simulation logic
-(no database required) and a UI/launch smoke check. It is split across the two
-tech stacks.
+The suite has two parts: pure model & simulation logic (no database required) and
+a UI/launch smoke check. It is split across the two tech stacks.
 
 | Target | Framework | What it covers |
 |---|---|---|
@@ -286,8 +284,7 @@ Exasol connection or LLM endpoint.
 
 ### Backend — `backend/tests/`
 
-Ported directly from the Swift `ModelLogicTests` and `SimulationEngineTests`, plus
-coverage of the web-specific compute layer.
+Cover the model & simulation logic plus the web-specific compute layer.
 
 | File | What it covers |
 |---|---|
@@ -311,7 +308,7 @@ coverage of the web-specific compute layer.
 | `graph/colors.test.ts` | `namedColor` (named / hex / fallback), gradient interpolation, deterministic `groupColor`, and per-metric default schemas |
 | `graph/format.test.ts` | Count / duration / compound-seconds formatting and the ISO-date round-trip |
 | `types.test.ts` | `metricValue`, `maxMetricValue`, `isTimeBased`, sample-set labels and note-target keys/labels |
-| `components/ui.test.tsx` | Render smoke tests (the web analogue of the Swift UI launch tests): `Unavailable`, `Switch`, `Segmented`, `RangeSlider`, and the Markdown renderer's headings/bold/tables/lists |
+| `components/ui.test.tsx` | Render smoke tests: `Unavailable`, `Switch`, `Segmented`, `RangeSlider`, and the Markdown renderer's headings/bold/tables/lists |
 
 ## Data & privacy
 
@@ -323,20 +320,18 @@ coverage of the web-specific compute layer.
 - Secrets — database passwords, LLM API keys, the LDAP service-account password
   and certificate private keys — are encrypted (Fernet) using the key file
   `data/secret.key` (created with mode `0600`); user passwords are scrypt-hashed.
-- Backups export as JSON, optionally encrypted with AES-256-GCM, and are
-  interchangeable with the macOS version's backups.
+- Backups export as JSON, optionally encrypted with AES-256-GCM.
 
 The whole `data/` directory (default location; override with `PMW_DATA_DIR`, or
 bind-mount it with Docker) is git-ignored — back it up to preserve users,
 connections, certificates and settings.
 
-## Parity with the macOS app
+## Features
 
-Functionality and look-and-feel mirror the SwiftUI original: the collapsible left
-sidebar, the KPI strip, node drag / group collapse / pan-zoom interactions, the
-valve-synchronised A/B panels, sticky notes on nodes and edges, and every
-analytics formula (process goodness, happy-path conformance, A/B similarity Q,
-the Markov simulation engine) are ported directly from the Swift sources.
+A collapsible left sidebar, the KPI strip, node drag / group collapse / pan-zoom
+interactions, valve-synchronised A/B panels, sticky notes on nodes and edges, and a
+full analytics suite: process goodness, happy-path conformance, A/B similarity Q and
+a Markov simulation engine.
 
 ## License
 
