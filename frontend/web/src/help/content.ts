@@ -198,6 +198,21 @@ const connecting: HelpTopic = {
       ],
     },
     {
+      heading: 'Demo event-ID format',
+      body: [
+        p('In both demo datasets the stored EVENT_ID — the case key that ties a journey’s rows together — is the MD5 hash of a simple synthetic reference: the dataset prefix plus a 1-based, zero-padded 6-digit sequence number. So the first journey uses ORD-000001 / CRA-000001, the second ORD-000002 / CRA-000002, and so on.'),
+        code(
+          'Online Bookstore (BOOKSTORE):     EVENT_ID = md5("ORD-000001"), md5("ORD-000002"), …\n' +
+            'Online Credit Application (CREDIT): EVENT_ID = md5("CRA-000001"), md5("CRA-000002"), …\n' +
+            '\n' +
+            '# reproduce a specific ID from a shell:\n' +
+            "printf 'ORD-%06d' 1 | md5      # macOS  →  the stored 32-char hex EVENT_ID\n" +
+            "printf 'CRA-%06d' 42 | md5sum  # Linux",
+        ),
+        tip('In the Individual Journey view you can type the friendly reference (e.g. ORD-000001) straight into the Event ID field — it is MD5-hashed for you — or paste a raw 32-character hash.'),
+      ],
+    },
+    {
       heading: 'No connections listed?',
       body: [
         p('An empty Connections list means no connection has been assigned to your account yet. Ask an administrator to grant you access from the admin interface (Database Connections tab) — or, if you are a power user, create one with the ＋ button.'),

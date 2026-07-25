@@ -649,7 +649,7 @@ export function ConnectionEditor({
               <DemoSection
                 icon="📚"
                 title="Online Bookstore"
-                description="Order lifecycle: login → browse → basket → checkout → payment → fulfilment → delivery, with a returns flow and a deliberately flaky bank-transfer path."
+                description="Order lifecycle: login → browse → basket → checkout → payment → fulfilment → delivery, with a returns flow and a deliberately flaky bank-transfer path. Each EVENT_ID is the MD5 hash of “ORD-000001”, “ORD-000002”, … (the prefix ORD- plus a 6-digit sequence number)."
                 schema={draft.schema}
                 onSchema={(v) => set('schema', v)}
                 generate={(j) => runDemo('retail', j)}
@@ -663,7 +663,7 @@ export function ConnectionEditor({
               <DemoSection
                 icon="💶🪙"
                 title="Online Credit Application"
-                description="Bank/affiliate intake → application check (with a rework loop) → credit assessment → score- and sum-driven approval with agent-review loops, ending in payment or rejection."
+                description="Bank/affiliate intake → application check (with a rework loop) → credit assessment → score- and sum-driven approval with agent-review loops, ending in payment or rejection. Each EVENT_ID is the MD5 hash of “CRA-000001”, “CRA-000002”, … (the prefix CRA- plus a 6-digit sequence number)."
                 schema={draft.schema}
                 onSchema={(v) => set('schema', v)}
                 generate={(j) => runDemo('finance', j)}

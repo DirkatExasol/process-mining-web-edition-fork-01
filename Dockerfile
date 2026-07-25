@@ -50,7 +50,9 @@ COPY --from=web /web/dist ./frontend/web/dist
 # 8000 (backend) is intentionally kept internal.
 EXPOSE 8080 8443 8090 8453
 
+# The backend serves TLS (internal self-signed cert); liveness on loopback does
+# not need cert verification.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
-  CMD /app/.venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)" || exit 1
+  CMD /app/.venv/bin/python -c "import ssl, urllib.request; urllib.request.urlopen('https://127.0.0.1:8000/api/health', timeout=4, context=ssl._create_unverified_context())" || exit 1
 
 CMD ["./run.sh"]

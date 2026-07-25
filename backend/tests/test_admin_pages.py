@@ -116,6 +116,7 @@ def test_dashboard_has_admin_idle_logout(dashboard):
     assert "function setAdminIdle" in dashboard
     assert "_onIdleTimeout" in dashboard  # client-side auto-logout
     assert "/api/access/admin-idle-timeout" in dashboard
+    assert "/login?inactivity=1" in dashboard  # idle logout lands on the notice
 
 
 def test_dashboard_has_logging_tab(dashboard):
@@ -125,6 +126,23 @@ def test_dashboard_has_logging_tab(dashboard):
     assert 'id="logSeverityFilter"' in dashboard  # severity filter
     assert 'id="logSearch"' in dashboard  # regex/wildcard search
     assert "/api/logs/download" in dashboard
+    # Paginated view: per-page dropdown (10/25/50/100) + pager.
+    assert 'id="logPerPage"' in dashboard and "function setLogPerPage" in dashboard
+    assert "function renderLogPager" in dashboard and "function logGoto" in dashboard
+    assert '<option value="10">' in dashboard and '<option value="100">' in dashboard
+
+
+def test_login_page_shows_inactivity_notice(pages):
+    # Same label the app's LoginView shows; the idle auto-logout redirects here.
+    plain = pages.login_page()
+    assert "signed out due to inactivity" not in plain
+    notice = pages.login_page(inactivity=True)
+    assert "You were signed out due to inactivity." in notice
+    assert "login-notice" in notice
+    # An error takes precedence over the inactivity notice (mirrors the app).
+    both = pages.login_page(error="Invalid credentials", inactivity=True)
+    assert "signed out due to inactivity" not in both
+    assert "Invalid credentials" in both
 
 
 def test_login_page_uses_the_app_master_design(pages):
@@ -132,4 +150,23 @@ def test_login_page_uses_the_app_master_design(pages):
     assert "login-splash" in html  # the centred card, like the app's LoginView
     assert "btn-prominent" in html  # full-width prominent Sign-in button
     assert "Sign in to continue" in html  # master subtitle
-    assert ">Administration<" in html  # the respective title
+    # The master's exact field + button classes (identical sizing/layout).
+    assert 'class="text-input"' in html
+    assert "5px 8px" in html and "font-size: 12px" in html  # master field metrics
+
+
+def test_login_page_title_is_two_lines(pages):
+    html = pages.login_page()
+    # Title spans two lines; only the title differs from the app master.
+    assert ">Process Mining Demonstrator<" in html
+    assert ">Administration<" in html
+    assert html.count('class="t-title3"') == 2
+
+
+def test_login_page_matches_master_behaviour(pages):
+    html = pages.login_page()
+    # Submit starts disabled and enables only once a username is entered (like the
+    # app) — so no prefilled username, and the button ships with `disabled`.
+    assert 'value="Administrator"' not in html  # fields start empty, as in the app
+    assert 'id="signin" disabled' in html
+    assert "btn.disabled = !u.value.trim()" in html

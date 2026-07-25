@@ -56,6 +56,21 @@ def gui(tmp_path, monkeypatch):
     return server, security_mod.store
 
 
+def test_backend_proxy_pins_the_internal_ca(gui, monkeypatch, tmp_path):
+    """The GUI→backend hop is HTTPS and verified against the pinned internal CA;
+    it falls back to system trust only when the pinned CA file is absent."""
+    server, _ = gui
+    assert server.BACKEND_URL.startswith("https://")  # encrypted hop
+
+    ca = tmp_path / "internal.crt"
+    ca.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(server, "BACKEND_CA_PATH", str(ca))
+    assert server._backend_verify() == str(ca)  # pinned
+
+    monkeypatch.setattr(server, "BACKEND_CA_PATH", str(tmp_path / "missing.crt"))
+    assert server._backend_verify() is True  # system trust fallback
+
+
 def test_health_is_open_even_when_login_required(gui):
     server, store = gui
     assert store.require_login is True

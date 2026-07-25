@@ -291,6 +291,14 @@ def test_ldap_endpoints_require_admin(admin):
 # ── Admin panel login: admins only (local or LDAP-tagged) ─────────────────────
 
 
+def test_login_get_inactivity_shows_notice(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    assert "inactivity" not in client.get("/login").text
+    body = client.get("/login?inactivity=1").text
+    assert "You were signed out due to inactivity." in body
+
+
 def test_admin_login_rejects_non_admin_local(admin):
     server, store = admin
     store.create_user("bob", "pw", is_admin=False)
@@ -545,6 +553,44 @@ def test_logs_endpoints_capture_and_filter(admin):
 
     # Clear empties the live log.
     assert client.post("/api/logs/clear").status_code == 200
+
+
+def test_logs_are_paginated_and_search_spans_all_pages(admin):
+    server, _ = admin
+    client = _login(server)
+    # Seed at INFO/ERROR (recorded at the default level); the DEBUG request-logs the
+    # /api/logs calls themselves emit are NOT recorded, so the window stays stable
+    # between page fetches.
+    for i in range(60):
+        server.log_store.record("INFO", f"seed {i:02d}", operation="page")
+    server.log_store.record("ERROR", "the lone needle", operation="error")
+
+    # Page 1 of 25 → 25 rows, but 'total' reflects the whole (filtered) log.
+    first = client.get("/api/logs?perPage=25&page=1").json()
+    assert first["perPage"] == 25 and first["page"] == 1
+    assert len(first["entries"]) == 25
+    total = first["total"]
+    assert total >= 61 and first["pages"] == (total + 24) // 25
+
+    # A middle and last page slice the same set without overlap.
+    p2 = client.get("/api/logs?perPage=25&page=2").json()
+    assert len(p2["entries"]) == 25
+    ids1 = {(e["date"], e["time"], e["message"]) for e in first["entries"]}
+    ids2 = {(e["date"], e["time"], e["message"]) for e in p2["entries"]}
+    assert ids1.isdisjoint(ids2)
+
+    # An out-of-range page is clamped to the last page.
+    clamped = client.get("/api/logs?perPage=25&page=999").json()
+    assert clamped["page"] == clamped["pages"]
+
+    # An invalid perPage falls back to 25.
+    assert client.get("/api/logs?perPage=999").json()["perPage"] == 25
+
+    # Search runs over ALL pages, not just the current page: the needle is found
+    # even though it is not on page 1 of the unfiltered view.
+    hit = client.get("/api/logs?search=lone%20needle&perPage=10&page=1").json()
+    assert hit["total"] == 1 and len(hit["entries"]) == 1
+    assert hit["entries"][0]["message"] == "the lone needle"
 
 
 def test_logs_endpoints_require_admin(admin):

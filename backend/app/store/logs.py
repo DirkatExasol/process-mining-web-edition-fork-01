@@ -179,16 +179,16 @@ class LogStore:
 
     # ── query / export ────────────────────────────────────────────────────────
 
-    def query(
+    def _build_where(
         self,
         *,
-        level: str | None = None,
-        severities: list[str] | None = None,
-        client_ip: str = "",
-        operation: str = "",
-        search: str = "",
-        limit: int = 500,
-    ) -> list[dict]:
+        level: str | None,
+        severities: list[str] | None,
+        client_ip: str,
+        operation: str,
+        search: str,
+    ) -> tuple[str, list[object]]:
+        """Shared filter for query()/count() so both see the same result set."""
         clauses: list[str] = []
         params: list[object] = []
         # Severity: an explicit set, or everything up to a max level.
@@ -209,14 +209,58 @@ class LogStore:
             clauses.append("message REGEXP ?")
             params.append(search.strip())
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        return where, params
+
+    def query(
+        self,
+        *,
+        level: str | None = None,
+        severities: list[str] | None = None,
+        client_ip: str = "",
+        operation: str = "",
+        search: str = "",
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[dict]:
+        where, params = self._build_where(
+            level=level,
+            severities=severities,
+            client_ip=client_ip,
+            operation=operation,
+            search=search,
+        )
         limit = max(1, min(int(limit), 5000))
+        offset = max(0, int(offset))
         with self._lock:
             rows = self._conn.execute(
                 f"SELECT ts, severity, client_ip, username, operation, message "
-                f"FROM log_entries {where} ORDER BY id DESC LIMIT ?",
-                (*params, limit),
+                f"FROM log_entries {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+                (*params, limit, offset),
             ).fetchall()
         return [_row_to_dict(r) for r in rows]
+
+    def count(
+        self,
+        *,
+        level: str | None = None,
+        severities: list[str] | None = None,
+        client_ip: str = "",
+        operation: str = "",
+        search: str = "",
+    ) -> int:
+        """Total rows matching the same filter query() uses — for pagination."""
+        where, params = self._build_where(
+            level=level,
+            severities=severities,
+            client_ip=client_ip,
+            operation=operation,
+            search=search,
+        )
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT COUNT(*) AS n FROM log_entries {where}", tuple(params)
+            ).fetchone()
+        return int(row["n"]) if row else 0
 
     def operations(self) -> list[str]:
         with self._lock:

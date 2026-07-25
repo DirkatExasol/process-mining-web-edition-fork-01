@@ -123,10 +123,10 @@ def index(request: Request):
 
 
 @app.get("/login", response_class=HTMLResponse)
-def login_get(request: Request):
+def login_get(request: Request, inactivity: bool = False):
     if _current_user(request) is not None:
         return RedirectResponse("/", status_code=303)
-    return HTMLResponse(pages.login_page())
+    return HTMLResponse(pages.login_page(inactivity=inactivity))
 
 
 # Brief cache so the login screen doesn't re-probe the directory on every load.
@@ -262,6 +262,9 @@ def api_admin_idle_timeout(body: IdleTimeoutBody, user: User = Depends(require_a
 # ── Logging ───────────────────────────────────────────────────────────────────
 
 
+_LOG_PAGE_SIZES = (10, 25, 50, 100)
+
+
 @app.get("/api/logs")
 def api_logs(
     request: Request,
@@ -270,20 +273,30 @@ def api_logs(
     clientIp: str = "",
     operation: str = "",
     search: str = "",
-    limit: int = 500,
+    page: int = 1,
+    perPage: int = 25,
     user: User = Depends(require_admin),
 ):
     sev_list = [s for s in severities.split(",") if s] if severities else None
-    entries = log_store.query(
+    filt = dict(
         level=level or None,
         severities=sev_list,
         client_ip=clientIp,
         operation=operation,
         search=search,
-        limit=limit,
     )
+    per_page = perPage if perPage in _LOG_PAGE_SIZES else 25
+    # The filter (incl. search) spans the whole log; paging only slices the view.
+    total = log_store.count(**filt)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(max(1, page), pages)
+    entries = log_store.query(**filt, limit=per_page, offset=(page - 1) * per_page)
     return {
         "entries": entries,
+        "total": total,
+        "page": page,
+        "perPage": per_page,
+        "pages": pages,
         "config": log_store.config(),
         "operations": log_store.operations(),
         "severities": list(LEVELS),

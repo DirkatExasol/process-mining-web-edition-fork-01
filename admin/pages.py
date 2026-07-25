@@ -200,60 +200,102 @@ details summary { cursor: pointer; font-size: 13px; color: var(--accent); paddin
 """
 
 
-def login_page(error: str = "") -> str:
-    """The admin sign-in screen — same design as the main app's login panel
-    (`LoginView.tsx`, the master), with the Administration title."""
+def login_page(error: str = "", inactivity: bool = False) -> str:
+    """The admin sign-in screen — a faithful port of the main app's login panel
+    (`LoginView.tsx`, the master): identical layout, field sizing and behaviour
+    (submit stays disabled until a username is entered). The ONLY difference is
+    the two-line title (Process Mining Demonstrator / Administration)."""
     err = (
         f'<div class="login-err">{html.escape(error)}</div>' if error else ""
+    )
+    # Same inactivity notice the app shows (LoginView.tsx); error takes precedence.
+    notice = (
+        '<div class="login-notice">You were signed out due to inactivity.</div>'
+        if inactivity and not error
+        else ""
     )
     return f"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 {_FAVICON_LINK}{_THEME_BOOT}
 <title>Administration — Sign in</title><style>{_STYLE}
-body {{ display: grid; place-items: center; min-height: 100vh; background: var(--bg); padding: 24px; }}
-.login-splash {{ width: min(460px, 100%); border-radius: 20px; background: var(--panel);
-  box-shadow: var(--shadow); padding: 32px 28px; display: flex; flex-direction: column;
-  align-items: center; gap: 14px; text-align: center; }}
-.login-logo {{ width: 64px; height: 64px; border-radius: 16px; display: grid; place-items: center;
-  box-shadow: 0 2px 8px rgba(10,20,60,.35); }}
-.login-logo .pm-logo {{ width: 100%; height: 100%; }}
-.login-title {{ display: flex; flex-direction: column; align-items: center; gap: 2px; }}
-.login-h1 {{ font-size: 20px; font-weight: 700; }}
-.login-sub {{ font-size: 12px; color: var(--muted); }}
-.login-form {{ display: flex; flex-direction: column; gap: 14px; width: 100%; }}
-.lfield {{ display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; }}
-.lfield label {{ font-size: 11px; color: var(--muted); }}
-.lfield input {{ width: 100%; padding: 8px 10px; font-size: 14px; border-radius: 8px;
-  border: 1px solid transparent; background: var(--fill); color: var(--text); outline: none; }}
-.lfield input:focus {{ border-color: var(--accent); }}
-.btn-prominent {{ width: 100%; padding: 10px; font-size: 15px; font-weight: 600; border-radius: 8px;
-  background: var(--accent); color: #fff; border: none; cursor: pointer; }}
-.btn-prominent:hover {{ filter: brightness(1.05); }}
-.login-err {{ width: 100%; padding: 10px 12px; border-radius: 8px; font-size: 12px; text-align: left;
-  background: rgba(255,69,58,.12); border: 1px solid rgba(255,69,58,.35); color: var(--red); }}
-.login-foot {{ font-size: 11px; color: var(--tertiary); margin: 0; }}
+/* App-master (LoginView.tsx) tokens, mirrored so both panels render identically
+   in light and dark. Rules are scoped under .login-splash so they win over the
+   base input/button styles in _STYLE. */
+:root {{
+  --l-material: rgba(255,255,255,.82); --l-shadow: 0 12px 40px rgba(0,0,0,.22);
+  --l-primary: #000; --l-secondary: rgba(60,60,67,.6);
+  --l-fill: rgba(120,120,128,.12); --l-grouped: #f2f2f7;
+}}
+:root[data-theme='dark'] {{
+  --l-material: rgba(38,38,40,.86); --l-shadow: 0 12px 40px rgba(0,0,0,.6);
+  --l-primary: #fff; --l-secondary: rgba(235,235,245,.6);
+  --l-fill: rgba(120,120,128,.24); --l-grouped: #000;
+}}
+body {{ display: grid; place-items: center; min-height: 100vh; background: var(--l-grouped); padding: 24px; }}
+.login-splash {{ width: min(460px, 100%); border-radius: 20px; background: var(--l-material);
+  -webkit-backdrop-filter: blur(30px); backdrop-filter: blur(30px); box-shadow: var(--l-shadow);
+  padding: 32px 28px; display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }}
+.login-splash .login-logo {{ width: 64px; height: 64px; border-radius: 11px; display: grid; place-items: center;
+  background: none; box-shadow: 0 2px 6px rgba(10,20,60,.28); flex-shrink: 0; }}
+.login-splash .login-logo .pm-logo {{ width: 100%; height: 100%; }}
+.login-splash .title-col {{ display: flex; flex-direction: column; align-items: center; gap: 2px; }}
+.login-splash .t-title3 {{ font-size: 20px; font-weight: 700; color: var(--l-primary); line-height: 1.2; }}
+.login-splash .t-caption {{ font-size: 11px; color: var(--l-secondary); }}
+.login-splash .login-form {{ display: flex; flex-direction: column; align-items: center; gap: 16px; width: 100%; }}
+.login-splash .field {{ display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left; }}
+.login-splash .field-label {{ font-size: 11px; color: var(--l-secondary); }}
+.login-splash .text-input {{ width: 100%; padding: 5px 8px; font-size: 12px; border-radius: 6px;
+  border: 1px solid transparent; background: var(--l-fill); color: var(--l-primary); outline: none; }}
+.login-splash .text-input:focus {{ border-color: transparent; }}
+.login-splash .btn-prominent {{ width: 100%; padding: 10px; font-size: 15px; font-weight: 500; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  background: var(--accent); color: #fff; border: none; white-space: nowrap; }}
+.login-splash .btn-prominent:hover:not(:disabled) {{ filter: brightness(1.08); }}
+.login-splash .btn-prominent:disabled {{ opacity: .4; cursor: default; }}
+.login-splash .login-err, .login-splash .login-notice {{ width: 100%; padding: 10px 12px; border-radius: 6px;
+  font-size: 12px; text-align: left; }}
+.login-splash .login-err {{ background: rgba(255,59,48,.12); border: 1px solid rgba(255,59,48,.32); color: #ff3b30; }}
+.login-splash .login-notice {{ background: rgba(255,159,10,.12); border: 1px solid rgba(255,159,10,.32); color: #ff9500; }}
+.login-splash .dir-row {{ display: flex; align-items: center; gap: 6px; }}
+.login-splash .t-caption2 {{ font-size: 10px; color: var(--l-secondary); }}
+.login-splash .spinner {{ width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255,255,255,.4);
+  border-top-color: #fff; animation: spin .8s linear infinite; display: inline-block; }}
+@keyframes spin {{ to {{ transform: rotate(360deg); }} }}
 </style></head><body>
 <div class="login-splash">
   <div class="login-logo">{_LOGO_SVG}</div>
-  <div class="login-title">
-    <span class="login-h1">Administration</span>
-    <span class="login-sub">Sign in to continue</span>
+  <div class="title-col">
+    <span class="t-title3">Process Mining Demonstrator</span>
+    <span class="t-title3">Administration</span>
+    <span class="t-caption">Sign in to continue</span>
   </div>
-  {err}
-  <form class="login-form" method="post" action="/login">
-    <div class="lfield"><label>Username</label>
-      <input type="text" name="username" autocomplete="username" autofocus value="Administrator"></div>
-    <div class="lfield"><label>Password</label>
-      <input type="password" name="password" autocomplete="current-password"></div>
-    <button class="btn-prominent" type="submit">Sign in</button>
+  {notice}{err}
+  <form class="login-form" method="post" action="/login" id="loginForm">
+    <div class="field"><label class="field-label" for="u">Username</label>
+      <input class="text-input" id="u" type="text" name="username" autocomplete="username"
+        autocapitalize="none" autocorrect="off" autofocus></div>
+    <div class="field"><label class="field-label" for="p">Password</label>
+      <input class="text-input" id="p" type="password" name="password" autocomplete="current-password"></div>
+    <button class="btn-prominent" type="submit" id="signin" disabled>
+      <span class="spinner" id="spin" style="display:none"></span> Sign in</button>
   </form>
-  <div id="dirStatus" class="row" style="justify-content:center; gap:6px; display:none">
+  <div id="dirStatus" class="dir-row" style="display:none">
     <span id="dirDot" style="width:8px; height:8px; border-radius:50%; flex:0 0 auto"></span>
-    <span id="dirLabel" style="font-size:12px; color:var(--muted)"></span>
+    <span id="dirLabel" class="t-caption2"></span>
   </div>
-  <p class="login-foot">Admin access only.</p>
 </div>
 <script>
+// Submit stays disabled until a username is entered — mirrors the app's LoginView.
+(function () {{
+  var u = document.getElementById('u'), btn = document.getElementById('signin');
+  var form = document.getElementById('loginForm'), spin = document.getElementById('spin');
+  function sync() {{ btn.disabled = !u.value.trim(); }}
+  u.addEventListener('input', sync); sync();
+  form.addEventListener('submit', function () {{
+    if (btn.disabled) return;
+    btn.disabled = true; spin.style.display = 'inline-block';  // busy state during the POST
+  }});
+}})();
 // Directory-server availability LED — shown only when a directory is configured.
 (async function () {{
   try {{
@@ -567,7 +609,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <div class="row" style="flex-wrap:wrap; gap:8px; margin:12px 0 8px; align-items:center">
       <div class="seg" id="logSeverityFilter"></div>
       <input type="text" id="logIp" placeholder="Client IP" style="width:130px" oninput="scheduleLogReload()">
-      <select id="logOp" onchange="loadLogs()"><option value="">All operations</option></select>
+      <select id="logOp" onchange="logResetReload()"><option value="">All operations</option></select>
       <input type="text" id="logSearch" placeholder="Search message (regex / wildcards)…"
         style="flex:1; min-width:180px" oninput="scheduleLogReload()">
       <button class="btn small" onclick="loadLogs()">↻ Refresh</button>
@@ -575,6 +617,18 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       <button class="btn small danger" onclick="clearLogs()">Clear</button>
     </div>
     <div id="logTable"></div>
+    <div class="row" id="logPager"
+      style="justify-content:space-between; align-items:center; gap:12px; margin-top:12px; font-size:13px">
+      <label class="row subtle" style="gap:6px">Per page
+        <select id="logPerPage" onchange="setLogPerPage()">
+          <option value="10">10</option>
+          <option value="25" selected>25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </label>
+      <span class="row" id="logPagerNav" style="gap:8px; align-items:center"></span>
+    </div>
   </div>
   </div><!-- /tab-logging -->
 </div>
@@ -688,7 +742,7 @@ function _resetIdle() {
 }
 async function _onIdleTimeout() {
   try { await fetch('/logout', { method: 'POST' }); } catch (e) { /* cookie expires anyway */ }
-  location.href = '/login';
+  location.href = '/login?inactivity=1';
 }
 function setAdminIdle(mins) {
   ADMIN_IDLE_MINS = mins || 0;
@@ -898,6 +952,7 @@ function selectTab(name) {
 
 // ── Logging ───────────────────────────────────────────────────────────────
 let LOG_LEVELS = [], LOG_SEVS = new Set(), _logInited = false, _logReloadTimer = null;
+let _logPage = 1, _logPerPage = 25, _logTotal = 0, _logPages = 1;
 
 function _logParams() {
   const p = new URLSearchParams();
@@ -908,7 +963,9 @@ function _logParams() {
   return p;
 }
 async function loadLogs() {
-  const params = _logParams(); params.set('limit', '500');
+  const params = _logParams();
+  params.set('page', String(_logPage));
+  params.set('perPage', String(_logPerPage));
   const r = await api('/api/logs?' + params.toString());
   LOG_LEVELS = r.severities || [];
   if (!_logInited) {
@@ -922,7 +979,30 @@ async function loadLogs() {
   $('logOp').innerHTML = '<option value="">All operations</option>' +
     (r.operations || []).map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('');
   $('logOp').value = curOp;
+  _logPage = r.page; _logPerPage = r.perPage; _logTotal = r.total; _logPages = r.pages;
   renderLogRows(r.entries || []);
+  renderLogPager();
+}
+// Filters/search span the entire log, so any filter change returns to page 1.
+function logResetReload() { _logPage = 1; loadLogs().catch(e => toast(e.message, true)); }
+function logGoto(p) { _logPage = Math.max(1, Math.min(p, _logPages)); loadLogs().catch(e => toast(e.message, true)); }
+function setLogPerPage() {
+  _logPerPage = parseInt($('logPerPage').value, 10) || 25;
+  _logPage = 1;
+  loadLogs().catch(e => toast(e.message, true));
+}
+function renderLogPager() {
+  const nav = $('logPagerNav');
+  if (!_logTotal) { nav.innerHTML = '<span class="subtle">No entries</span>'; return; }
+  const start = (_logPage - 1) * _logPerPage + 1;
+  const end = Math.min(_logTotal, _logPage * _logPerPage);
+  nav.innerHTML =
+    `<span class="subtle">${start}–${end} of ${_logTotal}</span>` +
+    `<button class="btn small" ${_logPage <= 1 ? 'disabled' : ''} onclick="logGoto(1)">« First</button>` +
+    `<button class="btn small" ${_logPage <= 1 ? 'disabled' : ''} onclick="logGoto(${_logPage - 1})">‹ Prev</button>` +
+    `<span class="subtle">Page ${_logPage} / ${_logPages}</span>` +
+    `<button class="btn small" ${_logPage >= _logPages ? 'disabled' : ''} onclick="logGoto(${_logPage + 1})">Next ›</button>` +
+    `<button class="btn small" ${_logPage >= _logPages ? 'disabled' : ''} onclick="logGoto(${_logPages})">Last »</button>`;
 }
 function renderSeverityChips() {
   $('logSeverityFilter').innerHTML = LOG_LEVELS.map(lv =>
@@ -933,7 +1013,7 @@ function toggleLogSeverity(lv) {
   if (LOG_SEVS.size === 0) LOG_LEVELS.forEach(l => LOG_SEVS.add(l));  // 'all' → explicit
   if (LOG_SEVS.has(lv)) LOG_SEVS.delete(lv); else LOG_SEVS.add(lv);
   if (LOG_SEVS.size === LOG_LEVELS.length) LOG_SEVS.clear();          // all selected → 'all'
-  loadLogs().catch(e => toast(e.message, true));
+  logResetReload();
 }
 function renderLogRows(entries) {
   if (!entries.length) { $('logTable').innerHTML = '<p class="subtle">No matching log entries.</p>'; return; }
@@ -948,7 +1028,7 @@ function renderLogRows(entries) {
 }
 function scheduleLogReload() {
   clearTimeout(_logReloadTimer);
-  _logReloadTimer = setTimeout(() => loadLogs().catch(e => toast(e.message, true)), 300);
+  _logReloadTimer = setTimeout(logResetReload, 300);
 }
 async function saveLogConfig() {
   const level = $('logLevel').value;
@@ -959,7 +1039,7 @@ async function saveLogConfig() {
 }
 async function clearLogs() {
   if (!confirm('Clear the live log?\n\nThis empties the current log (rotated archive files are kept).')) return;
-  try { await api('/api/logs/clear', { method: 'POST' }); toast('Log cleared'); await loadLogs(); }
+  try { await api('/api/logs/clear', { method: 'POST' }); toast('Log cleared'); _logPage = 1; await loadLogs(); }
   catch (e) { toast(e.message, true); }
 }
 function downloadLog() {

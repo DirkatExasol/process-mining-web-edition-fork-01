@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from app import log_events as logx  # noqa: E402
-from app.config import BACKEND_URL, SESSION_TTL_SECS  # noqa: E402
+from app.config import BACKEND_CA_PATH, BACKEND_URL, SESSION_TTL_SECS  # noqa: E402
 from app.store.crypto import read_session, sign_session  # noqa: E402
 from app.store.security import User, store  # noqa: E402
 
@@ -37,6 +37,19 @@ INDEX_HTML = DIST_DIR / "index.html"
 # Long enough for LLM documentation runs and heavy statistics queries.
 PROXY_TIMEOUT = httpx.Timeout(300.0, connect=10.0)
 
+
+def _backend_verify() -> object:
+    """TLS verification for the backend connection.
+
+    For an HTTPS backend, pin trust to the internal self-signed cert when present
+    (encrypted *and* authenticated); fall back to the system trust store otherwise.
+    Ignored for a plain-HTTP backend (e.g. PMW_BACKEND_URL overridden to http://).
+    """
+    ca = (BACKEND_CA_PATH or "").strip()
+    if ca and Path(ca).exists():
+        return ca
+    return True
+
 app = FastAPI(title="Process Mining Demonstrator — GUI Server", version="1.0.0")
 logx.install_request_logging(app, lambda r: _current_user(r))
 
@@ -45,12 +58,21 @@ logx.install_request_logging(app, lambda r: _current_user(r))
 # in-process on SIGHUP, which fires the app's shutdown/startup lifespan events —
 # the client must survive (or transparently reopen) across such a restart.
 _client: httpx.AsyncClient | None = None
+_client_pinned: bool = False
 
 
 def _get_client() -> httpx.AsyncClient:
-    global _client
-    if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(base_url=BACKEND_URL, timeout=PROXY_TIMEOUT)
+    global _client, _client_pinned
+    verify = _backend_verify()
+    pinned = verify is not True  # a CA-path string means we pin the backend cert
+    # Rebuild if never built, if the launcher closed it on a SIGHUP restart, or if
+    # the pinned CA has since appeared (the backend may still have been minting the
+    # internal cert when this process first built its client → system-trust only).
+    if _client is None or _client.is_closed or (pinned and not _client_pinned):
+        _client = httpx.AsyncClient(
+            base_url=BACKEND_URL, timeout=PROXY_TIMEOUT, verify=verify
+        )
+        _client_pinned = pinned
     return _client
 
 

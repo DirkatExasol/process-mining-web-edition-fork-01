@@ -28,6 +28,11 @@ CERTS_DIR.mkdir(parents=True, exist_ok=True)
 ACTIVE_CERT_PATH = CERTS_DIR / "active.crt"
 ACTIVE_KEY_PATH = CERTS_DIR / "active.key"
 
+# Always-on self-signed cert for the internal GUI → compute-backend hop (loopback).
+# Independent of the user-facing TLS mode; minted on backend start (internal_tls).
+INTERNAL_CERT_PATH = CERTS_DIR / "internal.crt"
+INTERNAL_KEY_PATH = CERTS_DIR / "internal.key"
+
 # Each TLS-aware launcher (GUI + admin) writes its PID here so the admin service
 # can signal a restart (SIGHUP → rebind listeners with the current TLS plan).
 GUI_PID_PATH = DATA_DIR / "gui.pid"
@@ -58,8 +63,15 @@ SESSION_TTL_SECS = int(os.environ.get("PMW_SESSION_TTL", str(12 * 3600)))
 DEFAULT_ADMIN_USERNAME = os.environ.get("PMW_DEFAULT_ADMIN_USER", "Administrator")
 DEFAULT_ADMIN_PASSWORD = os.environ.get("PMW_DEFAULT_ADMIN_PASSWORD", "Administrator")
 
-# URL the GUI server uses to reach the compute backend.
-BACKEND_URL = os.environ.get("PMW_BACKEND_URL", f"http://{BACKEND_HOST}:{BACKEND_PORT}")
+# URL the GUI server uses to reach the compute backend. HTTPS by default: the
+# backend serves TLS with the internal cert, so the frontend↔backend hop is
+# encrypted even on loopback.
+BACKEND_URL = os.environ.get("PMW_BACKEND_URL", f"https://{BACKEND_HOST}:{BACKEND_PORT}")
+
+# CA bundle the GUI proxy verifies the backend against. Defaults to the pinned
+# internal self-signed cert; point PMW_BACKEND_CA at a real CA when the backend is
+# fronted by one, or set it empty to fall back to the system trust store.
+BACKEND_CA_PATH = os.environ.get("PMW_BACKEND_CA", str(INTERNAL_CERT_PATH))
 
 # Wall-clock limit for the heavy statistics queries (Swift used 30 s).
 QUERY_TIMEOUT_SECS = float(os.environ.get("PMW_QUERY_TIMEOUT", "30"))

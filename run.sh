@@ -6,7 +6,7 @@
 #   ./run.sh --build   rebuild the SPA and exit
 #
 # Ports (override with PMW_* env vars):
-#   compute backend   8000
+#   compute backend   8000 (HTTPS, internal self-signed cert — loopback only)
 #   admin interface   8090 (HTTP)  8453 (HTTPS)
 #   GUI (HTTP)        8080     GUI (HTTPS)  8443   — TLS mode is set in the admin UI
 #   (both the GUI and the admin follow the same TLS mode + active certificate)
@@ -47,11 +47,10 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "→ compute backend on http://127.0.0.1:${PMW_BACKEND_PORT:-8000}"
-"$VENV/uvicorn" app.main:app \
-  --app-dir backend \
-  --host "${PMW_BACKEND_HOST:-127.0.0.1}" \
-  --port "${PMW_BACKEND_PORT:-8000}" &
+# TLS on loopback (internal self-signed cert) so the GUI→backend proxy hop is
+# always encrypted — see backend/app/services/internal_tls.py.
+echo "→ compute backend on https://127.0.0.1:${PMW_BACKEND_PORT:-8000} (TLS, internal cert)"
+"$VENV/python" backend/launch.py &
 pids+=($!)
 
 # The admin interface uses the same TLS-aware launcher as the GUI, so it follows

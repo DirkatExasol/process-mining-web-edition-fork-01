@@ -197,6 +197,19 @@ Either provisions the schema + tables (if needed) and loads into that dataset's 
 project, replacing only that project's journeys. Needs `CREATE SCHEMA` / `CREATE TABLE` /
 `INSERT` rights (DBA-granted). Both generators live in `backend/app/db/demo_data.py`.
 
+*Event-ID format.* In both datasets the stored `EVENT_ID` (the case/journey key that
+ties a journey's rows together) is an **MD5 hash** of a simple synthetic reference —
+the dataset prefix plus a **1-based, zero-padded 6-digit sequence number**:
+
+| Dataset | Project | Hashed input | Example |
+| --- | --- | --- | --- |
+| Online Bookstore | `BOOKSTORE` | `ORD-%06d` → `ORD-000001`, `ORD-000002`, … | `md5("ORD-000001")` = `4c2a8…` |
+| Online Credit Application | `CREDIT` | `CRA-%06d` → `CRA-000001`, `CRA-000002`, … | `md5("CRA-000001")` = `9f1b3…` |
+
+The hash is the UTF-8 MD5 lowercase hex digest (`hashlib.md5(raw).hexdigest()`), matching
+the macOS app. To reproduce a specific ID from the shell: `printf 'ORD-%06d' 1 | md5`
+(or `md5sum` on Linux).
+
 **Directory (LDAP / Active Directory).** When enabled, the **main application** login
 also accepts directory accounts via **search + bind**: the server binds with a
 read-only service account (or anonymously), searches the base DN with a filter such

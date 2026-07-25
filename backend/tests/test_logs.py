@@ -82,6 +82,28 @@ def test_filters_severity_ip_operation(logs):
     assert len(logs.query(level="USAGE")) == 2  # INFO+USAGE only → both USAGE rows
 
 
+def test_count_and_paging(logs):
+    logs.set_level("DEBUG")
+    for i in range(23):
+        logs.record("INFO", f"row {i:02d}", operation="page")
+    logs.record("ERROR", "the needle", operation="error")  # 24 total
+
+    assert logs.count() == 24
+    # count() honours the same filter as query() (search spans the whole store).
+    assert logs.count(operation="error") == 1
+    assert logs.count(search="needle") == 1
+
+    # Page 1 of 10 → newest 10; offsets slice the same newest-first ordering.
+    p1 = logs.query(limit=10, offset=0)
+    p2 = logs.query(limit=10, offset=10)
+    p3 = logs.query(limit=10, offset=20)
+    assert [len(p) for p in (p1, p2, p3)] == [10, 10, 4]
+    assert p1[0]["message"] == "the needle"  # newest first
+    # No overlap and full coverage across pages.
+    seen = [e["message"] for e in (*p1, *p2, *p3)]
+    assert len(seen) == len(set(seen)) == 24
+
+
 def test_regex_search(logs):
     logs.set_level("DEBUG")
     logs.record("USAGE", "user alice signed in")
