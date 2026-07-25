@@ -349,6 +349,15 @@ export interface AppActions {
   // notes
   loadNotes: () => Promise<void>
   saveNote: (note: ProcessNote) => Promise<void>
+  updateNote: (
+    noteId: string,
+    body: {
+      comment?: string
+      resolved?: boolean
+      importance?: string
+      isShared?: boolean
+    },
+  ) => Promise<void>
   deleteNote: (note: ProcessNote) => Promise<void>
 
   // sampling
@@ -1865,6 +1874,23 @@ export const useStore = create<Store>((set, get) => {
         get().showAlert({
           title: 'Note Not Synced',
           message: `Note could not be written to the database: ${message}`,
+          primaryLabel: 'OK',
+        })
+      }
+    },
+
+    updateNote: async (noteId, body) => {
+      const s = get()
+      if (!s.selectedProject) return
+      try {
+        const saved = await api.updateNote(s.selectedProject.projectId, noteId, body)
+        const notes = s.projectNotes.map((n) => (n.id === saved.id ? saved : n))
+        set({ projectNotes: notes })
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : String(error)
+        get().showAlert({
+          title: 'Note Not Synced',
+          message: `Note could not be updated: ${message}`,
           primaryLabel: 'OK',
         })
       }

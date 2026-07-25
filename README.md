@@ -352,10 +352,13 @@ connections, certificates and settings.
 ## Features
 
 A collapsible left sidebar, the KPI strip, node drag / group collapse / pan-zoom
-interactions, valve-synchronised A/B panels, sticky notes on nodes and edges
-(attributed to the signed-in user — the real name for directory accounts), and a
-full analytics suite: process goodness, happy-path conformance, A/B similarity Q and
-a Markov simulation engine.
+interactions, valve-synchronised A/B panels, threaded sticky notes on nodes and
+edges (a NORMAL/INFO/IMPORTANT/URGENT importance badge and a resolved flag,
+attributed to the signed-in user — the real name for directory accounts; anyone
+who can see a note may append a comment, while only its author changes its
+classification or deletes it; filterable by importance, author, time and status),
+and a full analytics suite: process goodness, happy-path conformance, A/B
+similarity Q and a Markov simulation engine.
 
 ## License
 

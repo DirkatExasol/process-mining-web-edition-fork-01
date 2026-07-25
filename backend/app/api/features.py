@@ -97,6 +97,57 @@ async def save_note(project_id: str, note: ProcessNote) -> ProcessNote:
     return _annotate_note(note)
 
 
+class NoteUpdateBody(BaseModel):
+    """Partial update of an existing note. `comment` is appended to the thread;
+    `resolved` may be toggled by any viewer; importance/isShared are owner-only."""
+
+    comment: str = ""
+    resolved: bool | None = None
+    importance: str | None = None
+    isShared: bool | None = None
+
+
+@router.post("/projects/{project_id}/notes/{note_id}", response_model=ProcessNote)
+async def update_note(project_id: str, note_id: str, body: NoteUpdateBody) -> ProcessNote:
+    """Append a comment and/or toggle resolved on a note — allowed for anyone who
+    can see it (author, a shared note, or an unowned one). Only the author may
+    change importance or the shared flag. The existing history is never rewritten."""
+    require_connection()
+    r = repo()
+    await r.ensure_notes_table()
+
+    meta = await r.note_meta(note_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Note not found.")
+    owner, is_shared = meta
+    caller = current_user() or ""
+    is_owner = (owner or "").upper() == caller.upper()
+    if not (is_owner or is_shared or owner == ""):
+        raise HTTPException(status_code=403, detail="You cannot access this note.")
+
+    append_block: str | None = None
+    if body.comment.strip():
+        name = _note_display_name(caller) or caller or "unknown"
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        append_block = f"\n\n—— {name} · {stamp} ——\n{body.comment.strip()}"
+
+    await r.update_note(
+        note_id,
+        project_id,
+        edited_by=caller,
+        append_block=append_block,
+        resolved=body.resolved,
+        # Note-level classification stays owner-only; a non-owner's values are ignored.
+        importance=body.importance if is_owner else None,
+        is_shared=body.isShared if is_owner else None,
+    )
+
+    note = await r.get_note(note_id, project_id)
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found.")
+    return _annotate_note(note)
+
+
 @router.delete("/projects/{project_id}/notes/{note_id}")
 async def delete_note(project_id: str, note_id: str) -> dict[str, bool]:
     require_connection()

@@ -26,6 +26,7 @@ from ..models import (
     NoteTarget,
     ProcessGraph,
     ProcessNote,
+    normalize_importance,
     ProcessTransition,
     Project,
     SampleSet,
@@ -889,6 +890,61 @@ class ProcessRepository:
         await self.db.execute_quiet(
             "ALTER TABLE NOTES ADD COLUMN EDITED_BY VARCHAR(200) DEFAULT ''"
         )
+        await self.db.execute_quiet(
+            "ALTER TABLE NOTES ADD COLUMN IMPORTANCE VARCHAR(20) DEFAULT 'NORMAL'"
+        )
+        await self.db.execute_quiet(
+            "ALTER TABLE NOTES ADD COLUMN RESOLVED BOOLEAN DEFAULT FALSE"
+        )
+        # Widen NOTE (was VARCHAR(8000)) so an append-only comment thread has room.
+        await self.db.execute_quiet(
+            "ALTER TABLE NOTES MODIFY COLUMN NOTE VARCHAR(100000)"
+        )
+
+    # Column order shared by load_notes / get_note — indices used by _row_to_note.
+    _NOTE_COLUMNS = (
+        "ID, NOTES_DATE, EDITED_DATE, NOTE_USER, NOTE, IS_SHARED, EDITED_BY, "
+        "TARGET_TYPE, TARGET_FROM, TARGET_TO, FILTER_SNAPSHOT, IMPORTANCE, RESOLVED"
+    )
+
+    @staticmethod
+    def _row_to_note(row) -> ProcessNote | None:
+        created = parse_date(row[1])
+        if not isinstance(row[0], str) or created is None:
+            return None
+        target_type = row[7] if isinstance(row[7], str) else "node"
+        target_from = row[8] if isinstance(row[8], str) else ""
+        target_to = row[9] if isinstance(row[9], str) else ""
+        if target_type == "edge" and target_to:
+            target = NoteTarget.model_validate(
+                {"type": "edge", "from": target_from, "to": target_to}
+            )
+        else:
+            target = NoteTarget(type="node", value=target_from)
+
+        snapshot: FilterSnapshot | None = None
+        if isinstance(row[10], str) and row[10]:
+            try:
+                snapshot = FilterSnapshot(**json.loads(row[10]))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                snapshot = None
+        if snapshot is None:
+            now = datetime.now()
+            snapshot = FilterSnapshot(fromDate=now, toDate=now)
+
+        return ProcessNote(
+            id=row[0],
+            text=row[4] if isinstance(row[4], str) else "",
+            createdAt=created,
+            editedAt=parse_date(row[2]),
+            target=target,
+            filterSnapshot=snapshot,
+            username=row[3] if isinstance(row[3], str) else "",
+            lastEditedBy=row[6] if isinstance(row[6], str) else "",
+            isShared=as_bool(row[5]),
+            importance=normalize_importance(row[11] if len(row) > 11 else None),
+            resolved=as_bool(row[12]) if len(row) > 12 else False,
+        )
 
     async def load_notes(self, project_id: str, username: str) -> list[ProcessNote]:
         vis_filter = ""
@@ -900,53 +956,61 @@ class ProcessRepository:
             )
         result = await self.db.execute(
             f"""
-            SELECT ID, NOTES_DATE, EDITED_DATE, NOTE_USER, NOTE, IS_SHARED, EDITED_BY,
-                   TARGET_TYPE, TARGET_FROM, TARGET_TO, FILTER_SNAPSHOT
+            SELECT {self._NOTE_COLUMNS}
             FROM NOTES
             WHERE PROJECT_ID = '{esc(project_id)}'
             {vis_filter}
             ORDER BY NOTES_DATE ASC
             """
         )
-        notes: list[ProcessNote] = []
+        return [n for row in result.rows if (n := self._row_to_note(row)) is not None]
+
+    async def get_note(self, note_id: str, project_id: str) -> ProcessNote | None:
+        result = await self.db.execute(
+            f"SELECT {self._NOTE_COLUMNS} FROM NOTES "
+            f"WHERE ID = '{esc(note_id)}' AND PROJECT_ID = '{esc(project_id)}'"
+        )
         for row in result.rows:
-            created = parse_date(row[1])
-            if not isinstance(row[0], str) or created is None:
-                continue
-            target_type = row[7] if isinstance(row[7], str) else "node"
-            target_from = row[8] if isinstance(row[8], str) else ""
-            target_to = row[9] if isinstance(row[9], str) else ""
-            if target_type == "edge" and target_to:
-                target = NoteTarget.model_validate(
-                    {"type": "edge", "from": target_from, "to": target_to}
-                )
-            else:
-                target = NoteTarget(type="node", value=target_from)
+            return self._row_to_note(row)
+        return None
 
-            snapshot: FilterSnapshot | None = None
-            if isinstance(row[10], str) and row[10]:
-                try:
-                    snapshot = FilterSnapshot(**json.loads(row[10]))
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    snapshot = None
-            if snapshot is None:
-                now = datetime.now()
-                snapshot = FilterSnapshot(fromDate=now, toDate=now)
+    async def note_meta(self, note_id: str) -> tuple[str, bool] | None:
+        """(author, is_shared) for a note by ID, or None if it doesn't exist —
+        used to authorize comments/updates independently of visibility filtering."""
+        result = await self.db.execute(
+            f"SELECT NOTE_USER, IS_SHARED FROM NOTES WHERE ID = '{esc(note_id)}'"
+        )
+        for row in result.rows:
+            return (row[0] if isinstance(row[0], str) else ""), as_bool(row[1])
+        return None
 
-            notes.append(
-                ProcessNote(
-                    id=row[0],
-                    text=row[4] if isinstance(row[4], str) else "",
-                    createdAt=created,
-                    editedAt=parse_date(row[2]),
-                    target=target,
-                    filterSnapshot=snapshot,
-                    username=row[3] if isinstance(row[3], str) else "",
-                    lastEditedBy=row[6] if isinstance(row[6], str) else "",
-                    isShared=as_bool(row[5]),
-                )
-            )
-        return notes
+    async def update_note(
+        self,
+        note_id: str,
+        project_id: str,
+        *,
+        edited_by: str,
+        append_block: str | None = None,
+        resolved: bool | None = None,
+        importance: str | None = None,
+        is_shared: bool | None = None,
+    ) -> None:
+        """Apply a partial update: optionally append text (thread comment), set the
+        resolved flag, importance and/or shared. Callers decide which fields a given
+        user is allowed to pass (owner-only for importance/isShared)."""
+        sets = ["EDITED_DATE = CURRENT_TIMESTAMP", f"EDITED_BY = '{esc(edited_by)}'"]
+        if append_block:
+            sets.append(f"NOTE = NOTE || '{esc(append_block)}'")
+        if resolved is not None:
+            sets.append(f"RESOLVED = {'TRUE' if resolved else 'FALSE'}")
+        if importance is not None:
+            sets.append(f"IMPORTANCE = '{normalize_importance(importance)}'")
+        if is_shared is not None:
+            sets.append(f"IS_SHARED = {'TRUE' if is_shared else 'FALSE'}")
+        await self.db.execute(
+            f"UPDATE NOTES SET {', '.join(sets)} "
+            f"WHERE ID = '{esc(note_id)}' AND PROJECT_ID = '{esc(project_id)}'"
+        )
 
     async def note_owner(self, note_id: str) -> str | None:
         """The NOTE_USER (author) of a note by its globally-unique ID, or None if
@@ -979,16 +1043,18 @@ class ProcessRepository:
         created_sql = f"TIMESTAMP '{_ts(note.createdAt)}'"
         edited_sql = f"TIMESTAMP '{_ts(note.editedAt)}'" if note.editedAt else "NULL"
         snapshot_json = note.filterSnapshot.model_dump_json(by_alias=True)
+        importance = normalize_importance(note.importance)  # whitelist, never raw input
         await self.db.execute(
             f"""
             INSERT INTO NOTES
                 (ID, PROJECT_ID, NOTES_DATE, EDITED_DATE, NOTE_USER, NOTE, IS_SHARED, EDITED_BY,
-                 TARGET_TYPE, TARGET_FROM, TARGET_TO, FILTER_SNAPSHOT)
+                 IMPORTANCE, RESOLVED, TARGET_TYPE, TARGET_FROM, TARGET_TO, FILTER_SNAPSHOT)
             VALUES (
                 '{esc(note.id)}', '{esc(project_id)}',
                 {created_sql}, {edited_sql},
                 '{esc(note.username)}', '{esc(note.text)}',
                 {'TRUE' if note.isShared else 'FALSE'}, '{esc(note.lastEditedBy)}',
+                '{importance}', {'TRUE' if note.resolved else 'FALSE'},
                 '{target_type}', '{esc(target_from)}', '{esc(target_to)}',
                 '{esc(snapshot_json)}'
             )
@@ -996,14 +1062,14 @@ class ProcessRepository:
         )
 
     async def delete_note(self, note_id: str, project_id: str, username: str) -> None:
-        # Only the author (or an unowned/legacy note) may be deleted — a user must
-        # not be able to delete another user's note, even a shared one whose ID is
-        # visible to them.
+        # Only the note's own author may delete it — not another user (even for a
+        # shared note whose ID is visible to them). In anonymous mode the author is
+        # the empty string, so UPPER('') = UPPER('') still matches the caller's notes.
         safe_user = esc(username.upper())
         await self.db.execute(
             f"DELETE FROM NOTES WHERE ID = '{esc(note_id)}' "
             f"AND PROJECT_ID = '{esc(project_id)}' "
-            f"AND (UPPER(NOTE_USER) = '{safe_user}' OR NOTE_USER = '')"
+            f"AND UPPER(NOTE_USER) = '{safe_user}'"
         )
 
     # ── sampling ─────────────────────────────────────────────────────────────

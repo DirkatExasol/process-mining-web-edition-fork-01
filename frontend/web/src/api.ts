@@ -227,6 +227,19 @@ export const api = {
     get<ProcessNote[]>(`/api/projects/${enc(projectId)}/notes`),
   saveNote: (projectId: string, note: ProcessNote) =>
     put<ProcessNote>(`/api/projects/${enc(projectId)}/notes`, note),
+  // Append a comment to a note's thread and/or toggle resolved (any viewer);
+  // importance/isShared are applied server-side only for the note's author.
+  updateNote: (
+    projectId: string,
+    noteId: string,
+    body: {
+      comment?: string
+      resolved?: boolean
+      importance?: string
+      isShared?: boolean
+    },
+  ) =>
+    post<ProcessNote>(`/api/projects/${enc(projectId)}/notes/${enc(noteId)}`, body),
   deleteNote: (projectId: string, noteId: string) =>
     del<void>(`/api/projects/${enc(projectId)}/notes/${enc(noteId)}`),
 

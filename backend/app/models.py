@@ -286,6 +286,15 @@ class NoteTarget(Base):
         return f"{self.from_} → {self.to}"
 
 
+# Note importance levels, lowest → highest. NORMAL is the default.
+NOTE_IMPORTANCE = ("NORMAL", "INFO", "IMPORTANT", "URGENT")
+
+
+def normalize_importance(value: object) -> str:
+    v = value.upper() if isinstance(value, str) else ""
+    return v if v in NOTE_IMPORTANCE else "NORMAL"
+
+
 class ProcessNote(Base):
     id: str = Field(default_factory=new_id)
     text: str = ""
@@ -296,6 +305,8 @@ class ProcessNote(Base):
     username: str = ""  # login user (stable identity — used for ownership/filtering)
     lastEditedBy: str = ""
     isShared: bool = False
+    importance: str = "NORMAL"  # one of NOTE_IMPORTANCE
+    resolved: bool = False  # the note/issue has been marked resolved
     # Display labels resolved by the API on read: an LDAP user's real name (cn),
     # otherwise the login username. Not persisted; ignored on write.
     authorName: str = ""

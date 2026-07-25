@@ -213,3 +213,57 @@ def test_directory_status_reports_unavailable_on_probe_failure(gui, monkeypatch)
         "configured": True,
         "available": False,
     }
+
+
+# ── Session invalidation on logout ────────────────────────────────────────────
+
+
+def test_logout_invalidates_captured_token(gui):
+    """A token captured before logout must be rejected afterwards — server-side
+    invalidation via the per-user session epoch, not just clearing the cookie."""
+    server, _ = gui
+    client = TestClient(server.app)
+    client.post(
+        "/auth/login", json={"username": "Administrator", "password": "Administrator"}
+    )
+    token = client.cookies.get(server.SESSION_COOKIE)
+    assert token
+
+    def _replay_status() -> int:
+        c = TestClient(server.app)
+        c.cookies.set(server.SESSION_COOKIE, token)
+        return c.get("/api/projects").status_code
+
+    assert _replay_status() == 200  # the captured token works before logout
+    client.post("/auth/logout")  # bumps the user's session epoch
+    assert _replay_status() == 401  # the same token no longer passes the gate
+
+
+# ── License / Demo Mode status (pre-auth, computed locally) ────────────────────
+
+
+def test_license_status_demo_and_licensed(gui, monkeypatch):
+    server, _ = gui
+    import app.licensing as licensing
+
+    client = TestClient(server.app)
+
+    # No valid license → Demo Mode with the remaining grace seconds.
+    monkeypatch.setattr(
+        licensing, "evaluate", lambda: licensing.LicenseStatus("missing", message="none")
+    )
+    monkeypatch.setattr(licensing, "demo_remaining_secs", lambda create: 300)
+    body = client.get("/auth/license-status").json()
+    assert body["demoMode"] is True
+    assert body["remainingSeconds"] == 300
+
+    # Valid license → not demo, no countdown.
+    monkeypatch.setattr(
+        licensing,
+        "evaluate",
+        lambda: licensing.LicenseStatus("valid", licensee="Acme", expires="2099-01-01"),
+    )
+    body = client.get("/auth/license-status").json()
+    assert body["demoMode"] is False
+    assert body["remainingSeconds"] is None
+    assert body["licensee"] == "Acme"

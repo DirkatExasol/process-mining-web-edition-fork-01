@@ -169,11 +169,11 @@ def test_delete_note_is_scoped_to_owner():
     r, mgr = _cap_repo()
     asyncio.run(r.delete_note("n-1", "proj", "Alice"))
     sql = mgr.executed[-1]
-    # Must not delete another user's note: owner (or unowned/legacy) predicate present.
+    # Only the author may delete — owner-only, no unowned/other-user fallback.
     assert "DELETE FROM NOTES" in sql
     assert "ID = 'n-1'" in sql
     assert "UPPER(NOTE_USER) = 'ALICE'" in sql
-    assert "NOTE_USER = ''" in sql
+    assert "OR NOTE_USER = ''" not in sql
 
 
 def test_upsert_note_predelete_is_scoped_to_owner():
@@ -193,8 +193,169 @@ def test_upsert_note_predelete_is_scoped_to_owner():
     assert "UPPER(NOTE_USER) = 'BOB'" in predelete  # can't clobber another user's ID
 
 
+def test_upsert_note_whitelists_importance():
+    r, mgr = _cap_repo()
+    note = ProcessNote(
+        id="n-8",
+        text="hi",
+        createdAt=datetime(2026, 1, 1),
+        target=NoteTarget(type="node", value="A"),
+        filterSnapshot=FilterSnapshot(fromDate=datetime(2026, 1, 1), toDate=datetime(2026, 1, 2)),
+        username="Bob",
+        importance="URGENT",
+    )
+    asyncio.run(r.upsert_note(note, "proj", "Bob"))
+    insert = mgr.executed[-1]
+    assert "IMPORTANCE" in insert and "'URGENT'" in insert
+
+    # A bogus importance (or an injection attempt) is coerced to NORMAL.
+    note.importance = "evil'; DROP TABLE NOTES; --"
+    asyncio.run(r.upsert_note(note, "proj", "Bob"))
+    assert "'NORMAL'" in mgr.executed[-1]
+    assert "DROP TABLE" not in mgr.executed[-1]
+
+
 def test_note_owner_returns_author_or_none():
     r, _ = _cap_repo(rows=[["Carol"]])
     assert asyncio.run(r.note_owner("n-3")) == "Carol"
     r2, _ = _cap_repo(rows=[])
     assert asyncio.run(r2.note_owner("missing")) is None
+
+
+# ── Note update: comment append + resolved; owner-only reclassification ────────
+
+
+def test_update_note_builds_partial_update_sql():
+    r, mgr = _cap_repo()
+    asyncio.run(
+        r.update_note(
+            "n-9",
+            "proj",
+            edited_by="Bob",
+            append_block="\n\n—— Bob · 2026-07-25 ——\nlooks fixed",
+            resolved=True,
+            importance="URGENT",
+            is_shared=True,
+        )
+    )
+    sql = mgr.executed[-1]
+    assert sql.startswith("UPDATE NOTES SET")
+    assert "NOTE = NOTE || '" in sql and "looks fixed" in sql
+    assert "RESOLVED = TRUE" in sql
+    assert "IMPORTANCE = 'URGENT'" in sql
+    assert "IS_SHARED = TRUE" in sql
+    assert "EDITED_BY = 'Bob'" in sql
+    assert "ID = 'n-9'" in sql and "PROJECT_ID = 'proj'" in sql
+
+
+def test_update_note_omits_untouched_fields():
+    r, mgr = _cap_repo()
+    asyncio.run(r.update_note("n-9", "proj", edited_by="Bob", resolved=False))
+    sql = mgr.executed[-1]
+    assert "RESOLVED = FALSE" in sql
+    assert "NOTE = NOTE ||" not in sql  # no comment appended
+    assert "IMPORTANCE" not in sql and "IS_SHARED" not in sql
+
+
+def test_note_meta_returns_owner_and_shared():
+    r, _ = _cap_repo(rows=[["alice", True]])
+    assert asyncio.run(r.note_meta("n-1")) == ("alice", True)
+    r2, _ = _cap_repo(rows=[])
+    assert asyncio.run(r2.note_meta("missing")) is None
+
+
+# ── update_note endpoint: per-field authorization ─────────────────────────────
+
+
+class _EndpointRepo:
+    def __init__(self, meta):
+        self._meta = meta
+        self.update_kwargs = None
+
+    async def ensure_notes_table(self):
+        pass
+
+    async def note_meta(self, note_id):
+        return self._meta
+
+    async def update_note(self, note_id, project_id, **kw):
+        self.update_kwargs = kw
+
+    async def get_note(self, note_id, project_id):
+        return ProcessNote(
+            id=note_id,
+            text="hi",
+            createdAt=datetime(2026, 1, 1),
+            target=NoteTarget(type="node", value="A"),
+            filterSnapshot=FilterSnapshot(
+                fromDate=datetime(2026, 1, 1), toDate=datetime(2026, 1, 2)
+            ),
+            username=self._meta[0] if self._meta else "",
+        )
+
+
+def _run_update(monkeypatch, *, caller, meta, body):
+    from app.api import features
+
+    repo = _EndpointRepo(meta)
+    monkeypatch.setattr(features, "require_connection", lambda: None)
+    monkeypatch.setattr(features, "repo", lambda: repo)
+    monkeypatch.setattr(features, "current_user", lambda: caller)
+    monkeypatch.setattr(features, "_note_display_name", lambda u: u)
+    result = asyncio.run(features.update_note("proj", "n1", body))
+    return repo, result
+
+
+def test_endpoint_owner_can_reclassify(monkeypatch):
+    from app.api.features import NoteUpdateBody
+
+    repo, _ = _run_update(
+        monkeypatch,
+        caller="alice",
+        meta=("alice", False),
+        body=NoteUpdateBody(comment="more", resolved=True, importance="URGENT", isShared=True),
+    )
+    assert "more" in repo.update_kwargs["append_block"]
+    assert repo.update_kwargs["resolved"] is True
+    assert repo.update_kwargs["importance"] == "URGENT"
+    assert repo.update_kwargs["is_shared"] is True
+
+
+def test_endpoint_non_owner_can_comment_but_not_reclassify(monkeypatch):
+    from app.api.features import NoteUpdateBody
+
+    repo, _ = _run_update(
+        monkeypatch,
+        caller="bob",
+        meta=("alice", True),  # alice's shared note → bob may comment + resolve
+        body=NoteUpdateBody(comment="fixed", resolved=True, importance="URGENT", isShared=False),
+    )
+    assert "fixed" in repo.update_kwargs["append_block"]
+    assert repo.update_kwargs["resolved"] is True
+    assert repo.update_kwargs["importance"] is None  # ignored for non-owner
+    assert repo.update_kwargs["is_shared"] is None
+
+
+def test_endpoint_non_owner_private_note_is_403(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api.features import NoteUpdateBody
+
+    with __import__("pytest").raises(HTTPException) as ei:
+        _run_update(
+            monkeypatch,
+            caller="bob",
+            meta=("alice", False),  # not shared → bob can't even see it
+            body=NoteUpdateBody(comment="peek"),
+        )
+    assert ei.value.status_code == 403
+
+
+def test_endpoint_missing_note_is_404(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api.features import NoteUpdateBody
+
+    with __import__("pytest").raises(HTTPException) as ei:
+        _run_update(monkeypatch, caller="bob", meta=None, body=NoteUpdateBody(comment="x"))
+    assert ei.value.status_code == 404

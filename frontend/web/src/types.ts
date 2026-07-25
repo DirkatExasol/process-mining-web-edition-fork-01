@@ -309,10 +309,44 @@ export interface ProcessNote {
   username: string
   lastEditedBy: string
   isShared: boolean
+  importance: NoteImportance
+  resolved: boolean
   // Display labels resolved by the backend: an LDAP user's real name (cn),
   // otherwise the login username. May be absent on locally-constructed notes.
   authorName?: string
   lastEditedByName?: string
+}
+
+export type NoteImportance = 'NORMAL' | 'INFO' | 'IMPORTANT' | 'URGENT'
+
+// Ordered lowest → highest; NORMAL is the default.
+export const NOTE_IMPORTANCE_LEVELS: NoteImportance[] = [
+  'NORMAL',
+  'INFO',
+  'IMPORTANT',
+  'URGENT',
+]
+
+// Badge presentation per level. NORMAL is intentionally muted (no loud badge).
+export const NOTE_IMPORTANCE_META: Record<
+  NoteImportance,
+  { label: string; glyph: string; color: string; bg: string }
+> = {
+  NORMAL: { label: 'Normal', glyph: '•', color: 'var(--tertiary)', bg: 'transparent' },
+  INFO: { label: 'Info', glyph: 'ℹ', color: 'var(--blue)', bg: 'rgba(10,132,255,0.14)' },
+  IMPORTANT: {
+    label: 'Important',
+    glyph: '★',
+    color: 'var(--orange)',
+    bg: 'rgba(255,159,10,0.16)',
+  },
+  URGENT: { label: 'Urgent', glyph: '⚠', color: 'var(--red)', bg: 'rgba(255,59,48,0.16)' },
+}
+
+export function normalizeImportance(value: unknown): NoteImportance {
+  return NOTE_IMPORTANCE_LEVELS.includes(value as NoteImportance)
+    ? (value as NoteImportance)
+    : 'NORMAL'
 }
 
 export function noteTargetKey(target: NoteTarget): string {

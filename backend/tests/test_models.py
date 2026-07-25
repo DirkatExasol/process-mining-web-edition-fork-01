@@ -192,3 +192,17 @@ def test_sample_set_sql_fragments():
         SampleSet.original.sql_fragment(alias="j")
         == "(j.SAMPLE_SET = 'ORIGINAL' OR j.SAMPLE_SET IS NULL)"
     )
+
+
+def test_normalize_importance():
+    from app.models import NOTE_IMPORTANCE, normalize_importance
+
+    for level in NOTE_IMPORTANCE:
+        assert normalize_importance(level) == level
+        assert normalize_importance(level.lower()) == level  # case-insensitive
+    # Anything unknown / non-string / injection-y collapses to the NORMAL default.
+    assert normalize_importance("bogus") == "NORMAL"
+    assert normalize_importance("") == "NORMAL"
+    assert normalize_importance(None) == "NORMAL"
+    assert normalize_importance(42) == "NORMAL"
+    assert normalize_importance("URGENT'; DROP TABLE NOTES; --") == "NORMAL"

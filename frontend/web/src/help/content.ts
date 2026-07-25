@@ -1043,8 +1043,11 @@ const notes: HelpTopic = {
     {
       heading: 'Creating and finding notes',
       body: [
-        p('Click a node or an edge and choose “Show Notes” to add an annotation. A yellow ✎ badge marks any node or edge that carries a note. The Notes view lists every note for the project — searchable, newest first — independent of the current filters.'),
-        p('Each note records its author, who last edited it, and the complete filter context at the time it was created, so the observation stays interpretable later. The author is the signed-in application user — shown by real name (the directory “cn”) for LDAP accounts — not the shared database login. Mark a note as “shared” to make it visible to other users of the same database; a shared note stays editable and deletable only by its author.'),
+        p('Click a node or an edge and choose “Show Notes” to add an annotation. A yellow ✎ badge marks any node or edge that carries a note. The Notes view lists every note for the project — newest first — independent of the current filters.'),
+        p('Each note records its author, who last contributed, and the complete filter context at the time it was created, so the observation stays interpretable later. The author is the signed-in application user — shown by real name (the directory “cn”) for LDAP accounts — not the shared database login.'),
+        p('A note is a thread. Opening it shows all comments so far on top (read-only) and an “Add a comment” box below: anyone who can see the note — the author, and other users for a shared note — can append a comment, which is recorded with their name and the time. Only the author can change the note’s importance or sharing, or delete the whole thread.'),
+        p('Give each note an importance — NORMAL (the default), INFO, IMPORTANT or URGENT — shown as a coloured badge in the list. Mark a note as “shared” to make it visible to other users of the same database, and tick “resolved” once the issue it describes is closed — a green ✓ Resolved badge then appears in the list.'),
+        p('The Notes view can be filtered by text search, importance, author, time window (any time, or the last 7 / 30 / 90 days), and status (open / resolved); the counter shows how many of the project’s notes match. The list is paged — choose 5, 10 or 20 notes per page and step through with Prev / Next.'),
       ],
     },
     {
