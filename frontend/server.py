@@ -23,7 +23,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from app import log_events as logx  # noqa: E402
 from app.config import BACKEND_CA_PATH, BACKEND_URL, SESSION_TTL_SECS  # noqa: E402
-from app.store.crypto import read_session, sign_session  # noqa: E402
+from app.store.crypto import (  # noqa: E402
+    proxy_auth_secret,
+    read_session,
+    sign_session,
+)
 from app.store.security import User, store  # noqa: E402
 
 logging.basicConfig(
@@ -88,7 +92,13 @@ def _get_client() -> httpx.AsyncClient:
     # internal cert when this process first built its client → system-trust only).
     if _client is None or _client.is_closed or (pinned and not _client_pinned):
         _client = httpx.AsyncClient(
-            base_url=BACKEND_URL, timeout=PROXY_TIMEOUT, verify=verify
+            base_url=BACKEND_URL,
+            timeout=PROXY_TIMEOUT,
+            verify=verify,
+            # Prove to the backend that this request came through the proxy. Sent on
+            # every backend call (proxy + logout disconnect); the browser cannot
+            # supply it (stripped below).
+            headers={"X-PMW-Proxy-Auth": proxy_auth_secret()},
         )
         _client_pinned = pinned
     return _client
@@ -246,6 +256,14 @@ async def auth_logout(request: Request) -> Response:
         username=user.username if user else "",
         operation="logout",
     )
+    # Release this user's per-user Exasol connection on the backend (best-effort).
+    if user is not None:
+        try:
+            await _get_client().post(
+                "/api/disconnect", headers={"X-PMW-User": user.username}, timeout=5.0
+            )
+        except Exception:  # noqa: BLE001 — never block sign-out on the backend
+            pass
     response = JSONResponse({"ok": True})
     response.delete_cookie(SESSION_COOKIE, path="/")
     return response
@@ -288,7 +306,7 @@ async def proxy(path: str, request: Request) -> Response:
     headers = {
         k: v
         for k, v in request.headers.items()
-        if k.lower() not in _HOP_BY_HOP | {"host", "x-pmw-user"}
+        if k.lower() not in _HOP_BY_HOP | {"host", "x-pmw-user", "x-pmw-proxy-auth"}
     }
     if user is not None:
         headers["X-PMW-User"] = user.username

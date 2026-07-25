@@ -685,7 +685,7 @@ async function api(path, opts) {
   if (!r.ok) throw new Error((body && body.detail) || ('HTTP ' + r.status));
   return body;
 }
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtDate = (s) => { if (!s) return '—'; const d = new Date(s); return isNaN(d) ? '—' : d.toLocaleString(); };
 
 let BUILTIN_ADMIN = '';
@@ -806,9 +806,9 @@ function renderCerts() {
       `<td>${c.isSelfSigned ? 'Self-signed' : 'CA-signed'}</td>` +
       `<td>${fmtDate(c.notAfter)}</td>` +
       `<td style="text-align:right; white-space:nowrap">` +
-        (active ? '' : `<button class="btn small" onclick="activateCert('${c.id}')">Activate</button> `) +
-        `<a class="btn small" href="/api/certs/${c.id}/download">Download</a> ` +
-        `<button class="btn small danger" onclick="deleteCert('${c.id}','${esc(c.name)}')">Delete</button>` +
+        (active ? '' : `<button class="btn small" data-id="${esc(c.id)}" onclick="activateCert(this.dataset.id)">Activate</button> `) +
+        `<a class="btn small" href="/api/certs/${encodeURIComponent(c.id)}/download">Download</a> ` +
+        `<button class="btn small danger" data-id="${esc(c.id)}" data-name="${esc(c.name)}" onclick="deleteCert(this.dataset.id, this.dataset.name)">Delete</button>` +
       `</td></tr>`;
   }
   $('certTable').innerHTML = h + '</tbody></table>';
@@ -896,11 +896,11 @@ function renderUsers() {
       `<td>${u.isEnabled ? '<span class="pill on">enabled</span>' : '<span class="pill off">disabled</span>'}</td>` +
       `<td class="muted">${fmtDate(u.lastLogin)}</td>` +
       `<td style="text-align:right; white-space:nowrap">` +
-        (isBuiltin ? '' : `<button class="btn small" onclick="toggleEnabled('${esc(u.username)}',${!u.isEnabled})">${u.isEnabled ? 'Disable' : 'Enable'}</button> `) +
-        (isBuiltin ? '' : `<button class="btn small" onclick="toggleAdmin('${esc(u.username)}',${!u.isAdmin})">${u.isAdmin ? 'Remove admin' : 'Make admin'}</button> `) +
-        (isBuiltin ? '' : `<button class="btn small" onclick="togglePower('${esc(u.username)}',${!u.isPower})">${u.isPower ? 'Remove power' : 'Make power'}</button> `) +
-        (isLdap ? '' : `<button class="btn small" onclick="resetPw('${esc(u.username)}')">Reset password</button> `) +
-        (isBuiltin ? '<span class="subtle" title="The built-in administrator cannot be disabled, demoted or deleted.">built-in admin</span>' : `<button class="btn small danger" onclick="delUser('${esc(u.username)}')">Delete</button>`) +
+        (isBuiltin ? '' : `<button class="btn small" data-user="${esc(u.username)}" onclick="toggleEnabled(this.dataset.user,${!u.isEnabled})">${u.isEnabled ? 'Disable' : 'Enable'}</button> `) +
+        (isBuiltin ? '' : `<button class="btn small" data-user="${esc(u.username)}" onclick="toggleAdmin(this.dataset.user,${!u.isAdmin})">${u.isAdmin ? 'Remove admin' : 'Make admin'}</button> `) +
+        (isBuiltin ? '' : `<button class="btn small" data-user="${esc(u.username)}" onclick="togglePower(this.dataset.user,${!u.isPower})">${u.isPower ? 'Remove power' : 'Make power'}</button> `) +
+        (isLdap ? '' : `<button class="btn small" data-user="${esc(u.username)}" onclick="resetPw(this.dataset.user)">Reset password</button> `) +
+        (isBuiltin ? '<span class="subtle" title="The built-in administrator cannot be disabled, demoted or deleted.">built-in admin</span>' : `<button class="btn small danger" data-user="${esc(u.username)}" onclick="delUser(this.dataset.user)">Delete</button>`) +
       `</td></tr>`;
   }
   $('userTable').innerHTML = h + '</tbody></table>';
@@ -1143,7 +1143,7 @@ async function loadConnections() {
       `<td>${c.hasLLMKey || c.llmURL ? '<span class="pill on">yes</span>' : '<span class="muted">—</span>'}</td>` +
       `<td class="muted">${who}</td>` +
       `<td style="text-align:right; white-space:nowrap">` +
-        `<button class="btn small" onclick="editConnection('${esc(c.id)}')">Edit</button></td></tr>`;
+        `<button class="btn small" data-id="${esc(c.id)}" onclick="editConnection(this.dataset.id)">Edit</button></td></tr>`;
   }
   $('connTable').innerHTML = h + '</tbody></table>';
 }

@@ -12,6 +12,7 @@ import asyncio
 import logging
 import ssl
 import threading
+from contextvars import ContextVar
 from typing import Any
 
 import pyexasol
@@ -57,14 +58,19 @@ class ExasolError(RuntimeError):
 
 
 class DatabaseManager:
-    """Singleton holding the one live Exasol connection plus server definitions."""
+    """Holds one live Exasol connection plus server definitions. One instance per
+    signed-in user (see ConnectionRegistry) so users never share a connection."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, load_legacy_active: bool = True) -> None:
         self._conn: pyexasol.ExaConnection | None = None
         self._lock = threading.Lock()
         self.is_connected = False
         self.is_llm_reachable = False
-        self.active_profile_id: str | None = store.get(KEY_ACTIVE_PROFILE)
+        # Per-user managers start with a clean slate; only the legacy global keeps
+        # the persisted single-user active profile.
+        self.active_profile_id: str | None = (
+            store.get(KEY_ACTIVE_PROFILE) if load_legacy_active else None
+        )
         self.last_error: str | None = None
         # Set when connected via an admin-defined connection (the current model).
         self._active_db_server: DatabaseServer | None = None
@@ -436,6 +442,17 @@ async def check_llm_reachable(server: LLMServer | None) -> bool:
         return False
     import httpx
 
+    from ..services.net_guard import UrlNotAllowed, assert_safe_url
+
+    try:  # SSRF guard: never let a configured URL probe internal/metadata hosts
+        assert_safe_url(server.serverURL)
+    except UrlNotAllowed as exc:
+        logx.warn(
+            f"LLM server URL refused (SSRF guard): {server.serverURL} — {exc}",
+            operation="llm-test",
+        )
+        return False
+
     url = server.serverURL.rstrip("/") + "/models"
     headers = {}
     if server.apiKey.strip():
@@ -458,4 +475,78 @@ async def check_llm_reachable(server: LLMServer | None) -> bool:
         return False
 
 
+# The legacy single-user profile store still backs the (unused) /servers & /profiles
+# endpoints; the live per-user data path uses the registry below instead.
 db = DatabaseManager()
+
+
+# ── Per-user connections ──────────────────────────────────────────────────────
+#
+# Each signed-in user gets their own DatabaseManager (their own Exasol connection),
+# reusing the same admin-defined connection *definitions* but keeping the live
+# session independent — so one user's data can never leak to another. The active
+# user is carried on a ContextVar set per request (see main.py middleware); it
+# propagates into the request's worker threads via asyncio.to_thread.
+
+_current_user_var: ContextVar[str | None] = ContextVar("pmw_current_user", default=None)
+
+
+def set_current_user(username: str | None):
+    return _current_user_var.set(username)
+
+
+def reset_current_user(token) -> None:
+    _current_user_var.reset(token)
+
+
+def current_user() -> str | None:
+    return _current_user_var.get()
+
+
+class ConnectionRegistry:
+    """Per-user DatabaseManager instances, created on demand."""
+
+    def __init__(self) -> None:
+        self._by_user: dict[str, DatabaseManager] = {}
+        self._lock = threading.RLock()
+
+    def for_user(self, username: str | None) -> DatabaseManager:
+        key = username or ""  # anonymous (sign-in disabled) shares one bucket
+        with self._lock:
+            mgr = self._by_user.get(key)
+            if mgr is None:
+                mgr = DatabaseManager(load_legacy_active=False)
+                self._by_user[key] = mgr
+            return mgr
+
+    async def disconnect_user(self, username: str | None) -> None:
+        """Release a user's connection (e.g. on sign-out)."""
+        with self._lock:
+            mgr = self._by_user.pop(username or "", None)
+        if mgr is not None:
+            await mgr.disconnect()
+
+    async def disconnect_connection(self, conn_id: str) -> None:
+        """Drop every user whose live connection is `conn_id` — its definition was
+        edited or deleted, so their session must not continue."""
+        with self._lock:
+            targets = [
+                m for m in self._by_user.values() if m.active_profile_id == conn_id
+            ]
+        for mgr in targets:
+            await mgr.disconnect()
+
+    async def disconnect_all(self) -> None:
+        with self._lock:
+            managers = list(self._by_user.values())
+            self._by_user.clear()
+        for mgr in managers:
+            await mgr.disconnect()
+
+
+registry = ConnectionRegistry()
+
+
+def current_db() -> DatabaseManager:
+    """The DatabaseManager for the current request's user."""
+    return registry.for_user(_current_user_var.get())

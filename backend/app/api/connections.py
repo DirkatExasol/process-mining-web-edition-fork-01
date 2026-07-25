@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import log_events as logx
-from ..db.manager import check_llm_reachable, db
+from ..db.manager import check_llm_reachable, current_db, db, registry
 from ..models import ConnectionProfile, ConnectionStatus, DatabaseServer, LLMServer
 from ..services import llm as llm_service
 from ..store.security import store as security_store
@@ -53,12 +53,6 @@ def upsert_db_server(payload: DatabaseServerPayload) -> DatabaseServer:
     if payload.password is not None:
         db.set_password(payload.server.id, payload.password)
     return payload.server
-
-
-@router.get("/servers/db/{server_id}/password")
-def get_db_password(server_id: str) -> dict[str, str]:
-    """The editor pre-fills the stored password so the user can see it is set."""
-    return {"password": db.password(server_id)}
 
 
 @router.delete("/servers/db/{server_id}")
@@ -180,12 +174,13 @@ async def connect_connection(conn_id: str, request: Request) -> ConnectionStatus
     conn_def = security_store.get_connection(conn_id, with_secrets=True)
     if conn_def is None:
         raise HTTPException(status_code=404, detail="Connection not found.")
-    error = await db.connect_connection(conn_def)
+    mgr = current_db()  # this user's own connection
+    error = await mgr.connect_connection(conn_def)
     return ConnectionStatus(
-        isConnected=db.is_connected,
-        isLLMReachable=db.is_llm_reachable,
-        activeProfileId=db.active_profile_id,
-        username=db.username,
+        isConnected=mgr.is_connected,
+        isLLMReachable=mgr.is_llm_reachable,
+        activeProfileId=mgr.active_profile_id,
+        username=mgr.username,
         lastError=error,
     )
 
@@ -319,8 +314,8 @@ async def delete_managed_connection(conn_id: str, request: Request) -> dict:
     user = _require_power(request)
     if not security_store.can_manage_connection(conn_id, user.username):
         raise HTTPException(status_code=403, detail="You cannot delete this connection.")
-    if db.active_profile_id == conn_id:
-        await db.disconnect()
+    # Drop every user whose live session is this connection before removing it.
+    await registry.disconnect_connection(conn_id)
     security_store.delete_connection(conn_id)
     return {"ok": True}
 
@@ -449,16 +444,18 @@ async def connect(profile_id: str) -> ConnectionStatus:
 
 @router.post("/disconnect", response_model=ConnectionStatus)
 async def disconnect() -> ConnectionStatus:
-    await db.disconnect()
-    return ConnectionStatus(activeProfileId=db.active_profile_id)
+    mgr = current_db()
+    await mgr.disconnect()
+    return ConnectionStatus(activeProfileId=mgr.active_profile_id)
 
 
 @router.get("/connection/status", response_model=ConnectionStatus)
 def status() -> ConnectionStatus:
+    mgr = current_db()
     return ConnectionStatus(
-        isConnected=db.is_connected,
-        isLLMReachable=db.is_llm_reachable,
-        activeProfileId=db.active_profile_id,
-        username=db.username,
-        lastError=db.last_error,
+        isConnected=mgr.is_connected,
+        isLLMReachable=mgr.is_llm_reachable,
+        activeProfileId=mgr.active_profile_id,
+        username=mgr.username,
+        lastError=mgr.last_error,
     )

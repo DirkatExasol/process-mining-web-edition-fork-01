@@ -6,6 +6,7 @@ Every test here runs without a database connection, mirroring the Swift
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -13,6 +14,11 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
+
+# Tests drive the compute backend directly (there is no GUI proxy in the loop), so
+# the proxy-auth gate is off by default. test_proxy_auth.py re-enables it to verify
+# the gate itself. Set before any `app.config` import so it takes effect.
+os.environ.setdefault("PMW_REQUIRE_PROXY_AUTH", "0")
 
 import pytest
 

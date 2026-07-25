@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from .. import log_events as logx
 from ..config import DEFAULT_LLM_PROMPT
-from ..db.manager import db
+from ..db.manager import current_db
 from ..models import (
     FilterSpec,
     HappyPath,
@@ -47,7 +47,7 @@ async def list_notes(project_id: str) -> list[ProcessNote]:
     require_connection()
     r = repo()
     await r.ensure_notes_table()
-    return await r.load_notes(project_id, db.username)
+    return await r.load_notes(project_id, current_db().username)
 
 
 @router.put("/projects/{project_id}/notes", response_model=ProcessNote)
@@ -56,7 +56,7 @@ async def save_note(project_id: str, note: ProcessNote) -> ProcessNote:
     r = repo()
     await r.ensure_notes_table()
 
-    current_user = db.username
+    current_user = current_db().username
     existing = next(
         (n for n in await r.load_notes(project_id, current_user) if n.id == note.id),
         None,
@@ -259,7 +259,7 @@ async def documentation(
     project_id: str, request: DocumentationRequest
 ) -> dict[str, object]:
     require_connection()
-    server = db.active_llm_server
+    server = current_db().active_llm_server
     if server is None or not server.serverURL.strip():
         raise HTTPException(
             status_code=400,

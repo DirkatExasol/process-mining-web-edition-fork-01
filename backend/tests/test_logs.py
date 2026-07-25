@@ -104,6 +104,27 @@ def test_count_and_paging(logs):
     assert len(seen) == len(set(seen)) == 24
 
 
+def test_search_is_redos_bounded(logs):
+    """A catastrophic-backtracking pattern must not hang the log search."""
+    import time
+
+    from app.store import logs as logs_mod
+
+    logs.set_level("DEBUG")
+    logs.record("INFO", "a" * 60 + "b")  # bait for (a|a)*$ style blowup
+
+    start = time.perf_counter()
+    logs.query(search="(a|a)*$")  # would run for aeons unbounded
+    elapsed = time.perf_counter() - start
+    # Bounded by the per-match timeout (or the length cap), well under a second.
+    assert elapsed < max(2.0, logs_mod._SEARCH_TIMEOUT_SECS * 4)
+
+    # An over-long pattern degrades to a safe literal match rather than compiling.
+    huge = "(a+)+" * 200
+    assert len(huge) > logs_mod._MAX_SEARCH_PATTERN
+    assert logs.query(search=huge) == []  # no literal match, no hang
+
+
 def test_regex_search(logs):
     logs.set_level("DEBUG")
     logs.record("USAGE", "user alice signed in")

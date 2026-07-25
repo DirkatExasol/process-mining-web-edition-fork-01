@@ -47,6 +47,13 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# In --dev the Vite dev server proxies straight to the backend (no GUI proxy in
+# between), so the backend can't require the proxy-auth secret. Everything is
+# loopback in dev anyway.
+if [[ "${1:-}" == "--dev" ]]; then
+  export PMW_REQUIRE_PROXY_AUTH=0
+fi
+
 # TLS on loopback (internal self-signed cert) so the GUI→backend proxy hop is
 # always encrypted — see backend/app/services/internal_tls.py.
 echo "→ compute backend on https://127.0.0.1:${PMW_BACKEND_PORT:-8000} (TLS, internal cert)"

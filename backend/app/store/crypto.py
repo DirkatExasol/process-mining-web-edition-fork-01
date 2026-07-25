@@ -101,3 +101,15 @@ def read_session(token: str, ttl_secs: int) -> bytes | None:
         return get_fernet().decrypt(token.encode("ascii"), ttl=ttl_secs)
     except (InvalidToken, ValueError):
         return None
+
+
+def proxy_auth_secret() -> str:
+    """Shared secret the GUI proxy and the compute backend both derive from the
+    Fernet key (which both processes load from ``data/secret.key``). The backend
+    requires it on every ``/api/*`` call, proving the request came through the
+    trusted proxy rather than a local process forging the X-PMW-User header.
+    Deterministic from the shared key — no separate file, no generation race.
+    """
+    get_fernet()  # ensure the key exists on disk
+    key = SECRET_KEY_PATH.read_bytes()
+    return hashlib.sha256(key + b"pmw-proxy-auth-v1").hexdigest()

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from ..db.manager import db
+from ..db.manager import current_db
 from ..db.repository import ProcessRepository
 from ..models import (
     DurationStats,
@@ -30,13 +30,15 @@ router = APIRouter(prefix="/api", tags=["projects"])
 
 
 def repo(sample_set: SampleSet = SampleSet.original) -> ProcessRepository:
-    r = ProcessRepository(db)
+    # The current request's user resolves to their own DatabaseManager, so data
+    # never crosses between users (see manager.current_db / main.UserContextMiddleware).
+    r = ProcessRepository(current_db())
     r.active_sample_set = sample_set
     return r
 
 
 def require_connection() -> None:
-    if not db.is_connected:
+    if not current_db().is_connected:
         raise HTTPException(status_code=409, detail="Not connected to a database.")
 
 

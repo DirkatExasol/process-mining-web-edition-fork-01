@@ -185,13 +185,15 @@ def test_db_connection_test_failure_is_logged(logstore, monkeypatch):
     assert "db.x" in entries[0]["message"]
 
 
-def test_llm_connection_error_is_logged(logstore):
+def test_llm_connection_error_is_logged(logstore, monkeypatch):
     """An LLM reachability probe captures the real connection error before it is
     swallowed (covers Test buttons and connect, which all call check_llm_reachable)."""
     from app.db import manager
     from app.models import LLMServer
 
-    # Port 1 refuses immediately → a connection error, not just 'unreachable'.
+    # Loopback is SSRF-blocked by default; opt in so we exercise the real
+    # connection-error path (port 1 refuses immediately).
+    monkeypatch.setenv("PMW_ALLOW_PRIVATE_LLM_HOSTS", "1")
     server = LLMServer(id="x", name="n", serverURL="http://127.0.0.1:1/v1", apiKey="", model="")
     reachable = asyncio.run(manager.check_llm_reachable(server))
     assert reachable is False
@@ -202,3 +204,19 @@ def test_llm_connection_error_is_logged(logstore):
         "connection error" in entries[0]["message"].lower()
         or "not reachable" in entries[0]["message"].lower()
     )
+
+
+def test_llm_ssrf_url_is_refused_and_logged(logstore):
+    """A configured LLM URL pointing at cloud-metadata is refused before any fetch."""
+    from app.db import manager
+    from app.models import LLMServer
+
+    server = LLMServer(
+        id="x", name="n",
+        serverURL="http://169.254.169.254/latest/meta-data/", apiKey="sk-secret", model="",
+    )
+    reachable = asyncio.run(manager.check_llm_reachable(server))
+    assert reachable is False
+    entries = logstore.query(operation="llm-test")
+    assert entries and "ssrf guard" in entries[0]["message"].lower()
+    assert "sk-secret" not in entries[0]["message"]  # the api key is never logged

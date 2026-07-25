@@ -22,6 +22,11 @@ import threading
 import time
 from datetime import datetime, timezone
 
+try:  # optional — enables a ReDoS-safe per-match timeout for the log search
+    import regex as _regex
+except ImportError:  # pragma: no cover - falls back to stdlib re
+    _regex = None
+
 from ..config import LOGS_DB_PATH, LOGS_DIR
 
 # Cumulative severity ladder — index is the rank; a max level records ranks <= it.
@@ -281,12 +286,32 @@ class LogStore:
             self._conn.commit()
 
 
+# Bounds for the user-supplied search regex (admin log filter) — a defence against
+# catastrophic-backtracking ReDoS. The `regex` engine enforces a real per-match
+# timeout; an over-long or pathological pattern degrades to a literal substring
+# match (the same safe fallback used for an invalid pattern).
+_MAX_SEARCH_PATTERN = 250
+_SEARCH_TIMEOUT_SECS = 0.25
+
+
 def _sql_regexp(pattern: str, value: str) -> bool:
-    try:
-        return re.search(pattern, value or "", re.IGNORECASE) is not None
+    pat = pattern or ""
+    text = value or ""
+    literal = pat.lower() in text.lower()
+    if not pat or len(pat) > _MAX_SEARCH_PATTERN:
+        return literal
+    if _regex is not None:
+        try:
+            return (
+                _regex.search(pat, text, _regex.IGNORECASE, timeout=_SEARCH_TIMEOUT_SECS)
+                is not None
+            )
+        except (_regex.error, TimeoutError, ValueError):
+            return literal
+    try:  # stdlib fallback — no timeout, so lean on the length cap above
+        return re.search(pat, text, re.IGNORECASE) is not None
     except re.error:
-        # Fall back to a literal substring match on an invalid pattern.
-        return (pattern or "").lower() in (value or "").lower()
+        return literal
 
 
 def _row_to_dict(r: sqlite3.Row) -> dict:

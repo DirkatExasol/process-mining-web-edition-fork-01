@@ -200,3 +200,27 @@ def test_restore_without_llm_creates_no_llm_server(memory_store):
     assert db.llm_servers == []
     assert db.profiles[0].llmServerId is None
     assert db.profiles[0].databaseServerId == "PROF-2"
+
+
+def test_restore_never_writes_secret_keys(memory_store):
+    """A crafted backup cannot inject secret settings (conn_pw_/llm_api_key_)
+    into the settings store — the restore mirrors the export/patch key filter."""
+    from app.db.manager import DatabaseManager
+
+    db = DatabaseManager()
+    payload = {
+        "version": 1,
+        "appSettings": {},
+        "connections": [],
+        "stringDefaults": {
+            "conn_pw_PROF-1": "injected-password",     # must be ignored
+            "llm_api_key_PROF-1": "sk-injected",        # must be ignored
+            "llm_prompt_P1": "legit-value",             # normal key restored
+        },
+        "dataDefaults": {},
+    }
+    backup.restore(db, payload, {})
+
+    assert memory_store.get("conn_pw_PROF-1") is None
+    assert memory_store.get("llm_api_key_PROF-1") is None
+    assert memory_store.get("llm_prompt_P1") == "legit-value"  # non-secret still restored

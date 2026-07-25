@@ -99,8 +99,6 @@ export const api = {
   listDbServers: () => get<DatabaseServer[]>('/api/servers/db'),
   saveDbServer: (server: DatabaseServer, password?: string) =>
     post<DatabaseServer>('/api/servers/db', { server, password }),
-  dbServerPassword: (id: string) =>
-    get<{ password: string }>(`/api/servers/db/${enc(id)}/password`),
   deleteDbServer: (id: string) => del<void>(`/api/servers/db/${enc(id)}`),
   testDbServer: (server: DatabaseServer, password?: string) =>
     post<{ error: string | null }>('/api/servers/db/test', { server, password }),

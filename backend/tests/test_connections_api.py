@@ -120,23 +120,25 @@ def test_connect_forbidden_for_unassigned_user(backend):
     assert called is False  # the gate short-circuits before any DB work
 
 
-def test_connect_allowed_for_assigned_user(backend):
-    app, store, db = backend
+def test_connect_allowed_for_assigned_user(backend, monkeypatch):
+    import app.db.manager as manager
+
+    app, store, _ = backend
     store.create_user("alice", "pw", is_admin=False)
     conn = _make_conn(store, assignments=["alice"])
     client = TestClient(app)
 
     received: dict = {}
 
-    async def _fake_connect(conn_def):
+    async def _fake_connect(self, conn_def):  # patched on the class → per-user managers
         received["id"] = conn_def.id
         received["password"] = conn_def.password  # backend receives decrypted secret
-        db.is_connected = True
-        db.is_llm_reachable = True
-        db.active_profile_id = conn_def.id
+        self.is_connected = True
+        self.is_llm_reachable = True
+        self.active_profile_id = conn_def.id
         return None
 
-    db.connect_connection = _fake_connect  # type: ignore[method-assign]
+    monkeypatch.setattr(manager.DatabaseManager, "connect_connection", _fake_connect)
 
     resp = client.post(
         f"/api/connections/{conn.id}/connect", headers={"X-PMW-User": "alice"}
@@ -145,8 +147,41 @@ def test_connect_allowed_for_assigned_user(backend):
     body = resp.json()
     assert body["isConnected"] is True
     assert body["activeProfileId"] == conn.id
-    # The backend connects with the decrypted secret, resolved from the store.
     assert received == {"id": conn.id, "password": "s3cret"}
+
+
+def test_connections_are_isolated_per_user(backend, monkeypatch):
+    """Once alice connects, bob (a different user) does NOT see her live session —
+    the core fix for cross-user data exposure."""
+    import app.db.manager as manager
+
+    app, store, _ = backend
+    store.create_user("alice", "pw", is_admin=False)
+    store.create_user("bob", "pw", is_admin=False)
+    conn = _make_conn(store, assignments=["alice", "bob"])
+    client = TestClient(app)
+
+    async def _fake_connect(self, conn_def):
+        self.is_connected = True
+        self.active_profile_id = conn_def.id
+        return None
+
+    monkeypatch.setattr(manager.DatabaseManager, "connect_connection", _fake_connect)
+
+    # alice connects.
+    assert (
+        client.post(
+            f"/api/connections/{conn.id}/connect", headers={"X-PMW-User": "alice"}
+        ).json()["isConnected"]
+        is True
+    )
+
+    # bob, who never connected, sees no connection (would be True with a shared global).
+    bob = client.get("/api/connection/status", headers={"X-PMW-User": "bob"}).json()
+    assert bob["isConnected"] is False and bob["activeProfileId"] is None
+    # alice still has hers.
+    alice = client.get("/api/connection/status", headers={"X-PMW-User": "alice"}).json()
+    assert alice["isConnected"] is True and alice["activeProfileId"] == conn.id
 
 
 def test_connect_missing_connection_is_404(backend):
@@ -417,3 +452,15 @@ def test_generate_demo_power_user_invokes_generator(backend, monkeypatch):
         json={"host": "db", "password": "pw", "schema": "PM", "journeys": 100, "dataset": "finance"},
     )
     assert resp.status_code == 200 and seen["dataset"] == "finance"
+
+
+def test_legacy_db_password_endpoint_is_removed(backend):
+    """The plaintext-password disclosure route must no longer exist (any authed
+    user could previously read a stored DB password from the legacy store)."""
+    app, _, _ = backend
+    client = TestClient(app)
+    resp = client.get("/api/servers/db/anything/password")
+    assert resp.status_code == 404  # route gone
+    # The route table itself carries no such path.
+    paths = {r.path for r in app.routes if hasattr(r, "path")}
+    assert "/api/servers/db/{server_id}/password" not in paths

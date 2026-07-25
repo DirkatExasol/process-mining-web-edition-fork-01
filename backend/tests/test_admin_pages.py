@@ -132,6 +132,24 @@ def test_dashboard_has_logging_tab(dashboard):
     assert '<option value="10">' in dashboard and '<option value="100">' in dashboard
 
 
+def test_dashboard_escapes_single_quote_and_avoids_inline_onclick_injection(dashboard):
+    # esc() must also escape ' (values sit in single-quoted JS strings inside
+    # onclick attributes; without this an LDAP/connection name with a quote
+    # becomes admin-context script execution).
+    assert "&#39;" in dashboard  # esc() maps ' -> &#39;
+    # The user/cert/connection actions read values from data-* via this.dataset,
+    # never interpolate them into inline JS string literals.
+    for safe in (
+        "delUser(this.dataset.user)",
+        "toggleAdmin(this.dataset.user",
+        "deleteCert(this.dataset.id, this.dataset.name)",
+        "editConnection(this.dataset.id)",
+    ):
+        assert safe in dashboard, safe
+    for vulnerable in ("delUser('", "editConnection('", "deleteCert('"):
+        assert vulnerable not in dashboard, vulnerable
+
+
 def test_login_page_shows_inactivity_notice(pages):
     # Same label the app's LoginView shows; the idle auto-logout redirects here.
     plain = pages.login_page()

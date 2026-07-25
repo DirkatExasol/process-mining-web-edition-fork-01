@@ -243,6 +243,15 @@ DEFAULT_RESTORE_OPTIONS = {
 }
 
 
+# Secret settings keys are managed only through the dedicated (encrypted) paths;
+# a restored backup must never be able to inject them into the settings store.
+_SECRET_KEY_PREFIXES = ("conn_pw_", "llm_api_key_")
+
+
+def _is_secret_key(key: str) -> bool:
+    return key.startswith(_SECRET_KEY_PREFIXES)
+
+
 def restore(
     db: DatabaseManager, payload: dict[str, Any], options: dict[str, bool]
 ) -> None:
@@ -257,11 +266,15 @@ def restore(
         _restore_connections(db, payload, opts)
 
     for key, value in (payload.get("stringDefaults") or {}).items():
+        if _is_secret_key(key):  # never restore secrets through the settings channel
+            continue
         if key.startswith("norms_metric_") and not opts["norms"]:
             continue
         store.set(key, value)
 
     for key, encoded in (payload.get("dataDefaults") or {}).items():
+        if _is_secret_key(key):
+            continue
         if key.startswith("layout_") or key.startswith("graph.collapsedGroups_"):
             if not opts["layouts"]:
                 continue

@@ -73,6 +73,17 @@ BACKEND_URL = os.environ.get("PMW_BACKEND_URL", f"https://{BACKEND_HOST}:{BACKEN
 # fronted by one, or set it empty to fall back to the system trust store.
 BACKEND_CA_PATH = os.environ.get("PMW_BACKEND_CA", str(INTERNAL_CERT_PATH))
 
+# The compute backend requires a proxy-auth secret on /api/* so only the GUI proxy
+# (which validated the session) can reach it — not a local process forging
+# X-PMW-User. Disable only for `run.sh --dev`, where Vite proxies straight to the
+# backend with no GUI in between.
+REQUIRE_PROXY_AUTH = os.environ.get("PMW_REQUIRE_PROXY_AUTH", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+
 # Wall-clock limit for the heavy statistics queries (Swift used 30 s).
 QUERY_TIMEOUT_SECS = float(os.environ.get("PMW_QUERY_TIMEOUT", "30"))
 

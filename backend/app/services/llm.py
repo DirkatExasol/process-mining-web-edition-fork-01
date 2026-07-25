@@ -11,6 +11,8 @@ import re
 
 from openai import APIStatusError, AsyncOpenAI
 
+from .net_guard import UrlNotAllowed, assert_safe_url
+
 # Some reasoning models prepend their scratchpad; the Swift client stripped it.
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
@@ -25,6 +27,10 @@ async def chat(server_url: str, api_key: str, model: str, prompt: str) -> str:
     base_url = server_url.strip().rstrip("/")
     if not base_url:
         raise LLMError("No LLM server configured.")
+    try:
+        assert_safe_url(base_url)  # SSRF guard
+    except UrlNotAllowed as exc:
+        raise LLMError(str(exc)) from exc
 
     client = AsyncOpenAI(
         base_url=base_url,
@@ -58,6 +64,10 @@ async def list_models(server_url: str, api_key: str) -> list[str]:
     base_url = server_url.strip().rstrip("/")
     if not base_url:
         return []
+    try:
+        assert_safe_url(base_url)  # SSRF guard
+    except UrlNotAllowed as exc:
+        raise LLMError(str(exc)) from exc
     client = AsyncOpenAI(
         base_url=base_url,
         api_key=api_key.strip() or "not-needed",
