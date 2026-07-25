@@ -53,6 +53,11 @@ def admin(tmp_path, monkeypatch):
 
     importlib.reload(backup_mod)
 
+    # License verifier rebound to the temp data dir (App Control → License).
+    import app.licensing as licensing_mod
+
+    importlib.reload(licensing_mod)
+
     # Load admin/server.py fresh (it lives outside the app package; its module name
     # `server` collides with the GUI server, so drop any cached copy first).
     admin_dir = Path(config.PROJECT_ROOT) / "admin"
@@ -694,3 +699,133 @@ def test_backup_actions_are_logged(admin):
     assert "inspect failed" in joined  # the failure is recorded
     # Every one is tagged with the backup operation.
     assert entries and all(e["operation"] == "backup" for e in entries)
+
+
+def test_max_failed_logins_config_roundtrip(admin):
+    server, store = admin
+    client = _login(server)
+    assert client.get("/api/session").json()["maxFailedLogins"] == 0  # default off
+    resp = client.post("/api/access/max-failed-logins", json={"count": 5})
+    assert resp.status_code == 200 and resp.json()["maxFailedLogins"] == 5
+    assert store.max_failed_logins == 5
+    assert client.get("/api/session").json()["maxFailedLogins"] == 5
+
+
+def test_max_failed_logins_requires_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    assert (
+        client.post("/api/access/max-failed-logins", json={"count": 5}).status_code
+        == 401
+    )
+
+
+def test_admin_login_shows_lockout_message(admin):
+    """A locked account gets the lockout message on the admin login screen."""
+    server, store = admin
+    store.set_max_failed_logins(1)
+    # One bad attempt locks the built-in admin.
+    client = TestClient(server.app)
+    r = client.post(
+        "/login",
+        data={"username": "Administrator", "password": "wrong"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 401
+    assert "locked" in r.text.lower()
+
+
+# ── License (App Control → License) ──────────────────────────────────────────
+
+
+def _sign_license(server, license_obj: dict) -> str:
+    """Sign a license with an ephemeral key and patch the verifier to accept it.
+    Returns the base64 the upload endpoint expects."""
+    import base64 as _b64
+    import json as _json
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    priv = Ed25519PrivateKey.generate()
+    server.licensing._PUBLIC_KEY = priv.public_key()
+    sig = priv.sign(server.licensing._canonical(license_obj))
+    doc = {"license": license_obj, "signature": sig.hex()}
+    return _b64.b64encode(_json.dumps(doc).encode()).decode()
+
+
+def _future_license() -> dict:
+    from datetime import date, timedelta
+
+    return {
+        "licensee": "Acme GmbH",
+        "issued": "2026-01-01",
+        "expires": (date.today() + timedelta(days=30)).isoformat(),
+        "version": 1,
+    }
+
+
+def test_license_upload_requires_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    assert client.get("/api/license").status_code == 401
+    assert client.post("/api/license", json={"content": ""}).status_code == 401
+
+
+def test_license_upload_installs_valid(admin):
+    server, _ = admin
+    client = _login(server)
+    content = _sign_license(server, _future_license())
+    r = client.post("/api/license", json={"content": content})
+    assert r.status_code == 200, r.text
+    assert r.json()["license"]["state"] == "valid"
+    # Session now reports the installed license.
+    assert client.get("/api/session").json()["license"]["state"] == "valid"
+
+
+def test_license_upload_rejects_forged(admin):
+    server, _ = admin
+    client = _login(server)
+    content = _sign_license(server, _future_license())
+    # Corrupt the base64'd document so the signature no longer matches.
+    import base64
+    import json
+
+    doc = json.loads(base64.b64decode(content))
+    doc["license"]["licensee"] = "Evil Corp"
+    tampered = base64.b64encode(json.dumps(doc).encode()).decode()
+    r = client.post("/api/license", json={"content": tampered})
+    assert r.status_code == 400
+    assert "signature" in r.json()["detail"].lower()
+    # Nothing was stored.
+    assert client.get("/api/session").json()["license"]["state"] == "missing"
+
+
+def test_license_upload_rejects_bad_base64(admin):
+    server, _ = admin
+    client = _login(server)
+    r = client.post("/api/license", json={"content": "not!base64!"})
+    assert r.status_code == 400
+
+
+def test_license_delete_removes_installed(admin):
+    server, _ = admin
+    client = _login(server)
+    # Install one, then delete it.
+    content = _sign_license(server, _future_license())
+    assert client.post("/api/license", json={"content": content}).status_code == 200
+    assert client.get("/api/session").json()["license"]["state"] == "valid"
+
+    r = client.request("DELETE", "/api/license")
+    assert r.status_code == 200
+    assert r.json()["removed"] is True
+    assert client.get("/api/session").json()["license"]["state"] == "missing"
+
+    # Deleting again is a no-op, not an error.
+    r2 = client.request("DELETE", "/api/license")
+    assert r2.status_code == 200 and r2.json()["removed"] is False
+
+
+def test_license_delete_requires_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    assert client.request("DELETE", "/api/license").status_code == 401

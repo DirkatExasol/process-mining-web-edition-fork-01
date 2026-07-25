@@ -38,6 +38,7 @@ from app.config import (  # noqa: E402
     FRONTEND_PORT,
     GUI_PID_PATH,
 )
+from app import licensing  # noqa: E402
 from app import log_events as logx  # noqa: E402
 from app.db.manager import db as legacy_db  # noqa: E402 — settings-backed backup state
 from app.services import backup as backup_service  # noqa: E402
@@ -185,10 +186,10 @@ def login_post(request: Request, username: str = Form(...), password: str = Form
             username=username,
             operation="login",
         )
-        return HTMLResponse(
-            pages.login_page("Invalid credentials, or the account is not an administrator."),
-            status_code=401,
+        message = store.login_block_message(username) or (
+            "Invalid credentials, or the account is not an administrator."
         )
+        return HTMLResponse(pages.login_page(message), status_code=401)
     logx.usage(
         f"admin {user.username} signed in to the admin interface",
         request=request,
@@ -232,7 +233,9 @@ def api_session(request: Request, response: Response, user: User = Depends(requi
         "requireLogin": store.require_login,
         "idleTimeoutMins": store.idle_timeout_mins,
         "adminIdleTimeoutMins": store.admin_idle_timeout_mins,
+        "maxFailedLogins": store.max_failed_logins,
         "builtinAdmin": DEFAULT_ADMIN_USERNAME,
+        "license": licensing.evaluate().public(),
     }
 
 
@@ -261,6 +264,78 @@ def api_admin_idle_timeout(body: IdleTimeoutBody, user: User = Depends(require_a
     """Idle timeout for the admin interface itself — separate from the app's."""
     store.set_admin_idle_timeout_mins(body.minutes)
     return {"ok": True, "adminIdleTimeoutMins": store.admin_idle_timeout_mins}
+
+
+class MaxFailedLoginsBody(BaseModel):
+    count: int
+
+
+@app.post("/api/access/max-failed-logins")
+def api_max_failed_logins(body: MaxFailedLoginsBody, user: User = Depends(require_admin)):
+    store.set_max_failed_logins(body.count)
+    logx.usage(
+        f"admin {user.username} set the failed-sign-in lockout to "
+        f"{store.max_failed_logins or 'off'}",
+        username=user.username,
+        operation="config",
+    )
+    return {"ok": True, "maxFailedLogins": store.max_failed_logins}
+
+
+# ── License ─────────────────────────────────────────────────────────────────────
+
+
+class LicenseUploadBody(BaseModel):
+    content: str  # base64-encoded license.json bytes
+
+
+# A signed license is a few hundred bytes; this cap just stops an absurd upload.
+_MAX_LICENSE_B64 = 100_000
+
+
+@app.get("/api/license")
+def api_license(user: User = Depends(require_admin)):
+    return licensing.evaluate().public()
+
+
+@app.post("/api/license")
+def api_license_upload(body: LicenseUploadBody, user: User = Depends(require_admin)):
+    if len(body.content) > _MAX_LICENSE_B64:
+        raise HTTPException(status_code=413, detail="License file is too large.")
+    try:
+        raw = base64.b64decode(body.content)
+    except ValueError as exc:  # binascii.Error is a ValueError subclass
+        raise HTTPException(status_code=400, detail="Invalid file content.") from exc
+
+    status = licensing.install(raw)
+    if status.state in ("invalid", "missing"):
+        # Forged/corrupt/unparseable — nothing was stored.
+        logx.warn(
+            f"admin {user.username} uploaded a license that was rejected: {status.message}",
+            username=user.username,
+            operation="license",
+        )
+        raise HTTPException(status_code=400, detail=status.message)
+
+    logx.usage(
+        f"admin {user.username} installed a license — {status.message}",
+        username=user.username,
+        operation="license",
+    )
+    return {"ok": True, "license": status.public()}
+
+
+@app.delete("/api/license")
+def api_license_delete(user: User = Depends(require_admin)):
+    removed = licensing.uninstall()
+    if removed:
+        logx.usage(
+            f"admin {user.username} removed the installed license — the backend "
+            "drops to Demo Mode",
+            username=user.username,
+            operation="license",
+        )
+    return {"ok": True, "removed": removed, "license": licensing.evaluate().public()}
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────

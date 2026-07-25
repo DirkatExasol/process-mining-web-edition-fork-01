@@ -119,6 +119,13 @@ def test_dashboard_has_admin_idle_logout(dashboard):
     assert "/login?inactivity=1" in dashboard  # idle logout lands on the notice
 
 
+def test_dashboard_has_failed_login_lockout_control(dashboard):
+    assert 'id="maxFailedLogins"' in dashboard
+    assert "function saveMaxFailedLogins" in dashboard
+    assert "/api/access/max-failed-logins" in dashboard
+    assert "Unlock" in dashboard  # a locked account can be unlocked from the Users tab
+
+
 def test_dashboard_has_logging_tab(dashboard):
     assert 'data-tab="logging"' in dashboard and 'id="tab-logging"' in dashboard
     assert "function loadLogs" in dashboard

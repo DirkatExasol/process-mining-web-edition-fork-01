@@ -6,6 +6,7 @@
  * through verbatim.
  */
 
+import DOMPurify from 'dompurify'
 import { useMemo, type ReactNode } from 'react'
 
 const RAW_BLOCK = /^\s*<(table|div|hr|h[1-6])[\s>]/i
@@ -80,8 +81,10 @@ function render(markdown: string): ReactNode[] {
       out.push(
         <div
           key={`raw${key++}`}
-          // The content is produced by this application, not user input.
-          dangerouslySetInnerHTML={{ __html: buffer.join('\n') }}
+          // Report HTML can originate from an LLM (via AI documentation), so treat
+          // it as untrusted and sanitize before injecting — strips scripts, event
+          // handlers and javascript: URLs while keeping the formatting tags.
+          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(buffer.join('\n')) }}
         />,
       )
       continue

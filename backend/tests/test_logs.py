@@ -180,3 +180,18 @@ def test_client_ip_extraction():
     assert logx.client_ip(_Req({}, "5.5.5.5")) == "5.5.5.5"
     # Never raises on a missing request.
     assert logx.client_ip(None) == ""
+
+
+def test_record_strips_control_chars_to_prevent_log_forgery(logs):
+    logs.set_level("DEBUG")
+    logs.record(
+        "WARN",
+        "real\n2099-01-01 -- 00:00:00 -- ERROR -- 9.9.9.9 -- root -- FORGED",
+        username="a\r\nb",
+        operation="op",
+    )
+    entry = logs.query()[0]
+    assert "\n" not in entry["message"] and "\r" not in entry["message"]
+    assert "\n" not in entry["user"] and "\r" not in entry["user"]
+    # The exported form is a single line per entry (no forged extra line).
+    assert logs.render().count("\n") == 1

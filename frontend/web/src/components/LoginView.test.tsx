@@ -8,6 +8,7 @@ vi.mock('../api', () => ({
   ApiError: class ApiError extends Error {},
   api: {
     directoryStatus: vi.fn(),
+    licenseStatus: vi.fn(),
     login: vi.fn(),
     session: vi.fn(),
     logout: vi.fn(),
@@ -22,6 +23,14 @@ import { api } from '../api'
 import { LoginView } from './LoginView'
 
 const directoryStatus = api.directoryStatus as unknown as ReturnType<typeof vi.fn>
+const licenseStatus = api.licenseStatus as unknown as ReturnType<typeof vi.fn>
+
+// Most tests don't care about the license label; default it to "licensed".
+licenseStatus.mockResolvedValue({
+  state: 'valid',
+  demoMode: false,
+  remainingSeconds: null,
+})
 
 describe('LoginView directory indicator', () => {
   it('shows a green "available" indicator when the directory is reachable', async () => {
@@ -48,5 +57,55 @@ describe('LoginView directory indicator', () => {
     // Give the effect a chance to resolve, then assert the indicator is absent.
     await waitFor(() => expect(directoryStatus).toHaveBeenCalled())
     expect(screen.queryByText(/Directory server/)).toBeNull()
+  })
+})
+
+describe('LoginView demo-mode label', () => {
+  it('shows the remaining minutes when no license is installed', async () => {
+    directoryStatus.mockResolvedValue({ configured: false, available: false })
+    licenseStatus.mockResolvedValue({
+      state: 'missing',
+      demoMode: true,
+      remainingSeconds: 25 * 60 + 5, // 25m05s → rounds up to 26 min
+    })
+    render(<LoginView onSignedIn={() => {}} />)
+    await screen.findByText(/Demo Mode/)
+    expect(screen.getByText(/remaining time: 26 min/)).toBeTruthy()
+  })
+
+  it('shows "No License installed" when the demo window is spent', async () => {
+    directoryStatus.mockResolvedValue({ configured: false, available: false })
+    licenseStatus.mockResolvedValue({
+      state: 'missing',
+      demoMode: true,
+      remainingSeconds: 0,
+    })
+    render(<LoginView onSignedIn={() => {}} />)
+    await screen.findByText('No License installed')
+    expect(screen.queryByText(/Demo Mode/)).toBeNull()
+    expect(screen.queryByText(/remaining time/)).toBeNull()
+  })
+
+  it('shows "No License installed" for an expired license with no demo left', async () => {
+    directoryStatus.mockResolvedValue({ configured: false, available: false })
+    licenseStatus.mockResolvedValue({
+      state: 'expired',
+      demoMode: true,
+      remainingSeconds: null,
+    })
+    render(<LoginView onSignedIn={() => {}} />)
+    await screen.findByText('No License installed')
+  })
+
+  it('shows no demo label when a license is installed', async () => {
+    directoryStatus.mockResolvedValue({ configured: false, available: false })
+    licenseStatus.mockResolvedValue({
+      state: 'valid',
+      demoMode: false,
+      remainingSeconds: null,
+    })
+    render(<LoginView onSignedIn={() => {}} />)
+    await waitFor(() => expect(licenseStatus).toHaveBeenCalled())
+    expect(screen.queryByText(/Demo Mode/)).toBeNull()
   })
 })

@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
+from app import licensing  # noqa: E402
 from app import log_events as logx  # noqa: E402
 from app.config import BACKEND_CA_PATH, BACKEND_URL, SESSION_TTL_SECS  # noqa: E402
 from app.store.crypto import (  # noqa: E402
@@ -182,16 +183,15 @@ async def auth_login(request: Request) -> Response:
     # panel deliberately stays on local-only `authenticate`.
     user = store.authenticate_app(username, password)
     if user is None:
+        # Tell the user when the account is disabled/locked; otherwise stay generic.
+        detail = store.login_block_message(username) or "Invalid username or password."
         logx.warn(
             f"failed sign-in for username {username!r}",
             request=request,
             username=username,
             operation="login",
         )
-        return JSONResponse(
-            {"detail": "Invalid username or password, or the account is disabled."},
-            status_code=401,
-        )
+        return JSONResponse({"detail": detail}, status_code=401)
     logx.usage(
         f"user {user.username} signed in ({user.auth_source})",
         request=request,
@@ -245,6 +245,31 @@ async def auth_directory_status() -> Response:
     value = {"configured": True, "available": available}
     _dir_status.update(at=now, value=value)
     return JSONResponse(value)
+
+
+@app.get("/auth/license-status")
+async def auth_license_status() -> Response:
+    """Demo-mode / license state for the login panel (pre-auth).
+
+    Computed here from the shared license + demo-marker files, NOT by asking the
+    compute backend — so the login panel still reports "Demo Mode" / "No License
+    installed" even after an unlicensed backend has stopped itself. Read-only
+    (create=False): showing the login page never starts or renews the demo window.
+    """
+    try:
+        status = licensing.evaluate()
+        remaining = None if status.ok else licensing.demo_remaining_secs(create=False)
+        return JSONResponse(
+            {
+                "state": status.state,
+                "demoMode": not status.ok,
+                "remainingSeconds": remaining,
+                "licensee": status.licensee,
+                "expires": status.expires,
+            }
+        )
+    except Exception:  # noqa: BLE001 — a license probe must never break the login page
+        return JSONResponse({"state": "unknown", "demoMode": False, "remainingSeconds": None})
 
 
 @app.post("/auth/logout")

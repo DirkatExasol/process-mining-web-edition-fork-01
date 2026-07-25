@@ -28,6 +28,11 @@ def security(tmp_path, monkeypatch):
     import app.store.security as security_mod
 
     importlib.reload(security_mod)
+    # Isolate the log store too (the lockout path logs), so tests never touch the
+    # developer's real data/logs.
+    import app.store.logs as logs_mod
+
+    importlib.reload(logs_mod)
     return security_mod
 
 
@@ -512,3 +517,98 @@ def test_admin_idle_timeout_round_trips_and_clamps(security):
     assert store.admin_idle_timeout_mins == 25 and store.idle_timeout_mins == 5
     store.set_admin_idle_timeout_mins(-3)  # clamps to 0
     assert store.admin_idle_timeout_mins == 0
+
+
+# ── failed-sign-in lockout ────────────────────────────────────────────────────
+
+
+def test_lockout_disables_account_after_threshold(security):
+    store = security.store
+    store.create_user("u", "pw", is_admin=False)
+    store.set_max_failed_logins(3)
+
+    assert store.authenticate("u", "wrong") is None
+    assert store.authenticate("u", "wrong") is None
+    assert store.get_user("u").is_enabled is True  # not yet
+    assert store.authenticate("u", "wrong") is None  # 3rd → lock
+
+    u = store.get_user("u")
+    assert u.is_enabled is False and u.login_locked is True
+    assert store.authenticate("u", "pw") is None  # correct pw, still locked out
+    assert "locked" in store.login_block_message("u").lower()
+
+
+def test_lockout_counter_resets_on_success(security):
+    store = security.store
+    store.create_user("u", "pw", is_admin=False)
+    store.set_max_failed_logins(3)
+    store.authenticate("u", "wrong")
+    store.authenticate("u", "wrong")
+    assert store.authenticate("u", "pw") is not None  # success resets
+    assert store.get_user("u").failed_logins == 0
+    # A later single failure doesn't lock (counter was reset).
+    store.authenticate("u", "wrong")
+    assert store.get_user("u").is_enabled is True
+
+
+def test_reenabling_clears_lockout(security):
+    store = security.store
+    store.create_user("u", "pw", is_admin=False)
+    store.set_max_failed_logins(1)
+    store.authenticate("u", "wrong")  # locked immediately
+    assert store.get_user("u").login_locked is True
+    store.set_enabled("u", True)  # admin re-enables → unlock
+    u = store.get_user("u")
+    assert u.is_enabled and not u.login_locked and u.failed_logins == 0
+    assert store.authenticate("u", "pw") is not None
+
+
+def test_lockout_applies_to_builtin_administrator(security):
+    store = security.store
+    store.set_max_failed_logins(2)
+    store.authenticate("Administrator", "x")
+    store.authenticate("Administrator", "x")
+    assert store.get_user("Administrator").is_enabled is False
+    assert store.get_user("Administrator").login_locked is True
+
+
+def test_zero_threshold_never_locks(security):
+    store = security.store
+    store.create_user("u", "pw", is_admin=False)
+    store.set_max_failed_logins(0)  # off (default)
+    for _ in range(10):
+        store.authenticate("u", "wrong")
+    assert store.get_user("u").is_enabled is True
+
+
+def test_authenticate_nonexistent_user_returns_none_without_error(security):
+    # The dummy-hash path (anti-enumeration) must not raise or leak.
+    assert security.store.authenticate("ghost", "whatever") is None
+    assert security.store.login_block_message("ghost") is None  # no account → generic
+
+
+def test_lockout_is_logged(security):
+    import app.store.logs as logs_mod
+
+    store = security.store
+    store.create_user("u", "pw", is_admin=False)
+    store.set_max_failed_logins(2)
+    store.authenticate("u", "wrong")
+    assert logs_mod.store.query(operation="login") == []  # not locked yet → no entry
+    store.authenticate("u", "wrong")  # 2nd → lock
+
+    entries = logs_mod.store.query(operation="login")
+    assert entries and "locked" in entries[0]["message"].lower()
+    assert "'u'" in entries[0]["message"] and entries[0]["severity"] == "WARN"
+
+
+def test_ldap_user_local_failures_do_not_count_toward_lockout(security):
+    """A directory user has no local password; local checks 'fail' by design and
+    must not trip the lockout — they authenticate via LDAP separately."""
+    store = security.store
+    store.set_max_failed_logins(2)
+    store.provision_ldap_user("dir.user", email="d@x", display_name="Dir")
+    for _ in range(5):
+        assert store.authenticate("dir.user", "anything") is None
+    u = store.get_user("dir.user")
+    assert u.is_enabled is True and u.failed_logins == 0  # never counted / locked

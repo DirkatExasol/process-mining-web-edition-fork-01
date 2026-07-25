@@ -12,6 +12,7 @@ scrypt-hashed and never stored reversibly.
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 import threading
 import uuid
@@ -29,6 +30,10 @@ from ..services import certs as cert_service
 from .crypto import decrypt_text, encrypt_text, hash_password, verify_password
 
 log = logging.getLogger("security-store")
+
+# A throwaway hash so `authenticate` can run one scrypt verification even when the
+# username doesn't exist — equalising response time against username enumeration.
+_DUMMY_HASH = hash_password("pmw-nonexistent-account")
 
 TLS_OFF = "off"
 TLS_OPTIONAL = "optional"
@@ -120,12 +125,16 @@ class User:
     email: str = ""
     display_name: str = ""
     is_power: bool = False  # may create/manage their own DB connections from the app
+    failed_logins: int = 0
+    login_locked: bool = False  # disabled by the failed-sign-in lockout
 
     def public(self) -> dict:
         return {
             "username": self.username,
             "isAdmin": self.is_admin,
             "isEnabled": self.is_enabled,
+            "failedLogins": self.failed_logins,
+            "loginLocked": self.login_locked,
             "createdAt": self.created_at,
             "lastLogin": self.last_login,
             "authSource": self.auth_source,
@@ -240,6 +249,18 @@ class SecurityStore:
         self._migrate()
         self._conn.commit()
         self._bootstrap()
+        # Recovery valve: set PMW_RESET_LOCKOUTS=1 and restart to clear every
+        # failed-sign-in lockout (e.g. if the sole admin locked themselves out).
+        if os.environ.get("PMW_RESET_LOCKOUTS", "").strip().lower() in (
+            "1", "true", "yes", "on"
+        ):
+            with self._lock:
+                self._conn.execute(
+                    "UPDATE users SET login_locked = 0, failed_logins = 0, "
+                    "is_enabled = 1 WHERE login_locked = 1"
+                )
+                self._conn.commit()
+            log.warning("PMW_RESET_LOCKOUTS set — cleared all failed-sign-in lockouts.")
 
     def _migrate(self) -> None:
         """Add columns introduced after the initial release to existing databases."""
@@ -251,6 +272,9 @@ class SecurityStore:
             ("email", "email TEXT NOT NULL DEFAULT ''"),
             ("display_name", "display_name TEXT NOT NULL DEFAULT ''"),
             ("is_power", "is_power INTEGER NOT NULL DEFAULT 0"),
+            # Failed-sign-in lockout (admin-configurable threshold).
+            ("failed_logins", "failed_logins INTEGER NOT NULL DEFAULT 0"),
+            ("login_locked", "login_locked INTEGER NOT NULL DEFAULT 0"),
         ):
             if name not in cols:
                 self._conn.execute(f"ALTER TABLE users ADD COLUMN {ddl}")
@@ -336,6 +360,78 @@ class SecurityStore:
         with self._lock:
             self._set_config("admin_idle_timeout_mins", str(minutes))
             self._conn.commit()
+
+    # ── failed-sign-in lockout ────────────────────────────────────────────────
+
+    @property
+    def max_failed_logins(self) -> int:
+        """Disable an account after this many consecutive failed sign-ins
+        (0 = never lock). Applies to every account, including the Administrator."""
+        with self._lock:
+            try:
+                return max(0, int(self._get_config("max_failed_logins") or 0))
+            except (TypeError, ValueError):
+                return 0
+
+    def set_max_failed_logins(self, count: int) -> None:
+        with self._lock:
+            self._set_config("max_failed_logins", str(max(0, int(count))))
+            self._conn.commit()
+
+    def record_login_failure(self, username: str) -> bool:
+        """Count a failed sign-in; lock (disable) the account once it reaches the
+        configured threshold. Returns True if this failure locked it. A direct write
+        so it can lock the built-in Administrator too (per the configured policy)."""
+        threshold = self.max_failed_logins
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT failed_logins FROM users WHERE LOWER(username) = LOWER(?)",
+                (username,),
+            ).fetchone()
+            if row is None:
+                return False
+            count = int(row["failed_logins"] or 0) + 1
+            locked = threshold > 0 and count >= threshold
+            self._conn.execute(
+                "UPDATE users SET failed_logins = ?, "
+                "is_enabled = CASE WHEN ? THEN 0 ELSE is_enabled END, "
+                "login_locked = CASE WHEN ? THEN 1 ELSE login_locked END "
+                "WHERE LOWER(username) = LOWER(?)",
+                (count, int(locked), int(locked), username),
+            )
+            self._conn.commit()
+        if locked:  # logged outside the store lock (the log store has its own lock)
+            from .. import log_events as logx
+
+            logx.warn(
+                f"account {username!r} locked (disabled) after {count} failed "
+                f"sign-in attempts",
+                username=username,
+                operation="login",
+            )
+        return locked
+
+    def reset_login_failures(self, username: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET failed_logins = 0, login_locked = 0 "
+                "WHERE LOWER(username) = LOWER(?)",
+                (username,),
+            )
+            self._conn.commit()
+
+    def login_block_message(self, username: str) -> str | None:
+        """A message to show the user when their account is disabled/locked, or None
+        for a plain bad-credentials failure (so we don't reveal account existence)."""
+        user = self.get_user(username)
+        if user is None or user.is_enabled:
+            return None
+        if user.login_locked:
+            return (
+                "This account has been locked after too many failed sign-in "
+                "attempts. Contact an administrator."
+            )
+        return "This account has been disabled. Contact an administrator."
 
     # ── LDAP / directory ──────────────────────────────────────────────────────
 
@@ -542,6 +638,8 @@ class SecurityStore:
             email=(row["email"] if "email" in keys else "") or "",
             display_name=(row["display_name"] if "display_name" in keys else "") or "",
             is_power=bool(row["is_power"]) if "is_power" in keys else False,
+            failed_logins=int(row["failed_logins"]) if "failed_logins" in keys else 0,
+            login_locked=bool(row["login_locked"]) if "login_locked" in keys else False,
         )
 
     def list_users(self) -> list[User]:
@@ -599,10 +697,18 @@ class SecurityStore:
         if not enabled and user.is_admin:
             self._guard_last_admin(exclude=username)
         with self._lock:
-            self._conn.execute(
-                "UPDATE users SET is_enabled = ? WHERE LOWER(username) = LOWER(?)",
-                (int(enabled), username),
-            )
+            # Re-enabling also clears any failed-sign-in lockout (and its counter).
+            if enabled:
+                self._conn.execute(
+                    "UPDATE users SET is_enabled = 1, login_locked = 0, "
+                    "failed_logins = 0 WHERE LOWER(username) = LOWER(?)",
+                    (username,),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE users SET is_enabled = 0 WHERE LOWER(username) = LOWER(?)",
+                    (username,),
+                )
             self._conn.commit()
 
     def set_admin(self, username: str, is_admin: bool) -> None:
@@ -667,17 +773,33 @@ class SecurityStore:
             )
 
     def authenticate(self, username: str, password: str) -> User | None:
-        """Return the user on a successful, enabled login; None otherwise."""
+        """Return the user on a successful, enabled login; None otherwise.
+
+        A failed sign-in on an enabled account is counted and can lock the account
+        (see max_failed_logins); a success clears the counter. One scrypt check runs
+        even when the account is missing, so timing doesn't reveal its existence.
+        """
         user = self.get_user(username)
         with self._lock:
             row = self._conn.execute(
                 "SELECT password_hash FROM users WHERE LOWER(username) = LOWER(?)",
                 (username,),
             ).fetchone()
-        if user is None or row is None or not user.is_enabled:
+        password_ok = verify_password(
+            password, row["password_hash"] if row is not None else _DUMMY_HASH
+        )
+        if user is None or row is None:
             return None
-        if not verify_password(password, row["password_hash"]):
+        if not password_ok:
+            # Count local-password failures only; directory users have no local
+            # password (a local check always "fails" for them and is authenticated
+            # via LDAP separately), and an already-disabled account isn't re-counted.
+            if user.is_enabled and user.auth_source != "ldap":
+                self.record_login_failure(username)
             return None
+        if not user.is_enabled:
+            return None  # correct password, but the account is disabled / locked
+        self.reset_login_failures(username)
         with self._lock:
             self._conn.execute(
                 "UPDATE users SET last_login = ? WHERE LOWER(username) = LOWER(?)",

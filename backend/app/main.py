@@ -6,7 +6,10 @@ never talks to this service directly; the GUI server proxies to it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import signal
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -16,9 +19,10 @@ import hmac
 
 from fastapi.responses import JSONResponse
 
+from . import licensing
 from . import log_events as logx
 from .api import connections, features, projects
-from .config import REQUIRE_PROXY_AUTH
+from .config import LICENSE_GRACE_SECS, LICENSE_POLL_SECS, REQUIRE_PROXY_AUTH
 from .db.manager import db, registry, reset_current_user, set_current_user
 from .store.crypto import proxy_auth_secret
 
@@ -41,9 +45,69 @@ else:
 _PROXY_AUTH_EXEMPT = {"/api/health"}
 
 
+# How often the watchdog re-reads the license file during a grace period. Short
+# enough that an admin upload cancels a pending shutdown within a few seconds.
+_LICENSE_POLL_SECS = LICENSE_POLL_SECS
+
+
+def _stop_backend() -> None:
+    # SIGTERM triggers uvicorn's graceful shutdown (which runs lifespan cleanup).
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+async def _license_watchdog() -> None:
+    """Enforce the license. With no valid license the backend runs only for the
+    remainder of the ONE-TIME demo window (persisted in the demo marker) and then
+    stops. An admin who uploads a valid license mid-demo cancels the shutdown; a
+    restart after the demo is spent gets no fresh window.
+    """
+    if licensing.evaluate().ok:
+        logx.info(f"License OK — {licensing.evaluate().message}", operation="license")
+    in_demo = False
+
+    while True:
+        status = licensing.evaluate()
+        if status.ok:
+            if in_demo:
+                logx.info(
+                    f"Valid license applied — {status.message} Shutdown cancelled.",
+                    operation="license",
+                )
+                in_demo = False
+            await asyncio.sleep(_LICENSE_POLL_SECS)
+            continue
+
+        # No valid license: consume/resume the one-time demo window.
+        remaining = licensing.demo_remaining_secs(create=True)
+        if remaining <= 0:
+            logx.error(
+                f"No valid license and the one-time demo period is over — stopping "
+                f"the backend. ({status.message})",
+                operation="license",
+            )
+            _stop_backend()
+            return
+        if not in_demo:
+            in_demo = True
+            logx.warn(
+                f"No valid license — {status.message} Demo mode: the backend will "
+                f"stop in ~{(remaining + 59) // 60} min unless a valid license is applied.",
+                operation="license",
+            )
+        await asyncio.sleep(_LICENSE_POLL_SECS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Recovery valve: clear the one-time demo marker so a fresh window is granted.
+    if os.environ.get("PMW_RESET_DEMO", "").strip().lower() in ("1", "true", "yes", "on"):
+        if licensing.reset_demo():
+            logging.getLogger("compute-backend").warning(
+                "PMW_RESET_DEMO set — cleared the one-time demo marker."
+            )
+    watchdog = asyncio.create_task(_license_watchdog())
     yield
+    watchdog.cancel()
     # Release every per-user Exasol connection (and the legacy one) on shutdown.
     await registry.disconnect_all()
     await db.disconnect()
@@ -121,5 +185,21 @@ app.include_router(features.router)
 def health() -> dict[str, object]:
     # Liveness only — connection state is per-user (see /api/connection/status).
     return {"status": "ok"}
+
+
+@app.get("/api/license/status")
+def license_status() -> dict[str, object]:
+    """Demo/license state (global, no per-user context). `remainingSeconds` is the
+    one-time demo grace left before an unlicensed backend stops (0 once spent).
+    Read-only: does not itself start/consume the demo window.
+    """
+    status = licensing.evaluate()
+    return {
+        "state": status.state,
+        "demoMode": not status.ok,
+        "remainingSeconds": None if status.ok else licensing.demo_remaining_secs(create=False),
+        "licensee": status.licensee,
+        "expires": status.expires,
+    }
 
 

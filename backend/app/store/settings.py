@@ -106,7 +106,11 @@ class SettingsStore:
 
     @staticmethod
     def _user_key(user: str, key: str) -> str:
-        return f"u:{user}:{key}"
+        # Encode ':' and '%' in the username so the "u:<user>:" namespace boundary is
+        # unambiguous — usernames aren't otherwise restricted (LDAP names, etc.), and
+        # a raw ':' would let one user's namespace prefix-match another's.
+        safe = user.replace("%", "%25").replace(":", "%3A")
+        return f"u:{safe}:{key}"
 
     def get_user(self, user: str, key: str, default: Any = None) -> Any:
         return self.get(self._user_key(user, key), default)

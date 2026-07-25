@@ -73,6 +73,23 @@ BACKEND_URL = os.environ.get("PMW_BACKEND_URL", f"https://{BACKEND_HOST}:{BACKEN
 # fronted by one, or set it empty to fall back to the system trust store.
 BACKEND_CA_PATH = os.environ.get("PMW_BACKEND_CA", str(INTERNAL_CERT_PATH))
 
+# Signed license file (shared: the admin writes it on upload, the backend verifies
+# it at startup and stops after a grace period if it is missing/invalid/expired).
+LICENSE_PATH = DATA_DIR / "license.json"
+
+# Marker that makes the demo grace a ONE-TIME window: the first unlicensed run
+# anchors a deadline here, and it is never renewed by restarting. Delete this file
+# (or set PMW_RESET_DEMO=1) to grant a fresh demo window.
+DEMO_MARKER_PATH = DATA_DIR / "demo_grace.json"
+
+# Grace period (seconds) the backend keeps running with no valid license before it
+# stops itself — enough time to upload a real license via the admin panel.
+LICENSE_GRACE_SECS = int(os.environ.get("PMW_LICENSE_GRACE_SECS", str(30 * 60)))
+
+# How often the backend re-reads the license during a grace period. Short enough
+# that an admin upload cancels a pending shutdown within seconds.
+LICENSE_POLL_SECS = float(os.environ.get("PMW_LICENSE_POLL_SECS", "15"))
+
 # The compute backend requires a proxy-auth secret on /api/* so only the GUI proxy
 # (which validated the session) can reach it — not a local process forging
 # X-PMW-User. Disable only for `run.sh --dev`, where Vite proxies straight to the

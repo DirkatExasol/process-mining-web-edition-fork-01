@@ -37,6 +37,14 @@ DEFAULT_LEVEL = "ERROR"  # INFO + USAGE + WARN + ERROR (everything but DEBUG)
 DEFAULT_MAX_BYTES = 5_000_000
 _MIN_MAX_BYTES = 50_000
 
+# Control chars (esp. CR/LF) are replaced before storing, so no field — even one
+# built from user-influenced text — can forge extra lines in the exported .log file.
+_CTRL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _clean_field(value: str) -> str:
+    return _CTRL_CHARS.sub(" ", value or "")
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS log_entries (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,7 +152,14 @@ class LogStore:
             self._conn.execute(
                 "INSERT INTO log_entries (ts, severity, client_ip, username, operation, message) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (_now(), sev, client_ip or "", username or "", operation or "", message or ""),
+                (
+                    _now(),
+                    sev,
+                    _clean_field(client_ip),
+                    _clean_field(username),
+                    _clean_field(operation),
+                    _clean_field(message),
+                ),
             )
             self._conn.commit()
             self._maybe_rotate()

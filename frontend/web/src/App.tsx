@@ -119,7 +119,15 @@ function ThemeSync() {
 
 function LegalGateHost({ children }: { children: React.ReactNode }) {
   const [accepted, setAccepted] = useSetting<boolean>('legal.accepted')
-  if (!accepted) return <LegalGate onAccept={() => setAccepted(true)} />
+  const store = useStore()
+  if (!accepted)
+    return (
+      <LegalGate
+        onAccept={() => setAccepted(true)}
+        // Declining returns to the Login panel (signs the user out).
+        onDecline={() => void store.logout()}
+      />
+    )
   return <>{children}</>
 }
 

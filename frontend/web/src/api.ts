@@ -92,6 +92,13 @@ export const api = {
   // Directory (LDAP) availability for the login panel; configured=false ⇒ show nothing.
   directoryStatus: () =>
     get<{ configured: boolean; available: boolean }>('/auth/directory-status'),
+  // Demo-mode / license state for the login panel; demoMode=false ⇒ show nothing.
+  licenseStatus: () =>
+    get<{
+      state: string
+      demoMode: boolean
+      remainingSeconds: number | null
+    }>('/auth/license-status'),
 
   // ── connections ──────────────────────────────────────────────────────────
   // Admin-defined connections assigned to the signed-in user.

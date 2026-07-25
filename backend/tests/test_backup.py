@@ -298,3 +298,19 @@ def test_backup_roundtrips_per_user_namespaced_settings(memory_store):
     assert memory_store.get("u:alice:llm_prompt_P1") == "alice-prompt"
     assert memory_store.get("u:alice:layout_P1") == {"n": 1}
     assert memory_store.get("u:bob:norms_metric_P1") == "9"
+
+
+def test_user_settings_namespace_is_colon_safe(tmp_path):
+    """A username containing ':' must not prefix-collide with another user's
+    per-user namespace (which is matched as `u:<user>:`)."""
+    from app.store.settings import SettingsStore
+
+    s = SettingsStore(path=tmp_path / "s.sqlite3")
+    s.set_user("alice", "kpi.order", "ALICE")
+    s.set_user("alice:x", "kpi.order", "ATTACKER")
+
+    assert s.all_user("alice") == {"kpi.order": "ALICE"}        # no leak of alice:x
+    assert s.all_user("alice:x") == {"kpi.order": "ATTACKER"}
+    # alice cannot write into alice:x's namespace via a crafted key
+    s.set_user("alice", "x:injected", "X")
+    assert "injected" not in s.all_user("alice:x")

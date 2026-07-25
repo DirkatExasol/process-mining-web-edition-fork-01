@@ -177,6 +177,8 @@ tr:last-child td { border-bottom: 0; }
 .banner { border-radius: var(--radius); padding: 12px 16px; margin: 14px 0; font-size: 13px; }
 .banner.warn { background: rgba(255,159,10,.12); border: 1px solid rgba(255,159,10,.4); }
 .banner.info { background: rgba(10,132,255,.1); border: 1px solid rgba(10,132,255,.3); }
+.banner.ok { background: rgba(48,209,88,.12); border: 1px solid rgba(48,209,88,.4); }
+.banner.err { background: rgba(255,69,58,.12); border: 1px solid rgba(255,69,58,.45); }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .subtle { font-size: 12px; color: var(--tertiary); }
 details summary { cursor: pointer; font-size: 13px; color: var(--accent); padding: 6px 0; }
@@ -363,6 +365,20 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <div id="restartResult" class="col" style="margin-top:8px"></div>
   </div>
   <div class="card">
+    <h2>License</h2>
+    <p class="muted" style="margin-top:0">The compute backend requires a valid license.
+      Without one it runs for a short grace period and then stops. Upload the
+      <code>license.json</code> you were issued to apply it.</p>
+    <div id="licenseStatus" class="banner info" style="margin-top:4px">Checking license…</div>
+    <div class="row" style="flex-wrap:wrap; align-items:center; gap:12px; margin-top:12px">
+      <input type="file" id="licenseFile" accept=".json,application/json">
+      <button class="btn primary" onclick="uploadLicense()">Upload license</button>
+      <button class="btn" onclick="deleteLicense()">Delete license</button>
+      <span class="subtle">The signature is verified before the license is stored.</span>
+    </div>
+    <div id="licenseResult" class="col" style="margin-top:8px"></div>
+  </div>
+  <div class="card">
     <h2>Admin session</h2>
     <p class="muted" style="margin-top:0">Automatically sign out of <strong>this admin interface</strong>
       after a period of inactivity. This is separate from the main app's auto sign-out (set in the Users tab).</p>
@@ -444,6 +460,14 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       </label>
       <button class="btn small" onclick="saveIdleTimeout()">Save</button>
       <span class="subtle" id="idleTimeoutHint"></span>
+    </div>
+    <div class="banner info" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">
+      <label class="row" style="font-size:13px; gap:8px">
+        Disable an account after
+        <input type="number" id="maxFailedLogins" min="0" max="100" step="1" style="width:80px"> failed sign-in attempts
+      </label>
+      <button class="btn small" onclick="saveMaxFailedLogins()">Save</button>
+      <span class="subtle" id="maxFailedLoginsHint"></span>
     </div>
     <div class="row" style="margin:12px 0 6px"><div class="seg" id="userFilter"></div></div>
     <div id="userTable"></div>
@@ -751,6 +775,64 @@ async function loadSession() {
     ? 'You are signed out of this admin after ' + adminIdle + ' min idle.'
     : 'Disabled — the admin session never times out on inactivity.';
   setAdminIdle(adminIdle);
+  const maxFail = s.maxFailedLogins || 0;
+  $('maxFailedLogins').value = maxFail;
+  $('maxFailedLoginsHint').textContent = maxFail > 0
+    ? 'Accounts (incl. the Administrator) are disabled after ' + maxFail + ' failed sign-ins.'
+    : 'Disabled — accounts are never locked on failed sign-ins.';
+  renderLicense(s.license);
+}
+function renderLicense(lic) {
+  const el = $('licenseStatus');
+  if (!el) return;
+  lic = lic || { state: 'missing', message: 'No license installed.' };
+  const cls = lic.state === 'valid' ? 'banner ok'
+    : lic.state === 'expired' ? 'banner warn' : 'banner err';
+  let html = '<strong>' + esc(lic.message || lic.state) + '</strong>';
+  if (lic.licensee) {
+    html += '<div class="subtle" style="margin-top:4px">Licensed to ' + esc(lic.licensee)
+      + (lic.expires ? ' · expires ' + esc(lic.expires) : '')
+      + (lic.issued ? ' · issued ' + esc(lic.issued) : '') + '</div>';
+  }
+  el.className = cls;
+  el.innerHTML = html;
+}
+async function uploadLicense() {
+  const f = $('licenseFile').files[0];
+  if (!f) { toast('Choose a license file first', true); return; }
+  const out = $('licenseResult');
+  try {
+    const content = await _fileToBase64(f);
+    const r = await api('/api/license', { method: 'POST', body: JSON.stringify({ content }) });
+    renderLicense(r.license);
+    if (out) out.innerHTML = '<div class="banner ok">License installed. The backend applies it within a few seconds.</div>';
+    $('licenseFile').value = '';
+    toast('License installed');
+  } catch (e) {
+    if (out) out.innerHTML = '<div class="banner err">' + esc(e.message) + '</div>';
+    toast(e.message, true);
+  }
+}
+async function deleteLicense() {
+  if (!confirm('Delete the installed license?\n\nThe compute backend drops to Demo Mode and stops after the grace period unless a new license is applied.')) return;
+  const out = $('licenseResult');
+  try {
+    const r = await api('/api/license', { method: 'DELETE' });
+    renderLicense(r.license);
+    if (out) out.innerHTML = r.removed
+      ? '<div class="banner warn">License removed — the backend is now in Demo Mode.</div>'
+      : '<div class="banner info">No license was installed.</div>';
+    toast(r.removed ? 'License deleted' : 'No license installed');
+  } catch (e) {
+    if (out) out.innerHTML = '<div class="banner err">' + esc(e.message) + '</div>';
+    toast(e.message, true);
+  }
+}
+async function saveMaxFailedLogins() {
+  const count = Math.max(0, parseInt($('maxFailedLogins').value, 10) || 0);
+  try { await api('/api/access/max-failed-logins', { method: 'POST', body: JSON.stringify({ count }) });
+    toast('Failed-sign-in lockout updated'); await loadSession(); }
+  catch (e) { toast(e.message, true); }
 }
 async function saveRequireLogin() {
   const requireLogin = $('requireLogin').checked;
@@ -935,10 +1017,18 @@ function renderUsers() {
     h += `<tr><td>${nameCell}</td>` +
       `<td>${isLdap ? '<span class="pill ldap">LDAP</span>' : '<span class="pill neutral">local</span>'}</td>` +
       `<td>${roleBadge(u)}</td>` +
-      `<td>${u.isEnabled ? '<span class="pill on">enabled</span>' : '<span class="pill off">disabled</span>'}</td>` +
+      `<td>${u.isEnabled
+        ? '<span class="pill on">enabled</span>'
+        : (u.loginLocked
+            ? '<span class="pill off" title="Disabled after too many failed sign-ins — Unlock to restore.">locked</span>'
+            : '<span class="pill off">disabled</span>')}</td>` +
       `<td class="muted">${fmtDate(u.lastLogin)}</td>` +
       `<td style="text-align:right; white-space:nowrap">` +
-        (isBuiltin ? '' : `<button class="btn small" data-user="${esc(u.username)}" onclick="toggleEnabled(this.dataset.user,${!u.isEnabled})">${u.isEnabled ? 'Disable' : 'Enable'}</button> `) +
+        (isBuiltin
+          ? (u.loginLocked
+              ? `<button class="btn small" data-user="${esc(u.username)}" onclick="toggleEnabled(this.dataset.user,true)">Unlock</button> `
+              : '')
+          : `<button class="btn small" data-user="${esc(u.username)}" onclick="toggleEnabled(this.dataset.user,${!u.isEnabled})">${u.isEnabled ? 'Disable' : (u.loginLocked ? 'Unlock' : 'Enable')}</button> `) +
         (isBuiltin ? '' : `<button class="btn small" data-user="${esc(u.username)}" onclick="toggleAdmin(this.dataset.user,${!u.isAdmin})">${u.isAdmin ? 'Remove admin' : 'Make admin'}</button> `) +
         (isBuiltin ? '' : `<button class="btn small" data-user="${esc(u.username)}" onclick="togglePower(this.dataset.user,${!u.isPower})">${u.isPower ? 'Remove power' : 'Make power'}</button> `) +
         (isLdap ? '' : `<button class="btn small" data-user="${esc(u.username)}" onclick="resetPw(this.dataset.user)">Reset password</button> `) +

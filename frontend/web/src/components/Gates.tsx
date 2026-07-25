@@ -11,19 +11,21 @@ const SECTIONS = [
   },
   {
     heading: 'AI-generated results',
-    body: 'Process Mining Demonstrator includes AI-powered analysis features that use large language models to interpret process data. AI models can produce results that are incorrect, incomplete, or misleading.\n\nNeither the author of this application nor Exasol SE (the database vendor) accepts any liability whatsoever for decisions, conclusions, or actions taken on the basis of AI-generated results. You must independently verify every AI finding before acting on it.',
+    body: 'Process Mining Demonstrator includes AI-powered analysis features that use large language models to interpret process data. AI models can produce results that are incorrect, incomplete, or misleading.',
   },
   {
     heading: 'Data accuracy',
-    body: 'Process maps, KPIs, journey statistics, and all other computed results depend entirely on the quality, completeness, and correctness of the data stored in your Exasol database. Neither the author nor Exasol SE accepts any liability for incorrect or misleading results arising from incomplete, erroneous, or misinterpreted source data.',
-  },
-  {
-    heading: 'Limitation of liability',
-    body: 'To the fullest extent permitted by applicable law, the author and Exasol SE expressly disclaim all warranties, express or implied, including but not limited to fitness for a particular purpose, accuracy, and non-infringement.\n\nIn no event shall the author or Exasol SE be liable for any direct, indirect, incidental, special, or consequential damages arising from the use of, or inability to use, this application or its outputs.',
+    body: 'Process maps, KPIs, journey statistics, and all other computed results depend entirely on the quality, completeness, and correctness of the data stored in your database.',
   },
 ]
 
-export function LegalGate({ onAccept }: { onAccept: () => void }) {
+export function LegalGate({
+  onAccept,
+  onDecline,
+}: {
+  onAccept: () => void
+  onDecline: () => void
+}) {
   const [accepted, setAccepted] = useState(false)
 
   return (
@@ -82,14 +84,23 @@ export function LegalGate({ onAccept }: { onAccept: () => void }) {
             />
             I have read and accept all terms stated above
           </label>
-          <button
-            className="btn prominent"
-            style={{ padding: '12px', fontSize: 15 }}
-            disabled={!accepted}
-            onClick={onAccept}
-          >
-            Accept &amp; Continue
-          </button>
+          <div className="row" style={{ gap: 10 }}>
+            <button
+              className="btn"
+              style={{ padding: '12px', fontSize: 15, flex: 1 }}
+              onClick={onDecline}
+            >
+              Decline
+            </button>
+            <button
+              className="btn prominent"
+              style={{ padding: '12px', fontSize: 15, flex: 1 }}
+              disabled={!accepted}
+              onClick={onAccept}
+            >
+              Accept &amp; Continue
+            </button>
+          </div>
         </div>
       </div>
     </div>

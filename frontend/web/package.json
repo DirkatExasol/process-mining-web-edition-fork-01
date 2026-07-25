@@ -11,7 +11,9 @@
     "test:watch": "vitest --reporter=verbose"
   },
   "dependencies": {
+    "@types/dompurify": "^3.0.5",
     "@xyflow/react": "^12.8.2",
+    "dompurify": "^3.4.12",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "recharts": "^2.15.3",

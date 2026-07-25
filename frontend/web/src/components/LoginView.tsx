@@ -19,6 +19,8 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
     configured: boolean
     available: boolean
   } | null>(null)
+  // Demo-mode countdown — only rendered when no license is installed.
+  const [demoSeconds, setDemoSeconds] = useState<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -28,6 +30,26 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
       .catch(() => !cancelled && setDirectory(null))
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const load = () =>
+      api
+        .licenseStatus()
+        .then(
+          (s) =>
+            !cancelled &&
+            setDemoSeconds(s.demoMode ? (s.remainingSeconds ?? 0) : null),
+        )
+        .catch(() => !cancelled && setDemoSeconds(null))
+    load()
+    // Re-sync the remaining time periodically so the label stays current.
+    const timer = setInterval(load, 30000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
     }
   }, [])
 
@@ -63,6 +85,30 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
           <span className="t-title3">Process Mining Demonstrator</span>
           <span className="t-caption fg-secondary">Sign in to continue</span>
         </div>
+
+        {demoSeconds !== null && (
+          <div
+            className="t-footnote"
+            style={{
+              width: '100%',
+              padding: '10px 12px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'rgba(255,159,10,0.12)',
+              border: '1px solid rgba(255,159,10,0.32)',
+              color: 'var(--orange)',
+              textAlign: 'center',
+            }}
+          >
+            {demoSeconds > 0 ? (
+              <>
+                <strong>Demo Mode</strong> — remaining time:{' '}
+                {Math.max(0, Math.ceil(demoSeconds / 60))} min
+              </>
+            ) : (
+              <strong>No License installed</strong>
+            )}
+          </div>
+        )}
 
         {store.signedOutForInactivity && !error && (
           <div

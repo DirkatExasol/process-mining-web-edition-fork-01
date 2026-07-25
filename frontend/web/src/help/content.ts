@@ -1017,7 +1017,7 @@ const aiDocumentation: HelpTopic = {
           'The second status dot on the connection card must be blue — the model server is reachable.',
           'Any OpenAI-compatible endpoint works: local servers (Ollama, llama.cpp, vLLM, LM Studio) or cloud APIs.',
         ),
-        warn('AI models can produce results that are incorrect, incomplete or misleading. Independently verify every finding before acting on it — see the legal disclaimer shown on first launch.'),
+        warn('AI models can produce results that are incorrect, incomplete or misleading. Independently verify every finding before acting on it.'),
       ],
     },
   ],
