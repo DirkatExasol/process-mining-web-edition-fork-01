@@ -612,3 +612,34 @@ def test_ldap_user_local_failures_do_not_count_toward_lockout(security):
         assert store.authenticate("dir.user", "anything") is None
     u = store.get_user("dir.user")
     assert u.is_enabled is True and u.failed_logins == 0  # never counted / locked
+
+
+def test_session_epoch_bumps_and_reads(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=False)
+    assert store.session_epoch("alice") == 0
+    store.bump_session_epoch("alice")
+    assert store.session_epoch("alice") == 1
+    store.bump_session_epoch("ALICE")  # case-insensitive, like other lookups
+    assert store.session_epoch("alice") == 2
+    assert store.get_user("alice").session_epoch == 2  # reflected on the User
+    assert store.session_epoch("nobody") == 0  # unknown user never raises
+
+
+def test_note_author_display_name_prefers_ldap_cn(security, monkeypatch):
+    """Note badges show the login user, and an LDAP user's real name (cn)."""
+    import app.api.features as features
+
+    store = security.store
+    store.create_user("localguy", "pw", is_admin=False)
+    store.provision_ldap_user("jsmith", email="j@x.io", display_name="John Smith")
+    monkeypatch.setattr(features, "security_store", store)
+
+    assert features._note_display_name("jsmith") == "John Smith"  # LDAP → cn
+    assert features._note_display_name("localguy") == "localguy"  # local → login user
+    assert features._note_display_name("") == ""
+    assert features._note_display_name("ghost") == "ghost"  # unknown → username
+
+    # An LDAP user with no cn falls back to the username.
+    store.provision_ldap_user("nocn", email="", display_name="")
+    assert features._note_display_name("nocn") == "nocn"

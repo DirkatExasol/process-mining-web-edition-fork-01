@@ -293,9 +293,13 @@ class ProcessNote(Base):
     editedAt: datetime | None = None
     target: NoteTarget
     filterSnapshot: FilterSnapshot
-    username: str = ""
+    username: str = ""  # login user (stable identity — used for ownership/filtering)
     lastEditedBy: str = ""
     isShared: bool = False
+    # Display labels resolved by the API on read: an LDAP user's real name (cn),
+    # otherwise the login username. Not persisted; ignored on write.
+    authorName: str = ""
+    lastEditedByName: str = ""
 
 
 # ── Simulation ────────────────────────────────────────────────────────────────

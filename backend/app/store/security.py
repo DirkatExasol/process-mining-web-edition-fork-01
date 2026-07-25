@@ -127,6 +127,7 @@ class User:
     is_power: bool = False  # may create/manage their own DB connections from the app
     failed_logins: int = 0
     login_locked: bool = False  # disabled by the failed-sign-in lockout
+    session_epoch: int = 0  # bumped on logout; stale-epoch tokens are rejected
 
     def public(self) -> dict:
         return {
@@ -275,6 +276,8 @@ class SecurityStore:
             # Failed-sign-in lockout (admin-configurable threshold).
             ("failed_logins", "failed_logins INTEGER NOT NULL DEFAULT 0"),
             ("login_locked", "login_locked INTEGER NOT NULL DEFAULT 0"),
+            # Bumped on logout to invalidate that user's outstanding session tokens.
+            ("session_epoch", "session_epoch INTEGER NOT NULL DEFAULT 0"),
         ):
             if name not in cols:
                 self._conn.execute(f"ALTER TABLE users ADD COLUMN {ddl}")
@@ -415,6 +418,28 @@ class SecurityStore:
         with self._lock:
             self._conn.execute(
                 "UPDATE users SET failed_logins = 0, login_locked = 0 "
+                "WHERE LOWER(username) = LOWER(?)",
+                (username,),
+            )
+            self._conn.commit()
+
+    def session_epoch(self, username: str) -> int:
+        """Current session epoch for a user (0 if unknown). Embedded in freshly
+        issued session tokens; a token whose epoch is stale is no longer valid."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT session_epoch FROM users WHERE LOWER(username) = LOWER(?)",
+                (username,),
+            ).fetchone()
+        return int(row["session_epoch"]) if row else 0
+
+    def bump_session_epoch(self, username: str) -> None:
+        """Invalidate every outstanding session token for a user (used on logout).
+        Because tokens are stateless and re-minted on each request, revoking by
+        epoch is the only way to also kill a token captured earlier in the session."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET session_epoch = session_epoch + 1 "
                 "WHERE LOWER(username) = LOWER(?)",
                 (username,),
             )
@@ -640,6 +665,7 @@ class SecurityStore:
             is_power=bool(row["is_power"]) if "is_power" in keys else False,
             failed_logins=int(row["failed_logins"]) if "failed_logins" in keys else 0,
             login_locked=bool(row["login_locked"]) if "login_locked" in keys else False,
+            session_epoch=int(row["session_epoch"]) if "session_epoch" in keys else 0,
         )
 
     def list_users(self) -> list[User]:

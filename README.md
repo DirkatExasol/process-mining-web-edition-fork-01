@@ -113,14 +113,18 @@ internal to the container.
    A-Chart, B-Chart, A/B Comparison, Individual Journey, AI Documentation,
    Statistics, Conformance Check, Happy Path, Notes and Simulation.
 
+> If the sign-in panel shows a **Demo Mode** banner, no license is installed yet.
+> The app runs for a limited grace period; an administrator applies a license in
+> **App Control → License** (see *App licensing & Demo Mode* below).
+
 ## Administration & TLS
 
 The admin interface at <http://127.0.0.1:8090> (and <https://127.0.0.1:8453> once
 TLS is enabled) manages security. Sign in with the
 default administrator (**Administrator / Administrator**) — you're prompted to
-change the password on first use. It is organised into five tabs: **App Control**
-(restart the servers), **TLS / SSL**, **Users**, **Database Connections** and
-**Directory (LDAP)**.
+change the password on first use. It is organised into tabs: **App Control**
+(restart the servers, manage the license), **TLS / SSL**, **Users**,
+**Database Connections**, **Directory (LDAP)**, **Logging** and **Backup**.
 
 **TLS / SSL.** Generate a self-signed certificate (common name + SANs, validity,
 key size) or upload your own PEM cert + key, mark one *active*, then choose the
@@ -146,7 +150,12 @@ reset passwords. The main app shows a **sign-in panel** and authenticates agains
 this user store — only enabled users get in. Sign-in is enforced at the GUI server
 (every `/api/*` call needs a valid session cookie); the **Require sign-in** toggle
 in the admin *Users* section can turn the gate off for single-user/kiosk use
-(on by default). Passwords are scrypt-hashed; certificate private keys are
+(on by default). A configurable **failed-sign-in lockout** (*Disable an account
+after N failed sign-in attempts*, `0` = off) automatically disables an account —
+including the built-in `Administrator` — after too many wrong passwords; the login
+panel then shows a clear message and the account carries a *Locked* badge in the
+*Users* tab where it can be unlocked (or restart with `PMW_RESET_LOCKOUTS=1` as a
+break-glass valve). Passwords are scrypt-hashed; certificate private keys are
 encrypted at rest. The security store lives in `data/security.sqlite3`.
 
 **Power role.** Beyond admins, a user can be granted the **power** role
@@ -233,6 +242,20 @@ connections and, if you wish, the admin role to them. Key rules:
   the account is still an enabled admin, so revoking the role ends access at once.
 
 The service-account password is Fernet-encrypted at rest like other secrets.
+
+**App licensing & Demo Mode.** The compute backend requires a signed license.
+Upload the `license.json` you were issued in **App Control → License** — the panel
+shows the licensee and expiry date, and lets you remove it. With no valid license
+the app runs in **Demo Mode** for a **one-time** grace period (the sign-in panel
+shows *Demo Mode — remaining time*, then *No License installed* once it is spent),
+after which the compute backend stops itself until a license is applied; applying
+one during the grace window cancels the shutdown, and the admin interface keeps
+working even after the backend stops so you can always upload one. Licenses are
+Ed25519-signed and verified against a public key embedded in the app; the license
+file lives at `data/license.json` and the demo marker at `data/demo_grace.json`
+(`PMW_LICENSE_GRACE_SECS` tunes the grace period; `PMW_RESET_DEMO=1` clears the
+one-time marker). This runtime **app** license is separate from the project's own
+software [`LICENSE`](LICENSE).
 
 Environment overrides: `PMW_ADMIN_PORT` (8090), `PMW_FRONTEND_HTTPS_PORT` (8443),
 `PMW_DEFAULT_ADMIN_USER`, `PMW_DEFAULT_ADMIN_PASSWORD`, `PMW_ADMIN_SESSION_TTL`.
@@ -329,7 +352,8 @@ connections, certificates and settings.
 ## Features
 
 A collapsible left sidebar, the KPI strip, node drag / group collapse / pan-zoom
-interactions, valve-synchronised A/B panels, sticky notes on nodes and edges, and a
+interactions, valve-synchronised A/B panels, sticky notes on nodes and edges
+(attributed to the signed-in user — the real name for directory accounts), and a
 full analytics suite: process goodness, happy-path conformance, A/B similarity Q and
 a Markov simulation engine.
 

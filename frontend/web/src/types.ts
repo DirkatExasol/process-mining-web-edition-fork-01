@@ -309,6 +309,10 @@ export interface ProcessNote {
   username: string
   lastEditedBy: string
   isShared: boolean
+  // Display labels resolved by the backend: an LDAP user's real name (cn),
+  // otherwise the login username. May be absent on locally-constructed notes.
+  authorName?: string
+  lastEditedByName?: string
 }
 
 export function noteTargetKey(target: NoteTarget): string {

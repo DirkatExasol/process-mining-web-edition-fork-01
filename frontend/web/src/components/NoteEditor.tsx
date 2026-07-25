@@ -116,13 +116,17 @@ export function NoteEditorSheet({
             <>
               <span>
                 Created {formatDateTime(item.existing.createdAt)}
-                {item.existing.username ? ` by ${item.existing.username}` : ''}
+                {item.existing.authorName || item.existing.username
+                  ? ` by ${item.existing.authorName || item.existing.username}`
+                  : ''}
               </span>
               {item.existing.editedAt && (
                 <span>
                   Edited {formatDateTime(item.existing.editedAt)}
-                  {item.existing.lastEditedBy
-                    ? ` by ${item.existing.lastEditedBy}`
+                  {item.existing.lastEditedByName || item.existing.lastEditedBy
+                    ? ` by ${
+                        item.existing.lastEditedByName || item.existing.lastEditedBy
+                      }`
                     : ''}
                 </span>
               )}
@@ -190,7 +194,7 @@ export function NoteListSheet({
             }
           >
             <div className="n-head">
-              <span>{note.username || '—'}</span>
+              <span>{note.authorName || note.username || '—'}</span>
               <span className="spacer" />
               {note.isShared && <span title="Shared">👥</span>}
               <span>{formatDateTime(note.createdAt)}</span>

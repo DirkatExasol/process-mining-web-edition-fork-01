@@ -133,7 +133,10 @@ _OPEN_API_PATHS = {"health"}
 
 
 def _issue_session(username: str) -> str:
-    return sign_session(json.dumps({"u": username}).encode("utf-8"))
+    # Embed the user's session epoch so logout (which bumps it) invalidates this
+    # token — otherwise the stateless Fernet token would stay valid until its TTL.
+    payload = {"u": username, "e": store.session_epoch(username)}
+    return sign_session(json.dumps(payload).encode("utf-8"))
 
 
 def _session_ttl() -> int:
@@ -164,11 +167,17 @@ def _current_user(request: Request) -> User | None:
     if raw is None:
         return None
     try:
-        username = json.loads(raw)["u"]
+        data = json.loads(raw)
+        username = data["u"]
     except (json.JSONDecodeError, KeyError, TypeError):
         return None
     user = store.get_user(username)
-    return user if user and user.is_enabled else None
+    if user is None or not user.is_enabled:
+        return None
+    # Reject tokens issued before the user's last logout (stale epoch).
+    if data.get("e") != user.session_epoch:
+        return None
+    return user
 
 
 @app.post("/auth/login")
@@ -281,8 +290,11 @@ async def auth_logout(request: Request) -> Response:
         username=user.username if user else "",
         operation="logout",
     )
-    # Release this user's per-user Exasol connection on the backend (best-effort).
     if user is not None:
+        # Invalidate this user's outstanding session tokens server-side (not just
+        # the cookie) so a captured token can't be replayed after logout.
+        store.bump_session_epoch(user.username)
+        # Release this user's per-user Exasol connection on the backend (best-effort).
         try:
             await _get_client().post(
                 "/api/disconnect", headers={"X-PMW-User": user.username}, timeout=5.0

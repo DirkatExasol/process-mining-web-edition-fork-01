@@ -62,7 +62,10 @@ logx.install_request_logging(app, lambda r: _current_user(r))
 
 
 def _issue_session(username: str) -> str:
-    return sign_session(json.dumps({"u": username}).encode("utf-8"))
+    # Embed the user's session epoch so logout (which bumps it) invalidates this
+    # token — otherwise the stateless Fernet token would stay valid until its TTL.
+    payload = {"u": username, "e": store.session_epoch(username)}
+    return sign_session(json.dumps(payload).encode("utf-8"))
 
 
 def _admin_session_ttl() -> int:
@@ -80,13 +83,17 @@ def _current_user(request: Request) -> User | None:
     if raw is None:
         return None
     try:
-        username = json.loads(raw)["u"]
+        data = json.loads(raw)
+        username = data["u"]
     except (json.JSONDecodeError, KeyError, TypeError):
         return None
     user = store.get_user(username)
-    if user and user.is_admin and user.is_enabled:
-        return user
-    return None
+    if not (user and user.is_admin and user.is_enabled):
+        return None
+    # Reject tokens issued before the user's last logout (stale epoch).
+    if data.get("e") != user.session_epoch:
+        return None
+    return user
 
 
 def require_admin(request: Request) -> User:
@@ -210,6 +217,10 @@ def logout(request: Request):
         username=user.username if user else "",
         operation="logout",
     )
+    if user is not None:
+        # Invalidate this user's outstanding session tokens server-side (not just
+        # the cookie) so a captured token can't be replayed after logout.
+        store.bump_session_epoch(user.username)
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(COOKIE, path="/")
     return response

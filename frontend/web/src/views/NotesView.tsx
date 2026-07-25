@@ -92,7 +92,7 @@ export function NotesView() {
               <strong>{noteTargetLabel(note.target)}</strong>
               <span className="spacer" />
               {note.isShared && <span title="Shared with other users">👥</span>}
-              <span>{note.username || '—'}</span>
+              <span>{note.authorName || note.username || '—'}</span>
               <span>{formatDateTime(note.createdAt)}</span>
             </div>
             <div className="n-text">{note.text}</div>

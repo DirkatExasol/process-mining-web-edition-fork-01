@@ -829,3 +829,21 @@ def test_license_delete_requires_admin(admin):
     server, _ = admin
     client = TestClient(server.app)
     assert client.request("DELETE", "/api/license").status_code == 401
+
+
+def test_logout_invalidates_captured_token(admin):
+    """A token captured before logout must be rejected afterwards — server-side
+    invalidation, not merely clearing the client's cookie."""
+    server, _ = admin
+    client = _login(server)
+    token = client.cookies.get(server.COOKIE)
+    assert token
+
+    def _replay():
+        c = TestClient(server.app)
+        c.cookies.set(server.COOKIE, token)
+        return c.get("/api/session").status_code
+
+    assert _replay() == 200  # valid before logout
+    client.post("/logout", follow_redirects=False)  # bumps the session epoch
+    assert _replay() == 401  # the same captured token no longer authenticates

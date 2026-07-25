@@ -30,6 +30,7 @@ from ..services.analytics import (
     random_sample,
     temporal_stratified_sample,
 )
+from ..store.security import store as security_store
 from ..store.settings import store
 from .projects import repo, require_connection
 
@@ -39,12 +40,32 @@ router = APIRouter(prefix="/api", tags=["features"])
 # ── Notes ────────────────────────────────────────────────────────────────────
 
 
+def _note_display_name(username: str) -> str:
+    """Badge label for a note author: the login user, shown as their real name
+    (cn) when we have one. `display_name` is only ever populated from LDAP (the cn),
+    so a non-empty value means "LDAP user, use the real name"; we don't gate on
+    auth_source because the LDAP-refresh path never rewrites it."""
+    if not username:
+        return ""
+    user = security_store.get_user(username)
+    if user and user.display_name:
+        return user.display_name
+    return username
+
+
+def _annotate_note(note: ProcessNote) -> ProcessNote:
+    note.authorName = _note_display_name(note.username)
+    note.lastEditedByName = _note_display_name(note.lastEditedBy)
+    return note
+
+
 @router.get("/projects/{project_id}/notes", response_model=list[ProcessNote])
 async def list_notes(project_id: str) -> list[ProcessNote]:
     require_connection()
     r = repo()
     await r.ensure_notes_table()
-    return await r.load_notes(project_id, current_db().username)
+    notes = await r.load_notes(project_id, current_user() or "")
+    return [_annotate_note(n) for n in notes]
 
 
 @router.put("/projects/{project_id}/notes", response_model=ProcessNote)
@@ -53,31 +74,33 @@ async def save_note(project_id: str, note: ProcessNote) -> ProcessNote:
     r = repo()
     await r.ensure_notes_table()
 
-    current_user = current_db().username
+    # The note author is the logged-in app user (X-PMW-User), NOT the shared
+    # database connection user.
+    author = current_user() or ""
     # Authorize by true ownership (not visibility): a shared note is visible to all
     # users of the connection, but only its author may edit it.
     owner = await r.note_owner(note.id)
-    if owner is not None and owner != "" and owner.upper() != current_user.upper():
+    if owner is not None and owner != "" and owner.upper() != author.upper():
         raise HTTPException(status_code=403, detail="You cannot edit another user's note.")
 
     if owner is None:
-        note.username = current_user
+        note.username = author
         note.lastEditedBy = ""
     else:
         # Editing preserves the original author (or leaves an unowned note unowned)
         # and records who made this edit.
         note.username = owner
-        note.lastEditedBy = current_user
+        note.lastEditedBy = author
         note.editedAt = datetime.now()
 
-    await r.upsert_note(note, project_id, current_user)
-    return note
+    await r.upsert_note(note, project_id, author)
+    return _annotate_note(note)
 
 
 @router.delete("/projects/{project_id}/notes/{note_id}")
 async def delete_note(project_id: str, note_id: str) -> dict[str, bool]:
     require_connection()
-    await repo().delete_note(note_id, project_id, current_db().username)
+    await repo().delete_note(note_id, project_id, current_user() or "")
     return {"ok": True}
 
 

@@ -256,7 +256,7 @@ function buildReport(
       const text = note.text.replace(/\|/g, '｜').replace(/\n/g, '<br>')
       table += `| ${noteTargetLabel(note.target)} | ${
         note.target.type === 'edge' ? 'Edge' : 'Node'
-      } | ${note.username || '—'} | ${text} | ${formatDateTime(note.createdAt)} |\n`
+      } | ${note.authorName || note.username || '—'} | ${text} | ${formatDateTime(note.createdAt)} |\n`
     }
     parts.push(table)
   }

@@ -234,7 +234,7 @@ const administration: HelpTopic = {
       body: [
         p('A separate administration interface runs on its own port (8090 by default) and is where all security and access is configured. It has its own sign-in and admits administrators only.'),
         p('On first run it seeds a local administrator — Administrator / Administrator — and prompts you to change the password. Local admin accounts always work as a break-glass route, even if a directory is later misconfigured.'),
-        tip('The admin interface is organised into five tabs: App Control (restart the servers), TLS / SSL, Users, Database Connections and Directory (LDAP).'),
+        tip('The admin interface is organised into tabs: App Control (restart the servers, manage the license), TLS / SSL, Users, Database Connections, Directory (LDAP), Logging and Backup.'),
       ],
     },
     {
@@ -250,6 +250,7 @@ const administration: HelpTopic = {
       body: [
         p('The Users tab controls who may sign in to the main application: create local users, enable or disable access, grant or revoke the admin role, and reset local passwords. Only enabled users can sign in.'),
         p('The Require sign-in toggle turns the login gate on or off for the main app (on by default). With it off, the app is open to anyone who can reach it.'),
+        def('Failed sign-in lockout', '“Disable an account after N failed sign-in attempts” automatically disables an account — including the built-in Administrator — once N wrong passwords are entered (0 turns it off). A locked account shows a clear message on the login panel and carries a Locked badge in the Users tab, where you can unlock it. If the sole administrator is ever locked out, restart the servers with PMW_RESET_LOCKOUTS=1 to clear all locks.'),
         def('Power role', 'Make power / Remove power grants the power badge. Power users can create and manage their own database connections from within the main app and assign them to other users — without needing access to this admin interface. They manage only the connections they create; admins still see and manage every connection.'),
         def('Source badge', 'Each user is tagged local or LDAP so you can tell built-in accounts from directory accounts at a glance; the All / Local / LDAP filter narrows the list.'),
       ],
@@ -275,6 +276,14 @@ const administration: HelpTopic = {
         p('While a directory is configured, the app’s sign-in panel shows a small status light — green when the directory server answers a connection test, red when it does not. The light is hidden entirely when no directory is configured.'),
         p('By default the admin interface stays local-only. Tick “Also allow directory sign-in to this admin interface” to let directory accounts sign in here too — but only after one has been promoted to admin in the Users tab. Local administrators always work regardless, as a break-glass route.'),
         tip('Admin is never granted from the directory — a directory user stays a normal user until a local admin promotes them.'),
+      ],
+    },
+    {
+      heading: 'License & Demo Mode',
+      body: [
+        p('The application requires a valid license. Upload the license file you were issued in App Control → License; the panel shows who it is licensed to and when it expires, and lets you remove it again.'),
+        p('With no valid license the app runs in Demo Mode for a one-time grace period — the sign-in panel shows “Demo Mode — remaining time”, or “No License installed” once that period is spent — after which the compute backend stops until a license is applied. Uploading a valid license during the grace period cancels the shutdown.'),
+        tip('The demo period is granted once per installation; restarting does not renew it. The admin interface itself keeps working even when the backend has stopped, so you can always apply a license there.'),
       ],
     },
   ],
@@ -1035,7 +1044,7 @@ const notes: HelpTopic = {
       heading: 'Creating and finding notes',
       body: [
         p('Click a node or an edge and choose “Show Notes” to add an annotation. A yellow ✎ badge marks any node or edge that carries a note. The Notes view lists every note for the project — searchable, newest first — independent of the current filters.'),
-        p('Each note records its author, who last edited it, and the complete filter context at the time it was created, so the observation stays interpretable later. Mark a note as “shared” to make it visible to other users of the same database.'),
+        p('Each note records its author, who last edited it, and the complete filter context at the time it was created, so the observation stays interpretable later. The author is the signed-in application user — shown by real name (the directory “cn”) for LDAP accounts — not the shared database login. Mark a note as “shared” to make it visible to other users of the same database; a shared note stays editable and deletable only by its author.'),
       ],
     },
     {
