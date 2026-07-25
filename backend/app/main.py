@@ -7,10 +7,10 @@ never talks to this service directly; the GUI server proxies to it.
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
 
 from . import log_events as logx
 from .api import connections, features, projects
@@ -20,10 +20,17 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 )
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    await db.disconnect()  # release the Exasol connection on shutdown
+
+
 app = FastAPI(
     title="Process Mining Demonstrator — Compute Backend",
     version="1.0.0",
-    default_response_class=ORJSONResponse,
+    lifespan=lifespan,
 )
 
 # The GUI server proxies same-origin, but allowing localhost keeps the Vite dev
@@ -50,6 +57,3 @@ def health() -> dict[str, object]:
     return {"status": "ok", "connected": db.is_connected}
 
 
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    await db.disconnect()

@@ -11,6 +11,7 @@ import json
 import logging
 import sys
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
@@ -50,7 +51,24 @@ def _backend_verify() -> object:
         return ca
     return True
 
-app = FastAPI(title="Process Mining Demonstrator — GUI Server", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # The TLS-aware launcher restarts uvicorn's listeners in-process on SIGHUP,
+    # which re-runs this lifespan: warm the proxy client on startup, close it on
+    # shutdown so the next cycle rebuilds it cleanly.
+    _get_client()
+    yield
+    global _client
+    if _client is not None and not _client.is_closed:
+        await _client.aclose()
+    _client = None
+
+
+app = FastAPI(
+    title="Process Mining Demonstrator — GUI Server",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 logx.install_request_logging(app, lambda r: _current_user(r))
 
 # The proxy client is created lazily and recreated if it was closed. This matters
@@ -76,9 +94,6 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
-@app.on_event("startup")
-async def _startup() -> None:
-    _get_client()
 
 _HOP_BY_HOP = {
     "connection",
@@ -314,14 +329,6 @@ async def proxy(path: str, request: Request) -> Response:
     if user is not None:
         _set_session_cookie(response, request, user.username)
     return response
-
-
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    global _client
-    if _client is not None and not _client.is_closed:
-        await _client.aclose()
-    _client = None
 
 
 if (DIST_DIR / "assets").is_dir():
