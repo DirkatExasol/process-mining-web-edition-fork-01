@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from .. import log_events as logx
 from ..config import DEFAULT_LLM_PROMPT
-from ..db.manager import current_db
+from ..db.manager import current_db, current_user
 from ..models import (
     FilterSpec,
     HappyPath,
@@ -329,8 +329,10 @@ class SettingsPatch(BaseModel):
 
 @router.get("/settings")
 def get_settings() -> dict[str, object]:
-    values = store.all()
-    # Secrets are never echoed back through the settings channel.
+    # App preferences are per-user; each user only sees their own namespace.
+    values = store.all_user(current_user() or "")
+    # Secrets are never echoed back through the settings channel (defensive — they
+    # live in the encrypted vault / global namespace, not a user's).
     return {
         k: v
         for k, v in values.items()
@@ -340,11 +342,12 @@ def get_settings() -> dict[str, object]:
 
 @router.patch("/settings")
 def patch_settings(patch: SettingsPatch) -> dict[str, bool]:
+    user = current_user() or ""
     for key, value in patch.values.items():
         if key.startswith("conn_pw_") or key.startswith("llm_api_key_"):
             continue
         if value is None:
-            store.delete(key)
+            store.delete_user(user, key)
         else:
-            store.set(key, value)
+            store.set_user(user, key, value)
     return {"ok": True}

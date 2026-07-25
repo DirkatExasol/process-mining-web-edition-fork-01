@@ -306,16 +306,23 @@ class DatabaseManager:
         return None
 
     async def disconnect(self) -> None:
-        conn, self._conn = self._conn, None
-        self.is_connected = False
-        self.is_llm_reachable = False
-        self._active_db_server = None
-        self._active_llm_server = None
-        if conn is not None:
-            try:
-                await asyncio.to_thread(conn.close)
-            except Exception:  # noqa: BLE001 — already going away
-                log.debug("error while closing Exasol connection", exc_info=True)
+        # Swap out and close the connection under the same lock query execution
+        # uses, in a worker thread: this waits for any in-flight statement to finish
+        # instead of closing the socket mid-query, and doesn't block the event loop.
+        def _close() -> None:
+            with self._lock:
+                conn, self._conn = self._conn, None
+                self.is_connected = False
+                self.is_llm_reachable = False
+                self._active_db_server = None
+                self._active_llm_server = None
+            if conn is not None:
+                conn.close()
+
+        try:
+            await asyncio.to_thread(_close)
+        except Exception:  # noqa: BLE001 — already going away
+            log.debug("error while closing Exasol connection", exc_info=True)
 
     # ── query execution ──────────────────────────────────────────────────────
 

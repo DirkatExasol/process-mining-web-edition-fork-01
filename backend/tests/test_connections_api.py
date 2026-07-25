@@ -464,3 +464,28 @@ def test_legacy_db_password_endpoint_is_removed(backend):
     # The route table itself carries no such path.
     paths = {r.path for r in app.routes if hasattr(r, "path")}
     assert "/api/servers/db/{server_id}/password" not in paths
+
+
+def test_settings_are_isolated_per_user(backend):
+    """App preferences are namespaced per user — one user's /settings never leak
+    into another's, and a fresh user starts empty."""
+    app, _, _ = backend
+    client = TestClient(app)
+
+    client.patch(
+        "/api/settings", json={"values": {"kpi.order": "a,b,c"}},
+        headers={"X-PMW-User": "alice"},
+    )
+    client.patch(
+        "/api/settings", json={"values": {"kpi.order": "x,y,z"}},
+        headers={"X-PMW-User": "bob"},
+    )
+
+    alice = client.get("/api/settings", headers={"X-PMW-User": "alice"}).json()
+    bob = client.get("/api/settings", headers={"X-PMW-User": "bob"}).json()
+    assert alice.get("kpi.order") == "a,b,c"
+    assert bob.get("kpi.order") == "x,y,z"
+
+    # A user who never saved anything sees nothing (fresh on first access).
+    carol = client.get("/api/settings", headers={"X-PMW-User": "carol"}).json()
+    assert "kpi.order" not in carol

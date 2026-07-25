@@ -224,3 +224,77 @@ def test_restore_never_writes_secret_keys(memory_store):
     assert memory_store.get("conn_pw_PROF-1") is None
     assert memory_store.get("llm_api_key_PROF-1") is None
     assert memory_store.get("llm_prompt_P1") == "legit-value"  # non-secret still restored
+
+
+def test_restore_only_writes_allowlisted_keys(memory_store):
+    """Restore is a positive allowlist: secret keys, legacy connection metadata and
+    arbitrary keys are ignored; only export's own prefixes are written."""
+    from app.db.manager import DatabaseManager
+
+    db = DatabaseManager()
+    payload = {
+        "version": 1,
+        "appSettings": {},
+        "connections": [],
+        "stringDefaults": {
+            "conn_pw_X": "secret",           # secret → skipped
+            "llm_api_key_X": "sk-x",         # secret → skipped
+            "database_servers": "junk",      # legacy metadata → skipped
+            "active_profile_id": "evil",     # arbitrary → skipped
+            "llm_prompt_P1": "legit-prompt", # allowlisted (rides with appSettings)
+            "norms_metric_P1": "7",          # allowlisted (norms)
+        },
+        "dataDefaults": {"random_unknown_key": "junk"},  # not allowlisted → skipped
+    }
+    # connections off so _restore_connections doesn't legitimately touch those keys;
+    # this isolates the settings-key allowlist.
+    backup.restore(db, payload, {"connections": False})
+
+    for skipped in (
+        "conn_pw_X", "llm_api_key_X", "database_servers",
+        "active_profile_id", "random_unknown_key",
+    ):
+        assert memory_store.get(skipped) is None, skipped
+    assert memory_store.get("llm_prompt_P1") == "legit-prompt"
+    assert memory_store.get("norms_metric_P1") == "7"
+
+
+def test_restore_gates_llm_prompt_behind_app_settings(memory_store):
+    from app.db.manager import DatabaseManager
+
+    db = DatabaseManager()
+    payload = {"stringDefaults": {"llm_prompt_P1": "injected"}}
+    backup.restore(db, payload, {"appSettings": False})  # app settings unchecked
+    assert memory_store.get("llm_prompt_P1") is None
+
+
+def test_settings_store_enables_wal(tmp_path):
+    from app.store.settings import SettingsStore
+
+    s = SettingsStore(path=tmp_path / "s.sqlite3")
+    mode = s._conn.execute("PRAGMA journal_mode").fetchone()[0]
+    assert mode.lower() == "wal"
+
+
+def test_backup_roundtrips_per_user_namespaced_settings(memory_store):
+    """Backup is global: it captures per-user (`u:<user>:...`) keys and restores
+    each back into the owning user's namespace."""
+    from app.db.manager import DatabaseManager
+
+    db = DatabaseManager()
+    memory_store.set("u:alice:llm_prompt_P1", "alice-prompt")
+    memory_store.set("u:alice:layout_P1", {"n": 1})
+    memory_store.set("u:bob:norms_metric_P1", "9")
+
+    payload = backup.export_payload(
+        db, include_passwords=False, include_username=True, include_llm_api_key=False
+    )
+    assert payload["stringDefaults"].get("u:alice:llm_prompt_P1") == "alice-prompt"
+    assert payload["stringDefaults"].get("u:bob:norms_metric_P1") == "9"
+    assert "u:alice:layout_P1" in payload["dataDefaults"]
+
+    memory_store.kv.clear()
+    backup.restore(db, payload, {})
+    assert memory_store.get("u:alice:llm_prompt_P1") == "alice-prompt"
+    assert memory_store.get("u:alice:layout_P1") == {"n": 1}
+    assert memory_store.get("u:bob:norms_metric_P1") == "9"

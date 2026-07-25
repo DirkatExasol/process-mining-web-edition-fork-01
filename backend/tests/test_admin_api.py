@@ -659,3 +659,38 @@ def test_encrypted_backup_inspect_without_password_is_400_not_401(admin):
 
     ok = client.post("/api/backup/inspect", json={"content": content, "password": "pw123"})
     assert ok.status_code == 200
+
+
+def test_backup_upload_size_is_capped(admin, monkeypatch):
+    server, _ = admin
+    monkeypatch.setattr(server, "_MAX_BACKUP_B64", 100)
+    client = _login(server)
+    resp = client.post("/api/backup/inspect", json={"content": "A" * 101})
+    assert resp.status_code == 413
+
+
+def test_backup_actions_are_logged(admin):
+    server, _ = admin
+    client = _login(server)
+
+    export = client.post("/api/backup/export", json={"includeUsername": True})
+    content = base64.b64encode(export.content).decode("ascii")
+    client.post("/api/backup/inspect", json={"content": content})
+    client.post(
+        "/api/backup/restore",
+        json={"content": content, "options": {"appSettings": True}},
+    )
+    # A failed decode (encrypted, no password) must be logged too.
+    enc = base64.b64encode(
+        client.post("/api/backup/export", json={"password": "pw"}).content
+    ).decode("ascii")
+    assert client.post("/api/backup/inspect", json={"content": enc}).status_code == 400
+
+    entries = server.log_store.query(operation="backup", limit=50)
+    joined = " ".join(e["message"].lower() for e in entries)
+    assert "exported a settings backup" in joined
+    assert "inspected a backup file" in joined
+    assert "restored a settings backup" in joined
+    assert "inspect failed" in joined  # the failure is recorded
+    # Every one is tagged with the backup operation.
+    assert entries and all(e["operation"] == "backup" for e in entries)

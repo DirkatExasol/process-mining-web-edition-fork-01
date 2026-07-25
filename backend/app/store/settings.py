@@ -43,6 +43,11 @@ class SettingsStore:
     def __init__(self, path=DB_PATH) -> None:
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
+        # WAL + a busy timeout so an admin-side restore (writer) and the compute
+        # backend (reader) sharing this file don't hit SQLITE_BUSY, matching the
+        # security store.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         self._fernet = _load_fernet()
@@ -91,6 +96,35 @@ class SettingsStore:
                 "SELECT key FROM kv WHERE key LIKE ?", (f"{prefix}%",)
             ).fetchall()
         return [r[0] for r in rows]
+
+    # ── per-user values ───────────────────────────────────────────────────────
+    #
+    # App preferences (filter presets, layouts, norms, happy paths, KPI order, LLM
+    # prompt templates …) are namespaced per user so one user's settings never leak
+    # into another's. Stored as `u:<user>:<key>` in the same kv table; the raw
+    # methods above still see the full keys (used by backup, which is global).
+
+    @staticmethod
+    def _user_key(user: str, key: str) -> str:
+        return f"u:{user}:{key}"
+
+    def get_user(self, user: str, key: str, default: Any = None) -> Any:
+        return self.get(self._user_key(user, key), default)
+
+    def set_user(self, user: str, key: str, value: Any) -> None:
+        self.set(self._user_key(user, key), value)
+
+    def delete_user(self, user: str, key: str) -> None:
+        self.delete(self._user_key(user, key))
+
+    def all_user(self, user: str) -> dict[str, Any]:
+        """Every setting belonging to `user`, with the namespace prefix stripped."""
+        prefix = self._user_key(user, "")
+        return {
+            key[len(prefix):]: value
+            for key, value in self.all().items()
+            if key.startswith(prefix)
+        }
 
     # ── secrets ──────────────────────────────────────────────────────────────
 

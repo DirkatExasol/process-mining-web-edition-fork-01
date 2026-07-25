@@ -45,6 +45,17 @@ DATA_PREFIXES = (
     "filterGroups_",
 )
 
+
+def _logical_key(key: str) -> str:
+    """Strip a per-user namespace (`u:<user>:<key>`) so prefix checks work on the
+    logical setting name. The backup itself keeps the full key, so a restore lands
+    back in the right user's namespace. Backup is global — it spans all users."""
+    if key.startswith("u:"):
+        parts = key.split(":", 2)
+        if len(parts) == 3:
+            return parts[2]
+    return key
+
 _SETTINGS_KEYS = {
     "appTheme": ("app.theme", "system"),
     "graphStartMode": ("graph.startMode", "expanded"),
@@ -136,10 +147,11 @@ def export_payload(
     data_defaults: dict[str, str] = {}
 
     for key, value in store.all().items():
-        if key.startswith(STRING_PREFIXES):
+        logical = _logical_key(key)
+        if logical.startswith(STRING_PREFIXES):
             if isinstance(value, str):
                 string_defaults[key] = value
-        elif key.startswith(DATA_PREFIXES) and not key.startswith("norms_metric_"):
+        elif logical.startswith(DATA_PREFIXES) and not logical.startswith("norms_metric_"):
             # The Swift side stored these as JSON-encoded Data; base64 keeps the
             # backup byte-identical in shape.
             raw = json.dumps(value, separators=(",", ":")).encode("utf-8")
@@ -243,15 +255,6 @@ DEFAULT_RESTORE_OPTIONS = {
 }
 
 
-# Secret settings keys are managed only through the dedicated (encrypted) paths;
-# a restored backup must never be able to inject them into the settings store.
-_SECRET_KEY_PREFIXES = ("conn_pw_", "llm_api_key_")
-
-
-def _is_secret_key(key: str) -> bool:
-    return key.startswith(_SECRET_KEY_PREFIXES)
-
-
 def restore(
     db: DatabaseManager, payload: dict[str, Any], options: dict[str, bool]
 ) -> None:
@@ -265,24 +268,37 @@ def restore(
     if opts["connections"]:
         _restore_connections(db, payload, opts)
 
+    # Positive allowlist: only keys matching the same prefixes `export` writes are
+    # restored, each gated by its option. Anything else in the file (secret keys,
+    # legacy connection metadata, arbitrary keys) is ignored — a crafted backup
+    # cannot inject settings outside these namespaces.
     for key, value in (payload.get("stringDefaults") or {}).items():
-        if _is_secret_key(key):  # never restore secrets through the settings channel
-            continue
-        if key.startswith("norms_metric_") and not opts["norms"]:
+        logical = _logical_key(key)  # gate on the logical name, restore the full key
+        if logical.startswith("norms_metric_"):
+            if not opts["norms"]:
+                continue
+        elif logical.startswith("llm_prompt_"):
+            if not opts["appSettings"]:  # LLM prompt templates ride with app settings
+                continue
+        else:
             continue
         store.set(key, value)
 
     for key, encoded in (payload.get("dataDefaults") or {}).items():
-        if _is_secret_key(key):
-            continue
-        if key.startswith("layout_") or key.startswith("graph.collapsedGroups_"):
+        logical = _logical_key(key)
+        if logical.startswith("layout_") or logical.startswith("graph.collapsedGroups_"):
             if not opts["layouts"]:
                 continue
-        elif key.startswith("norms_") and not opts["norms"]:
-            continue
-        elif key.startswith("happyPaths_") and not opts["happyPaths"]:
-            continue
-        elif key.startswith("filterGroups_") and not opts["filterPresets"]:
+        elif logical.startswith("norms_"):
+            if not opts["norms"]:
+                continue
+        elif logical.startswith("happyPaths_"):
+            if not opts["happyPaths"]:
+                continue
+        elif logical.startswith("filterGroups_"):
+            if not opts["filterPresets"]:
+                continue
+        else:
             continue
         try:
             store.set(key, json.loads(base64.b64decode(encoded)))

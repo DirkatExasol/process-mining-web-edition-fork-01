@@ -381,7 +381,14 @@ class BackupRestoreBody(BackupInspectBody):
     options: dict[str, bool] = {}
 
 
+# A real backup is well under this; the cap stops an oversized upload from being
+# base64-decoded / decrypted / JSON-parsed into several full in-memory copies.
+_MAX_BACKUP_B64 = 25_000_000  # ~18 MB decoded
+
+
 def _decode_backup(body: BackupInspectBody) -> dict:
+    if len(body.content) > _MAX_BACKUP_B64:
+        raise HTTPException(status_code=413, detail="Backup file is too large.")
     try:
         raw = base64.b64decode(body.content)
     except ValueError as exc:
@@ -407,21 +414,50 @@ def _decode_backup(body: BackupInspectBody) -> dict:
         ) from exc
 
 
-@app.post("/api/backup/export")
-def api_backup_export(body: BackupExportBody, user: User = Depends(require_admin)):
-    payload = backup_service.export_payload(
-        legacy_db,
-        include_passwords=body.includePasswords,
-        include_username=body.includeUsername,
-        include_llm_api_key=body.includeLlmApiKey,
+def _export_desc(body: BackupExportBody) -> str:
+    inc = []
+    if body.includeUsername:
+        inc.append("usernames")
+    if body.includePasswords:
+        inc.append("passwords")
+    if body.includeLlmApiKey:
+        inc.append("LLM keys")
+    return (
+        f"includes: {', '.join(inc) or 'none'}; "
+        f"{'encrypted' if body.password else 'PLAINTEXT'}"
     )
-    data = backup_service.encode(payload)
-    if body.password:
-        data = backup_service.encrypt(data, body.password)
+
+
+def _restore_opts_desc(options: dict[str, bool]) -> str:
+    if not options:
+        return "all (default)"
+    enabled = [k for k, v in options.items() if v]
+    return ", ".join(enabled) if enabled else "none"
+
+
+@app.post("/api/backup/export")
+def api_backup_export(
+    body: BackupExportBody, request: Request, user: User = Depends(require_admin)
+):
+    try:
+        payload = backup_service.export_payload(
+            legacy_db,
+            include_passwords=body.includePasswords,
+            include_username=body.includeUsername,
+            include_llm_api_key=body.includeLlmApiKey,
+        )
+        data = backup_service.encode(payload)
+        if body.password:
+            data = backup_service.encrypt(data, body.password)
+    except Exception as exc:  # noqa: BLE001
+        logx.error(
+            f"admin {user.username} backup export failed: {exc}",
+            request=request, username=user.username, operation="backup",
+        )
+        raise
     logx.usage(
-        f"admin {user.username} exported a settings backup",
-        username=user.username,
-        operation="config",
+        f"admin {user.username} exported a settings backup — {_export_desc(body)}",
+        request=request, username=user.username, operation="backup",
     )
     stamp = datetime.datetime.now().strftime("%Y-%m-%d")
     return Response(
@@ -436,17 +472,48 @@ def api_backup_export(body: BackupExportBody, user: User = Depends(require_admin
 
 
 @app.post("/api/backup/inspect")
-def api_backup_inspect(body: BackupInspectBody, user: User = Depends(require_admin)):
-    return backup_service.summarize(_decode_backup(body))
+def api_backup_inspect(
+    body: BackupInspectBody, request: Request, user: User = Depends(require_admin)
+):
+    try:
+        payload = _decode_backup(body)
+    except HTTPException as exc:
+        logx.warn(
+            f"admin {user.username} backup inspect failed: {exc.detail}",
+            request=request, username=user.username, operation="backup",
+        )
+        raise
+    logx.usage(
+        f"admin {user.username} inspected a backup file",
+        request=request, username=user.username, operation="backup",
+    )
+    return backup_service.summarize(payload)
 
 
 @app.post("/api/backup/restore")
-def api_backup_restore(body: BackupRestoreBody, user: User = Depends(require_admin)):
-    backup_service.restore(legacy_db, _decode_backup(body), body.options)
+def api_backup_restore(
+    body: BackupRestoreBody, request: Request, user: User = Depends(require_admin)
+):
+    try:
+        payload = _decode_backup(body)
+    except HTTPException as exc:
+        logx.warn(
+            f"admin {user.username} backup restore failed (decode): {exc.detail}",
+            request=request, username=user.username, operation="backup",
+        )
+        raise
+    try:
+        backup_service.restore(legacy_db, payload, body.options)
+    except Exception as exc:  # noqa: BLE001
+        logx.error(
+            f"admin {user.username} backup restore failed: {exc}",
+            request=request, username=user.username, operation="backup",
+        )
+        raise
     logx.warn(
-        f"admin {user.username} restored a settings backup",
-        username=user.username,
-        operation="config",
+        f"admin {user.username} restored a settings backup — options: "
+        f"{_restore_opts_desc(body.options)}",
+        request=request, username=user.username, operation="backup",
     )
     return {"ok": True}
 

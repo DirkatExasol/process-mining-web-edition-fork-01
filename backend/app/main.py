@@ -27,7 +27,16 @@ logging.basicConfig(
 )
 
 # Only the GUI proxy knows this (both derive it from the shared Fernet key).
-_PROXY_SECRET = proxy_auth_secret() if REQUIRE_PROXY_AUTH else ""
+if REQUIRE_PROXY_AUTH:
+    _PROXY_SECRET = proxy_auth_secret()
+else:
+    _PROXY_SECRET = ""
+    logging.getLogger("compute-backend").warning(
+        "SECURITY: PMW_REQUIRE_PROXY_AUTH is DISABLED — the compute backend trusts the "
+        "X-PMW-User header unconditionally, so any process that can reach its port can "
+        "impersonate any user. This is for local development only; never run a deployed "
+        "or shared instance with it off."
+    )
 # Liveness probe stays open (the Docker healthcheck hits it directly).
 _PROXY_AUTH_EXEMPT = {"/api/health"}
 
