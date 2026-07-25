@@ -3,37 +3,6 @@
 export const INT_MAX = 9223372036854775807
 export const INT_MIN = -9223372036854775808
 
-export interface DatabaseServer {
-  id: string
-  name: string
-  comment: string
-  host: string
-  port: number
-  username: string
-  schema: string
-  useTLS: boolean
-  certModeRaw: string
-  fingerprint: string
-  minRSAKeySizeBits: number
-}
-
-export interface LLMServer {
-  id: string
-  name: string
-  comment: string
-  serverURL: string
-  apiKey: string
-  model: string
-}
-
-export interface ConnectionProfile {
-  id: string
-  name: string
-  comment: string
-  databaseServerId: string | null
-  llmServerId: string | null
-}
-
 export interface ConnectionStatus {
   isConnected: boolean
   isLLMReachable: boolean

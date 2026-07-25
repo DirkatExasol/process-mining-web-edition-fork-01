@@ -8,6 +8,7 @@ no network access is needed.
 
 from __future__ import annotations
 
+import base64
 import importlib
 import sys
 from pathlib import Path
@@ -39,6 +40,18 @@ def admin(tmp_path, monkeypatch):
     import app.store.logs as logs_mod
 
     importlib.reload(logs_mod)
+
+    # Settings store + connection manager + backup service (the Backup tab uses
+    # these) rebound to the temp data dir.
+    import app.store.settings as settings_mod
+
+    importlib.reload(settings_mod)
+    import app.db.manager as manager_mod
+
+    importlib.reload(manager_mod)
+    import app.services.backup as backup_mod
+
+    importlib.reload(backup_mod)
 
     # Load admin/server.py fresh (it lives outside the app package; its module name
     # `server` collides with the GUI server, so drop any cached copy first).
@@ -599,3 +612,50 @@ def test_logs_endpoints_require_admin(admin):
     assert client.get("/api/logs").status_code == 401
     assert client.post("/api/logs/config", json={"level": "INFO"}).status_code == 401
     assert client.get("/api/logs/download").status_code == 401
+
+
+def test_backup_export_inspect_restore_roundtrip(admin):
+    server, _ = admin
+    client = _login(server)  # authenticated admin
+
+    export = client.post("/api/backup/export", json={"includeUsername": True})
+    assert export.status_code == 200
+    assert "attachment" in export.headers.get("content-disposition", "")
+
+    content = base64.b64encode(export.content).decode("ascii")
+    summary = client.post("/api/backup/inspect", json={"content": content}).json()
+    assert "createdAt" in summary and "connectionCount" in summary
+
+    restored = client.post(
+        "/api/backup/restore",
+        json={"content": content, "options": {"appSettings": True}},
+    )
+    assert restored.status_code == 200 and restored.json()["ok"] is True
+
+
+def test_backup_endpoints_require_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)  # no session
+    assert client.post("/api/backup/export", json={}).status_code == 401
+    assert client.post("/api/backup/inspect", json={"content": ""}).status_code == 401
+    assert client.post("/api/backup/restore", json={"content": ""}).status_code == 401
+
+
+def test_encrypted_backup_inspect_without_password_is_400_not_401(admin):
+    """A 401 makes the admin fetch helper redirect to /login (the 'jumps to App
+    Control / looks like a refresh' bug); the encrypted-backup case must be 400."""
+    server, _ = admin
+    client = _login(server)
+
+    enc = client.post("/api/backup/export", json={"password": "pw123"})
+    content = base64.b64encode(enc.content).decode("ascii")
+
+    missing = client.post("/api/backup/inspect", json={"content": content})
+    assert missing.status_code == 400  # NOT 401
+    assert "encrypted" in missing.json()["detail"].lower()
+
+    wrong = client.post("/api/backup/inspect", json={"content": content, "password": "nope"})
+    assert wrong.status_code == 400  # NOT 401
+
+    ok = client.post("/api/backup/inspect", json={"content": content, "password": "pw123"})
+    assert ok.status_code == 200

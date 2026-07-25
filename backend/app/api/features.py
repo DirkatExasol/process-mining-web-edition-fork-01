@@ -1,13 +1,11 @@
-"""Notes, sampling, simulation, AI documentation, settings and backup endpoints."""
+"""Notes, sampling, simulation, AI documentation and settings endpoints."""
 
 from __future__ import annotations
 
 import asyncio
-import base64
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
 from pydantic import BaseModel
 
 from .. import log_events as logx
@@ -25,7 +23,6 @@ from ..models import (
     StepInfo,
     TransitionMetric,
 )
-from ..services import backup as backup_service
 from ..services import docgen, llm as llm_service, simulation
 from ..services.analytics import (
     happy_path_conformance,
@@ -350,81 +347,4 @@ def patch_settings(patch: SettingsPatch) -> dict[str, bool]:
             store.delete(key)
         else:
             store.set(key, value)
-    return {"ok": True}
-
-
-# ── Backup / restore ─────────────────────────────────────────────────────────
-
-
-class ExportRequest(BaseModel):
-    includePasswords: bool = False
-    includeUsername: bool = True
-    includeLlmApiKey: bool = False
-    password: str = ""
-
-
-class InspectRequest(BaseModel):
-    content: str  # base64-encoded file bytes
-    password: str = ""
-
-
-class RestoreRequest(InspectRequest):
-    options: dict[str, bool] = {}
-
-
-def _decode_backup(request: InspectRequest) -> dict:
-    try:
-        raw = base64.b64decode(request.content)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid file content.") from exc
-
-    if backup_service.is_encrypted(raw):
-        if not request.password:
-            raise HTTPException(status_code=401, detail="This backup is encrypted.")
-        try:
-            raw = backup_service.decrypt(raw, request.password)
-        except backup_service.BackupError as exc:
-            raise HTTPException(status_code=401, detail=str(exc)) from exc
-
-    import json
-
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status_code=400, detail="The backup file format is invalid or corrupted."
-        ) from exc
-
-
-@router.post("/backup/export")
-def export_backup(request: ExportRequest) -> Response:
-    payload = backup_service.export_payload(
-        db,
-        include_passwords=request.includePasswords,
-        include_username=request.includeUsername,
-        include_llm_api_key=request.includeLlmApiKey,
-    )
-    data = backup_service.encode(payload)
-    if request.password:
-        data = backup_service.encrypt(data, request.password)
-    stamp = datetime.now().strftime("%Y-%m-%d")
-    return Response(
-        content=data,
-        media_type="application/json",
-        headers={
-            "Content-Disposition": (
-                f'attachment; filename="ProcessMining-Backup-{stamp}.json"'
-            )
-        },
-    )
-
-
-@router.post("/backup/inspect")
-def inspect_backup(request: InspectRequest) -> dict[str, object]:
-    return backup_service.summarize(_decode_backup(request))
-
-
-@router.post("/backup/restore")
-def restore_backup(request: RestoreRequest) -> dict[str, bool]:
-    backup_service.restore(db, _decode_backup(request), request.options)
     return {"ok": True}

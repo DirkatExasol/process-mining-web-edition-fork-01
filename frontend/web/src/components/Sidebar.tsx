@@ -17,7 +17,6 @@ import type {
 import { formatSecs } from '../graph/format'
 import { useSetting } from '../settings'
 import { DEFAULT_LLM_PROMPT, useStore } from '../store'
-import { BackupRestore } from './BackupRestore'
 import { ConnectionEditor } from './ConnectionEditor'
 import { Logo } from './Logo'
 import { SamplingSection } from './SamplingSection'
@@ -47,7 +46,6 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
   const store = useStore()
   const [openSection, setOpenSection] = useState<SectionId | null>('connections')
   const [showPromptEditor, setShowPromptEditor] = useState(false)
-  const [showBackup, setShowBackup] = useState(false)
   const [showSavePreset, setShowSavePreset] = useState(false)
   const [theme, setTheme] = useSetting<string>('app.theme')
   // Power/admin only: the connection being created (null) or edited.
@@ -157,10 +155,7 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
           onToggle={() => toggleSection('config')}
         />
         {openSection === 'config' && (
-          <ConfigSection
-            onEditPrompt={() => setShowPromptEditor(true)}
-            onOpenBackup={() => setShowBackup(true)}
-          />
+          <ConfigSection onEditPrompt={() => setShowPromptEditor(true)} />
         )}
       </div>
 
@@ -238,7 +233,6 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
       {showPromptEditor && (
         <PromptEditorSheet onClose={() => setShowPromptEditor(false)} />
       )}
-      {showBackup && <BackupRestore onClose={() => setShowBackup(false)} />}
       {showSavePreset && (
         <PromptSheet
           title="Save Filter Preset"
@@ -1113,13 +1107,7 @@ function EventIdFilter() {
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
-function ConfigSection({
-  onEditPrompt,
-  onOpenBackup,
-}: {
-  onEditPrompt: () => void
-  onOpenBackup: () => void
-}) {
+function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
   const store = useStore()
   const [showGrouping, setShowGrouping] = useSetting<boolean>('processmap.showGrouping')
   const [startMode, setStartMode] = useSetting<GraphStartMode>('graph.startMode')
@@ -1217,17 +1205,6 @@ function ConfigSection({
           onClick={onEditPrompt}
         >
           Edit
-        </button>
-      </div>
-
-      <Divider />
-      <div className="row" style={{ padding: '8px 20px', gap: 10 }}>
-        <span aria-hidden className="fg-secondary">
-          🗄
-        </span>
-        <span className="t-caption fg-secondary spacer">Backup &amp; Restore</span>
-        <button className="btn small" onClick={onOpenBackup}>
-          Open
         </button>
       </div>
 

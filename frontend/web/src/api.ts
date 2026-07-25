@@ -3,14 +3,12 @@
 import type {
   AssignedConnection,
   ConnectionStatus,
-  DatabaseServer,
   ManagedConnection,
   DocumentationResponse,
   FilterSpec,
   GraphResult,
   HappyPath,
   JourneyPath,
-  LLMServer,
   ProcessGraph,
   ProcessNote,
   Project,
@@ -96,21 +94,6 @@ export const api = {
     get<{ configured: boolean; available: boolean }>('/auth/directory-status'),
 
   // ── connections ──────────────────────────────────────────────────────────
-  listDbServers: () => get<DatabaseServer[]>('/api/servers/db'),
-  saveDbServer: (server: DatabaseServer, password?: string) =>
-    post<DatabaseServer>('/api/servers/db', { server, password }),
-  deleteDbServer: (id: string) => del<void>(`/api/servers/db/${enc(id)}`),
-  testDbServer: (server: DatabaseServer, password?: string) =>
-    post<{ error: string | null }>('/api/servers/db/test', { server, password }),
-
-  listLlmServers: () => get<LLMServer[]>('/api/servers/llm'),
-  saveLlmServer: (server: LLMServer) => post<LLMServer>('/api/servers/llm', server),
-  deleteLlmServer: (id: string) => del<void>(`/api/servers/llm/${enc(id)}`),
-  testLlmServer: (server: LLMServer) =>
-    post<{ error: string | null; models: string[] }>('/api/servers/llm/test', {
-      server,
-    }),
-
   // Admin-defined connections assigned to the signed-in user.
   listConnections: () => get<AssignedConnection[]>('/api/connections'),
   connectConnection: (id: string) =>
@@ -291,27 +274,4 @@ export const api = {
   settings: () => get<Record<string, unknown>>('/api/settings'),
   patchSettings: (values: Record<string, unknown>) =>
     patch<{ ok: boolean }>('/api/settings', { values }),
-
-  // ── backup ───────────────────────────────────────────────────────────────
-  exportBackup: async (payload: {
-    includePasswords: boolean
-    includeUsername: boolean
-    includeLlmApiKey: boolean
-    password: string
-  }) => {
-    const response = await fetch('/api/backup/export', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-    if (!response.ok) throw new ApiError('Export failed.', response.status)
-    return response.blob()
-  },
-  inspectBackup: (content: string, password: string) =>
-    post<Record<string, unknown>>('/api/backup/inspect', { content, password }),
-  restoreBackup: (
-    content: string,
-    password: string,
-    options: Record<string, boolean>,
-  ) => post<{ ok: boolean }>('/api/backup/restore', { content, password, options }),
 }

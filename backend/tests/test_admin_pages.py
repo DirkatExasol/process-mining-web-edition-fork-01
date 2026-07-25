@@ -150,6 +150,14 @@ def test_dashboard_escapes_single_quote_and_avoids_inline_onclick_injection(dash
         assert vulnerable not in dashboard, vulnerable
 
 
+def test_dashboard_has_backup_tab(dashboard):
+    # Backup/restore moved from the app's left panel to its own admin tab.
+    assert 'data-tab="backup"' in dashboard and 'id="tab-backup"' in dashboard
+    assert "function exportBackup" in dashboard and "function restoreBackup" in dashboard
+    assert 'id="bkFile"' in dashboard  # restore file picker
+    assert "/api/backup/export" in dashboard and "/api/backup/inspect" in dashboard
+
+
 def test_login_page_shows_inactivity_notice(pages):
     # Same label the app's LoginView shows; the idle auto-logout redirects here.
     plain = pages.login_page()

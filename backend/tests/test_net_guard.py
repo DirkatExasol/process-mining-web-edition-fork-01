@@ -25,11 +25,12 @@ def test_blocks_non_http_schemes():
         assert _blocked(u), u
 
 
-def test_blocks_loopback_and_private_by_default():
-    assert _blocked("http://127.0.0.1:11434/v1")
-    assert _blocked("http://localhost:8000/v1")
-    assert _blocked("http://10.0.0.5:8000/v1")
-    assert _blocked("http://192.168.1.10/v1")
+def test_allows_loopback_and_private_by_default():
+    # Local/internal LLM servers are a primary, legitimate use case.
+    assert_safe_url("http://127.0.0.1:11434/v1")  # Ollama default — must not raise
+    assert_safe_url("http://localhost:1234/v1")
+    assert_safe_url("http://10.0.0.5:8000/v1")
+    assert_safe_url("http://192.168.1.10/v1")
 
 
 def test_allows_public_host():
@@ -37,11 +38,11 @@ def test_allows_public_host():
     assert_safe_url("https://api.openai.com/v1")  # does not raise
 
 
-def test_private_allowed_only_with_optin(monkeypatch):
-    assert _blocked("http://127.0.0.1:11434/v1")  # default: blocked
-    monkeypatch.setenv("PMW_ALLOW_PRIVATE_LLM_HOSTS", "1")
-    assert_safe_url("http://127.0.0.1:11434/v1")  # opt-in: allowed
-    # ...but metadata/link-local stays blocked even with the opt-in.
+def test_private_blocked_only_with_optin(monkeypatch):
+    assert not _blocked("http://127.0.0.1:11434/v1")  # default: allowed
+    monkeypatch.setenv("PMW_BLOCK_PRIVATE_LLM_HOSTS", "1")
+    assert _blocked("http://127.0.0.1:11434/v1")  # hardening opt-in: blocked
+    # ...and metadata/link-local stays blocked either way.
     assert _blocked("http://169.254.169.254/")
 
 

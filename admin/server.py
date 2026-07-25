@@ -7,6 +7,8 @@ by an admin session cookie; seeded with Administrator / Administrator on first r
 from __future__ import annotations
 
 import asyncio
+import base64
+import datetime
 import json
 import logging
 import os
@@ -37,6 +39,8 @@ from app.config import (  # noqa: E402
     GUI_PID_PATH,
 )
 from app import log_events as logx  # noqa: E402
+from app.db.manager import db as legacy_db  # noqa: E402 — settings-backed backup state
+from app.services import backup as backup_service  # noqa: E402
 from app.services.certs import CertError  # noqa: E402
 from app.store.logs import LEVELS, store as log_store  # noqa: E402
 from app.store.crypto import read_session, sign_session  # noqa: E402
@@ -356,6 +360,95 @@ def api_logs_download(
         text,
         headers={"Content-Disposition": 'attachment; filename="pmw-log.log"'},
     )
+
+
+# ── Backup / restore (moved here from the app's left panel) ───────────────────
+
+
+class BackupExportBody(BaseModel):
+    includePasswords: bool = False
+    includeUsername: bool = True
+    includeLlmApiKey: bool = False
+    password: str = ""
+
+
+class BackupInspectBody(BaseModel):
+    content: str  # base64-encoded file bytes
+    password: str = ""
+
+
+class BackupRestoreBody(BackupInspectBody):
+    options: dict[str, bool] = {}
+
+
+def _decode_backup(body: BackupInspectBody) -> dict:
+    try:
+        raw = base64.b64decode(body.content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid file content.") from exc
+    if backup_service.is_encrypted(raw):
+        if not body.password:
+            # 400 (a client error), NOT 401 — the admin fetch helper redirects to
+            # /login on any 401, which would bounce the page instead of prompting
+            # for the encryption password.
+            raise HTTPException(
+                status_code=400,
+                detail="This backup is encrypted — enter its password and Inspect again.",
+            )
+        try:
+            raw = backup_service.decrypt(raw, body.password)
+        except backup_service.BackupError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=400, detail="The backup file format is invalid or corrupted."
+        ) from exc
+
+
+@app.post("/api/backup/export")
+def api_backup_export(body: BackupExportBody, user: User = Depends(require_admin)):
+    payload = backup_service.export_payload(
+        legacy_db,
+        include_passwords=body.includePasswords,
+        include_username=body.includeUsername,
+        include_llm_api_key=body.includeLlmApiKey,
+    )
+    data = backup_service.encode(payload)
+    if body.password:
+        data = backup_service.encrypt(data, body.password)
+    logx.usage(
+        f"admin {user.username} exported a settings backup",
+        username=user.username,
+        operation="config",
+    )
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d")
+    return Response(
+        content=data,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="ProcessMining-Backup-{stamp}.json"'
+            )
+        },
+    )
+
+
+@app.post("/api/backup/inspect")
+def api_backup_inspect(body: BackupInspectBody, user: User = Depends(require_admin)):
+    return backup_service.summarize(_decode_backup(body))
+
+
+@app.post("/api/backup/restore")
+def api_backup_restore(body: BackupRestoreBody, user: User = Depends(require_admin)):
+    backup_service.restore(legacy_db, _decode_backup(body), body.options)
+    logx.warn(
+        f"admin {user.username} restored a settings backup",
+        username=user.username,
+        operation="config",
+    )
+    return {"ok": True}
 
 
 @app.post("/api/self/password")

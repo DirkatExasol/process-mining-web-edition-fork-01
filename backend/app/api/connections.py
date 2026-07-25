@@ -1,4 +1,5 @@
-"""Connection management endpoints — DatabaseServer / LLMServer / profile CRUD."""
+"""Connection endpoints — list/connect the admin-defined connections assigned to a
+user, power-user connection management, schema provisioning and demo generation."""
 
 from __future__ import annotations
 
@@ -6,8 +7,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import log_events as logx
-from ..db.manager import check_llm_reachable, current_db, db, registry
-from ..models import ConnectionProfile, ConnectionStatus, DatabaseServer, LLMServer
+from ..db.manager import check_llm_reachable, current_db, registry
+from ..models import ConnectionStatus, LLMServer
 from ..services import llm as llm_service
 from ..store.security import store as security_store
 
@@ -22,138 +23,6 @@ USER_HEADER = "x-pmw-user"
 def _request_user(request: Request) -> str | None:
     value = request.headers.get(USER_HEADER)
     return value.strip() if value and value.strip() else None
-
-
-class DatabaseServerPayload(BaseModel):
-    server: DatabaseServer
-    password: str | None = None
-
-
-class LLMTestPayload(BaseModel):
-    server: LLMServer
-
-
-# ── database servers ─────────────────────────────────────────────────────────
-
-
-@router.get("/servers/db", response_model=list[DatabaseServer])
-def list_db_servers() -> list[DatabaseServer]:
-    return db.database_servers
-
-
-@router.post("/servers/db", response_model=DatabaseServer)
-def upsert_db_server(payload: DatabaseServerPayload) -> DatabaseServer:
-    servers = db.database_servers
-    index = next((i for i, s in enumerate(servers) if s.id == payload.server.id), None)
-    if index is None:
-        servers.append(payload.server)
-    else:
-        servers[index] = payload.server
-    db.database_servers = servers
-    if payload.password is not None:
-        db.set_password(payload.server.id, payload.password)
-    return payload.server
-
-
-@router.delete("/servers/db/{server_id}")
-async def delete_db_server(server_id: str) -> dict[str, bool]:
-    if (active := db.active_database_server) and active.id == server_id:
-        await db.disconnect()
-    db.database_servers = [s for s in db.database_servers if s.id != server_id]
-    db.delete_password(server_id)
-    profiles = db.profiles
-    for profile in profiles:
-        if profile.databaseServerId == server_id:
-            profile.databaseServerId = None
-    db.profiles = profiles
-    return {"ok": True}
-
-
-@router.post("/servers/db/test")
-async def test_db_server(payload: DatabaseServerPayload) -> dict[str, str | None]:
-    password = payload.password
-    if password is None:
-        password = db.password(payload.server.id)
-    error = await db.test_server(payload.server, password)
-    return {"error": error}
-
-
-# ── LLM servers ──────────────────────────────────────────────────────────────
-
-
-@router.get("/servers/llm", response_model=list[LLMServer])
-def list_llm_servers() -> list[LLMServer]:
-    return db.llm_servers
-
-
-@router.post("/servers/llm", response_model=LLMServer)
-def upsert_llm_server(server: LLMServer) -> LLMServer:
-    servers = db.llm_servers
-    index = next((i for i, s in enumerate(servers) if s.id == server.id), None)
-    if index is None:
-        servers.append(server)
-    else:
-        servers[index] = server
-    db.llm_servers = servers
-    return server
-
-
-@router.delete("/servers/llm/{server_id}")
-def delete_llm_server(server_id: str) -> dict[str, bool]:
-    db.llm_servers = [s for s in db.llm_servers if s.id != server_id]
-    profiles = db.profiles
-    for profile in profiles:
-        if profile.llmServerId == server_id:
-            profile.llmServerId = None
-    db.profiles = profiles
-    return {"ok": True}
-
-
-@router.post("/servers/llm/test")
-async def test_llm_server(payload: LLMTestPayload) -> dict[str, object]:
-    server = payload.server
-    if not server.serverURL.strip():
-        return {"error": "Enter a valid server URL.", "models": []}
-    reachable = await check_llm_reachable(server)  # logs the real cause on failure
-    if not reachable:
-        return {"error": "Server not reachable.", "models": []}
-    try:
-        models = await llm_service.list_models(server.serverURL, server.apiKey)
-    except Exception as exc:  # noqa: BLE001
-        logx.warn(
-            f"LLM server test failed — {server.serverURL}: {exc}",
-            operation="llm-test",
-        )
-        return {"error": str(exc), "models": []}
-    return {"error": None, "models": models}
-
-
-# ── profiles (pairings) ──────────────────────────────────────────────────────
-
-
-@router.get("/profiles", response_model=list[ConnectionProfile])
-def list_profiles() -> list[ConnectionProfile]:
-    return db.profiles
-
-
-@router.post("/profiles", response_model=ConnectionProfile)
-def upsert_profile(profile: ConnectionProfile) -> ConnectionProfile:
-    profiles = db.profiles
-    index = next((i for i, p in enumerate(profiles) if p.id == profile.id), None)
-    if index is None:
-        profiles.append(profile)
-    else:
-        profiles[index] = profile
-    db.profiles = profiles
-    return profile
-
-
-@router.delete("/profiles/{profile_id}")
-async def delete_profile(profile_id: str) -> dict[str, bool]:
-    if db.active_profile_id == profile_id:
-        await db.disconnect()
-    db.profiles = [p for p in db.profiles if p.id != profile_id]
-    return {"ok": True}
 
 
 # ── admin-defined connections (assigned per user) ─────────────────────────────
@@ -425,21 +294,6 @@ async def generate_demo_content(body: DemoContentBody, request: Request) -> dict
 
 
 # ── connect / disconnect / status ────────────────────────────────────────────
-
-
-@router.post("/profiles/{profile_id}/connect", response_model=ConnectionStatus)
-async def connect(profile_id: str) -> ConnectionStatus:
-    profile = db.profile(profile_id)
-    if profile is None:
-        raise HTTPException(status_code=404, detail="Connection not found")
-    error = await db.connect(profile)
-    return ConnectionStatus(
-        isConnected=db.is_connected,
-        isLLMReachable=db.is_llm_reachable,
-        activeProfileId=db.active_profile_id,
-        username=db.username,
-        lastError=error,
-    )
 
 
 @router.post("/disconnect", response_model=ConnectionStatus)

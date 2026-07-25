@@ -343,6 +343,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <button data-tab="connections" onclick="selectTab('connections')">Database Connections</button>
     <button data-tab="ldap" onclick="selectTab('ldap')">Directory (LDAP)</button>
     <button data-tab="logging" onclick="selectTab('logging')">Logging</button>
+    <button data-tab="backup" onclick="selectTab('backup')">Backup</button>
   </div>
 
   <div class="tabpanel sel" id="tab-appcontrol">
@@ -631,6 +632,47 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     </div>
   </div>
   </div><!-- /tab-logging -->
+
+  <div class="tabpanel" id="tab-backup">
+  <div class="card">
+    <h2>Export</h2>
+    <p class="muted" style="font-size:13px; margin:0 0 12px">Exports connections, filter presets,
+      happy paths, target norms, node layouts, LLM prompt templates and app preferences as a single
+      JSON file (byte-compatible with the app's backup format).</p>
+    <div class="col" style="gap:8px; max-width:520px">
+      <label class="row" style="gap:8px; font-size:14px"><input type="checkbox" id="bkUsername" checked style="width:auto"> Include database usernames</label>
+      <label class="row" style="gap:8px; font-size:14px"><input type="checkbox" id="bkPasswords" style="width:auto" onchange="updateBackupWarn()"> Include database passwords</label>
+      <label class="row" style="gap:8px; font-size:14px"><input type="checkbox" id="bkLlmKey" style="width:auto" onchange="updateBackupWarn()"> Include LLM API keys</label>
+      <div id="bkSecretWarn" class="banner warn" style="display:none">⚠ Secrets will be written in plain text unless you set an encryption password below.</div>
+      <div class="field"><label>Encryption password (optional, AES-256-GCM)</label>
+        <input type="password" id="bkExportPw" autocomplete="new-password" oninput="updateBackupWarn()" style="max-width:320px"></div>
+      <button class="btn primary" style="align-self:flex-start" onclick="exportBackup()">⬇ Export backup</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Restore</h2>
+    <p class="muted" style="font-size:13px; margin:0 0 12px">Load a backup file, review its contents,
+      then choose what to restore. This overwrites the corresponding settings.</p>
+    <div class="col" style="gap:10px; max-width:520px">
+      <div class="field"><label>Backup file</label>
+        <input type="file" id="bkFile" accept=".json,application/json" onchange="pickBackupFile()"></div>
+      <div class="field"><label>Password (if the backup is encrypted)</label>
+        <div class="row" style="gap:8px">
+          <input type="password" id="bkRestorePw" autocomplete="off" style="max-width:280px">
+          <button class="btn small" onclick="inspectBackup()">Inspect</button>
+        </div></div>
+      <div id="bkError" class="banner warn" style="display:none"></div>
+      <div id="bkSummary" style="display:none">
+        <hr style="border:none; border-top:1px solid var(--border-soft); margin:8px 0">
+        <div style="font-weight:600; margin-bottom:6px">Backup contents</div>
+        <div id="bkSummaryBody" class="col" style="gap:3px; font-size:13px; color:var(--muted)"></div>
+        <div style="font-weight:600; margin:14px 0 6px">Restore</div>
+        <div id="bkRestoreOpts" class="col" style="gap:6px"></div>
+        <button class="btn primary danger" style="align-self:flex-start; margin-top:12px" onclick="restoreBackup()">Restore</button>
+      </div>
+    </div>
+  </div>
+  </div><!-- /tab-backup -->
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -1044,6 +1086,126 @@ async function clearLogs() {
 }
 function downloadLog() {
   window.location = '/api/logs/download?' + _logParams().toString();
+}
+
+// ── Backup / restore ──────────────────────────────────────────────────────
+let _bkContent = '';
+const BACKUP_RESTORE_OPTS = [
+  ['appSettings', 'App settings & preferences'],
+  ['connections', 'Connections & servers'],
+  ['username', 'Usernames'],
+  ['llmApiKey', 'LLM API keys'],
+  ['passwords', 'Database passwords'],
+  ['layouts', 'Saved node layouts'],
+  ['norms', 'Target norms'],
+  ['happyPaths', 'Happy paths'],
+  ['filterPresets', 'Filter presets'],
+];
+
+function updateBackupWarn() {
+  const wantSecrets = $('bkPasswords').checked || $('bkLlmKey').checked;
+  $('bkSecretWarn').style.display = wantSecrets && !$('bkExportPw').value ? 'block' : 'none';
+}
+
+async function exportBackup() {
+  try {
+    const resp = await fetch('/api/backup/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        includeUsername: $('bkUsername').checked,
+        includePasswords: $('bkPasswords').checked,
+        includeLlmApiKey: $('bkLlmKey').checked,
+        password: $('bkExportPw').value,
+      }),
+    });
+    if (resp.status === 401) { location.href = '/login'; return; }
+    if (!resp.ok) { toast('Export failed', true); return; }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'ProcessMining-Backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Backup exported');
+  } catch (e) { toast(e.message, true); }
+}
+
+function _fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const bytes = new Uint8Array(r.result);
+      let s = '';
+      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      resolve(btoa(s));
+    };
+    r.onerror = reject;
+    r.readAsArrayBuffer(file);
+  });
+}
+
+async function pickBackupFile() {
+  const f = $('bkFile').files[0];
+  if (!f) return;
+  _bkContent = await _fileToBase64(f);
+  $('bkSummary').style.display = 'none';
+  $('bkError').style.display = 'none';
+  inspectBackup();
+}
+
+async function inspectBackup() {
+  if (!_bkContent) { toast('Choose a backup file first', true); return; }
+  $('bkError').style.display = 'none';
+  try {
+    const s = await api('/api/backup/inspect', {
+      method: 'POST',
+      body: JSON.stringify({ content: _bkContent, password: $('bkRestorePw').value }),
+    });
+    renderBackupSummary(s);
+  } catch (e) {
+    $('bkSummary').style.display = 'none';
+    $('bkError').textContent = e.message;
+    $('bkError').style.display = 'block';
+  }
+}
+
+function renderBackupSummary(s) {
+  const inc = [
+    s.includesUsername ? 'usernames' : '—',
+    s.includesPasswords ? 'passwords' : 'no passwords',
+    s.includesLlmApiKey ? 'API keys' : 'no API keys',
+  ];
+  const rows = [
+    'Created: ' + (s.createdAt || '—'),
+    'Connections: ' + (s.connectionCount || 0),
+    'Projects with settings: ' + (s.projectCount || 0),
+    'Includes: ' + inc.join(', '),
+  ];
+  if (s.connectionNames && s.connectionNames.length) {
+    rows.push('Overwrites: ' + s.connectionNames.join(', '));
+  }
+  $('bkSummaryBody').innerHTML = rows.map((r) => '<span>' + esc(r) + '</span>').join('');
+  $('bkRestoreOpts').innerHTML = BACKUP_RESTORE_OPTS.map(
+    (o) =>
+      '<label class="row" style="gap:8px; font-size:14px"><input type="checkbox" class="bk-opt" data-key="' +
+      o[0] + '" checked style="width:auto"> ' + esc(o[1]) + '</label>'
+  ).join('');
+  $('bkSummary').style.display = 'block';
+}
+
+async function restoreBackup() {
+  const opts = {};
+  document.querySelectorAll('.bk-opt').forEach((c) => { opts[c.dataset.key] = c.checked; });
+  if (!confirm('Restore the selected items from this backup?\n\nThis overwrites the current settings.')) return;
+  try {
+    await api('/api/backup/restore', {
+      method: 'POST',
+      body: JSON.stringify({ content: _bkContent, password: $('bkRestorePw').value, options: opts }),
+    });
+    toast('Backup restored');
+  } catch (e) { toast(e.message, true); }
 }
 
 // ── Directory (LDAP) ──────────────────────────────────────────────────────

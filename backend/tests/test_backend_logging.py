@@ -185,15 +185,14 @@ def test_db_connection_test_failure_is_logged(logstore, monkeypatch):
     assert "db.x" in entries[0]["message"]
 
 
-def test_llm_connection_error_is_logged(logstore, monkeypatch):
+def test_llm_connection_error_is_logged(logstore):
     """An LLM reachability probe captures the real connection error before it is
     swallowed (covers Test buttons and connect, which all call check_llm_reachable)."""
     from app.db import manager
     from app.models import LLMServer
 
-    # Loopback is SSRF-blocked by default; opt in so we exercise the real
-    # connection-error path (port 1 refuses immediately).
-    monkeypatch.setenv("PMW_ALLOW_PRIVATE_LLM_HOSTS", "1")
+    # Loopback is allowed by default, so this reaches the real connection-error
+    # path (port 1 refuses immediately).
     server = LLMServer(id="x", name="n", serverURL="http://127.0.0.1:1/v1", apiKey="", model="")
     reachable = asyncio.run(manager.check_llm_reachable(server))
     assert reachable is False
