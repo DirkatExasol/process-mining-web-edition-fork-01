@@ -447,12 +447,11 @@ async def check_llm_reachable(server: LLMServer | None) -> bool:
     """GET {base}/models — same reachability probe the Swift app used."""
     if server is None or not server.serverURL.strip():
         return False
-    import httpx
 
-    from ..services.net_guard import UrlNotAllowed, assert_safe_url
+    from ..services.net_guard import UrlNotAllowed, safe_async_client
 
-    try:  # SSRF guard: never let a configured URL probe internal/metadata hosts
-        assert_safe_url(server.serverURL)
+    try:  # SSRF guard: validates the URL AND pins the connection to the vetted IP
+        client = safe_async_client(server.serverURL, timeout=5.0)
     except UrlNotAllowed as exc:
         logx.warn(
             f"LLM server URL refused (SSRF guard): {server.serverURL} — {exc}",
@@ -465,7 +464,7 @@ async def check_llm_reachable(server: LLMServer | None) -> bool:
     if server.apiKey.strip():
         headers["Authorization"] = f"Bearer {server.apiKey.strip()}"
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with client:
             response = await client.get(url, headers=headers)
         if response.status_code >= 500:
             logx.warn(

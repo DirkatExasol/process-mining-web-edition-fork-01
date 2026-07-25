@@ -948,8 +948,26 @@ class ProcessRepository:
             )
         return notes
 
-    async def upsert_note(self, note: ProcessNote, project_id: str) -> None:
-        await self.db.execute_quiet(f"DELETE FROM NOTES WHERE ID = '{esc(note.id)}'")
+    async def note_owner(self, note_id: str) -> str | None:
+        """The NOTE_USER (author) of a note by its globally-unique ID, or None if
+        no such note exists. Used to authorize edits/deletes independently of note
+        *visibility* (shared notes are visible to all, but only the author owns them)."""
+        result = await self.db.execute(
+            f"SELECT NOTE_USER FROM NOTES WHERE ID = '{esc(note_id)}'"
+        )
+        for row in result.rows:
+            return row[0] if isinstance(row[0], str) else ""
+        return None
+
+    async def upsert_note(self, note: ProcessNote, project_id: str, username: str) -> None:
+        # Scope the delete-then-insert to the caller's own (or an unowned/legacy)
+        # note so a crafted ID can never clobber another user's note. The endpoint
+        # already 403s a non-owner edit; this is defence in depth.
+        safe_user = esc(username.upper())
+        await self.db.execute_quiet(
+            f"DELETE FROM NOTES WHERE ID = '{esc(note.id)}' "
+            f"AND (UPPER(NOTE_USER) = '{safe_user}' OR NOTE_USER = '')"
+        )
 
         if note.target.is_node:
             target_type, target_from, target_to = "node", note.target.value or "", ""
@@ -977,10 +995,15 @@ class ProcessRepository:
             """
         )
 
-    async def delete_note(self, note_id: str, project_id: str) -> None:
+    async def delete_note(self, note_id: str, project_id: str, username: str) -> None:
+        # Only the author (or an unowned/legacy note) may be deleted — a user must
+        # not be able to delete another user's note, even a shared one whose ID is
+        # visible to them.
+        safe_user = esc(username.upper())
         await self.db.execute(
             f"DELETE FROM NOTES WHERE ID = '{esc(note_id)}' "
-            f"AND PROJECT_ID = '{esc(project_id)}'"
+            f"AND PROJECT_ID = '{esc(project_id)}' "
+            f"AND (UPPER(NOTE_USER) = '{safe_user}' OR NOTE_USER = '')"
         )
 
     # ── sampling ─────────────────────────────────────────────────────────────

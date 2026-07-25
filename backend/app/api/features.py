@@ -54,27 +54,30 @@ async def save_note(project_id: str, note: ProcessNote) -> ProcessNote:
     await r.ensure_notes_table()
 
     current_user = current_db().username
-    existing = next(
-        (n for n in await r.load_notes(project_id, current_user) if n.id == note.id),
-        None,
-    )
-    if existing is not None:
-        # Editing preserves the original author and records who made this edit.
-        note.username = existing.username
-        note.lastEditedBy = current_user
-        note.editedAt = datetime.now()
-    else:
+    # Authorize by true ownership (not visibility): a shared note is visible to all
+    # users of the connection, but only its author may edit it.
+    owner = await r.note_owner(note.id)
+    if owner is not None and owner != "" and owner.upper() != current_user.upper():
+        raise HTTPException(status_code=403, detail="You cannot edit another user's note.")
+
+    if owner is None:
         note.username = current_user
         note.lastEditedBy = ""
+    else:
+        # Editing preserves the original author (or leaves an unowned note unowned)
+        # and records who made this edit.
+        note.username = owner
+        note.lastEditedBy = current_user
+        note.editedAt = datetime.now()
 
-    await r.upsert_note(note, project_id)
+    await r.upsert_note(note, project_id, current_user)
     return note
 
 
 @router.delete("/projects/{project_id}/notes/{note_id}")
 async def delete_note(project_id: str, note_id: str) -> dict[str, bool]:
     require_connection()
-    await repo().delete_note(note_id, project_id)
+    await repo().delete_note(note_id, project_id, current_db().username)
     return {"ok": True}
 
 

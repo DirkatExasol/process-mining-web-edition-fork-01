@@ -11,7 +11,7 @@ import re
 
 from openai import APIStatusError, AsyncOpenAI
 
-from .net_guard import UrlNotAllowed, assert_safe_url
+from .net_guard import UrlNotAllowed, safe_async_client
 
 # Some reasoning models prepend their scratchpad; the Swift client stripped it.
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
@@ -28,7 +28,8 @@ async def chat(server_url: str, api_key: str, model: str, prompt: str) -> str:
     if not base_url:
         raise LLMError("No LLM server configured.")
     try:
-        assert_safe_url(base_url)  # SSRF guard
+        # SSRF guard: validates the URL AND pins the connection to the vetted IP.
+        http_client = safe_async_client(base_url, timeout=REQUEST_TIMEOUT_SECS)
     except UrlNotAllowed as exc:
         raise LLMError(str(exc)) from exc
 
@@ -38,6 +39,7 @@ async def chat(server_url: str, api_key: str, model: str, prompt: str) -> str:
         api_key=api_key.strip() or "not-needed",
         timeout=REQUEST_TIMEOUT_SECS,
         max_retries=0,
+        http_client=http_client,
     )
     try:
         response = await client.chat.completions.create(
@@ -50,7 +52,7 @@ async def chat(server_url: str, api_key: str, model: str, prompt: str) -> str:
     except Exception as exc:  # noqa: BLE001 — surfaced to the user verbatim
         raise LLMError(str(exc)) from exc
     finally:
-        await client.close()
+        await http_client.aclose()
 
     if not response.choices:
         raise LLMError("The LLM returned no choices.")
@@ -65,7 +67,8 @@ async def list_models(server_url: str, api_key: str) -> list[str]:
     if not base_url:
         return []
     try:
-        assert_safe_url(base_url)  # SSRF guard
+        # SSRF guard: validates the URL AND pins the connection to the vetted IP.
+        http_client = safe_async_client(base_url, timeout=10.0)
     except UrlNotAllowed as exc:
         raise LLMError(str(exc)) from exc
     client = AsyncOpenAI(
@@ -73,6 +76,7 @@ async def list_models(server_url: str, api_key: str) -> list[str]:
         api_key=api_key.strip() or "not-needed",
         timeout=10.0,
         max_retries=0,
+        http_client=http_client,
     )
     try:
         page = await client.models.list()
@@ -80,4 +84,4 @@ async def list_models(server_url: str, api_key: str) -> list[str]:
     except Exception:  # noqa: BLE001 — reachability probe, failure is not fatal
         return []
     finally:
-        await client.close()
+        await http_client.aclose()

@@ -10,8 +10,11 @@ unspecified addresses, which are never a real LLM server.
 For hardened / cloud deployments where the LLM is always external, set
 ``PMW_BLOCK_PRIVATE_LLM_HOSTS=1`` to also refuse loopback/private targets.
 
-The host is resolved and *every* address it maps to is checked, so a hostname
-that resolves to a blocked address (or a DNS-rebind attempt) is rejected too.
+The host is resolved and *every* address it maps to is checked. Crucially, the
+outbound connection is then **pinned to the vetted IP** (see ``safe_async_client``)
+rather than re-resolving the hostname, so a DNS-rebind attack — pass the check with
+a benign IP, then flip DNS to 169.254.169.254 for the actual connect — cannot slip
+through the check-then-connect gap.
 """
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ import ipaddress
 import os
 import socket
 from urllib.parse import urlsplit
+
+import httpx
 
 
 class UrlNotAllowed(ValueError):
@@ -55,8 +60,14 @@ def _classify(ip, block_private: bool) -> str | None:
     return None
 
 
-def assert_safe_url(url: str) -> None:
-    """Validate an outbound URL, raising UrlNotAllowed if it must not be fetched."""
+def resolve_safe(url: str) -> tuple[str, str]:
+    """Validate an outbound URL and return ``(host, vetted_ip)``.
+
+    Every address the host resolves to is checked; if any is disallowed the whole
+    URL is refused (a split-horizon host that also maps to a bad address can't be
+    used). The returned IP is the address the caller should actually connect to, so
+    the connection uses the exact address that was vetted (no re-resolution).
+    """
     parts = urlsplit((url or "").strip())
     if parts.scheme not in ("http", "https"):
         raise UrlNotAllowed("Only http:// and https:// URLs are allowed.")
@@ -71,6 +82,7 @@ def assert_safe_url(url: str) -> None:
     except socket.gaierror as exc:
         raise UrlNotAllowed(f"The host could not be resolved: {host}") from exc
 
+    vetted: str | None = None
     for info in infos:
         addr = info[4][0]
         try:
@@ -79,6 +91,42 @@ def assert_safe_url(url: str) -> None:
             continue
         reason = _classify(ip, block_private)
         if reason is not None:
-            raise UrlNotAllowed(
-                f"The URL resolves to {reason} ({addr}); refused."
-            )
+            raise UrlNotAllowed(f"The URL resolves to {reason} ({addr}); refused.")
+        if vetted is None:
+            vetted = addr
+    if vetted is None:
+        raise UrlNotAllowed(f"The host could not be resolved: {host}")
+    return host, vetted
+
+
+def assert_safe_url(url: str) -> None:
+    """Validate an outbound URL, raising UrlNotAllowed if it must not be fetched."""
+    resolve_safe(url)
+
+
+class _PinnedTransport(httpx.AsyncHTTPTransport):
+    """An httpx transport that forces every request for ``host`` onto the already
+    vetted ``ip``, while preserving the Host header and TLS SNI/cert hostname — so
+    the connection cannot be re-pointed by a DNS rebind between check and connect."""
+
+    def __init__(self, host: str, ip: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._host = host
+        self._ip = ip
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.host == self._host:
+            # Keep SNI + cert verification bound to the real hostname; the Host
+            # header was already set from the original URL at build time.
+            request.extensions = {**request.extensions, "sni_hostname": self._host}
+            request.url = request.url.copy_with(host=self._ip)
+        return await super().handle_async_request(request)
+
+
+def safe_async_client(url: str, **client_kwargs) -> httpx.AsyncClient:
+    """An ``httpx.AsyncClient`` that validates ``url`` now and pins all requests to
+    it onto the vetted IP. Raises UrlNotAllowed if the URL is refused. Redirects are
+    disabled so a 3xx can't bounce the client to an unvetted host."""
+    host, ip = resolve_safe(url)
+    client_kwargs.setdefault("follow_redirects", False)
+    return httpx.AsyncClient(transport=_PinnedTransport(host, ip), **client_kwargs)

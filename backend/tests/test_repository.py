@@ -133,3 +133,68 @@ def test_all_filters_combines_clauses():
     assert "EVENT_TIME >= TIMESTAMP '2024-01-01 00:00:00'" in sql
     assert "STEP IN ('Login')" in sql
     assert "COUNT(*) >= 2" in sql
+
+
+# ── Note authorization scoping (security: cross-user write/delete) ─────────────
+
+
+class _CapturingManager:
+    """Captures the SQL the repository would run, and can return canned rows."""
+
+    is_connected = True
+
+    def __init__(self, rows=()):
+        self.executed: list[str] = []
+        self._rows = list(rows)
+
+    async def execute(self, sql, *a, **k):
+        self.executed.append(sql)
+        return type("R", (), {"rows": self._rows})()
+
+    async def execute_quiet(self, sql, *a, **k):
+        self.executed.append(sql)
+
+
+def _cap_repo(rows=()):
+    r = ProcessRepository(_CapturingManager(rows))  # type: ignore[arg-type]
+    return r, r.db  # type: ignore[return-value]
+
+
+import asyncio
+
+from app.models import NoteTarget, ProcessNote, FilterSnapshot
+
+
+def test_delete_note_is_scoped_to_owner():
+    r, mgr = _cap_repo()
+    asyncio.run(r.delete_note("n-1", "proj", "Alice"))
+    sql = mgr.executed[-1]
+    # Must not delete another user's note: owner (or unowned/legacy) predicate present.
+    assert "DELETE FROM NOTES" in sql
+    assert "ID = 'n-1'" in sql
+    assert "UPPER(NOTE_USER) = 'ALICE'" in sql
+    assert "NOTE_USER = ''" in sql
+
+
+def test_upsert_note_predelete_is_scoped_to_owner():
+    r, mgr = _cap_repo()
+    note = ProcessNote(
+        id="n-2",
+        text="hi",
+        createdAt=datetime(2026, 1, 1),
+        target=NoteTarget(type="node", value="A"),
+        filterSnapshot=FilterSnapshot(fromDate=datetime(2026, 1, 1), toDate=datetime(2026, 1, 2)),
+        username="Bob",
+    )
+    asyncio.run(r.upsert_note(note, "proj", "Bob"))
+    predelete = mgr.executed[0]
+    assert predelete.startswith("DELETE FROM NOTES") or "DELETE FROM NOTES" in predelete
+    assert "ID = 'n-2'" in predelete
+    assert "UPPER(NOTE_USER) = 'BOB'" in predelete  # can't clobber another user's ID
+
+
+def test_note_owner_returns_author_or_none():
+    r, _ = _cap_repo(rows=[["Carol"]])
+    assert asyncio.run(r.note_owner("n-3")) == "Carol"
+    r2, _ = _cap_repo(rows=[])
+    assert asyncio.run(r2.note_owner("missing")) is None

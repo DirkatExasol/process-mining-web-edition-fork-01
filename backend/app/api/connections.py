@@ -161,7 +161,7 @@ def list_assignable_users(request: Request) -> list[str]:
 
 
 @router.post("/connections")
-def upsert_managed_connection(body: ManagedConnectionBody, request: Request) -> dict:
+async def upsert_managed_connection(body: ManagedConnectionBody, request: Request) -> dict:
     user = _require_power(request)
     data = _managed_payload(body)
     if body.id:
@@ -175,6 +175,11 @@ def upsert_managed_connection(body: ManagedConnectionBody, request: Request) -> 
         conn = security_store.upsert_connection(data)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Editing an existing connection may change host/credentials or drop assignees;
+    # drop every live session on it so users re-establish against the new definition
+    # (and re-pass the user_can_use gate) instead of keeping the stale one.
+    if body.id:
+        await registry.disconnect_connection(body.id)
     return conn.admin_public()
 
 
@@ -190,7 +195,7 @@ async def delete_managed_connection(conn_id: str, request: Request) -> dict:
 
 
 @router.post("/connections/{conn_id}/assignments")
-def set_managed_assignments(
+async def set_managed_assignments(
     conn_id: str, body: ManagedAssignmentsBody, request: Request
 ) -> dict:
     user = _require_power(request)
@@ -200,6 +205,9 @@ def set_managed_assignments(
         security_store.set_assignments(conn_id, body.assignments)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # Revocation must take effect immediately: drop live sessions so a user whose
+    # assignment was just removed can't keep querying through a stale connection.
+    await registry.disconnect_connection(conn_id)
     return {"ok": True}
 
 

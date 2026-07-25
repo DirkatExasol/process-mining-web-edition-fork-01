@@ -489,3 +489,62 @@ def test_settings_are_isolated_per_user(backend):
     # A user who never saved anything sees nothing (fresh on first access).
     carol = client.get("/api/settings", headers={"X-PMW-User": "carol"}).json()
     assert "kpi.order" not in carol
+
+
+def test_reassignment_disconnects_live_sessions(backend, monkeypatch):
+    """Revoking/altering an assignment must drop live sessions immediately so a
+    user whose access was removed can't keep querying through a stale connection."""
+    import app.db.manager as manager
+
+    app, store, _ = backend
+    pat = _power(store)
+    store.create_user("bob", "pw", is_admin=False)
+    conn = _make_conn(store, owner=pat, assignments=[pat, "bob"])
+
+    calls: list[str] = []
+
+    async def _rec(conn_id):
+        calls.append(conn_id)
+
+    monkeypatch.setattr(manager.registry, "disconnect_connection", _rec)
+    client = TestClient(app)
+
+    r = client.post(
+        f"/api/connections/{conn.id}/assignments",
+        headers={"X-PMW-User": pat},
+        json={"assignments": [pat]},  # bob revoked
+    )
+    assert r.status_code == 200
+    assert calls == [conn.id]
+
+
+def test_editing_connection_disconnects_live_sessions(backend, monkeypatch):
+    import app.db.manager as manager
+
+    app, store, _ = backend
+    pat = _power(store)
+    conn = _make_conn(store, owner=pat, assignments=[pat])
+
+    calls: list[str] = []
+
+    async def _rec(conn_id):
+        calls.append(conn_id)
+
+    monkeypatch.setattr(manager.registry, "disconnect_connection", _rec)
+    client = TestClient(app)
+
+    r = client.post(
+        "/api/connections",
+        headers={"X-PMW-User": pat},
+        json={
+            "id": conn.id,
+            "name": "Pat's DB (moved)",
+            "host": "new-host",  # host change → live sessions must be dropped
+            "port": 8563,
+            "username": "svc",
+            "schema": "S",
+            "assignments": [pat],
+        },
+    )
+    assert r.status_code == 200
+    assert calls == [conn.id]
