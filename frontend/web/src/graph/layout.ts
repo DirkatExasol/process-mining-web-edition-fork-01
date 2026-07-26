@@ -52,6 +52,7 @@ export function computeLayout(
   nodeHeight: number = NODE_H,
   optimised = true,
   nodeWidth: number = NODE_W,
+  labelScale = 1,
 ): GraphLayout {
   const nodes = Object.keys(graph.steps)
   if (nodes.length === 0) {
@@ -157,7 +158,7 @@ export function computeLayout(
   }
 
   // ── 5. Nudge overlapping group boxes apart.
-  resolveGroupOverlaps(positions, graph, nodeHeight, nodeWidth)
+  resolveGroupOverlaps(positions, graph, nodeHeight, nodeWidth, labelScale)
 
   const allX = Object.values(positions).map((p) => p.x)
   const allY = Object.values(positions).map((p) => p.y)
@@ -232,6 +233,7 @@ function resolveGroupOverlaps(
   graph: ProcessGraph,
   nodeHeight: number,
   nodeWidth: number = NODE_W,
+  labelScale = 1,
 ): void {
   const groups: Record<string, string[]> = {}
   for (const [name, step] of Object.entries(graph.steps)) {
@@ -244,7 +246,10 @@ function resolveGroupOverlaps(
 
   const s = nodeWidth / NODE_W
   const gPad = GROUP_PAD * s
-  const gLabel = GROUP_LABEL_PAD * s
+  // The title pill scales with the independent group-title font setting, so its
+  // reserved space must track that — not the node scale — or the box top desyncs
+  // from the rendered pill and adjacent groups overlap.
+  const gLabel = GROUP_LABEL_PAD * labelScale
   const gMinGap = GROUP_MIN_GAP * s
 
   const rectFor = (nodeList: string[]): Rect => {
@@ -313,6 +318,7 @@ export function groupRects(
   nodeHeight: number,
   collapsedNodeId: (group: string) => string,
   nodeWidth: number = NODE_W,
+  labelScale = 1,
 ): { name: string; rect: Rect }[] {
   const grouped: Record<string, Point[]> = {}
 
@@ -330,7 +336,7 @@ export function groupRects(
 
   const s = nodeWidth / NODE_W
   const gPad = GROUP_PAD * s
-  const gLabel = GROUP_LABEL_PAD * s
+  const gLabel = GROUP_LABEL_PAD * labelScale
   return Object.keys(grouped)
     .sort()
     .map((name) => {

@@ -273,9 +273,10 @@ function FlowChartInner(props: FlowChartProps) {
   const nodeW = Math.round(NODE_W * scale)
   const nodeH = Math.round(defaultNodeHeight(graph) * scale)
 
+  const gLabelScale = groupScale || 1
   const layout = useMemo(
-    () => computeLayout(graph, nodeH, optimisedLayout, nodeW),
-    [graph, nodeH, nodeW, optimisedLayout],
+    () => computeLayout(graph, nodeH, optimisedLayout, nodeW, gLabelScale),
+    [graph, nodeH, nodeW, optimisedLayout, gLabelScale],
   )
 
   const effectiveOverrides = syncState ? syncState.nodeOverrides : overrides
@@ -328,9 +329,9 @@ function FlowChartInner(props: FlowChartProps) {
   const boxes = useMemo(
     () =>
       showGrouping
-        ? groupRects(graph, positions, collapsedGroups, nodeH, collapsedNodeId, nodeW)
+        ? groupRects(graph, positions, collapsedGroups, nodeH, collapsedNodeId, nodeW, gLabelScale)
         : [],
-    [showGrouping, graph, positions, collapsedGroups, nodeH, nodeW],
+    [showGrouping, graph, positions, collapsedGroups, nodeH, nodeW, gLabelScale],
   )
 
   // ── Note lookup ─────────────────────────────────────────────────────────
@@ -402,6 +403,15 @@ function FlowChartInner(props: FlowChartProps) {
           id,
           type: 'groupBox',
           position: { x: rect.x, y: rect.y },
+          // Declared size so ReactFlow keeps the node dimensioned AND keeps its
+          // handle bounds when it rebuilds the internal node on a drag (new object
+          // ref). `measured` makes adoptUserNodes/parseHandles preserve the existing
+          // handleBounds; without it the box + members flip to visibility:hidden and
+          // every connected edge drops out (isNodeInitialized → false) for the whole
+          // drag, since a position-only change never re-fires the ResizeObserver.
+          measured: { width: rect.width, height: rect.height },
+          initialWidth: rect.width,
+          initialHeight: rect.height,
           data: {
             group: name,
             width: rect.width,
@@ -435,6 +445,11 @@ function FlowChartInner(props: FlowChartProps) {
           id: name,
           type: 'step',
           position: left,
+          // Declared size — see the group box note above: keeps the node visible
+          // and its edges attached when its object is rebuilt mid-drag.
+          measured: { width: nodeW, height: nodeH },
+          initialWidth: nodeW,
+          initialHeight: nodeH,
           data: {
             name: group ?? name,
             step,
@@ -469,6 +484,9 @@ function FlowChartInner(props: FlowChartProps) {
         id: `start:${name}`,
         type: 'marker',
         position: p,
+        measured: { width: MARKER_W, height: MARKER_H },
+        initialWidth: MARKER_W,
+        initialHeight: MARKER_H,
         data: { kind: 'start' },
         draggable: false,
         selectable: false,
@@ -485,6 +503,9 @@ function FlowChartInner(props: FlowChartProps) {
         id: `end:${name}`,
         type: 'marker',
         position: p,
+        measured: { width: MARKER_W, height: MARKER_H },
+        initialWidth: MARKER_W,
+        initialHeight: MARKER_H,
         data: { kind: 'end' },
         draggable: false,
         selectable: false,

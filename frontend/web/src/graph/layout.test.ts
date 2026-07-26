@@ -136,6 +136,19 @@ describe('groupRects', () => {
       g2.rect.y < g1.rect.y + g1.rect.height
     expect(overlap).toBe(false)
   })
+
+  it('reserves more label space when the group-title scale grows', () => {
+    const g = graphFrom([['A', 'B', 5]], { A: 'G1', B: 'G1' })
+    const layout = computeLayout(g)
+    const h = defaultNodeHeight(g)
+    const id = (grp: string) => `__group__${grp}`
+    const small = groupRects(g, layout.nodePositions, new Set(), h, id, NODE_W, 1)
+    const large = groupRects(g, layout.nodePositions, new Set(), h, id, NODE_W, 3)
+    // A larger title pill pushes the box top up and makes the box taller, so the
+    // rendered pill never overlaps the reserved band — same node positions.
+    expect(large[0].rect.y).toBeLessThan(small[0].rect.y)
+    expect(large[0].rect.height).toBeGreaterThan(small[0].rect.height)
+  })
 })
 
 describe('node scaling', () => {
