@@ -8,13 +8,14 @@ import {
   namedColor,
 } from '../graph/colors'
 import { formatTimeOnly } from '../graph/format'
-import { NODE_W } from '../graph/layout'
 import type { StepInfo } from '../types'
 
 export interface StepNodeData extends Record<string, unknown> {
   name: string
   step: StepInfo
+  nodeW: number
   nodeH: number
+  scale: number
   showDescription: boolean
   /** Set when this node stands in for a collapsed BELONGS_TO group. */
   groupProxy: { group: string; memberCount: number; color: string } | null
@@ -42,7 +43,7 @@ function shapeStyle(shape: string, w: number, h: number): React.CSSProperties {
 }
 
 function StepNodeComponent({ data, dragging }: NodeProps) {
-  const { name, step, nodeH, showDescription, groupProxy, hasNote } =
+  const { name, step, nodeW, nodeH, scale, showDescription, groupProxy, hasNote } =
     data as StepNodeData
 
   const background = groupProxy ? groupProxy.color : namedColor(step.bgColor)
@@ -69,11 +70,14 @@ function StepNodeComponent({ data, dragging }: NodeProps) {
         hasDescription || step.eventTime ? ' split' : ''
       }`}
       style={{
-        width: NODE_W,
+        width: nodeW,
         height: nodeH,
         background,
         color: foreground,
-        ...shapeStyle(step.shape, NODE_W, nodeH),
+        // Scales the node text (see .step-node font-size calc()s) in step with the
+        // box, so the label always fits — it can never spill outside the node.
+        ['--node-scale' as string]: scale,
+        ...shapeStyle(step.shape, nodeW, nodeH),
       }}
       title={description && description !== name ? description : name}
     >

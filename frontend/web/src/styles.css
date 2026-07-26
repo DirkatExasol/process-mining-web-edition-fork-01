@@ -1013,8 +1013,10 @@ textarea.text-input {
   border-color: rgba(0, 0, 0, 0.28);
 }
 
+/* Node text scales with the node box via --node-scale (set inline in StepNode),
+   so a larger node font never pushes the label outside the (equally larger) node. */
 .step-node .n-name {
-  font-size: 13px;
+  font-size: calc(13px * var(--node-scale, 1));
   font-weight: 600;
   line-height: 1.15;
   overflow: hidden;
@@ -1024,11 +1026,11 @@ textarea.text-input {
 }
 
 .step-node.split .n-name {
-  font-size: 12px;
+  font-size: calc(12px * var(--node-scale, 1));
 }
 
 .step-node .n-sub {
-  font-size: 13px;
+  font-size: calc(13px * var(--node-scale, 1));
   opacity: 0.8;
   line-height: 1.1;
   overflow: hidden;
@@ -1038,21 +1040,21 @@ textarea.text-input {
 }
 
 .step-node .n-time {
-  font-size: 10px;
+  font-size: calc(10px * var(--node-scale, 1));
   font-family: var(--font-mono);
   opacity: 0.75;
 }
 
 .step-node .n-count {
   font-family: var(--font-rounded);
-  font-size: 22px;
+  font-size: calc(22px * var(--node-scale, 1));
   font-weight: 700;
   line-height: 1;
 }
 
 .step-node .n-count-label {
   font-family: var(--font-rounded);
-  font-size: 10px;
+  font-size: calc(10px * var(--node-scale, 1));
   opacity: 0.8;
 }
 

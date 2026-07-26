@@ -99,7 +99,7 @@ describe('NotesView importance', () => {
     expect(within(list).getByText('urgent one')).toBeTruthy()
     expect(within(list).getByText('normal one')).toBeTruthy()
 
-    const [importanceSelect] = screen.getAllByRole('combobox')
+    const importanceSelect = screen.getByRole('combobox', { name: /Importance/ })
     fireEvent.change(importanceSelect, { target: { value: 'URGENT' } })
     expect(within(noteList()).getByText('urgent one')).toBeTruthy()
     expect(within(noteList()).queryByText('normal one')).toBeNull()
@@ -128,11 +128,28 @@ describe('NotesView resolved status', () => {
       ],
     })
     render(<NotesView />)
-    const statusSelect = screen.getAllByRole('combobox')[3] // [imp, user, time, status]
+    const statusSelect = screen.getByRole('combobox', { name: /Status/ })
     fireEvent.change(statusSelect, { target: { value: 'RESOLVED' } })
     const list = noteList()
     expect(within(list).getByText('done one')).toBeTruthy()
     expect(within(list).queryByText('open one')).toBeNull()
+  })
+})
+
+describe('NotesView type filter', () => {
+  it('filters by note target type (node vs edge)', () => {
+    useStore.setState({
+      projectNotes: [
+        note({ id: 'a', text: 'node note', target: { type: 'node', value: 'STEP_A' } }),
+        note({ id: 'b', text: 'edge note', target: { type: 'edge', from: 'A', to: 'B' } }),
+      ],
+    })
+    render(<NotesView />)
+    const type = screen.getByRole('combobox', { name: /Type/ })
+    fireEvent.change(type, { target: { value: 'edge' } })
+    const list = noteList()
+    expect(within(list).getByText('edge note')).toBeTruthy()
+    expect(within(list).queryByText('node note')).toBeNull()
   })
 })
 
@@ -149,20 +166,19 @@ describe('NotesView pagination', () => {
     render(<NotesView />)
 
     const cardCount = () => noteList().querySelectorAll('.note-card').length
-    expect(cardCount()).toBe(10) // default page size
-    expect(screen.getByText('Page 1 of 2')).toBeTruthy()
-    expect(screen.getByText(/1.10 of 12/)).toBeTruthy()
+    expect(cardCount()).toBe(5) // default page size
+    expect(screen.getByText('Page 1 of 3')).toBeTruthy()
+    expect(screen.getByText(/1.5 of 12/)).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: /Next/ }))
-    expect(cardCount()).toBe(2)
-    expect(screen.getByText('Page 2 of 2')).toBeTruthy()
-
-    // Resizing to 5/page resets back to the first page.
-    // combobox order: [importance, user, time, status, sort, perPage]
-    const perPage = screen.getAllByRole('combobox')[5]
-    fireEvent.change(perPage, { target: { value: '5' } })
     expect(cardCount()).toBe(5)
-    expect(screen.getByText('Page 1 of 3')).toBeTruthy()
+    expect(screen.getByText('Page 2 of 3')).toBeTruthy()
+
+    // Resizing to 20/page shows them all and resets to the first page.
+    const perPage = screen.getByRole('combobox', { name: /Per page/ })
+    fireEvent.change(perPage, { target: { value: '20' } })
+    expect(cardCount()).toBe(12)
+    expect(screen.getByText('Page 1 of 1')).toBeTruthy()
   })
 })
 
@@ -212,7 +228,7 @@ describe('NotesView KPIs / sort / grouping', () => {
       [...noteList().querySelectorAll('.n-text')].map((e) => e.textContent)
     expect(texts()).toEqual(['newer', 'older']) // newest first (default)
 
-    const sort = screen.getAllByRole('combobox')[4] // [imp, user, time, status, sort]
+    const sort = screen.getByRole('combobox', { name: /Sort/ })
     fireEvent.change(sort, { target: { value: 'oldest' } })
     expect(texts()).toEqual(['older', 'newer'])
   })
@@ -246,7 +262,7 @@ describe('NotesView user filter', () => {
       ],
     })
     render(<NotesView />)
-    const userSelect = screen.getAllByRole('combobox')[1] // [importance, user, time]
+    const userSelect = screen.getByRole('combobox', { name: /User/ })
     fireEvent.change(userSelect, { target: { value: 'bob' } })
     const list = noteList()
     expect(within(list).getByText('by bob')).toBeTruthy()

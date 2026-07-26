@@ -138,6 +138,9 @@ function FlowChartInner(props: FlowChartProps) {
 
   const [showGrouping] = useSetting<boolean>('processmap.showGrouping')
   const [showNodeDescriptions] = useSetting<boolean>('processmap.showNodeDescriptions')
+  const [nodeScale] = useSetting<number>('graph.node.scale')
+  const [edgeScale] = useSetting<number>('graph.edge.scale')
+  const [groupScale] = useSetting<number>('graph.group.scale')
   const [optimisedLayout] = useSetting<boolean>('graph.optimisedLayout')
   const [colorizeByWeight] = useSetting<boolean>('graph.edge.colorizeByWeight')
   const [graphStartMode] = useSetting<GraphStartMode>('graph.startMode')
@@ -264,11 +267,15 @@ function FlowChartInner(props: FlowChartProps) {
     return { steps, transitions }
   }, [graph, collapsedGroups, nodesInGroup, resolvedStep])
 
-  const nodeH = defaultNodeHeight(graph)
+  // Node scale grows the node box AND the font together, so text always stays
+  // inside; the layout uses the scaled dimensions so nodes never overlap.
+  const scale = nodeScale || 1
+  const nodeW = Math.round(NODE_W * scale)
+  const nodeH = Math.round(defaultNodeHeight(graph) * scale)
 
   const layout = useMemo(
-    () => computeLayout(graph, nodeH, optimisedLayout),
-    [graph, nodeH, optimisedLayout],
+    () => computeLayout(graph, nodeH, optimisedLayout, nodeW),
+    [graph, nodeH, nodeW, optimisedLayout],
   )
 
   const effectiveOverrides = syncState ? syncState.nodeOverrides : overrides
@@ -321,9 +328,9 @@ function FlowChartInner(props: FlowChartProps) {
   const boxes = useMemo(
     () =>
       showGrouping
-        ? groupRects(graph, positions, collapsedGroups, nodeH, collapsedNodeId)
+        ? groupRects(graph, positions, collapsedGroups, nodeH, collapsedNodeId, nodeW)
         : [],
-    [showGrouping, graph, positions, collapsedGroups, nodeH],
+    [showGrouping, graph, positions, collapsedGroups, nodeH, nodeW],
   )
 
   // ── Note lookup ─────────────────────────────────────────────────────────
@@ -390,7 +397,7 @@ function FlowChartInner(props: FlowChartProps) {
       const collapsed = collapsedGroups.has(name)
       emit(
         id,
-        `box|${rect.x}|${rect.y}|${rect.width}|${rect.height}|${color}|${collapsed ? 1 : 0}`,
+        `box|${rect.x}|${rect.y}|${rect.width}|${rect.height}|${color}|${collapsed ? 1 : 0}|${groupScale}`,
         () => ({
           id,
           type: 'groupBox',
@@ -401,6 +408,7 @@ function FlowChartInner(props: FlowChartProps) {
             height: rect.height,
             color,
             collapsed,
+            scale: groupScale || 1,
             onToggle: toggleGroup,
           } satisfies GroupBoxData,
           draggable: true,
@@ -414,13 +422,13 @@ function FlowChartInner(props: FlowChartProps) {
       const pos = positions[name]
       if (!pos) continue
       const group = virtualGroupOf(name)
-      const left = { x: pos.x - NODE_W / 2, y: pos.y - nodeH / 2 }
+      const left = { x: pos.x - nodeW / 2, y: pos.y - nodeH / 2 }
       const memberCount = group ? nodesInGroup(group).length : 0
       const groupCol = group ? groupColorFor(group) : ''
       const hasNote = noteNodes.has(name)
       emit(
         name,
-        `step|${left.x}|${left.y}|${nodeH}|${showNodeDescriptions ? 1 : 0}|${
+        `step|${left.x}|${left.y}|${nodeW}|${nodeH}|${scale}|${showNodeDescriptions ? 1 : 0}|${
           hasNote ? 1 : 0
         }|${group ?? ''}|${memberCount}|${groupCol}|${stepIdOf(step)}`,
         () => ({
@@ -430,7 +438,9 @@ function FlowChartInner(props: FlowChartProps) {
           data: {
             name: group ?? name,
             step,
+            nodeW,
             nodeH,
+            scale,
             showDescription: showNodeDescriptions,
             groupProxy: group
               ? { group, memberCount, color: groupCol }
@@ -492,7 +502,10 @@ function FlowChartInner(props: FlowChartProps) {
     drawGraph.steps,
     endNodes,
     graph.steps,
+    groupScale,
     nodeH,
+    nodeW,
+    scale,
     nodesInGroup,
     noteNodes,
     positions,
@@ -541,6 +554,7 @@ function FlowChartInner(props: FlowChartProps) {
             outgoingTotal: outgoing.get(t.fromStep) ?? 0,
             hasNote: noteEdges.has(id),
             nodeH,
+            edgeScale: edgeScale || 1,
             onEdgeClick:
               onEdgeTap ??
               (onEdgeNote
@@ -559,6 +573,7 @@ function FlowChartInner(props: FlowChartProps) {
     activeSchema,
     colorizeByWeight,
     drawGraph,
+    edgeScale,
     metric,
     nodeH,
     normIsMinimum,
@@ -641,7 +656,7 @@ function FlowChartInner(props: FlowChartProps) {
 
         next ??= { ...effectiveOverrides }
         next[id] = snap({
-          x: change.position.x + NODE_W / 2,
+          x: change.position.x + nodeW / 2,
           y: change.position.y + nodeH / 2,
         })
       }
@@ -658,6 +673,7 @@ function FlowChartInner(props: FlowChartProps) {
       commitOverrides,
       effectiveOverrides,
       nodeH,
+      nodeW,
       nodesInGroup,
       positions,
     ],

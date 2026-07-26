@@ -40,12 +40,13 @@ export function NotesView() {
   const [editing, setEditing] = useState<NoteEditorTarget | null>(null)
   const [search, setSearch] = useState('')
   const [importance, setImportance] = useState<'ALL' | NoteImportance>('ALL')
+  const [noteType, setNoteType] = useState<'ALL' | 'node' | 'edge'>('ALL')
   const [author, setAuthor] = useState<string>('ALL')
   const [time, setTime] = useState<TimeWindow>('ALL')
   const [status, setStatus] = useState<'ALL' | 'OPEN' | 'RESOLVED'>('ALL')
   const [sortDir, setSortDir] = useState<'newest' | 'oldest'>('newest')
   const [grouped, setGrouped] = useState(false)
-  const [pageSize, setPageSize] = useState(10)
+  const [pageSize, setPageSize] = useState(5)
   const [page, setPage] = useState(0)
 
   // Distinct note authors (by stable login username), labelled with the real name.
@@ -71,6 +72,7 @@ export function NotesView() {
         !noteTargetLabel(n.target).toLowerCase().includes(term)
       )
         return false
+      if (noteType !== 'ALL' && n.target.type !== noteType) return false
       if (author !== 'ALL' && (n.username ?? '') !== author) return false
       if (status === 'OPEN' && n.resolved) return false
       if (status === 'RESOLVED' && !n.resolved) return false
@@ -89,7 +91,7 @@ export function NotesView() {
       if (n.resolved) resolvedCount++
     }
     return { base, counts, resolvedCount }
-  }, [store.projectNotes, search, author, time, status])
+  }, [store.projectNotes, search, noteType, author, time, status])
 
   const notes = useMemo(() => {
     const filtered =
@@ -111,7 +113,7 @@ export function NotesView() {
   // Any filter/sort/group change or a resized page resets to the first page.
   useEffect(
     () => setPage(0),
-    [search, importance, author, time, status, sortDir, grouped, pageSize],
+    [search, noteType, importance, author, time, status, sortDir, grouped, pageSize],
   )
 
   if (store.projectNotes.length === 0) {
@@ -159,141 +161,159 @@ export function NotesView() {
       </div>
 
       <div
-        className="row"
+        className="col"
         style={{
           padding: '8px 16px',
-          gap: 10,
-          flexWrap: 'wrap',
-          alignItems: 'center',
+          gap: 8,
           background: 'var(--bg-tertiary-grouped)',
           borderBottom: '1px solid var(--separator-soft)',
         }}
       >
-        <div className="search-row" style={{ flex: '1 1 200px', maxWidth: 300 }}>
-          <span aria-hidden className="fg-secondary">
-            🔍
+        {/* Row 1 — search, result count, reload */}
+        <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+          <div className="search-row" style={{ flex: '1 1 auto' }}>
+            <span aria-hidden className="fg-secondary">
+              🔍
+            </span>
+            <input
+              value={search}
+              placeholder="Filter notes"
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {search && (
+              <button className="fg-secondary" onClick={() => setSearch('')}>
+                ⊗
+              </button>
+            )}
+          </div>
+          <span className="t-caption fg-secondary">
+            {notes.length} of {store.projectNotes.length}
           </span>
-          <input
-            value={search}
-            placeholder="Filter notes"
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          {search && (
-            <button className="fg-secondary" onClick={() => setSearch('')}>
-              ⊗
-            </button>
-          )}
+          <button className="btn small" onClick={() => void store.loadNotes()}>
+            ↻ Reload
+          </button>
         </div>
 
-        <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
-          Importance
-          <select
-            className="text-input"
-            style={selectStyle}
-            value={importance}
-            onChange={(e) => setImportance(e.target.value as 'ALL' | NoteImportance)}
-          >
-            <option value="ALL">All</option>
-            {NOTE_IMPORTANCE_LEVELS.map((lvl) => (
-              <option key={lvl} value={lvl}>
-                {NOTE_IMPORTANCE_META[lvl].label}
-              </option>
-            ))}
-          </select>
-        </label>
+        {/* Row 2 — filters & view options */}
+        <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
+            Type
+            <select
+              className="text-input"
+              style={selectStyle}
+              value={noteType}
+              onChange={(e) => setNoteType(e.target.value as 'ALL' | 'node' | 'edge')}
+            >
+              <option value="ALL">All</option>
+              <option value="node">Node</option>
+              <option value="edge">Edge</option>
+            </select>
+          </label>
 
-        <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
-          User
-          <select
-            className="text-input"
-            style={selectStyle}
-            value={author}
-            onChange={(e) => setAuthor(e.target.value)}
-          >
-            <option value="ALL">All</option>
-            {authors.map(([user, label]) => (
-              <option key={user} value={user}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
+          <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
+            Importance
+            <select
+              className="text-input"
+              style={selectStyle}
+              value={importance}
+              onChange={(e) => setImportance(e.target.value as 'ALL' | NoteImportance)}
+            >
+              <option value="ALL">All</option>
+              {NOTE_IMPORTANCE_LEVELS.map((lvl) => (
+                <option key={lvl} value={lvl}>
+                  {NOTE_IMPORTANCE_META[lvl].label}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
-          Time
-          <select
-            className="text-input"
-            style={selectStyle}
-            value={time}
-            onChange={(e) => setTime(e.target.value as TimeWindow)}
-          >
-            {(Object.keys(TIME_LABELS) as TimeWindow[]).map((w) => (
-              <option key={w} value={w}>
-                {TIME_LABELS[w]}
-              </option>
-            ))}
-          </select>
-        </label>
+          <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
+            Status
+            <select
+              className="text-input"
+              style={selectStyle}
+              value={status}
+              onChange={(e) => setStatus(e.target.value as 'ALL' | 'OPEN' | 'RESOLVED')}
+            >
+              <option value="ALL">All</option>
+              <option value="OPEN">Unresolved</option>
+              <option value="RESOLVED">Resolved</option>
+            </select>
+          </label>
 
-        <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
-          Status
-          <select
-            className="text-input"
-            style={selectStyle}
-            value={status}
-            onChange={(e) => setStatus(e.target.value as 'ALL' | 'OPEN' | 'RESOLVED')}
-          >
-            <option value="ALL">All</option>
-            <option value="OPEN">Unresolved</option>
-            <option value="RESOLVED">Resolved</option>
-          </select>
-        </label>
+          <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
+            User
+            <select
+              className="text-input"
+              style={selectStyle}
+              value={author}
+              onChange={(e) => setAuthor(e.target.value)}
+            >
+              <option value="ALL">All</option>
+              {authors.map(([user, label]) => (
+                <option key={user} value={user}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
-          Sort
-          <select
-            className="text-input"
-            style={selectStyle}
-            value={sortDir}
-            onChange={(e) => setSortDir(e.target.value as 'newest' | 'oldest')}
-          >
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
-          </select>
-        </label>
+          <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
+            Time
+            <select
+              className="text-input"
+              style={selectStyle}
+              value={time}
+              onChange={(e) => setTime(e.target.value as TimeWindow)}
+            >
+              {(Object.keys(TIME_LABELS) as TimeWindow[]).map((w) => (
+                <option key={w} value={w}>
+                  {TIME_LABELS[w]}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="row t-caption fg-secondary" style={{ gap: 6 }}>
-          <input
-            type="checkbox"
-            checked={grouped}
-            onChange={(e) => setGrouped(e.target.checked)}
-          />
-          Group by importance
-        </label>
+          <span className="spacer" />
 
-        <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
-          Per page
-          <select
-            className="text-input"
-            style={selectStyle}
-            value={pageSize}
-            onChange={(e) => setPageSize(Number(e.target.value))}
-          >
-            {[5, 10, 20].map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </label>
+          <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
+            Sort
+            <select
+              className="text-input"
+              style={selectStyle}
+              value={sortDir}
+              onChange={(e) => setSortDir(e.target.value as 'newest' | 'oldest')}
+            >
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+            </select>
+          </label>
 
-        <span className="t-caption fg-secondary">
-          {notes.length} of {store.projectNotes.length}
-        </span>
-        <span className="spacer" />
-        <button className="btn small" onClick={() => void store.loadNotes()}>
-          ↻ Reload
-        </button>
+          <label className="row t-caption fg-secondary" style={{ gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={grouped}
+              onChange={(e) => setGrouped(e.target.checked)}
+            />
+            Group by importance
+          </label>
+
+          <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
+            Per page
+            <select
+              className="text-input"
+              style={selectStyle}
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+            >
+              {[5, 10, 20].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
 
       <div className="scroll-view">

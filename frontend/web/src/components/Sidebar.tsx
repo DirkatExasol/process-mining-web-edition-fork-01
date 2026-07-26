@@ -297,17 +297,24 @@ function SubHeader({
   onToggle,
   badge,
   onClear,
+  icon,
 }: {
   title: string
   open: boolean
   onToggle: () => void
   badge?: string
   onClear?: () => void
+  icon?: string
 }) {
   return (
     <div className="sub-header">
       <button onClick={onToggle}>
         <Chevron open={open} />
+        {icon && (
+          <span aria-hidden style={{ width: 16, textAlign: 'center' }}>
+            {icon}
+          </span>
+        )}
         <span className="sub-title">{title}</span>
       </button>
       {badge && <span className="badge-pill">{badge}</span>}
@@ -1116,7 +1123,12 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
   )
   const [optimised, setOptimised] = useSetting<boolean>('graph.optimisedLayout')
   const [colorize, setColorize] = useSetting<boolean>('graph.edge.colorizeByWeight')
+  const [nodeScale, setNodeScale] = useSetting<number>('graph.node.scale')
+  const [edgeScale, setEdgeScale] = useSetting<number>('graph.edge.scale')
+  const [groupScale, setGroupScale] = useSetting<number>('graph.group.scale')
   const [sliderMode, setSliderMode] = useSetting<SliderMode>('slider.mode')
+  const [groupsOpen, setGroupsOpen] = useSetting<boolean>('sidebar.configGroupsExpanded')
+  const [fontsOpen, setFontsOpen] = useSetting<boolean>('sidebar.configFontsExpanded')
   const [kpisOpen, setKpisOpen] = useSetting<boolean>('sidebar.configKpisExpanded')
   const [stepsOpen, setStepsOpen] = useSetting<boolean>('sidebar.configStepsExpanded')
   const [kpiOrder, setKpiOrder] = useSetting<string>('kpi.order')
@@ -1136,28 +1148,128 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
     setKpiOrder(arr.join(','))
   }
 
+  // Node presets (M = 2.25 default); edge presets run a further +50% again
+  // (M = 3.375 default) so transition labels read larger.
+  const NODE_FONT_OPTIONS = [
+    { value: '1.95', label: 'S' },
+    { value: '2.25', label: 'M' },
+    { value: '2.7', label: 'L' },
+    { value: '3.15', label: 'XL' },
+  ]
+  const EDGE_FONT_OPTIONS = [
+    { value: '2.925', label: 'S' },
+    { value: '3.375', label: 'M' },
+    { value: '4.05', label: 'L' },
+    { value: '4.725', label: 'XL' },
+  ]
+
   return (
     <div className="col" style={{ gap: 0 }}>
-      <ToggleRow
-        icon="⬚"
-        label="Show step groups"
-        checked={showGrouping}
-        onChange={setShowGrouping}
+      {/* Collapsible sections first */}
+      <SubHeader
+        icon="🗂"
+        title="Step Groups"
+        open={groupsOpen}
+        onToggle={() => setGroupsOpen(!groupsOpen)}
       />
-      {showGrouping && (
-        <div className="col" style={{ padding: '6px 20px', gap: 5 }}>
-          <span className="t-caption fg-secondary">▦ Groups start</span>
-          <Segmented
-            options={[
-              { value: 'expanded', label: 'Expanded' },
-              { value: 'collapsed', label: 'Collapsed' },
-              { value: 'persisted', label: 'Persisted' },
-            ]}
-            value={startMode}
-            onChange={setStartMode}
+      {groupsOpen && (
+        <>
+          <ToggleRow
+            icon="⬚"
+            label="Show step groups"
+            checked={showGrouping}
+            onChange={setShowGrouping}
           />
+          {showGrouping && (
+            <div className="col" style={{ padding: '6px 20px', gap: 5 }}>
+              <span className="t-caption fg-secondary">▦ Groups start</span>
+              <Segmented
+                options={[
+                  { value: 'expanded', label: 'Expanded' },
+                  { value: 'collapsed', label: 'Collapsed' },
+                  { value: 'persisted', label: 'Persisted' },
+                ]}
+                value={startMode}
+                onChange={setStartMode}
+              />
+            </div>
+          )}
+        </>
+      )}
+
+      <SubHeader
+        icon="🔠"
+        title="Flowchart Font Sizes"
+        open={fontsOpen}
+        onToggle={() => setFontsOpen(!fontsOpen)}
+      />
+      {fontsOpen && (
+        <div className="col" style={{ padding: '4px 20px 8px', gap: 8 }}>
+          <div className="col" style={{ gap: 4 }}>
+            <span className="t-caption2 fg-secondary">Nodes</span>
+            <Segmented
+              options={NODE_FONT_OPTIONS}
+              value={String(nodeScale ?? 2.25)}
+              onChange={(v) => setNodeScale(Number(v))}
+            />
+          </div>
+          <div className="col" style={{ gap: 4 }}>
+            <span className="t-caption2 fg-secondary">Edges</span>
+            <Segmented
+              options={EDGE_FONT_OPTIONS}
+              value={String(edgeScale ?? 3.375)}
+              onChange={(v) => setEdgeScale(Number(v))}
+            />
+          </div>
+          <div className="col" style={{ gap: 4 }}>
+            <span className="t-caption2 fg-secondary">Group titles</span>
+            <Segmented
+              options={NODE_FONT_OPTIONS}
+              value={String(groupScale ?? 2.25)}
+              onChange={(v) => setGroupScale(Number(v))}
+            />
+          </div>
         </div>
       )}
+
+      <SubHeader
+        icon="📊"
+        title="KPIs"
+        open={kpisOpen}
+        onToggle={() => setKpisOpen(!kpisOpen)}
+      />
+      {kpisOpen && (
+        <div className="col" style={{ padding: '0 14px 8px', gap: 0 }}>
+          {orderedIds.map((id) => (
+            <KpiToggleRow
+              key={id}
+              id={id}
+              dragging={dragging === id}
+              onDragStart={() => setDragging(id)}
+              onDragEnd={() => setDragging(null)}
+              onDropOn={() => {
+                if (dragging) reorder(dragging, id)
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      <SubHeader
+        icon="⬭"
+        title="Steps"
+        open={stepsOpen}
+        onToggle={() => setStepsOpen(!stepsOpen)}
+      />
+      {stepsOpen && (
+        <div style={{ padding: '0 20px 14px' }}>
+          <StepEditor />
+        </div>
+      )}
+
+      <Divider />
+
+      {/* Non-collapsible options below */}
       <ToggleRow
         icon="🗒"
         label="Show node notes"
@@ -1177,7 +1289,6 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
         onChange={setColorize}
       />
 
-      <Divider />
       <div className="row" style={{ padding: '8px 20px', gap: 10 }}>
         <span aria-hidden className="fg-secondary">
           ⇥
@@ -1193,7 +1304,6 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
         />
       </div>
 
-      <Divider />
       <div className="row" style={{ padding: '8px 20px', gap: 10 }}>
         <span aria-hidden className="fg-secondary">
           💬
@@ -1207,33 +1317,6 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
           Edit
         </button>
       </div>
-
-      <Divider />
-      <SubHeader title="KPIs" open={kpisOpen} onToggle={() => setKpisOpen(!kpisOpen)} />
-      {kpisOpen && (
-        <div className="col" style={{ padding: '0 14px 8px', gap: 0 }}>
-          {orderedIds.map((id) => (
-            <KpiToggleRow
-              key={id}
-              id={id}
-              dragging={dragging === id}
-              onDragStart={() => setDragging(id)}
-              onDragEnd={() => setDragging(null)}
-              onDropOn={() => {
-                if (dragging) reorder(dragging, id)
-              }}
-            />
-          ))}
-        </div>
-      )}
-
-      <Divider />
-      <SubHeader title="Steps" open={stepsOpen} onToggle={() => setStepsOpen(!stepsOpen)} />
-      {stepsOpen && (
-        <div style={{ padding: '0 20px 14px' }}>
-          <StepEditor />
-        </div>
-      )}
     </div>
   )
 }

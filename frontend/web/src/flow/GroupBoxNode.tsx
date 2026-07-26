@@ -8,6 +8,7 @@ export interface GroupBoxData extends Record<string, unknown> {
   height: number
   color: string
   collapsed: boolean
+  scale: number // group-title font scale
   onToggle: (group: string) => void
 }
 
@@ -17,7 +18,8 @@ export interface GroupBoxData extends Record<string, unknown> {
  * Dragging the box moves every member node, matching the Swift group drag.
  */
 function GroupBoxNodeComponent({ data }: NodeProps) {
-  const { group, width, height, color, collapsed, onToggle } = data as GroupBoxData
+  const { group, width, height, color, collapsed, scale, onToggle } = data as GroupBoxData
+  const gs = scale || 1
 
   return (
     <div
@@ -30,7 +32,18 @@ function GroupBoxNodeComponent({ data }: NodeProps) {
         pointerEvents: 'all',
       }}
     >
-      <span className="group-label" style={{ background: rgba(color, 0.9) }}>
+      <span
+        className="group-label"
+        style={{
+          background: rgba(color, 0.9),
+          // Scale the title pill (font + box) with the group-title font setting.
+          fontSize: `${11 * gs}px`,
+          height: Math.round(20 * gs),
+          top: Math.round((-20 * gs) / 2),
+          padding: `0 ${Math.round(10 * gs)}px`,
+          borderRadius: Math.round(10 * gs),
+        }}
+      >
         {group}
       </span>
       <button

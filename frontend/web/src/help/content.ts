@@ -1047,7 +1047,7 @@ const notes: HelpTopic = {
         p('Each note records its author, who last contributed, and the complete filter context at the time it was created, so the observation stays interpretable later. The author is the signed-in application user — shown by real name (the directory “cn”) for LDAP accounts — not the shared database login.'),
         p('A note is a thread. Opening it shows all comments so far on top (read-only) and an “Add a comment” box below: anyone who can see the note — the author, and other users for a shared note — can add a comment, which is placed at the top of the thread and recorded with their name and the time. Give the note (when you create it) and each comment a short title; the most recent title is shown as the note’s heading, separately from the body, in both the list and the node’s note panel. Only the author can change the note’s importance or sharing, or delete the whole thread.'),
         p('Give each note an importance — NORMAL (the default), INFO, IMPORTANT or URGENT — shown as a coloured badge in the list. Mark a note as “shared” to make it visible to other users of the same database, and tick “resolved” once the issue it describes is closed — a green ✓ Resolved badge then appears in the list.'),
-        p('The Notes view can be filtered by text search, importance, author, time window (any time, or the last 7 / 30 / 90 days), and status (unresolved / resolved); the counter shows how many of the project’s notes match. It can be sorted by date (newest or oldest first) and optionally grouped by importance (off by default), and the list is paged — choose 5, 10 or 20 notes per page and step through with Prev / Next. A KPI strip across the top shows the note count for each importance level, least on the left through most urgent on the right, coloured to match the badges.'),
+        p('The Notes view can be filtered by text search, type (node / edge), importance, status (unresolved / resolved), author, and time window (any time, or the last 7 / 30 / 90 days); the counter shows how many of the project’s notes match. It can be sorted by date (newest or oldest first) and optionally grouped by importance (off by default), and the list is paged — choose 5, 10 or 20 notes per page and step through with Prev / Next. A KPI strip across the top shows the note count for each importance level, least on the left through most urgent on the right, coloured to match the badges.'),
       ],
     },
     {
@@ -1099,6 +1099,7 @@ const configuration: HelpTopic = {
         def('Show node notes', 'Shows the shortened DESCRIPTION under the step name on each node, and the yellow note badges.'),
         def('Optimise layout', 'Enables barycenter crossing-minimisation for a cleaner arrangement on complex graphs.'),
         def('Colorise edges by weight', 'Turns on the per-metric colour scales (configure them from the map’s colour legend).'),
+        def('Flowchart Font Sizes', 'Scale the process-map text — separate S / M / L / XL settings for Nodes, Edges and Group titles. A node’s box grows with its font, so the label always stays inside the node; the edge setting enlarges the transition labels, and the group-title setting sizes the pill on each step-group box.'),
         def('Date slider', 'Switches the map’s date control between Range (two thumbs) and Day (single day) mode.'),
       ],
     },

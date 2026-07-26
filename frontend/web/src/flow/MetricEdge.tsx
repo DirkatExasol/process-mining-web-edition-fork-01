@@ -31,6 +31,7 @@ export interface MetricEdgeData extends Record<string, unknown> {
   outgoingTotal: number
   hasNote: boolean
   nodeH: number
+  edgeScale: number
   onEdgeClick?: (transition: ProcessTransition, screen: { x: number; y: number }) => void
 }
 
@@ -72,8 +73,10 @@ function MetricEdgeComponent({
     outgoingTotal,
     hasNote,
     nodeH,
+    edgeScale,
     onEdgeClick,
   } = d
+  const eScale = edgeScale || 1
 
   const isSelfLoop = transition.fromStep === transition.toStep
   const isCountPct = normMetric === 'Count'
@@ -165,7 +168,7 @@ function MetricEdgeComponent({
 
   const markerId = `arrow-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`
 
-  const badgeWidth = Math.max(44, labelText.length * 9 + 18)
+  const badgeWidth = Math.round(Math.max(44, labelText.length * 9 + 18) * eScale)
   const hasNorm = normValue != null
   const badgeColor = showCompliance
     ? lineColor
@@ -235,10 +238,11 @@ function MetricEdgeComponent({
               className="edge-badge-text"
               style={{
                 minWidth: badgeWidth,
-                height: 22,
+                height: Math.round(22 * eScale),
+                fontSize: `${13 * eScale}px`,
                 display: 'grid',
                 placeItems: 'center',
-                borderRadius: 11,
+                borderRadius: Math.round(11 * eScale),
                 background:
                   badgeColor === 'var(--accent)'
                     ? `rgba(10, 132, 255, ${badgeOpacity})`
@@ -256,6 +260,7 @@ function MetricEdgeComponent({
               style={{
                 padding: '1px 6px',
                 borderRadius: 6,
+                fontSize: `${13 * eScale}px`,
                 background: 'var(--bg-grouped)',
                 color: 'var(--primary)',
                 cursor: onEdgeClick ? 'pointer' : 'default',

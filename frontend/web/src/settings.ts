@@ -25,6 +25,14 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   'graph.edge.colorSchema.Std Dev': defaultSchemaFor('Std Dev'),
   'processmap.showGrouping': true,
   'processmap.showNodeDescriptions': true,
+  // Font/size scale for the process map. Node scale grows the node too, so text
+  // always stays inside; edge scale sizes the transition labels. Node baseline is
+  // 2.25 (M) and edge baseline is 3.375 (M) — edges run 50% larger again than nodes.
+  'graph.node.scale': 2.25,
+  'graph.edge.scale': 3.375,
+  'graph.group.scale': 2.25,
+  'sidebar.configGroupsExpanded': true,
+  'sidebar.configFontsExpanded': true,
   'processmap.kpiExpanded': true,
   'abComparison.valveOpen': true,
   'legal.accepted': false,

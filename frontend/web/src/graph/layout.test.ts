@@ -137,3 +137,21 @@ describe('groupRects', () => {
     expect(overlap).toBe(false)
   })
 })
+
+describe('node scaling', () => {
+  it('a larger nodeWidth widens the canvas and node spacing', () => {
+    // Two sibling nodes on the same layer, so horizontal spacing depends on width.
+    const graph = graphFrom([
+      ['Start', 'A', 5],
+      ['Start', 'B', 5],
+    ])
+    const base = computeLayout(graph, defaultNodeHeight(graph), true, NODE_W)
+    const big = computeLayout(graph, defaultNodeHeight(graph), true, NODE_W * 1.5)
+
+    expect(big.canvasSize.width).toBeGreaterThan(base.canvasSize.width)
+    // The two same-layer siblings are pushed further apart at the larger width.
+    const gap = (l: typeof base) =>
+      Math.abs(l.nodePositions['A'].x - l.nodePositions['B'].x)
+    expect(gap(big)).toBeGreaterThan(gap(base))
+  })
+})

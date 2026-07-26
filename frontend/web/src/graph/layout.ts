@@ -51,6 +51,7 @@ export function computeLayout(
   graph: ProcessGraph,
   nodeHeight: number = NODE_H,
   optimised = true,
+  nodeWidth: number = NODE_W,
 ): GraphLayout {
   const nodes = Object.keys(graph.steps)
   if (nodes.length === 0) {
@@ -132,30 +133,36 @@ export function computeLayout(
   const maxLayer = Math.max(...Object.values(layers))
   const maxCount = Math.max(...Object.values(layerGroups).map((g) => g.length), 1)
 
-  const canvasW = maxCount * NODE_W + Math.max(maxCount - 1, 0) * H_GAP + 2 * PADDING
-  const canvasH =
-    (maxLayer + 1) * nodeHeight + maxLayer * V_GAP + 2 * PADDING
+  // Scale the gaps/padding with the nodes so a larger node size just zooms the whole
+  // layout uniformly — otherwise big nodes with fixed small gaps crowd and overlap.
+  const s = nodeWidth / NODE_W
+  const hGap = H_GAP * s
+  const vGap = V_GAP * s
+  const pad = PADDING * s
+
+  const canvasW = maxCount * nodeWidth + Math.max(maxCount - 1, 0) * hGap + 2 * pad
+  const canvasH = (maxLayer + 1) * nodeHeight + maxLayer * vGap + 2 * pad
 
   // ── 4. Position each node centred within its layer row.
   const positions: Record<string, Point> = {}
   for (const [layerKey, nodesInLayer] of Object.entries(layerGroups)) {
     const layer = Number(layerKey)
-    const y = PADDING + layer * (nodeHeight + V_GAP) + nodeHeight / 2
+    const y = pad + layer * (nodeHeight + vGap) + nodeHeight / 2
     const groupW =
-      nodesInLayer.length * NODE_W + Math.max(nodesInLayer.length - 1, 0) * H_GAP
+      nodesInLayer.length * nodeWidth + Math.max(nodesInLayer.length - 1, 0) * hGap
     const startX = (canvasW - groupW) / 2
     nodesInLayer.forEach((node, i) => {
-      positions[node] = { x: startX + i * (NODE_W + H_GAP) + NODE_W / 2, y }
+      positions[node] = { x: startX + i * (nodeWidth + hGap) + nodeWidth / 2, y }
     })
   }
 
   // ── 5. Nudge overlapping group boxes apart.
-  resolveGroupOverlaps(positions, graph, nodeHeight)
+  resolveGroupOverlaps(positions, graph, nodeHeight, nodeWidth)
 
   const allX = Object.values(positions).map((p) => p.x)
   const allY = Object.values(positions).map((p) => p.y)
-  const finalW = Math.max(canvasW, Math.max(...allX) + NODE_W / 2 + PADDING)
-  const finalH = Math.max(canvasH, Math.max(...allY) + nodeHeight / 2 + PADDING)
+  const finalW = Math.max(canvasW, Math.max(...allX) + nodeWidth / 2 + pad)
+  const finalH = Math.max(canvasH, Math.max(...allY) + nodeHeight / 2 + pad)
 
   return { nodePositions: positions, canvasSize: { width: finalW, height: finalH } }
 }
@@ -224,6 +231,7 @@ function resolveGroupOverlaps(
   positions: Record<string, Point>,
   graph: ProcessGraph,
   nodeHeight: number,
+  nodeWidth: number = NODE_W,
 ): void {
   const groups: Record<string, string[]> = {}
   for (const [name, step] of Object.entries(graph.steps)) {
@@ -234,14 +242,19 @@ function resolveGroupOverlaps(
   const groupNames = Object.keys(groups).sort()
   if (groupNames.length <= 1) return
 
+  const s = nodeWidth / NODE_W
+  const gPad = GROUP_PAD * s
+  const gLabel = GROUP_LABEL_PAD * s
+  const gMinGap = GROUP_MIN_GAP * s
+
   const rectFor = (nodeList: string[]): Rect => {
     const xs = nodeList.map((n) => positions[n]?.x).filter((v): v is number => v != null)
     const ys = nodeList.map((n) => positions[n]?.y).filter((v): v is number => v != null)
     if (xs.length === 0) return { x: 0, y: 0, width: 0, height: 0 }
-    const minX = Math.min(...xs) - NODE_W / 2 - GROUP_PAD
-    const minY = Math.min(...ys) - nodeHeight / 2 - GROUP_PAD - GROUP_LABEL_PAD
-    const maxX = Math.max(...xs) + NODE_W / 2 + GROUP_PAD
-    const maxY = Math.max(...ys) + nodeHeight / 2 + GROUP_PAD
+    const minX = Math.min(...xs) - nodeWidth / 2 - gPad
+    const minY = Math.min(...ys) - nodeHeight / 2 - gPad - gLabel
+    const maxX = Math.max(...xs) + nodeWidth / 2 + gPad
+    const maxY = Math.max(...ys) + nodeHeight / 2 + gPad
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
   }
 
@@ -265,21 +278,15 @@ function resolveGroupOverlaps(
         const nodesB = groups[groupNames[j]]
         const rA = rectFor(nodesA)
         const rB = rectFor(nodesB)
-        if (
-          !intersects(inset(rA, GROUP_MIN_GAP / 2), inset(rB, GROUP_MIN_GAP / 2))
-        ) {
+        if (!intersects(inset(rA, gMinGap / 2), inset(rB, gMinGap / 2))) {
           continue
         }
         anyOverlap = true
 
         const overlapX =
-          Math.min(rA.x + rA.width, rB.x + rB.width) -
-          Math.max(rA.x, rB.x) +
-          GROUP_MIN_GAP
+          Math.min(rA.x + rA.width, rB.x + rB.width) - Math.max(rA.x, rB.x) + gMinGap
         const overlapY =
-          Math.min(rA.y + rA.height, rB.y + rB.height) -
-          Math.max(rA.y, rB.y) +
-          GROUP_MIN_GAP
+          Math.min(rA.y + rA.height, rB.y + rB.height) - Math.max(rA.y, rB.y) + gMinGap
 
         if (overlapX <= overlapY) {
           const shift = overlapX / 2 + 1
@@ -305,6 +312,7 @@ export function groupRects(
   collapsedGroups: Set<string>,
   nodeHeight: number,
   collapsedNodeId: (group: string) => string,
+  nodeWidth: number = NODE_W,
 ): { name: string; rect: Rect }[] {
   const grouped: Record<string, Point[]> = {}
 
@@ -320,15 +328,18 @@ export function groupRects(
     if (pos) grouped[group] = [pos]
   }
 
+  const s = nodeWidth / NODE_W
+  const gPad = GROUP_PAD * s
+  const gLabel = GROUP_LABEL_PAD * s
   return Object.keys(grouped)
     .sort()
     .map((name) => {
       const centers = grouped[name]
-      const minX = Math.min(...centers.map((c) => c.x - NODE_W / 2)) - GROUP_PAD
+      const minX = Math.min(...centers.map((c) => c.x - nodeWidth / 2)) - gPad
       const minY =
-        Math.min(...centers.map((c) => c.y - nodeHeight / 2)) - GROUP_PAD - GROUP_LABEL_PAD
-      const maxX = Math.max(...centers.map((c) => c.x + NODE_W / 2)) + GROUP_PAD
-      const maxY = Math.max(...centers.map((c) => c.y + nodeHeight / 2)) + GROUP_PAD
+        Math.min(...centers.map((c) => c.y - nodeHeight / 2)) - gPad - gLabel
+      const maxX = Math.max(...centers.map((c) => c.x + nodeWidth / 2)) + gPad
+      const maxY = Math.max(...centers.map((c) => c.y + nodeHeight / 2)) + gPad
       return { name, rect: { x: minX, y: minY, width: maxX - minX, height: maxY - minY } }
     })
 }
