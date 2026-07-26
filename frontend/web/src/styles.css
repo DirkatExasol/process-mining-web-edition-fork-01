@@ -1058,40 +1058,43 @@ textarea.text-input {
   opacity: 0.8;
 }
 
+/* Badges scale with the node (var(--node-scale)) so they stay visible on large
+ * nodes, plus a 1.35× boost so the bubbles read bigger relative to the box than
+ * the original macOS proportions. */
 .node-badge {
   position: absolute;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  font-size: 10px;
+  font-size: calc(10px * var(--node-scale, 1) * 1.35);
   font-weight: 700;
   color: #fff;
   box-shadow: 0 3px 5px rgba(0, 0, 0, 0.4);
 }
 
 .node-badge.score {
-  width: 26px;
-  height: 26px;
-  left: -13px;
-  top: -17px;
-  border: 2px solid rgba(255, 255, 255, 0.9);
+  width: calc(26px * var(--node-scale, 1) * 1.35);
+  height: calc(26px * var(--node-scale, 1) * 1.35);
+  left: calc(-13px * var(--node-scale, 1) * 1.35);
+  top: calc(-17px * var(--node-scale, 1) * 1.35);
+  border: calc(2px * var(--node-scale, 1)) solid rgba(255, 255, 255, 0.9);
 }
 
 .node-badge.note {
-  width: 22px;
-  height: 22px;
-  right: -9px;
-  top: -15px;
+  width: calc(22px * var(--node-scale, 1) * 1.35);
+  height: calc(22px * var(--node-scale, 1) * 1.35);
+  right: calc(-9px * var(--node-scale, 1) * 1.35);
+  top: calc(-15px * var(--node-scale, 1) * 1.35);
   background: var(--yellow);
   color: rgba(0, 0, 0, 0.75);
-  font-size: 11px;
+  font-size: calc(11px * var(--node-scale, 1) * 1.35);
 }
 
 .node-badge.eop {
-  width: 10px;
-  height: 10px;
-  right: 5px;
-  top: 5px;
+  width: calc(10px * var(--node-scale, 1) * 1.35);
+  height: calc(10px * var(--node-scale, 1) * 1.35);
+  right: calc(5px * var(--node-scale, 1));
+  top: calc(5px * var(--node-scale, 1));
   background: var(--orange);
   box-shadow: none;
 }

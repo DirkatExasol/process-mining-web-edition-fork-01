@@ -227,7 +227,7 @@ function MetricEdgeComponent({
             pointerEvents: 'all',
             display: 'flex',
             alignItems: 'center',
-            gap: 6,
+            gap: Math.round(6 * eScale),
           }}
           onClick={(event) =>
             onEdgeClick?.(transition, { x: event.clientX, y: event.clientY })
@@ -274,14 +274,16 @@ function MetricEdgeComponent({
           {hasNote && (
             <span
               style={{
-                width: 14,
-                height: 14,
-                borderRadius: 7,
+                // Scale the note bubble with the edge label, plus the same 1.35×
+                // boost the node badges use so it stays clearly visible.
+                width: Math.round(14 * eScale * 1.35),
+                height: Math.round(14 * eScale * 1.35),
+                borderRadius: Math.round(7 * eScale * 1.35),
                 display: 'grid',
                 placeItems: 'center',
                 background: NOTE_YELLOW,
                 color: 'rgba(0,0,0,0.75)',
-                fontSize: 9,
+                fontSize: Math.round(9 * eScale * 1.35),
                 boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
               }}
               title="This transition has notes"

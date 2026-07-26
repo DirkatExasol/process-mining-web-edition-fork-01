@@ -49,7 +49,14 @@ function GroupBoxNodeComponent({ data }: NodeProps) {
       <button
         className="group-toggle"
         style={{
-          right: 6,
+          // Scale the collapse/expand handle with the group-title font setting so
+          // it stays proportional to the (scaled) title pill.
+          right: Math.round(6 * gs),
+          top: Math.round(-11 * gs),
+          width: Math.round(22 * gs),
+          height: Math.round(22 * gs),
+          borderRadius: Math.round(11 * gs),
+          fontSize: `${14 * gs}px`,
           background: collapsed ? COLLAPSE_BADGE_GREEN : COLLAPSE_BADGE_RED,
         }}
         onPointerDown={(e) => e.stopPropagation()}
