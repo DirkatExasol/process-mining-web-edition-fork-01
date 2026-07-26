@@ -21,6 +21,7 @@ const SNAPSHOT = {
 function note(overrides: Partial<ProcessNote>): ProcessNote {
   return {
     id: 'n1',
+    title: 'A title',
     text: 'A note',
     createdAt: '2026-07-25T18:00:00',
     editedAt: null,
@@ -60,6 +61,16 @@ describe('NotesView author badge', () => {
     })
     render(<NotesView />)
     expect(within(noteList()).getByText('jsmith')).toBeTruthy()
+  })
+})
+
+describe('NotesView title', () => {
+  it('shows the note title as a separate heading', () => {
+    useStore.setState({
+      projectNotes: [note({ title: 'Bottleneck here', text: 'body text' })],
+    })
+    render(<NotesView />)
+    expect(within(noteList()).getByText('Bottleneck here')).toBeTruthy()
   })
 })
 
@@ -147,10 +158,82 @@ describe('NotesView pagination', () => {
     expect(screen.getByText('Page 2 of 2')).toBeTruthy()
 
     // Resizing to 5/page resets back to the first page.
-    const perPage = screen.getAllByRole('combobox')[4] // [imp, user, time, status, perPage]
+    // combobox order: [importance, user, time, status, sort, perPage]
+    const perPage = screen.getAllByRole('combobox')[5]
     fireEvent.change(perPage, { target: { value: '5' } })
     expect(cardCount()).toBe(5)
     expect(screen.getByText('Page 1 of 3')).toBeTruthy()
+  })
+})
+
+describe('NotesView KPIs / sort / grouping', () => {
+  it('shows a per-importance count in the KPI strip', () => {
+    useStore.setState({
+      projectNotes: [
+        note({ id: 'a', importance: 'URGENT' }),
+        note({ id: 'b', importance: 'URGENT' }),
+        note({ id: 'c', importance: 'INFO' }),
+      ],
+    })
+    render(<NotesView />)
+    const strip = document.querySelector('.kpi-strip') as HTMLElement
+    // The Urgent tile reads 2, the Info tile 1 (and Normal/Important 0).
+    const urgent = within(strip).getByText('Urgent').closest('.kpi-tile') as HTMLElement
+    expect(within(urgent).getByText('2')).toBeTruthy()
+    const info = within(strip).getByText('Info').closest('.kpi-tile') as HTMLElement
+    expect(within(info).getByText('1')).toBeTruthy()
+  })
+
+  it('shows Total and Resolved KPI counts', () => {
+    useStore.setState({
+      projectNotes: [
+        note({ id: 'a', resolved: true }),
+        note({ id: 'b', resolved: false }),
+        note({ id: 'c', resolved: true }),
+      ],
+    })
+    render(<NotesView />)
+    const strip = document.querySelector('.kpi-strip') as HTMLElement
+    const total = within(strip).getByText('Total Notes').closest('.kpi-tile') as HTMLElement
+    expect(within(total).getByText('3')).toBeTruthy()
+    const resolved = within(strip).getByText('Resolved').closest('.kpi-tile') as HTMLElement
+    expect(within(resolved).getByText('2')).toBeTruthy()
+  })
+
+  it('sorts by date, newest or oldest first', () => {
+    useStore.setState({
+      projectNotes: [
+        note({ id: 'old', text: 'older', createdAt: '2026-01-01T00:00:00' }),
+        note({ id: 'new', text: 'newer', createdAt: '2026-06-01T00:00:00' }),
+      ],
+    })
+    render(<NotesView />)
+    const texts = () =>
+      [...noteList().querySelectorAll('.n-text')].map((e) => e.textContent)
+    expect(texts()).toEqual(['newer', 'older']) // newest first (default)
+
+    const sort = screen.getAllByRole('combobox')[4] // [imp, user, time, status, sort]
+    fireEvent.change(sort, { target: { value: 'oldest' } })
+    expect(texts()).toEqual(['older', 'newer'])
+  })
+
+  it('shows importance group headers when grouping is on', () => {
+    useStore.setState({
+      projectNotes: [
+        note({ id: 'a', importance: 'NORMAL', text: 'plain' }),
+        note({ id: 'b', importance: 'URGENT', text: 'urgent' }),
+      ],
+    })
+    render(<NotesView />)
+    expect(noteList().querySelector('.note-group-header')).toBeNull() // off by default
+
+    fireEvent.click(screen.getByLabelText('Group by importance'))
+    const headers = [...noteList().querySelectorAll('.note-group-header')].map(
+      (e) => e.textContent,
+    )
+    // Highest importance group first.
+    expect(headers[0]).toContain('Urgent')
+    expect(headers.some((h) => h?.includes('Normal'))).toBe(true)
   })
 })
 

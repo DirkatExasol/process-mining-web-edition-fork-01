@@ -896,6 +896,9 @@ class ProcessRepository:
         await self.db.execute_quiet(
             "ALTER TABLE NOTES ADD COLUMN RESOLVED BOOLEAN DEFAULT FALSE"
         )
+        await self.db.execute_quiet(
+            "ALTER TABLE NOTES ADD COLUMN TITLE VARCHAR(500) DEFAULT ''"
+        )
         # Widen NOTE (was VARCHAR(8000)) so an append-only comment thread has room.
         await self.db.execute_quiet(
             "ALTER TABLE NOTES MODIFY COLUMN NOTE VARCHAR(100000)"
@@ -904,7 +907,7 @@ class ProcessRepository:
     # Column order shared by load_notes / get_note — indices used by _row_to_note.
     _NOTE_COLUMNS = (
         "ID, NOTES_DATE, EDITED_DATE, NOTE_USER, NOTE, IS_SHARED, EDITED_BY, "
-        "TARGET_TYPE, TARGET_FROM, TARGET_TO, FILTER_SNAPSHOT, IMPORTANCE, RESOLVED"
+        "TARGET_TYPE, TARGET_FROM, TARGET_TO, FILTER_SNAPSHOT, IMPORTANCE, RESOLVED, TITLE"
     )
 
     @staticmethod
@@ -934,6 +937,7 @@ class ProcessRepository:
 
         return ProcessNote(
             id=row[0],
+            title=row[13] if len(row) > 13 and isinstance(row[13], str) else "",
             text=row[4] if isinstance(row[4], str) else "",
             createdAt=created,
             editedAt=parse_date(row[2]),
@@ -947,13 +951,13 @@ class ProcessRepository:
         )
 
     async def load_notes(self, project_id: str, username: str) -> list[ProcessNote]:
-        vis_filter = ""
-        if username:
-            safe_user = esc(username.upper())
-            vis_filter = (
-                f"AND (UPPER(NOTE_USER) = '{safe_user}' "
-                "OR NOTE_USER = '' OR IS_SHARED = TRUE)"
-            )
+        # Always visibility-filter (fail closed): an unknown/empty user must still
+        # only see unowned or shared notes, never another user's private ones.
+        safe_user = esc(username.upper())
+        vis_filter = (
+            f"AND (UPPER(NOTE_USER) = '{safe_user}' "
+            "OR NOTE_USER = '' OR IS_SHARED = TRUE)"
+        )
         result = await self.db.execute(
             f"""
             SELECT {self._NOTE_COLUMNS}
@@ -990,17 +994,22 @@ class ProcessRepository:
         project_id: str,
         *,
         edited_by: str,
-        append_block: str | None = None,
+        comment_block: str | None = None,
+        title: str | None = None,
         resolved: bool | None = None,
         importance: str | None = None,
         is_shared: bool | None = None,
     ) -> None:
-        """Apply a partial update: optionally append text (thread comment), set the
-        resolved flag, importance and/or shared. Callers decide which fields a given
-        user is allowed to pass (owner-only for importance/isShared)."""
+        """Apply a partial update: optionally add a thread comment (prepended so the
+        newest is on top), set the note's title to the latest entry's, the resolved
+        flag, importance and/or shared. Callers decide which fields a given user may
+        pass (owner-only for importance/isShared)."""
         sets = ["EDITED_DATE = CURRENT_TIMESTAMP", f"EDITED_BY = '{esc(edited_by)}'"]
-        if append_block:
-            sets.append(f"NOTE = NOTE || '{esc(append_block)}'")
+        if comment_block:
+            # Prepend so the most recent comment appears at the top of the thread.
+            sets.append(f"NOTE = '{esc(comment_block)}' || NOTE")
+        if title is not None:
+            sets.append(f"TITLE = '{esc(title)}'")
         if resolved is not None:
             sets.append(f"RESOLVED = {'TRUE' if resolved else 'FALSE'}")
         if importance is not None:
@@ -1048,13 +1057,13 @@ class ProcessRepository:
             f"""
             INSERT INTO NOTES
                 (ID, PROJECT_ID, NOTES_DATE, EDITED_DATE, NOTE_USER, NOTE, IS_SHARED, EDITED_BY,
-                 IMPORTANCE, RESOLVED, TARGET_TYPE, TARGET_FROM, TARGET_TO, FILTER_SNAPSHOT)
+                 IMPORTANCE, RESOLVED, TITLE, TARGET_TYPE, TARGET_FROM, TARGET_TO, FILTER_SNAPSHOT)
             VALUES (
                 '{esc(note.id)}', '{esc(project_id)}',
                 {created_sql}, {edited_sql},
                 '{esc(note.username)}', '{esc(note.text)}',
                 {'TRUE' if note.isShared else 'FALSE'}, '{esc(note.lastEditedBy)}',
-                '{importance}', {'TRUE' if note.resolved else 'FALSE'},
+                '{importance}', {'TRUE' if note.resolved else 'FALSE'}, '{esc(note.title)}',
                 '{target_type}', '{esc(target_from)}', '{esc(target_to)}',
                 '{esc(snapshot_json)}'
             )

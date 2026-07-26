@@ -72,8 +72,10 @@ export function NoteEditorSheet({
   const isNew = !existing
 
   // For a new note `draft` is the initial text; for an existing note it is the
-  // comment to append to the thread (the history above is read-only).
+  // comment to append to the thread (the history above is read-only). `title` is
+  // the new note's / the new comment's title.
   const [draft, setDraft] = useState('')
+  const [title, setTitle] = useState('')
   const [isShared, setIsShared] = useState(existing?.isShared ?? false)
   const [importance, setImportance] = useState<NoteImportance>(
     normalizeImportance(existing?.importance),
@@ -103,6 +105,7 @@ export function NoteEditorSheet({
       if (isNew) {
         await store.saveNote({
           id: crypto.randomUUID().toUpperCase(),
+          title: title.trim(),
           text: draft,
           createdAt: new Date().toISOString(),
           editedAt: null,
@@ -116,12 +119,17 @@ export function NoteEditorSheet({
         })
       } else {
         const body: {
+          title?: string
           comment?: string
           resolved?: boolean
           importance?: string
           isShared?: boolean
         } = { resolved }
-        if (draft.trim()) body.comment = draft.trim()
+        if (draft.trim()) {
+          body.comment = draft.trim()
+          // The comment's title (optional) also becomes the note's shown title.
+          if (title.trim()) body.title = title.trim()
+        }
         if (isOwner) {
           body.importance = importance
           body.isShared = isShared
@@ -178,6 +186,12 @@ export function NoteEditorSheet({
           )}
         </div>
 
+        {!isNew && existing!.title && (
+          <div className="t-title3" style={{ fontWeight: 700 }}>
+            {existing!.title}
+          </div>
+        )}
+
         {!isNew && (
           <div className="col" style={{ gap: 4 }}>
             <span className="t-caption fg-secondary">Notes &amp; comments so far</span>
@@ -194,11 +208,16 @@ export function NoteEditorSheet({
           <span className="t-caption fg-secondary">
             {isNew ? 'Note' : 'Add a comment'}
           </span>
+          <input
+            className="text-input"
+            value={title}
+            placeholder={isNew ? 'Title (optional)…' : 'Comment title (optional)…'}
+            onChange={(e) => setTitle(e.target.value)}
+          />
           <textarea
             className="text-input"
             style={{ minHeight: isNew ? 160 : 84 }}
             value={draft}
-            autoFocus
             placeholder={isNew ? 'Your note…' : 'Add a note or comment…'}
             onChange={(e) => setDraft(e.target.value)}
           />
@@ -338,11 +357,17 @@ export function NoteListSheet({
           >
             <div className="n-head">
               <ImportanceBadge level={normalizeImportance(note.importance)} />
+              {note.resolved && (
+                <span title="Resolved" style={{ color: 'var(--green)', fontWeight: 600 }}>
+                  ✓ Resolved
+                </span>
+              )}
               <span>{note.authorName || note.username || '—'}</span>
               <span className="spacer" />
               {note.isShared && <span title="Shared">👥</span>}
               <span>{formatDateTime(note.createdAt)}</span>
             </div>
+            <div className="n-title">{note.title || '—'}</div>
             <div className="n-text">{note.text}</div>
             <div className="n-meta">{snapshotSummary(note.filterSnapshot)}</div>
           </button>

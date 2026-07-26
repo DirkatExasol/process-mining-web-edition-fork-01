@@ -22,6 +22,7 @@ const SNAPSHOT = {
 function existingNote(username: string): ProcessNote {
   return {
     id: 'n1',
+    title: 'A title',
     text: 'original observation',
     createdAt: '2026-07-25T18:00:00',
     editedAt: null,
@@ -53,6 +54,25 @@ describe('NoteEditor — author', () => {
     render(<NoteEditorSheet item={item('alice')} onClose={() => {}} />)
     expect(screen.getByText('Delete')).toBeTruthy()
     expect(btn(/Urgent/).disabled).toBe(false) // importance selector enabled
+  })
+})
+
+describe('NoteEditor — title', () => {
+  it('offers a title input when creating a new note', () => {
+    render(
+      <NoteEditorSheet
+        item={{ target: { type: 'node', value: 'A' }, existing: null, snapshot: SNAPSHOT }}
+        onClose={() => {}}
+      />,
+    )
+    expect(screen.getByPlaceholderText('Title (optional)…')).toBeTruthy()
+  })
+
+  it('shows the note title and a comment-title input on an existing note', () => {
+    useStore.setState({ authUser: 'bob' })
+    render(<NoteEditorSheet item={item('alice')} onClose={() => {}} />)
+    expect(screen.getByText('A title')).toBeTruthy() // the note's heading
+    expect(screen.getByPlaceholderText('Comment title (optional)…')).toBeTruthy()
   })
 })
 

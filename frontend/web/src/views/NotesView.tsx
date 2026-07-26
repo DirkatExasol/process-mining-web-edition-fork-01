@@ -1,12 +1,13 @@
 /** Notes list — port of `commentsContent` from ProcessMapView.swift. */
 
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import {
   ImportanceBadge,
   NoteEditorSheet,
   snapshotSummary,
   type NoteEditorTarget,
 } from '../components/NoteEditor'
+import { KpiTile } from '../components/KpiStrip'
 import { Unavailable } from '../components/ui'
 import { formatDateTime } from '../graph/format'
 import { useStore } from '../store'
@@ -26,6 +27,14 @@ const TIME_LABELS: Record<TimeWindow, string> = {
   '90': 'Last 90 days',
 }
 
+// Least → highest importance (drives KPI order left→right and group order).
+const IMPORTANCE_RANK: Record<NoteImportance, number> = {
+  NORMAL: 0,
+  INFO: 1,
+  IMPORTANT: 2,
+  URGENT: 3,
+}
+
 export function NotesView() {
   const store = useStore()
   const [editing, setEditing] = useState<NoteEditorTarget | null>(null)
@@ -34,6 +43,8 @@ export function NotesView() {
   const [author, setAuthor] = useState<string>('ALL')
   const [time, setTime] = useState<TimeWindow>('ALL')
   const [status, setStatus] = useState<'ALL' | 'OPEN' | 'RESOLVED'>('ALL')
+  const [sortDir, setSortDir] = useState<'newest' | 'oldest'>('newest')
+  const [grouped, setGrouped] = useState(false)
   const [pageSize, setPageSize] = useState(10)
   const [page, setPage] = useState(0)
 
@@ -47,30 +58,61 @@ export function NotesView() {
     return [...byUser.entries()].sort((a, b) => a[1].localeCompare(b[1]))
   }, [store.projectNotes])
 
-  const notes = useMemo(() => {
+  // Notes filtered by everything EXCEPT importance, plus the per-importance counts
+  // (so the KPI strip always shows the full breakdown of the current context).
+  const { base, counts, resolvedCount } = useMemo(() => {
     const term = search.trim().toLowerCase()
     const cutoff = time === 'ALL' ? null : Date.now() - Number(time) * 86_400_000
-    return [...store.projectNotes]
-      .filter((n) => {
-        if (
-          term &&
-          !n.text.toLowerCase().includes(term) &&
-          !noteTargetLabel(n.target).toLowerCase().includes(term)
-        )
-          return false
-        if (importance !== 'ALL' && normalizeImportance(n.importance) !== importance)
-          return false
-        if (author !== 'ALL' && (n.username ?? '') !== author) return false
-        if (status === 'OPEN' && n.resolved) return false
-        if (status === 'RESOLVED' && !n.resolved) return false
-        if (cutoff !== null && new Date(n.createdAt).getTime() < cutoff) return false
-        return true
-      })
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-  }, [store.projectNotes, search, importance, author, time, status])
+    const base = store.projectNotes.filter((n) => {
+      if (
+        term &&
+        !n.text.toLowerCase().includes(term) &&
+        !(n.title ?? '').toLowerCase().includes(term) &&
+        !noteTargetLabel(n.target).toLowerCase().includes(term)
+      )
+        return false
+      if (author !== 'ALL' && (n.username ?? '') !== author) return false
+      if (status === 'OPEN' && n.resolved) return false
+      if (status === 'RESOLVED' && !n.resolved) return false
+      if (cutoff !== null && new Date(n.createdAt).getTime() < cutoff) return false
+      return true
+    })
+    const counts: Record<NoteImportance, number> = {
+      NORMAL: 0,
+      INFO: 0,
+      IMPORTANT: 0,
+      URGENT: 0,
+    }
+    let resolvedCount = 0
+    for (const n of base) {
+      counts[normalizeImportance(n.importance)]++
+      if (n.resolved) resolvedCount++
+    }
+    return { base, counts, resolvedCount }
+  }, [store.projectNotes, search, author, time, status])
 
-  // Any filter change or a resized page resets to the first page.
-  useEffect(() => setPage(0), [search, importance, author, time, status, pageSize])
+  const notes = useMemo(() => {
+    const filtered =
+      importance === 'ALL'
+        ? base
+        : base.filter((n) => normalizeImportance(n.importance) === importance)
+    return [...filtered].sort((a, b) => {
+      if (grouped) {
+        const r =
+          IMPORTANCE_RANK[normalizeImportance(b.importance)] -
+          IMPORTANCE_RANK[normalizeImportance(a.importance)] // highest group first
+        if (r !== 0) return r
+      }
+      const byDate = b.createdAt.localeCompare(a.createdAt) // newest first
+      return sortDir === 'newest' ? byDate : -byDate
+    })
+  }, [base, importance, grouped, sortDir])
+
+  // Any filter/sort/group change or a resized page resets to the first page.
+  useEffect(
+    () => setPage(0),
+    [search, importance, author, time, status, sortDir, grouped, pageSize],
+  )
 
   if (store.projectNotes.length === 0) {
     return (
@@ -92,6 +134,30 @@ export function NotesView() {
 
   return (
     <div className="col" style={{ flex: 1, minHeight: 0, gap: 0 }}>
+      {/* Total, one KPI per importance (least→highest, coloured like the badges),
+          then Resolved. */}
+      <div className="kpi-strip">
+        <KpiTile label="Total Notes" icon="🗒" value={base.length.toLocaleString()} />
+        {NOTE_IMPORTANCE_LEVELS.map((lvl) => {
+          const m = NOTE_IMPORTANCE_META[lvl]
+          return (
+            <KpiTile
+              key={lvl}
+              label={m.label}
+              icon={m.glyph}
+              value={counts[lvl].toLocaleString()}
+              color={m.color}
+            />
+          )
+        })}
+        <KpiTile
+          label="Resolved"
+          icon="✓"
+          value={resolvedCount.toLocaleString()}
+          color="var(--green)"
+        />
+      </div>
+
       <div
         className="row"
         style={{
@@ -103,7 +169,7 @@ export function NotesView() {
           borderBottom: '1px solid var(--separator-soft)',
         }}
       >
-        <div className="search-row" style={{ flex: '1 1 200px', maxWidth: 320 }}>
+        <div className="search-row" style={{ flex: '1 1 200px', maxWidth: 300 }}>
           <span aria-hidden className="fg-secondary">
             🔍
           </span>
@@ -178,9 +244,31 @@ export function NotesView() {
             onChange={(e) => setStatus(e.target.value as 'ALL' | 'OPEN' | 'RESOLVED')}
           >
             <option value="ALL">All</option>
-            <option value="OPEN">Open</option>
+            <option value="OPEN">Unresolved</option>
             <option value="RESOLVED">Resolved</option>
           </select>
+        </label>
+
+        <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
+          Sort
+          <select
+            className="text-input"
+            style={selectStyle}
+            value={sortDir}
+            onChange={(e) => setSortDir(e.target.value as 'newest' | 'oldest')}
+          >
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+          </select>
+        </label>
+
+        <label className="row t-caption fg-secondary" style={{ gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={grouped}
+            onChange={(e) => setGrouped(e.target.checked)}
+          />
+          Group by importance
         </label>
 
         <label className="row t-caption fg-secondary" style={{ gap: 4 }}>
@@ -217,50 +305,67 @@ export function NotesView() {
             No notes match the current filters.
           </div>
         )}
-        {pageNotes.map((note) => (
-          <button
-            key={note.id}
-            className="note-card"
-            style={{ textAlign: 'left', cursor: 'pointer' }}
-            onClick={() =>
-              setEditing({
-                target: note.target,
-                existing: note,
-                snapshot: note.filterSnapshot,
-              })
-            }
-          >
-            <div className="n-head">
-              <span aria-hidden>{note.target.type === 'edge' ? '↝' : '⬭'}</span>
-              <strong>{noteTargetLabel(note.target)}</strong>
-              <ImportanceBadge level={normalizeImportance(note.importance)} />
-              {note.resolved && (
-                <span
-                  title="Resolved"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 3,
-                    padding: '1px 7px',
-                    borderRadius: 999,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: 'var(--green)',
-                    background: 'rgba(48,209,88,0.16)',
-                  }}
+        {pageNotes.map((note, i) => {
+          const imp = normalizeImportance(note.importance)
+          const showHeader =
+            grouped &&
+            (i === 0 || normalizeImportance(pageNotes[i - 1].importance) !== imp)
+          return (
+            <Fragment key={note.id}>
+              {showHeader && (
+                <div
+                  className="note-group-header"
+                  style={{ color: NOTE_IMPORTANCE_META[imp].color }}
                 >
-                  ✓ Resolved
-                </span>
+                  {NOTE_IMPORTANCE_META[imp].glyph} {NOTE_IMPORTANCE_META[imp].label} (
+                  {counts[imp]})
+                </div>
               )}
-              <span className="spacer" />
-              {note.isShared && <span title="Shared with other users">👥</span>}
-              <span>{note.authorName || note.username || '—'}</span>
-              <span>{formatDateTime(note.createdAt)}</span>
-            </div>
-            <div className="n-text">{note.text}</div>
-            <div className="n-meta">{snapshotSummary(note.filterSnapshot)}</div>
-          </button>
-        ))}
+              <button
+                className="note-card"
+                style={{ textAlign: 'left', cursor: 'pointer' }}
+                onClick={() =>
+                  setEditing({
+                    target: note.target,
+                    existing: note,
+                    snapshot: note.filterSnapshot,
+                  })
+                }
+              >
+                <div className="n-head">
+                  <span aria-hidden>{note.target.type === 'edge' ? '↝' : '⬭'}</span>
+                  <strong>{noteTargetLabel(note.target)}</strong>
+                  <ImportanceBadge level={imp} />
+                  {note.resolved && (
+                    <span
+                      title="Resolved"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 3,
+                        padding: '1px 7px',
+                        borderRadius: 999,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: 'var(--green)',
+                        background: 'rgba(48,209,88,0.16)',
+                      }}
+                    >
+                      ✓ Resolved
+                    </span>
+                  )}
+                  <span className="spacer" />
+                  {note.isShared && <span title="Shared with other users">👥</span>}
+                  <span>{note.authorName || note.username || '—'}</span>
+                  <span>{formatDateTime(note.createdAt)}</span>
+                </div>
+                <div className="n-title">{note.title || '—'}</div>
+                <div className="n-text">{note.text}</div>
+                <div className="n-meta">{snapshotSummary(note.filterSnapshot)}</div>
+              </button>
+            </Fragment>
+          )
+        })}
       </div>
 
       {notes.length > 0 && (

@@ -233,6 +233,7 @@ export const api = {
     projectId: string,
     noteId: string,
     body: {
+      title?: string
       comment?: string
       resolved?: boolean
       importance?: string

@@ -301,6 +301,7 @@ export interface NoteTarget {
 
 export interface ProcessNote {
   id: string
+  title: string
   text: string
   createdAt: string
   editedAt: string | null

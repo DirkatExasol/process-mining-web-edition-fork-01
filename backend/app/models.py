@@ -297,6 +297,7 @@ def normalize_importance(value: object) -> str:
 
 class ProcessNote(Base):
     id: str = Field(default_factory=new_id)
+    title: str = ""  # short subject; on a thread it is the latest entry's title
     text: str = ""
     createdAt: datetime = Field(default_factory=datetime.now)
     editedAt: datetime | None = None

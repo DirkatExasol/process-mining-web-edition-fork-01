@@ -1802,16 +1802,61 @@ textarea.text-input {
   gap: 8px;
   font-size: 11px;
   color: var(--secondary);
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
+/* The target label yields space (truncating) so the head stays a single line. */
+.note-card .n-head strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* The note's title (its latest subject) as a separate one-line heading. */
+.note-card .n-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Clamp every note preview to a fixed two-line box so all cards are the same size,
+   however long the underlying comment thread is. Line breaks in the text are kept
+   (pre-wrap) so multi-line comments read naturally — just truncated after 2 lines. */
 .note-card .n-text {
   font-size: 13px;
+  line-height: 1.4;
+  height: 2.8em;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
   white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .note-card .n-meta {
   font-size: 10px;
   color: var(--tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Group-by-importance section header in the notes list. */
+.note-group-header {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 4px 2px;
+  position: sticky;
+  top: 0;
+  background: var(--bg-grouped);
+  z-index: 1;
 }
 
 /* ── Help panel (floating, draggable) ─────────────────────────────────────── */

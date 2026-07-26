@@ -1,8 +1,9 @@
 /** Shared node/edge note plumbing — ports `handleNodeNoteEdit` /
  *  `handleEdgeNoteEdit` from ProcessMapView.swift.
  *
- * Zero existing notes opens the editor, one opens it pre-filled, several open
- * the list sheet. */
+ * Zero existing notes opens the editor to create one; one or more open the list
+ * sheet, which shows every note for the target plus a "New note" button — so a node
+ * or edge can carry more than one note. */
 
 import { useCallback, useState, type ReactNode } from 'react'
 import {
@@ -13,9 +14,14 @@ import {
 import { useStore } from '../store'
 import type { NoteTarget, ProcessNote, ProcessTransition } from '../types'
 
-interface NoteListState {
-  target: NoteTarget
-  notes: ProcessNote[]
+function notesForTarget(notes: ProcessNote[], target: NoteTarget): ProcessNote[] {
+  return notes.filter((n) =>
+    target.type === 'edge'
+      ? n.target.type === 'edge' &&
+        n.target.from === target.from &&
+        n.target.to === target.to
+      : n.target.type === 'node' && n.target.value === target.value,
+  )
 }
 
 export function useNoteHandlers(): {
@@ -25,61 +31,47 @@ export function useNoteHandlers(): {
 } {
   const store = useStore()
   const [editor, setEditor] = useState<NoteEditorTarget | null>(null)
-  const [list, setList] = useState<NoteListState | null>(null)
+  const [listTarget, setListTarget] = useState<NoteTarget | null>(null)
 
   const open = useCallback(
-    (target: NoteTarget, matching: ProcessNote[]) => {
-      const snapshot = store.currentFilterSnapshot()
-      if (matching.length === 0) {
-        setEditor({ target, existing: null, snapshot })
-      } else if (matching.length === 1) {
-        setEditor({
-          target,
-          existing: matching[0],
-          snapshot: matching[0].filterSnapshot,
-        })
+    (target: NoteTarget) => {
+      if (notesForTarget(store.projectNotes, target).length === 0) {
+        // Nothing yet — go straight to creating the first note.
+        setEditor({ target, existing: null, snapshot: store.currentFilterSnapshot() })
       } else {
-        setList({ target, notes: matching })
+        // One or more — show the list (with a "New note" button) so the user can
+        // read any existing note AND add another to the same node/edge.
+        setListTarget(target)
       }
     },
     [store],
   )
 
   const openNodeNotes = useCallback(
-    (node: string) => {
-      const matching = store.projectNotes.filter(
-        (n) => n.target.type === 'node' && n.target.value === node,
-      )
-      open({ type: 'node', value: node }, matching)
-    },
-    [open, store.projectNotes],
+    (node: string) => open({ type: 'node', value: node }),
+    [open],
   )
 
   const openEdgeNotes = useCallback(
-    (transition: ProcessTransition) => {
-      const matching = store.projectNotes.filter(
-        (n) =>
-          n.target.type === 'edge' &&
-          n.target.from === transition.fromStep &&
-          n.target.to === transition.toStep,
-      )
-      open(
-        { type: 'edge', from: transition.fromStep, to: transition.toStep },
-        matching,
-      )
-    },
-    [open, store.projectNotes],
+    (transition: ProcessTransition) =>
+      open({ type: 'edge', from: transition.fromStep, to: transition.toStep }),
+    [open],
   )
+
+  // Derive the list's notes from the live store so adding a note refreshes it.
+  const listNotes = listTarget
+    ? notesForTarget(store.projectNotes, listTarget)
+    : []
 
   const element = (
     <>
       {editor && <NoteEditorSheet item={editor} onClose={() => setEditor(null)} />}
-      {list && (
+      {listTarget && (
         <NoteListSheet
-          target={list.target}
-          notes={list.notes}
+          target={listTarget}
+          notes={listNotes}
           snapshot={store.currentFilterSnapshot()}
-          onClose={() => setList(null)}
+          onClose={() => setListTarget(null)}
         />
       )}
     </>

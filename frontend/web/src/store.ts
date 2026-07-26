@@ -352,6 +352,7 @@ export interface AppActions {
   updateNote: (
     noteId: string,
     body: {
+      title?: string
       comment?: string
       resolved?: boolean
       importance?: string

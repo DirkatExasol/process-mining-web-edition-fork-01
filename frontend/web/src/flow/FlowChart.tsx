@@ -328,17 +328,23 @@ function FlowChartInner(props: FlowChartProps) {
 
   // ── Note lookup ─────────────────────────────────────────────────────────
 
-  const { noteNodes, noteEdges } = useMemo(() => {
+  const { noteNodes, noteEdges, noteCounts } = useMemo(() => {
     const nodesWithNotes = new Set<string>()
     const edgesWithNotes = new Set<string>()
+    const counts = new Map<string, number>() // "node:<name>" / "edge:<from>-><to>" → count
     for (const note of notes ?? []) {
+      let key: string | null = null
       if (note.target.type === 'edge') {
-        edgesWithNotes.add(`${note.target.from}->${note.target.to}`)
+        const e = `${note.target.from}->${note.target.to}`
+        edgesWithNotes.add(e)
+        key = `edge:${e}`
       } else if (note.target.value) {
         nodesWithNotes.add(note.target.value)
+        key = `node:${note.target.value}`
       }
+      if (key) counts.set(key, (counts.get(key) ?? 0) + 1)
     }
-    return { noteNodes: nodesWithNotes, noteEdges: edgesWithNotes }
+    return { noteNodes: nodesWithNotes, noteEdges: edgesWithNotes, noteCounts: counts }
   }, [notes])
 
   // ── ReactFlow nodes ─────────────────────────────────────────────────────
@@ -921,7 +927,7 @@ function FlowChartInner(props: FlowChartProps) {
                   setMenu(null)
                 }}
               >
-                ✎ Show Notes
+                ✎ Show Notes ({noteCounts.get(`node:${menu.node}`) ?? 0})
               </button>
             )}
           </div>
@@ -949,7 +955,11 @@ function FlowChartInner(props: FlowChartProps) {
                 setMenu(null)
               }}
             >
-              ✎ Show Notes
+              ✎ Show Notes (
+              {noteCounts.get(
+                `edge:${menu.transition.fromStep}->${menu.transition.toStep}`,
+              ) ?? 0}
+              )
             </button>
           </div>
         </>

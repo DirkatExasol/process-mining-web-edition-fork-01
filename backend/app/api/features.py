@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import log_events as logx
 from ..config import DEFAULT_LLM_PROMPT
@@ -77,31 +77,29 @@ async def save_note(project_id: str, note: ProcessNote) -> ProcessNote:
     # The note author is the logged-in app user (X-PMW-User), NOT the shared
     # database connection user.
     author = current_user() or ""
-    # Authorize by true ownership (not visibility): a shared note is visible to all
-    # users of the connection, but only its author may edit it.
-    owner = await r.note_owner(note.id)
-    if owner is not None and owner != "" and owner.upper() != author.upper():
-        raise HTTPException(status_code=403, detail="You cannot edit another user's note.")
+    # Creation only. An existing note is an append-only thread — comments, resolved
+    # and reclassification go through POST .../notes/{id}, so this PUT can never
+    # rewrite an existing note's history (which would discard other users' comments).
+    if await r.note_owner(note.id) is not None:
+        raise HTTPException(
+            status_code=409, detail="This note already exists — add a comment instead."
+        )
 
-    if owner is None:
-        note.username = author
-        note.lastEditedBy = ""
-    else:
-        # Editing preserves the original author (or leaves an unowned note unowned)
-        # and records who made this edit.
-        note.username = owner
-        note.lastEditedBy = author
-        note.editedAt = datetime.now()
-
+    note.username = author
+    note.lastEditedBy = ""
     await r.upsert_note(note, project_id, author)
     return _annotate_note(note)
 
 
 class NoteUpdateBody(BaseModel):
-    """Partial update of an existing note. `comment` is appended to the thread;
-    `resolved` may be toggled by any viewer; importance/isShared are owner-only."""
+    """Partial update of an existing note. `comment` (with an optional `title`) is
+    added to the thread; `resolved` may be toggled by any viewer; importance/isShared
+    are owner-only."""
 
-    comment: str = ""
+    title: str = Field(default="", max_length=200)
+    # Capped so one commenter can't fill a shared note's thread (and block everyone
+    # else) or send an oversized body. Plenty for an annotation/comment.
+    comment: str = Field(default="", max_length=4000)
     resolved: bool | None = None
     importance: str | None = None
     isShared: bool | None = None
@@ -125,17 +123,25 @@ async def update_note(project_id: str, note_id: str, body: NoteUpdateBody) -> Pr
     if not (is_owner or is_shared or owner == ""):
         raise HTTPException(status_code=403, detail="You cannot access this note.")
 
-    append_block: str | None = None
+    comment_block: str | None = None
+    new_title = body.title.strip() or None
     if body.comment.strip():
         name = _note_display_name(caller) or caller or "unknown"
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-        append_block = f"\n\n—— {name} · {stamp} ——\n{body.comment.strip()}"
+        # The header carries the (optional) title, so each comment's title is visible
+        # in the thread; the trailing blank line separates it from the older content
+        # it is prepended in front of (newest on top).
+        header = f"—— {new_title} · {name} · {stamp} ——" if new_title else f"—— {name} · {stamp} ——"
+        comment_block = f"{header}\n{body.comment.strip()}\n\n"
 
     await r.update_note(
         note_id,
         project_id,
         edited_by=caller,
-        append_block=append_block,
+        comment_block=comment_block,
+        # The note's title tracks the latest titled entry, so the overview heading
+        # shows the most recent subject. Not owner-gated (part of the comment).
+        title=new_title,
         resolved=body.resolved,
         # Note-level classification stays owner-only; a non-owner's values are ignored.
         importance=body.importance if is_owner else None,

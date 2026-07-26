@@ -232,7 +232,7 @@ def test_update_note_builds_partial_update_sql():
             "n-9",
             "proj",
             edited_by="Bob",
-            append_block="\n\n—— Bob · 2026-07-25 ——\nlooks fixed",
+            comment_block="—— Bob · 2026-07-25 ——\nlooks fixed\n\n",
             resolved=True,
             importance="URGENT",
             is_shared=True,
@@ -240,7 +240,7 @@ def test_update_note_builds_partial_update_sql():
     )
     sql = mgr.executed[-1]
     assert sql.startswith("UPDATE NOTES SET")
-    assert "NOTE = NOTE || '" in sql and "looks fixed" in sql
+    assert "|| NOTE" in sql and "looks fixed" in sql  # prepended (newest on top)
     assert "RESOLVED = TRUE" in sql
     assert "IMPORTANCE = 'URGENT'" in sql
     assert "IS_SHARED = TRUE" in sql
@@ -253,7 +253,7 @@ def test_update_note_omits_untouched_fields():
     asyncio.run(r.update_note("n-9", "proj", edited_by="Bob", resolved=False))
     sql = mgr.executed[-1]
     assert "RESOLVED = FALSE" in sql
-    assert "NOTE = NOTE ||" not in sql  # no comment appended
+    assert "|| NOTE" not in sql  # no comment prepended
     assert "IMPORTANCE" not in sql and "IS_SHARED" not in sql
 
 
@@ -315,7 +315,7 @@ def test_endpoint_owner_can_reclassify(monkeypatch):
         meta=("alice", False),
         body=NoteUpdateBody(comment="more", resolved=True, importance="URGENT", isShared=True),
     )
-    assert "more" in repo.update_kwargs["append_block"]
+    assert "more" in repo.update_kwargs["comment_block"]
     assert repo.update_kwargs["resolved"] is True
     assert repo.update_kwargs["importance"] == "URGENT"
     assert repo.update_kwargs["is_shared"] is True
@@ -330,7 +330,7 @@ def test_endpoint_non_owner_can_comment_but_not_reclassify(monkeypatch):
         meta=("alice", True),  # alice's shared note → bob may comment + resolve
         body=NoteUpdateBody(comment="fixed", resolved=True, importance="URGENT", isShared=False),
     )
-    assert "fixed" in repo.update_kwargs["append_block"]
+    assert "fixed" in repo.update_kwargs["comment_block"]
     assert repo.update_kwargs["resolved"] is True
     assert repo.update_kwargs["importance"] is None  # ignored for non-owner
     assert repo.update_kwargs["is_shared"] is None
@@ -359,3 +359,111 @@ def test_endpoint_missing_note_is_404(monkeypatch):
     with __import__("pytest").raises(HTTPException) as ei:
         _run_update(monkeypatch, caller="bob", meta=None, body=NoteUpdateBody(comment="x"))
     assert ei.value.status_code == 404
+
+
+# ── Security hardening (6th review): comment cap, create-only PUT, fail-closed ──
+
+
+def test_note_comment_length_is_capped():
+    from pydantic import ValidationError
+
+    from app.api.features import NoteUpdateBody
+
+    NoteUpdateBody(comment="x" * 4000)  # at the limit — accepted
+    with __import__("pytest").raises(ValidationError):
+        NoteUpdateBody(comment="x" * 4001)  # over the limit — rejected
+
+
+def test_load_notes_is_fail_closed_for_empty_user():
+    r, mgr = _cap_repo(rows=[])
+    asyncio.run(r.load_notes("proj", ""))
+    sql = mgr.executed[-1]
+    # An unknown/empty user still only sees unowned or shared notes — never all.
+    assert "IS_SHARED = TRUE" in sql
+    assert "NOTE_USER = ''" in sql
+
+
+def _run_save(monkeypatch, *, caller, existing_owner):
+    from app.api import features
+
+    class _Repo:
+        def __init__(self):
+            self.upserted = False
+
+        async def ensure_notes_table(self):
+            pass
+
+        async def note_owner(self, note_id):
+            return existing_owner  # None ⇒ brand-new note
+
+        async def upsert_note(self, note, project_id, author):
+            self.upserted = True
+
+    repo = _Repo()
+    monkeypatch.setattr(features, "require_connection", lambda: None)
+    monkeypatch.setattr(features, "repo", lambda: repo)
+    monkeypatch.setattr(features, "current_user", lambda: caller)
+    monkeypatch.setattr(features, "_note_display_name", lambda u: u)
+    note = ProcessNote(
+        id="n1",
+        text="hi",
+        createdAt=datetime(2026, 1, 1),
+        target=NoteTarget(type="node", value="A"),
+        filterSnapshot=FilterSnapshot(fromDate=datetime(2026, 1, 1), toDate=datetime(2026, 1, 2)),
+    )
+    return repo, asyncio.run(features.save_note("proj", note))
+
+
+def test_save_note_creates_a_new_note(monkeypatch):
+    repo, result = _run_save(monkeypatch, caller="alice", existing_owner=None)
+    assert repo.upserted is True
+    assert result.username == "alice"
+
+
+def test_save_note_rejects_existing_note_id(monkeypatch):
+    from fastapi import HTTPException
+
+    # PUT on an existing note is refused (409) so it can't overwrite the thread —
+    # edits go through the append-only update endpoint instead.
+    with __import__("pytest").raises(HTTPException) as ei:
+        _run_save(monkeypatch, caller="bob", existing_owner="alice")
+    assert ei.value.status_code == 409
+
+
+# ── Note titles (subject shown separately in the overview / editor) ────────────
+
+
+def test_upsert_note_includes_title():
+    r, mgr = _cap_repo()
+    note = ProcessNote(
+        id="n-7",
+        title="Bottleneck here",
+        text="hi",
+        createdAt=datetime(2026, 1, 1),
+        target=NoteTarget(type="node", value="A"),
+        filterSnapshot=FilterSnapshot(fromDate=datetime(2026, 1, 1), toDate=datetime(2026, 1, 2)),
+        username="Bob",
+    )
+    asyncio.run(r.upsert_note(note, "proj", "Bob"))
+    insert = mgr.executed[-1]
+    assert "TITLE" in insert and "'Bottleneck here'" in insert
+
+
+def test_update_note_sets_title():
+    r, mgr = _cap_repo()
+    asyncio.run(r.update_note("n-9", "proj", edited_by="Bob", title="New subject"))
+    assert "TITLE = 'New subject'" in mgr.executed[-1]
+
+
+def test_endpoint_comment_title_updates_note_title(monkeypatch):
+    from app.api.features import NoteUpdateBody
+
+    repo, _ = _run_update(
+        monkeypatch,
+        caller="alice",
+        meta=("alice", False),
+        body=NoteUpdateBody(title="Bottleneck", comment="we see delays here"),
+    )
+    # The comment's title becomes the note's shown title and appears in the header.
+    assert repo.update_kwargs["title"] == "Bottleneck"
+    assert "Bottleneck" in repo.update_kwargs["comment_block"]
