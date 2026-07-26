@@ -216,3 +216,11 @@ def test_dashboard_has_customize_login_section(dashboard):
 def test_login_page_accepts_custom_background(pages):
     assert "background: #123456;" in pages.login_page(bg_css="#123456")
     assert "background: var(--l-grouped);" in pages.login_page()
+
+
+def test_customize_preview_avoids_login_only_css_var(dashboard):
+    # --l-grouped is defined only on the login page; referencing it in the
+    # dashboard's Customize preview made the image `background` shorthand an
+    # invalid (undefined-var) declaration, so the picked image never painted.
+    assert "--l-grouped" not in dashboard
+    assert 'id="lbg_preview"' in dashboard

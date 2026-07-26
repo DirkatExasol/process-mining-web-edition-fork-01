@@ -691,24 +691,41 @@ class SecurityStore:
         Raises ValueError on bad input. Returns the stored appearance."""
         if type not in _LOGIN_BG_TYPES:
             raise ValueError(f"Unknown login background type {type!r}")
+
+        # Validate ANY supplied value up front, not just the one matching `type`,
+        # so a non-active field can never persist an unvalidated (CSS-unsafe)
+        # value — even though the render side re-checks before injecting.
         color = (color or "").strip()
-        if type == LOGIN_BG_COLOR and not _HEX_COLOR_RE.match(color):
+        if color and not _HEX_COLOR_RE.match(color):
+            raise ValueError("Color must be a #rrggbb hex value")
+        if image is not None:
+            image = image.strip()
+            if image:
+                if len(image) > _MAX_LOGIN_IMAGE_CHARS:
+                    raise ValueError("Image is too large (max ~3 MB)")
+                if not _DATA_IMAGE_RE.match(image):
+                    raise ValueError(
+                        "Background image must be a PNG, JPEG, GIF, WebP or SVG"
+                    )
+
+        if type == LOGIN_BG_COLOR and not color:
             raise ValueError("Color must be a #rrggbb hex value")
         if type == LOGIN_BG_IMAGE:
-            candidate = image if image is not None else self._get_config("login_bg_image")
-            candidate = (candidate or "").strip()
+            # No new upload → the already-stored image must itself be valid.
+            candidate = image if image else (self._get_config("login_bg_image") or "")
             if not candidate:
                 raise ValueError("Choose a background image first")
-            if len(candidate) > _MAX_LOGIN_IMAGE_CHARS:
-                raise ValueError("Image is too large (max ~3 MB)")
-            if not _DATA_IMAGE_RE.match(candidate):
-                raise ValueError("Background image must be a PNG, JPEG, GIF, WebP or SVG")
+            if len(candidate) > _MAX_LOGIN_IMAGE_CHARS or not _DATA_IMAGE_RE.match(
+                candidate
+            ):
+                raise ValueError("Choose a valid background image first")
+
         with self._lock:
             self._set_config("login_bg_type", type)
             if color:
                 self._set_config("login_bg_color", color)
-            if image is not None:
-                self._set_config("login_bg_image", image.strip())
+            if image:
+                self._set_config("login_bg_image", image)
             self._conn.commit()
         return self.login_appearance()
 

@@ -687,3 +687,19 @@ def test_login_appearance_rejects_bad_input(security):
     # An image type with nothing ever uploaded is rejected too.
     with pytest.raises(ValueError):
         store.set_login_appearance(type="image")
+
+
+def test_login_appearance_validates_non_active_fields(security):
+    store = security.store
+    # A garbage colour is rejected even when colour is not the active type, so no
+    # unvalidated (CSS-unsafe) value can ever be persisted.
+    with pytest.raises(ValueError):
+        store.set_login_appearance(type="default", color="garbage")
+    # A garbage image is rejected even under a different active type.
+    with pytest.raises(ValueError):
+        store.set_login_appearance(type="color", color="#000000", image="not-a-data-uri")
+    # A CSS-breaking image payload (would escape url("…")) is rejected.
+    with pytest.raises(ValueError):
+        store.set_login_appearance(
+            type="image", image='data:image/png;base64,abc"),url(http://evil'
+        )

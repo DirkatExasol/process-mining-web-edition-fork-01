@@ -34,4 +34,11 @@ describe('Sidebar Metrics section', () => {
     expect(screen.queryByText('Metrics')).toBeNull()
     expect(screen.queryByText('Sampling')).toBeNull()
   })
+
+  it('auto-opens the Filters (Event ID) section in Individual Journey mode', () => {
+    useStore.setState({ activeChartMode: 'Individual Journey' })
+    render(<Sidebar onCollapse={() => {}} />)
+    // The Filters section is expanded on entry, revealing the Event ID field.
+    expect(screen.getByText('Event ID')).toBeInTheDocument()
+  })
 })

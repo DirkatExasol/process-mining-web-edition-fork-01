@@ -4,7 +4,7 @@
  * Configuration): opening one collapses the others, exactly like the Swift
  * `collapseAllSections()` behaviour. */
 
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { KPI_DEFAULT_ORDER, KPI_META, TRANSITION_METRICS } from '../types'
 import type {
   AssignedConnection,
@@ -58,6 +58,13 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
 
   const toggleSection = (id: SectionId) =>
     setOpenSection((current) => (current === id ? null : id))
+
+  // Switching to Individual Journey opens the Filters section (its Event ID
+  // field) so you can start typing immediately. Fires only on the mode change,
+  // so you can still collapse it afterwards.
+  useEffect(() => {
+    if (store.activeChartMode === 'Individual Journey') setOpenSection('filters')
+  }, [store.activeChartMode])
 
   return (
     <aside className="sidebar">

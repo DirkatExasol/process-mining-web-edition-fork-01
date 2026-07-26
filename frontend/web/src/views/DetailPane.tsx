@@ -240,6 +240,8 @@ function IndividualJourneyView() {
       // here — always show the average transition time. The sidebar Metrics
       // selector is hidden for this mode (see Sidebar).
       metric="Avg Time"
+      // Play a dot along the edges in the order the steps occurred.
+      animateJourney
     />
   )
 }

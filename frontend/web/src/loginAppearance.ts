@@ -10,6 +10,11 @@ export interface LoginAppearance {
 }
 
 const HEX = /^#[0-9a-fA-F]{6}$/
+// Mirrors the server-side validation: a strict image data URI whose payload is
+// pure base64 (no ", ), <, whitespace …). Validating here too means a tampered
+// or MITM-injected appearance response can never inject extra CSS / an external
+// url() layer, regardless of what the fetch returned.
+const DATA_IMAGE = /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,[A-Za-z0-9+/]+={0,2}$/
 
 /**
  * CSS `background` value for the sign-in backdrop. Falls back to the theme
@@ -25,7 +30,7 @@ export function loginBackground(
   if (appearance.type === 'color' && HEX.test(appearance.color)) {
     return appearance.color
   }
-  if (appearance.type === 'image' && appearance.image.startsWith('data:image/')) {
+  if (appearance.type === 'image' && DATA_IMAGE.test(appearance.image)) {
     return `${fallback} url("${appearance.image}") center / cover no-repeat`
   }
   return fallback

@@ -729,7 +729,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
 
     <div style="margin-top:16px">
       <div class="subtle" style="margin-bottom:6px">Preview</div>
-      <div id="lbg_preview" style="width:100%; max-width:520px; height:150px; border-radius:10px; border:1px solid var(--border-soft); background:var(--l-grouped); display:grid; place-items:center">
+      <div id="lbg_preview" style="width:100%; max-width:520px; height:150px; border-radius:10px; border:1px solid var(--border-soft); background:var(--bg); display:grid; place-items:center">
         <div style="padding:10px 16px; border-radius:10px; background:rgba(255,255,255,.82); color:#000; font-size:13px; box-shadow:0 6px 20px rgba(0,0,0,.18)">Sign in</div>
       </div>
     </div>
@@ -1166,9 +1166,9 @@ function pickLoginImage() {
 function updateLoginPreview() {
   const type = (document.querySelector('input[name="loginBg"]:checked') || {}).value || 'default';
   const el = $('lbg_preview');
-  if (type === 'color') el.style.background = $('lbg_colorHex').value || 'var(--l-grouped)';
-  else if (type === 'image' && _loginImage) el.style.background = 'var(--l-grouped) url("' + _loginImage + '") center / cover no-repeat';
-  else el.style.background = 'var(--l-grouped)';
+  if (type === 'color') el.style.background = $('lbg_colorHex').value || 'var(--bg)';
+  else if (type === 'image' && _loginImage) el.style.background = 'var(--bg) url("' + _loginImage + '") center / cover no-repeat';
+  else el.style.background = 'var(--bg)';
 }
 
 async function saveLoginBg() {

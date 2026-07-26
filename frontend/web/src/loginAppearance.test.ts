@@ -15,6 +15,15 @@ describe('loginBackground', () => {
     expect(loginBackground({ type: 'image', color: '', image: 'http://x/y.png' })).toBe(
       'var(--bg-grouped)',
     )
+    // an image whose payload isn't pure base64 (could break out of url("…") and
+    // inject an external layer) is rejected — only the strict data URI is used
+    expect(
+      loginBackground({
+        type: 'image',
+        color: '',
+        image: 'data:image/png;base64,abc"),url(http://evil/beacon',
+      }),
+    ).toBe('var(--bg-grouped)')
   })
 
   it('uses a valid hex colour', () => {

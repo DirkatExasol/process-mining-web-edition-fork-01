@@ -32,10 +32,67 @@ export interface MetricEdgeData extends Record<string, unknown> {
   hasNote: boolean
   nodeH: number
   edgeScale: number
+  /** Individual Journey playback: animate a dot along this edge in turn. */
+  flowActive?: boolean
+  flowIndex?: number
+  flowTotal?: number
   onEdgeClick?: (transition: ProcessTransition, screen: { x: number; y: number }) => void
 }
 
 const SECONDARY = '#8E8E93'
+const FLOW_COLOR = '#0A84FF'
+const FLOW_SECS_PER_EDGE = 0.8 // one edge's dot travel time; total loop = N × this
+
+/**
+ * SMIL keyframes for a single dot that traverses `total` edges one after
+ * another over a shared loop. Each edge's dot moves along its own path only
+ * during its 1/total time slot (rest of the loop it is hidden). Returns the
+ * motion keyPoints/keyTimes (progress 0→1 along the path) and the opacity
+ * on/off schedule (discrete). All edges share the same `dur`, so they stay in
+ * lock-step and the dot appears to hop from edge to edge in order.
+ */
+export function flowKeyframes(index: number, total: number) {
+  const a = index / total
+  const b = (index + 1) / total
+  const f = (n: number) => n.toFixed(4)
+
+  // Motion: hold at start until a, move a→b, hold at end. Collapse equal times.
+  const motion: Array<[number, number]> = [
+    [0, 0],
+    [a, 0],
+    [b, 1],
+    [1, 1],
+  ]
+  const mTimes: string[] = []
+  const mPoints: string[] = []
+  for (const [t, p] of motion) {
+    if (mTimes.length && f(t) === mTimes[mTimes.length - 1]) {
+      mPoints[mPoints.length - 1] = f(p) // equal time → keep the later point
+    } else {
+      mTimes.push(f(t))
+      mPoints.push(f(p))
+    }
+  }
+
+  // Opacity (discrete): visible only during [a, b].
+  const oTimes: string[] = ['0']
+  const oValues: string[] = [a === 0 ? '1' : '0']
+  if (a > 0) {
+    oTimes.push(f(a))
+    oValues.push('1')
+  }
+  if (b < 1) {
+    oTimes.push(f(b))
+    oValues.push('0')
+  }
+
+  return {
+    keyPoints: mPoints.join(';'),
+    keyTimes: mTimes.join(';'),
+    opacityTimes: oTimes.join(';'),
+    opacityValues: oValues.join(';'),
+  }
+}
 
 /** Cubic path matching the Swift `addCurve` control points. */
 function edgePath(
@@ -74,6 +131,9 @@ function MetricEdgeComponent({
     hasNote,
     nodeH,
     edgeScale,
+    flowActive,
+    flowIndex,
+    flowTotal,
     onEdgeClick,
   } = d
   const eScale = edgeScale || 1
@@ -218,6 +278,37 @@ function MetricEdgeComponent({
           onEdgeClick?.(transition, { x: event.clientX, y: event.clientY })
         }
       />
+
+      {/* Individual Journey playback: a dot travels this edge during its slot in
+          the shared loop, so a single marker hops edge-to-edge in time order. */}
+      {flowActive &&
+        flowTotal != null &&
+        flowTotal > 0 &&
+        (() => {
+          const total = flowTotal * FLOW_SECS_PER_EDGE
+          const kf = flowKeyframes(flowIndex ?? 0, flowTotal)
+          const r = Math.max(4, Math.round(3 * eScale))
+          return (
+            <circle r={r} fill={FLOW_COLOR} stroke="#fff" strokeWidth={1.5} opacity={0}>
+              <animateMotion
+                dur={`${total}s`}
+                repeatCount="indefinite"
+                calcMode="linear"
+                keyPoints={kf.keyPoints}
+                keyTimes={kf.keyTimes}
+                path={path}
+              />
+              <animate
+                attributeName="opacity"
+                dur={`${total}s`}
+                repeatCount="indefinite"
+                calcMode="discrete"
+                keyTimes={kf.opacityTimes}
+                values={kf.opacityValues}
+              />
+            </circle>
+          )
+        })()}
 
       <EdgeLabelRenderer>
         <div
