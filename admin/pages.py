@@ -213,6 +213,9 @@ def login_page(error: str = "", inactivity: bool = False, bg_css: str = "") -> s
     theme colour."""
     # Custom background chosen in the admin Customize tab, or the theme default.
     body_bg = bg_css or "var(--l-grouped)"
+    # Over a custom background image, make the panel 50% transparent so the image
+    # shows through (a colour/default background keeps the panel solid).
+    panel_class = " translucent" if "url(" in body_bg else ""
     err = (
         f'<div class="login-err">{html.escape(error)}</div>' if error else ""
     )
@@ -243,6 +246,9 @@ body {{ display: grid; place-items: center; min-height: 100vh; background: {body
 .login-splash {{ width: min(460px, 100%); border-radius: 20px; background: var(--l-material);
   -webkit-backdrop-filter: blur(30px); backdrop-filter: blur(30px); box-shadow: var(--l-shadow);
   padding: 32px 28px; display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }}
+/* Over a background image the panel is 50% transparent; content stays opaque. */
+.login-splash.translucent {{ background: rgba(255,255,255,.5); }}
+:root[data-theme='dark'] .login-splash.translucent {{ background: rgba(38,38,40,.5); }}
 .login-splash .login-logo {{ width: 64px; height: 64px; border-radius: 11px; display: grid; place-items: center;
   background: none; box-shadow: 0 2px 6px rgba(10,20,60,.28); flex-shrink: 0; }}
 .login-splash .login-logo .pm-logo {{ width: 100%; height: 100%; }}
@@ -263,14 +269,14 @@ body {{ display: grid; place-items: center; min-height: 100vh; background: {body
 .login-splash .login-err, .login-splash .login-notice {{ width: 100%; padding: 10px 12px; border-radius: 6px;
   font-size: 12px; text-align: left; }}
 .login-splash .login-err {{ background: rgba(255,59,48,.12); border: 1px solid rgba(255,59,48,.32); color: #ff3b30; }}
-.login-splash .login-notice {{ background: rgba(255,159,10,.12); border: 1px solid rgba(255,159,10,.32); color: #ff9500; }}
+.login-splash .login-notice {{ background: rgba(255,159,10,.12); border: 1px solid rgba(255,159,10,.32); color: #ff9500; text-align: center; }}
 .login-splash .dir-row {{ display: flex; align-items: center; gap: 6px; }}
 .login-splash .t-caption2 {{ font-size: 10px; color: var(--l-secondary); }}
 .login-splash .spinner {{ width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255,255,255,.4);
   border-top-color: #fff; animation: spin .8s linear infinite; display: inline-block; }}
 @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
 </style></head><body>
-<div class="login-splash">
+<div class="login-splash{panel_class}">
   <div class="login-logo">{_LOGO_SVG}</div>
   <div class="title-col">
     <span class="t-title3">Process Mining Demonstrator</span>

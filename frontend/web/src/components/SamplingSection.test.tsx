@@ -26,4 +26,13 @@ describe('SamplingSection', () => {
     render(<SamplingSection />)
     expect(screen.getAllByText('Not created')).toHaveLength(3)
   })
+
+  it('notes that sample sets are shared project-wide (not per-user)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    useStore.setState({ sampleCounts: {} as any, sampleMethods: {} as any })
+    render(<SamplingSection />)
+    expect(
+      screen.getByText(/shared by\s+everyone connected to it/i),
+    ).toBeInTheDocument()
+  })
 })

@@ -88,7 +88,7 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
       style={{ background: loginBackground(appearance), position: 'fixed', inset: 0 }}
     >
       <form
-        className="splash"
+        className={`splash${appearance?.type === 'image' ? ' over-image' : ''}`}
         style={{ gap: 16, cursor: 'default' }}
         onSubmit={submit}
       >

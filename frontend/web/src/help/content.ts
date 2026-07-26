@@ -985,6 +985,7 @@ const sampling: HelpTopic = {
       body: [
         p('On very large event logs, working with a representative subset keeps exploration interactive while preserving the process’s shape. Create up to three named sample sets from the original data; the A and B chart slots can each select their own sample independently.'),
         p('Samples are written to a SAMPLE_SET column on the JOURNEYS table (added automatically on first use). The original rows are never modified, and deleting a sample removes only its rows.'),
+        p('Because sample sets live in the project database, they are shared by everyone connected to that project — unlike your personal settings and filter presets, which are stored per user. Creating or deleting a sample changes it for all users of the project.'),
       ],
     },
     {

@@ -207,6 +207,22 @@ export function SamplingSection() {
 
   return (
     <div className="col" style={{ gap: 0 }}>
+      <div
+        className="row"
+        style={{ padding: '10px 20px 8px', gap: 8, alignItems: 'flex-start' }}
+      >
+        <span aria-hidden className="fg-secondary" style={{ lineHeight: 1.3 }}>
+          ⓘ
+        </span>
+        <span className="t-caption2 fg-secondary" style={{ lineHeight: 1.35 }}>
+          Sample sets are stored in the project&apos;s database and are shared by
+          everyone connected to it — unlike your personal settings and filter
+          presets. Creating or deleting one changes it for all users of this
+          project.
+        </span>
+      </div>
+      <Divider />
+
       <div className="col" style={{ gap: 4, padding: '8px 20px' }}>
         <div className="row t-caption fg-secondary" style={{ gap: 6 }}>
           <span aria-hidden>▤</span> Active data
