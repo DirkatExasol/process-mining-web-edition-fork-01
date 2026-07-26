@@ -52,6 +52,9 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
     { conn: ManagedConnection | null } | null
   >(null)
   const canManageConnections = store.authIsPower || store.authIsAdmin
+  // Individual Journey always renders with a fixed metric (Avg Time), so its
+  // metric picker is hidden.
+  const isIndividualJourney = store.activeChartMode === 'Individual Journey'
 
   const toggleSection = (id: SectionId) =>
     setOpenSection((current) => (current === id ? null : id))
@@ -122,13 +125,17 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
         )}
         <Divider />
 
-        <SectionHeader
-          title="Metrics"
-          open={openSection === 'metrics'}
-          onToggle={() => toggleSection('metrics')}
-        />
-        {openSection === 'metrics' && <MetricsSection />}
-        <Divider />
+        {!isIndividualJourney && (
+          <>
+            <SectionHeader
+              title="Metrics"
+              open={openSection === 'metrics'}
+              onToggle={() => toggleSection('metrics')}
+            />
+            {openSection === 'metrics' && <MetricsSection />}
+            <Divider />
+          </>
+        )}
 
         <SectionHeader
           title="Filters"
@@ -140,13 +147,17 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
         )}
         <Divider />
 
-        <SectionHeader
-          title="Sampling"
-          open={openSection === 'sampling'}
-          onToggle={() => toggleSection('sampling')}
-        />
-        {openSection === 'sampling' && <SamplingSection />}
-        <Divider />
+        {!isIndividualJourney && (
+          <>
+            <SectionHeader
+              title="Sampling"
+              open={openSection === 'sampling'}
+              onToggle={() => toggleSection('sampling')}
+            />
+            {openSection === 'sampling' && <SamplingSection />}
+            <Divider />
+          </>
+        )}
 
         <SectionHeader
           title="Configuration"

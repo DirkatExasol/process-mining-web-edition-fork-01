@@ -324,6 +324,7 @@ const chartViews: HelpTopic = {
       body: [
         p('Shows the complete step sequence for a single journey identified by EVENT_ID. The Filters section becomes an Event ID field: type a source identifier (e.g. ORD-000001) or a raw 32-character hash and press Return. Any input that is not already a hash is MD5-hashed automatically before querying, so you never compute a hash by hand.'),
         tip('A live suggestion dropdown appears as you type. Each EVENT_ID keeps its own saved node layout.'),
+        tip('Transitions are labelled with the average transition time. The sidebar metric picker is hidden in this view, since a single journey visits each step once — Count would carry no information.'),
       ],
     },
     {

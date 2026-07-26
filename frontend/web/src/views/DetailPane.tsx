@@ -236,7 +236,10 @@ function IndividualJourneyView() {
       graph={store.processGraph}
       projectId={store.selectedProject.projectId}
       chartMode={`ij_${store.eventIdFilter}`}
-      metric={store.transitionMetric}
+      // A single journey traverses each transition once, so Count is meaningless
+      // here — always show the average transition time. The sidebar Metrics
+      // selector is hidden for this mode (see Sidebar).
+      metric="Avg Time"
     />
   )
 }
