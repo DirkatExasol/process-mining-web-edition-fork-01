@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sqlite3
 import threading
 import uuid
@@ -39,6 +40,23 @@ TLS_OFF = "off"
 TLS_OPTIONAL = "optional"
 TLS_REQUIRED = "required"
 _TLS_MODES = {TLS_OFF, TLS_OPTIONAL, TLS_REQUIRED}
+
+# ── Login-page appearance (admin "Customize" tab) ───────────────────────────
+# Applies to both the app and admin sign-in pages. "default" keeps each page's
+# existing theme colour; "color" paints a solid colour; "image" uses an uploaded
+# background image (stored inline as a data: URI).
+LOGIN_BG_DEFAULT = "default"
+LOGIN_BG_COLOR = "color"
+LOGIN_BG_IMAGE = "image"
+_LOGIN_BG_TYPES = {LOGIN_BG_DEFAULT, LOGIN_BG_COLOR, LOGIN_BG_IMAGE}
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+# data:image/<png|jpeg|gif|webp|svg+xml>;base64,<standard base64>
+_DATA_IMAGE_RE = re.compile(
+    r"^data:image/(png|jpe?g|gif|webp|svg\+xml);base64,[A-Za-z0-9+/]+={0,2}$"
+)
+# Cap the stored data URI so a background image can't bloat the settings DB or a
+# backup export. ~4 MB of base64 ≈ a 3 MB source image — plenty for a backdrop.
+_MAX_LOGIN_IMAGE_CHARS = 4_000_000
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -648,6 +666,51 @@ class SecurityStore:
     def active_cert_id(self) -> str | None:
         with self._lock:
             return self._get_config("active_cert_id")
+
+    # ── login-page appearance ───────────────────────────────────────────────
+
+    def login_appearance(self) -> dict:
+        """Background chosen in the admin Customize tab, applied to both sign-in
+        pages. `type` is default|color|image; only the field for the active type
+        is meaningful."""
+        with self._lock:
+            bg_type = self._get_config("login_bg_type") or LOGIN_BG_DEFAULT
+            if bg_type not in _LOGIN_BG_TYPES:
+                bg_type = LOGIN_BG_DEFAULT
+            return {
+                "type": bg_type,
+                "color": self._get_config("login_bg_color") or "",
+                "image": self._get_config("login_bg_image") or "",
+            }
+
+    def set_login_appearance(
+        self, *, type: str, color: str = "", image: str | None = None
+    ) -> dict:
+        """Persist the login background. Validates every field so the stored
+        values are always safe to inject into CSS (no injection / no bloat).
+        Raises ValueError on bad input. Returns the stored appearance."""
+        if type not in _LOGIN_BG_TYPES:
+            raise ValueError(f"Unknown login background type {type!r}")
+        color = (color or "").strip()
+        if type == LOGIN_BG_COLOR and not _HEX_COLOR_RE.match(color):
+            raise ValueError("Color must be a #rrggbb hex value")
+        if type == LOGIN_BG_IMAGE:
+            candidate = image if image is not None else self._get_config("login_bg_image")
+            candidate = (candidate or "").strip()
+            if not candidate:
+                raise ValueError("Choose a background image first")
+            if len(candidate) > _MAX_LOGIN_IMAGE_CHARS:
+                raise ValueError("Image is too large (max ~3 MB)")
+            if not _DATA_IMAGE_RE.match(candidate):
+                raise ValueError("Background image must be a PNG, JPEG, GIF, WebP or SVG")
+        with self._lock:
+            self._set_config("login_bg_type", type)
+            if color:
+                self._set_config("login_bg_color", color)
+            if image is not None:
+                self._set_config("login_bg_image", image.strip())
+            self._conn.commit()
+        return self.login_appearance()
 
     # ── users ─────────────────────────────────────────────────────────────────
 

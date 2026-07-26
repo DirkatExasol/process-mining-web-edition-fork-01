@@ -643,3 +643,47 @@ def test_note_author_display_name_prefers_ldap_cn(security, monkeypatch):
     # An LDAP user with no cn falls back to the username.
     store.provision_ldap_user("nocn", email="", display_name="")
     assert features._note_display_name("nocn") == "nocn"
+
+
+# ── Login-page appearance (admin Customize tab) ───────────────────────────────
+
+
+def test_login_appearance_default(security):
+    store = security.store
+    assert store.login_appearance() == {"type": "default", "color": "", "image": ""}
+
+
+def test_login_appearance_color_roundtrip(security):
+    store = security.store
+    saved = store.set_login_appearance(type="color", color="#1A2b3C")
+    assert saved == {"type": "color", "color": "#1A2b3C", "image": ""}
+    assert store.login_appearance()["color"] == "#1A2b3C"
+
+
+def test_login_appearance_image_roundtrip(security):
+    store = security.store
+    img = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+    saved = store.set_login_appearance(type="image", image=img)
+    assert saved["type"] == "image"
+    assert saved["image"] == img
+
+
+def test_login_appearance_rejects_bad_input(security):
+    store = security.store
+    with pytest.raises(ValueError):
+        store.set_login_appearance(type="color", color="blue")
+    with pytest.raises(ValueError):
+        store.set_login_appearance(type="color", color="#12")
+    with pytest.raises(ValueError):
+        store.set_login_appearance(type="bogus")
+    with pytest.raises(ValueError):
+        store.set_login_appearance(type="image", image="not-a-data-uri")
+    with pytest.raises(ValueError):
+        store.set_login_appearance(type="image", image="data:text/html;base64,AAAA")
+    with pytest.raises(ValueError):  # oversized
+        store.set_login_appearance(
+            type="image", image="data:image/png;base64," + "A" * 4_000_001
+        )
+    # An image type with nothing ever uploaded is rejected too.
+    with pytest.raises(ValueError):
+        store.set_login_appearance(type="image")

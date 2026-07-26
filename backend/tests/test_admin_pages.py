@@ -203,3 +203,16 @@ def test_login_page_matches_master_behaviour(pages):
     assert 'value="Administrator"' not in html  # fields start empty, as in the app
     assert 'id="signin" disabled' in html
     assert "btn.disabled = !u.value.trim()" in html
+
+
+def test_dashboard_has_customize_login_section(dashboard):
+    assert 'data-tab="customize"' in dashboard
+    assert 'id="tab-customize"' in dashboard
+    assert "Login Page" in dashboard
+    assert 'name="loginBg"' in dashboard
+    assert "saveLoginBg" in dashboard
+
+
+def test_login_page_accepts_custom_background(pages):
+    assert "background: #123456;" in pages.login_page(bg_css="#123456")
+    assert "background: var(--l-grouped);" in pages.login_page()

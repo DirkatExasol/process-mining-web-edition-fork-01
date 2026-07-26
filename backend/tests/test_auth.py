@@ -267,3 +267,20 @@ def test_license_status_demo_and_licensed(gui, monkeypatch):
     assert body["demoMode"] is False
     assert body["remainingSeconds"] is None
     assert body["licensee"] == "Acme"
+
+
+def test_login_appearance_endpoint_is_open(gui):
+    """The login background is served pre-auth (the login page needs it)."""
+    server, store = gui
+    client = TestClient(server.app)
+    assert client.get("/auth/login-appearance").json() == {
+        "type": "default",
+        "color": "",
+        "image": "",
+    }
+    store.set_login_appearance(type="color", color="#0a84ff")
+    assert client.get("/auth/login-appearance").json() == {
+        "type": "color",
+        "color": "#0a84ff",
+        "image": "",
+    }

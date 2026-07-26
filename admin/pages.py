@@ -202,11 +202,17 @@ details summary { cursor: pointer; font-size: 13px; color: var(--accent); paddin
 """
 
 
-def login_page(error: str = "", inactivity: bool = False) -> str:
+def login_page(error: str = "", inactivity: bool = False, bg_css: str = "") -> str:
     """The admin sign-in screen — a faithful port of the main app's login panel
     (`LoginView.tsx`, the master): identical layout, field sizing and behaviour
     (submit stays disabled until a username is entered). The ONLY difference is
-    the two-line title (Process Mining Demonstrator / Administration)."""
+    the two-line title (Process Mining Demonstrator / Administration).
+
+    ``bg_css`` overrides the page background (admin Customize tab). It is a value
+    already validated by the security store, safe to inject; blank keeps the
+    theme colour."""
+    # Custom background chosen in the admin Customize tab, or the theme default.
+    body_bg = bg_css or "var(--l-grouped)"
     err = (
         f'<div class="login-err">{html.escape(error)}</div>' if error else ""
     )
@@ -233,7 +239,7 @@ def login_page(error: str = "", inactivity: bool = False) -> str:
   --l-primary: #fff; --l-secondary: rgba(235,235,245,.6);
   --l-fill: rgba(120,120,128,.24); --l-grouped: #000;
 }}
-body {{ display: grid; place-items: center; min-height: 100vh; background: var(--l-grouped); padding: 24px; }}
+body {{ display: grid; place-items: center; min-height: 100vh; background: {body_bg}; padding: 24px; }}
 .login-splash {{ width: min(460px, 100%); border-radius: 20px; background: var(--l-material);
   -webkit-backdrop-filter: blur(30px); backdrop-filter: blur(30px); box-shadow: var(--l-shadow);
   padding: 32px 28px; display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }}
@@ -346,6 +352,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <button data-tab="ldap" onclick="selectTab('ldap')">Directory (LDAP)</button>
     <button data-tab="logging" onclick="selectTab('logging')">Logging</button>
     <button data-tab="backup" onclick="selectTab('backup')">Backup</button>
+    <button data-tab="customize" onclick="selectTab('customize')">Customize</button>
   </div>
 
   <div class="tabpanel sel" id="tab-appcontrol">
@@ -697,6 +704,42 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     </div>
   </div>
   </div><!-- /tab-backup -->
+
+  <div class="tabpanel" id="tab-customize">
+  <div class="card">
+    <h2>Customize</h2>
+    <p class="muted" style="margin-top:0">Branding and appearance for the application and this admin interface. More options to come.</p>
+
+    <h2 style="font-size:14px; margin-top:18px">Login Page</h2>
+    <p class="subtle" style="margin-top:0">Background for both sign-in pages (the main app and this admin interface). The default keeps the built-in theme colour, which follows light / dark mode.</p>
+
+    <div class="col" style="gap:10px; max-width:520px; margin-top:12px">
+      <label class="row" style="font-size:14px; cursor:pointer"><input type="radio" name="loginBg" value="default" id="lbg_default" style="width:auto" onchange="onLoginBgType()"> Default theme colour</label>
+      <label class="row" style="font-size:14px; cursor:pointer"><input type="radio" name="loginBg" value="color" id="lbg_color" style="width:auto" onchange="onLoginBgType()"> Solid colour</label>
+      <div class="row" id="lbg_colorRow" style="gap:10px; align-items:center; padding-left:26px; display:none">
+        <input type="color" id="lbg_colorPicker" value="#f2f2f7" style="width:48px; height:32px; padding:2px" onchange="syncLoginColor('picker')">
+        <div class="field" style="margin:0"><input type="text" id="lbg_colorHex" placeholder="#f2f2f7" style="width:120px" oninput="syncLoginColor('hex')"></div>
+      </div>
+      <label class="row" style="font-size:14px; cursor:pointer"><input type="radio" name="loginBg" value="image" id="lbg_image" style="width:auto" onchange="onLoginBgType()"> Background image</label>
+      <div class="col" id="lbg_imageRow" style="gap:8px; padding-left:26px; display:none">
+        <input type="file" id="lbg_imageFile" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" onchange="pickLoginImage()">
+        <p class="subtle" style="margin:0">PNG, JPEG, GIF, WebP or SVG, up to ~3&nbsp;MB. The image is scaled to cover the page.</p>
+      </div>
+    </div>
+
+    <div style="margin-top:16px">
+      <div class="subtle" style="margin-bottom:6px">Preview</div>
+      <div id="lbg_preview" style="width:100%; max-width:520px; height:150px; border-radius:10px; border:1px solid var(--border-soft); background:var(--l-grouped); display:grid; place-items:center">
+        <div style="padding:10px 16px; border-radius:10px; background:rgba(255,255,255,.82); color:#000; font-size:13px; box-shadow:0 6px 20px rgba(0,0,0,.18)">Sign in</div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:16px; align-items:center; gap:12px">
+      <button class="btn primary" onclick="saveLoginBg()">Save</button>
+      <span id="lbg_result" class="subtle"></span>
+    </div>
+  </div>
+  </div><!-- /tab-customize -->
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -1080,6 +1123,68 @@ function selectTab(name) {
   if (name === 'connections') loadConnections().catch(e => toast(e.message, true));
   if (name === 'ldap') loadLdap().catch(e => toast(e.message, true));
   if (name === 'logging') loadLogs().catch(e => toast(e.message, true));
+  if (name === 'customize') loadCustomize().catch(e => toast(e.message, true));
+}
+
+// ── Customize (login page background) ───────────────────────────────────────
+let _loginImage = ''; // data: URI of the current / newly-picked background image
+
+async function loadCustomize() {
+  const a = await api('/api/customize/login');
+  _loginImage = a.image || '';
+  const type = ['default', 'color', 'image'].includes(a.type) ? a.type : 'default';
+  $('lbg_' + type).checked = true;
+  const hex = /^#[0-9a-fA-F]{6}$/.test(a.color) ? a.color : '#f2f2f7';
+  $('lbg_colorHex').value = hex;
+  $('lbg_colorPicker').value = hex;
+  onLoginBgType();
+}
+
+function onLoginBgType() {
+  const type = (document.querySelector('input[name="loginBg"]:checked') || {}).value || 'default';
+  $('lbg_colorRow').style.display = type === 'color' ? 'flex' : 'none';
+  $('lbg_imageRow').style.display = type === 'image' ? 'flex' : 'none';
+  updateLoginPreview();
+}
+
+function syncLoginColor(from) {
+  if (from === 'picker') $('lbg_colorHex').value = $('lbg_colorPicker').value;
+  else if (/^#[0-9a-fA-F]{6}$/.test($('lbg_colorHex').value)) $('lbg_colorPicker').value = $('lbg_colorHex').value;
+  updateLoginPreview();
+}
+
+function pickLoginImage() {
+  const f = $('lbg_imageFile').files[0];
+  if (!f) return;
+  if (f.size > 3 * 1024 * 1024) { toast('Image is too large (max ~3 MB)', true); $('lbg_imageFile').value = ''; return; }
+  const r = new FileReader();
+  r.onload = () => { _loginImage = r.result; updateLoginPreview(); };
+  r.onerror = () => toast('Could not read the image', true);
+  r.readAsDataURL(f);
+}
+
+function updateLoginPreview() {
+  const type = (document.querySelector('input[name="loginBg"]:checked') || {}).value || 'default';
+  const el = $('lbg_preview');
+  if (type === 'color') el.style.background = $('lbg_colorHex').value || 'var(--l-grouped)';
+  else if (type === 'image' && _loginImage) el.style.background = 'var(--l-grouped) url("' + _loginImage + '") center / cover no-repeat';
+  else el.style.background = 'var(--l-grouped)';
+}
+
+async function saveLoginBg() {
+  const type = (document.querySelector('input[name="loginBg"]:checked') || {}).value || 'default';
+  const body = { type: type, color: $('lbg_colorHex').value };
+  if (type === 'image') {
+    if (!_loginImage) { toast('Choose a background image first', true); return; }
+    body.image = _loginImage;
+  }
+  $('lbg_result').textContent = '';
+  try {
+    const a = await api('/api/customize/login', { method: 'POST', body: JSON.stringify(body) });
+    _loginImage = a.image || _loginImage;
+    $('lbg_result').textContent = 'Saved — new sign-ins use it immediately.';
+    toast('Login background saved');
+  } catch (e) { $('lbg_result').textContent = ''; toast(e.message, true); }
 }
 
 // ── Logging ───────────────────────────────────────────────────────────────

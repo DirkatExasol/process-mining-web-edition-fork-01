@@ -847,3 +847,46 @@ def test_logout_invalidates_captured_token(admin):
     assert _replay() == 200  # valid before logout
     client.post("/logout", follow_redirects=False)  # bumps the session epoch
     assert _replay() == 401  # the same captured token no longer authenticates
+
+
+# ── Customize (login page background) ─────────────────────────────────────────
+
+
+def test_customize_login_requires_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    assert client.get("/api/customize/login").status_code == 401
+    assert (
+        client.post("/api/customize/login", json={"type": "default"}).status_code
+        == 401
+    )
+
+
+def test_customize_login_roundtrip(admin):
+    server, store = admin
+    client = _login(server)
+
+    assert client.get("/api/customize/login").json()["type"] == "default"
+
+    resp = client.post(
+        "/api/customize/login", json={"type": "color", "color": "#0a84ff"}
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"type": "color", "color": "#0a84ff", "image": ""}
+    assert store.login_appearance()["type"] == "color"
+
+
+def test_customize_login_rejects_bad_color(admin):
+    server, _ = admin
+    client = _login(server)
+    resp = client.post("/api/customize/login", json={"type": "color", "color": "nope"})
+    assert resp.status_code == 400
+
+
+def test_login_page_uses_custom_background(admin):
+    server, _ = admin
+    client = _login(server)
+    client.post("/api/customize/login", json={"type": "color", "color": "#0a84ff"})
+    anon = TestClient(server.app)  # the sign-in page is served pre-auth
+    html = anon.get("/login").text
+    assert "background: #0a84ff;" in html

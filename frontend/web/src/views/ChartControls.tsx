@@ -3,7 +3,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { JourneyTimeSlider } from '../components/JourneyTimeSlider'
-import { Chevron, Divider } from '../components/ui'
+import { Chevron, Divider, Segmented } from '../components/ui'
+import { useSetting } from '../settings'
 import { useStore } from '../store'
 import { TRANSITION_METRICS, type FilterGroup, type SliderMode, type TransitionMetric } from '../types'
 
@@ -46,6 +47,10 @@ export function ChartControls({
   selectedPresetId: string | null
   onApplyPreset: (group: FilterGroup) => void
 }) {
+  // The date-slider mode (Range / Day) lives here, right under the slider it
+  // controls, instead of in the sidebar. It writes the shared `slider.mode`
+  // setting the parent reads back as the `sliderMode` prop.
+  const [, setSliderMode] = useSetting<SliderMode>('slider.mode')
   return (
     <div className="controls-card">
       <div className="controls-head">
@@ -80,6 +85,19 @@ export function ChartControls({
                 <span aria-hidden>{METRIC_ICONS[m]}</span> {m}
               </button>
             ))}
+            <div className="metric-bar-slider" title="Date slider mode">
+              <span aria-hidden className="fg-secondary">
+                ⇥
+              </span>
+              <Segmented
+                options={[
+                  { value: 'Range', label: 'Range' },
+                  { value: 'Day', label: 'Day' },
+                ]}
+                value={sliderMode}
+                onChange={setSliderMode}
+              />
+            </div>
           </div>
         </>
       )}

@@ -134,11 +134,32 @@ def index(request: Request):
     )
 
 
+def _login_bg_css() -> str:
+    """CSS `background` value for the admin sign-in page from the Customize tab,
+    or "" to keep the theme default. Stored values are already validated by the
+    security store; the guards here are defence-in-depth before CSS injection."""
+    appearance = store.login_appearance()
+    kind = appearance.get("type")
+    if kind == "color":
+        color = appearance.get("color", "")
+        if (
+            color.startswith("#")
+            and len(color) == 7
+            and all(c in "0123456789abcdefABCDEF" for c in color[1:])
+        ):
+            return color
+    elif kind == "image":
+        image = appearance.get("image", "")
+        if image.startswith("data:image/") and '"' not in image:
+            return f'var(--l-grouped) url("{image}") center / cover no-repeat'
+    return ""
+
+
 @app.get("/login", response_class=HTMLResponse)
 def login_get(request: Request, inactivity: bool = False):
     if _current_user(request) is not None:
         return RedirectResponse("/", status_code=303)
-    return HTMLResponse(pages.login_page(inactivity=inactivity))
+    return HTMLResponse(pages.login_page(inactivity=inactivity, bg_css=_login_bg_css()))
 
 
 # Brief cache so the login screen doesn't re-probe the directory on every load.
@@ -196,7 +217,9 @@ def login_post(request: Request, username: str = Form(...), password: str = Form
         message = store.login_block_message(username) or (
             "Invalid credentials, or the account is not an administrator."
         )
-        return HTMLResponse(pages.login_page(message), status_code=401)
+        return HTMLResponse(
+            pages.login_page(message, bg_css=_login_bg_css()), status_code=401
+        )
     logx.usage(
         f"admin {user.username} signed in to the admin interface",
         request=request,
@@ -1096,6 +1119,35 @@ def api_test_ldap(body: LdapTestBody, user: User = Depends(require_admin)):
         display_attr=body.displayAttr or "cn",
     )
     return test_settings(settings, body.testUsername, body.testPassword)
+
+
+class CustomizeLoginBody(BaseModel):
+    type: str
+    color: str = ""
+    image: str | None = None
+
+
+@app.get("/api/customize/login")
+def api_customize_login(user: User = Depends(require_admin)):
+    return store.login_appearance()
+
+
+@app.post("/api/customize/login")
+def api_save_customize_login(
+    body: CustomizeLoginBody, user: User = Depends(require_admin)
+):
+    try:
+        appearance = store.set_login_appearance(
+            type=body.type, color=body.color, image=body.image
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logx.usage(
+        f"admin {user.username} set the login page background to {appearance['type']}",
+        username=user.username,
+        operation="customize",
+    )
+    return appearance
 
 
 @app.get("/health")

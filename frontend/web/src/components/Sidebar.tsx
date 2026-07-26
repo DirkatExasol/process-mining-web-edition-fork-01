@@ -11,7 +11,6 @@ import type {
   FilterGroup,
   GraphStartMode,
   ManagedConnection,
-  SliderMode,
   TransitionMetric,
 } from '../types'
 import { formatSecs } from '../graph/format'
@@ -1126,7 +1125,6 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
   const [nodeScale, setNodeScale] = useSetting<number>('graph.node.scale')
   const [edgeScale, setEdgeScale] = useSetting<number>('graph.edge.scale')
   const [groupScale, setGroupScale] = useSetting<number>('graph.group.scale')
-  const [sliderMode, setSliderMode] = useSetting<SliderMode>('slider.mode')
   const [groupsOpen, setGroupsOpen] = useSetting<boolean>('sidebar.configGroupsExpanded')
   const [fontsOpen, setFontsOpen] = useSetting<boolean>('sidebar.configFontsExpanded')
   const [kpisOpen, setKpisOpen] = useSetting<boolean>('sidebar.configKpisExpanded')
@@ -1288,21 +1286,6 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
         checked={colorize}
         onChange={setColorize}
       />
-
-      <div className="row" style={{ padding: '8px 20px', gap: 10 }}>
-        <span aria-hidden className="fg-secondary">
-          ⇥
-        </span>
-        <span className="t-caption fg-secondary spacer">Date slider</span>
-        <Segmented
-          options={[
-            { value: 'Range', label: 'Range' },
-            { value: 'Day', label: 'Day' },
-          ]}
-          value={sliderMode}
-          onChange={setSliderMode}
-        />
-      </div>
 
       <div className="row" style={{ padding: '8px 20px', gap: 10 }}>
         <span aria-hidden className="fg-secondary">

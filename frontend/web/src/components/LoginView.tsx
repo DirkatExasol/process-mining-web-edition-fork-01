@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { loginBackground, type LoginAppearance } from '../loginAppearance'
 import { useStore } from '../store'
 import { Logo } from './Logo'
 import { Spinner } from './ui'
@@ -21,6 +22,19 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
   } | null>(null)
   // Demo-mode countdown — only rendered when no license is installed.
   const [demoSeconds, setDemoSeconds] = useState<number | null>(null)
+  // Login-page background configured by the admin (Customize tab).
+  const [appearance, setAppearance] = useState<LoginAppearance | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .loginAppearance()
+      .then((a) => !cancelled && setAppearance(a))
+      .catch(() => !cancelled && setAppearance(null))
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -71,7 +85,7 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
   return (
     <div
       className="scrim"
-      style={{ background: 'var(--bg-grouped)', position: 'fixed', inset: 0 }}
+      style={{ background: loginBackground(appearance), position: 'fixed', inset: 0 }}
     >
       <form
         className="splash"

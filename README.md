@@ -124,7 +124,8 @@ TLS is enabled) manages security. Sign in with the
 default administrator (**Administrator / Administrator**) — you're prompted to
 change the password on first use. It is organised into tabs: **App Control**
 (restart the servers, manage the license), **TLS / SSL**, **Users**,
-**Database Connections**, **Directory (LDAP)**, **Logging** and **Backup**.
+**Database Connections**, **Directory (LDAP)**, **Logging**, **Backup** and
+**Customize**.
 
 **TLS / SSL.** Generate a self-signed certificate (common name + SANs, validity,
 key size) or upload your own PEM cert + key, mark one *active*, then choose the
@@ -157,6 +158,14 @@ panel then shows a clear message and the account carries a *Locked* badge in the
 *Users* tab where it can be unlocked (or restart with `PMW_RESET_LOCKOUTS=1` as a
 break-glass valve). Passwords are scrypt-hashed; certificate private keys are
 encrypted at rest. The security store lives in `data/security.sqlite3`.
+
+**Customize.** The *Customize* tab sets the **login-page background** for *both*
+sign-in pages (the main app and the admin interface): keep the default
+theme colour (which follows light/dark mode), pick a solid colour, or upload a
+background image (PNG/JPEG/GIF/WebP/SVG, up to ~3 MB, scaled to cover). The choice
+is stored in the security store and applied to new sign-ins immediately; a live
+preview shows the result before you save. Uploaded values are validated so they
+can never inject CSS.
 
 **Power role.** Beyond admins, a user can be granted the **power** role
 (*Make power* / *Remove power* in the admin *Users* tab). Power users create and

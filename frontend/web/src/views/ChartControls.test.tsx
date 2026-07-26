@@ -1,9 +1,10 @@
 /** ChartControls — the filter-preset picker with its inline manage/delete menu. */
 
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { ChartControls } from './ChartControls'
 import { useStore } from '../store'
+import { readSetting, writeSetting } from '../settings'
 import type { FilterGroup } from '../types'
 
 const group = (id: string, name: string): FilterGroup => ({
@@ -88,5 +89,26 @@ describe('ChartControls preset menu', () => {
     fireEvent.click(screen.getByLabelText('Delete preset Q1'))
 
     expect(useStore.getState().filterGroups.map((g) => g.id)).toEqual(['g2'])
+  })
+})
+
+describe('ChartControls date-slider mode', () => {
+  it('shows the Range/Day control right-aligned in the metric row', () => {
+    useStore.setState({ filterGroups: [], selectedFilterGroupId: null, selectedProject: null })
+    const { container } = render(<ChartControls {...baseProps} expanded />)
+    const slider = container.querySelector('.metric-bar .metric-bar-slider')
+    expect(slider).not.toBeNull()
+    expect(slider?.textContent).toContain('Range')
+    expect(slider?.textContent).toContain('Day')
+  })
+
+  it('writes slider.mode when a mode is picked', () => {
+    writeSetting('slider.mode', 'Range')
+    useStore.setState({ filterGroups: [], selectedFilterGroupId: null, selectedProject: null })
+    const { container } = render(<ChartControls {...baseProps} expanded />)
+    const slider = container.querySelector('.metric-bar-slider') as HTMLElement
+    fireEvent.click(within(slider).getByText('Day'))
+    expect(readSetting('slider.mode')).toBe('Day')
+    writeSetting('slider.mode', 'Range') // reset shared setting for other tests
   })
 })

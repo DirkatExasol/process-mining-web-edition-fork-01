@@ -241,15 +241,17 @@ describe('NotesView KPIs / sort / grouping', () => {
       ],
     })
     render(<NotesView />)
-    expect(noteList().querySelector('.note-group-header')).toBeNull() // off by default
-
-    fireEvent.click(screen.getByLabelText('Group by importance'))
+    // Grouping is on by default.
     const headers = [...noteList().querySelectorAll('.note-group-header')].map(
       (e) => e.textContent,
     )
     // Highest importance group first.
     expect(headers[0]).toContain('Urgent')
     expect(headers.some((h) => h?.includes('Normal'))).toBe(true)
+
+    // Toggling off removes the group headers.
+    fireEvent.click(screen.getByLabelText('Group by importance'))
+    expect(noteList().querySelector('.note-group-header')).toBeNull()
   })
 })
 

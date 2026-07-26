@@ -942,10 +942,21 @@ textarea.text-input {
 
 .metric-bar {
   display: flex;
+  align-items: center;
   gap: 6px;
   padding: 7px 12px;
   overflow-x: auto;
   background: var(--bg-tertiary-grouped);
+}
+
+/* Date-slider mode control, right-aligned in the same row as the metric chips. */
+.metric-bar-slider {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 12px;
+  flex: none;
 }
 
 .journey-slider {

@@ -21,6 +21,7 @@ import type {
   StepInfo,
   TransitionMetric,
 } from './types'
+import type { LoginAppearance } from './loginAppearance'
 
 export class ApiError extends Error {
   constructor(
@@ -99,6 +100,8 @@ export const api = {
       demoMode: boolean
       remainingSeconds: number | null
     }>('/auth/license-status'),
+  // Login-page background chosen in the admin Customize tab (pre-auth).
+  loginAppearance: () => get<LoginAppearance>('/auth/login-appearance'),
 
   // ── connections ──────────────────────────────────────────────────────────
   // Admin-defined connections assigned to the signed-in user.

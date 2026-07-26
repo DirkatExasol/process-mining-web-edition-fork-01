@@ -9,6 +9,7 @@ vi.mock('../api', () => ({
   api: {
     directoryStatus: vi.fn(),
     licenseStatus: vi.fn(),
+    loginAppearance: vi.fn(),
     login: vi.fn(),
     session: vi.fn(),
     logout: vi.fn(),
@@ -30,6 +31,13 @@ licenseStatus.mockResolvedValue({
   state: 'valid',
   demoMode: false,
   remainingSeconds: null,
+})
+
+// The login background is fetched on mount; default it to the theme colour.
+;(api.loginAppearance as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+  type: 'default',
+  color: '',
+  image: '',
 })
 
 describe('LoginView directory indicator', () => {

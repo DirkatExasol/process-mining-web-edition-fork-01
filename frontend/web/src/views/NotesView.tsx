@@ -45,7 +45,7 @@ export function NotesView() {
   const [time, setTime] = useState<TimeWindow>('ALL')
   const [status, setStatus] = useState<'ALL' | 'OPEN' | 'RESOLVED'>('ALL')
   const [sortDir, setSortDir] = useState<'newest' | 'oldest'>('newest')
-  const [grouped, setGrouped] = useState(false)
+  const [grouped, setGrouped] = useState(true)
   const [pageSize, setPageSize] = useState(5)
   const [page, setPage] = useState(0)
 

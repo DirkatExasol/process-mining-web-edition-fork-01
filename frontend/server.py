@@ -256,6 +256,16 @@ async def auth_directory_status() -> Response:
     return JSONResponse(value)
 
 
+@app.get("/auth/login-appearance")
+async def auth_login_appearance() -> Response:
+    """Login-page background chosen in the admin Customize tab (pre-auth).
+
+    Returns ``{type, color, image}``; the client applies it to the sign-in
+    backdrop. ``type: "default"`` means keep the built-in theme colour.
+    """
+    return JSONResponse(store.login_appearance())
+
+
 @app.get("/auth/license-status")
 async def auth_license_status() -> Response:
     """Demo-mode / license state for the login panel (pre-auth).

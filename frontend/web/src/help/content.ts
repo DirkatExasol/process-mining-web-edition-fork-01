@@ -301,7 +301,7 @@ const chartViews: HelpTopic = {
       heading: 'A-Chart',
       body: [
         p('The primary process map. Shows all journeys matching the current filter set as an aggregated directly-follows graph; arrow thickness reflects the selected transition metric. When a project is first selected, A-Chart loads automatically using the last 30 days of data.'),
-        tip('A date slider sits above the map. In Range mode it has two thumbs; in Day mode a single thumb selects one calendar day. Switch modes in Configuration → Date slider.'),
+        tip('A date slider sits above the map, in the Date & Metrics card. In Range mode it has two thumbs; in Day mode a single thumb selects one calendar day. Switch modes with the Range / Day control at the right of the metric row, just below the slider.'),
       ],
     },
     {
@@ -1047,7 +1047,7 @@ const notes: HelpTopic = {
         p('Each note records its author, who last contributed, and the complete filter context at the time it was created, so the observation stays interpretable later. The author is the signed-in application user — shown by real name (the directory “cn”) for LDAP accounts — not the shared database login.'),
         p('A note is a thread. Opening it shows all comments so far on top (read-only) and an “Add a comment” box below: anyone who can see the note — the author, and other users for a shared note — can add a comment, which is placed at the top of the thread and recorded with their name and the time. Give the note (when you create it) and each comment a short title; the most recent title is shown as the note’s heading, separately from the body, in both the list and the node’s note panel. Only the author can change the note’s importance or sharing, or delete the whole thread.'),
         p('Give each note an importance — NORMAL (the default), INFO, IMPORTANT or URGENT — shown as a coloured badge in the list. Mark a note as “shared” to make it visible to other users of the same database, and tick “resolved” once the issue it describes is closed — a green ✓ Resolved badge then appears in the list.'),
-        p('The Notes view can be filtered by text search, type (node / edge), importance, status (unresolved / resolved), author, and time window (any time, or the last 7 / 30 / 90 days); the counter shows how many of the project’s notes match. It can be sorted by date (newest or oldest first) and optionally grouped by importance (off by default), and the list is paged — choose 5, 10 or 20 notes per page and step through with Prev / Next. A KPI strip across the top shows the note count for each importance level, least on the left through most urgent on the right, coloured to match the badges.'),
+        p('The Notes view can be filtered by text search, type (node / edge), importance, status (unresolved / resolved), author, and time window (any time, or the last 7 / 30 / 90 days); the counter shows how many of the project’s notes match. It can be sorted by date (newest or oldest first) and optionally grouped by importance (on by default), and the list is paged — choose 5, 10 or 20 notes per page and step through with Prev / Next. A KPI strip across the top shows the note count for each importance level, least on the left through most urgent on the right, coloured to match the badges.'),
       ],
     },
     {
