@@ -378,6 +378,11 @@ it; the list is filterable by importance, author, time and status, and paged), a
 a full analytics suite: process goodness, happy-path conformance, A/B similarity Q
 and a Markov simulation engine.
 
+The process map carries a date-window slider (Range mode with two independently
+draggable thumbs, or single-day mode). On first load a project shows the last *N*
+days ending at its latest event; *N* is configurable per user under
+**Configuration → Default date window** (default 30, `0` = full range).
+
 ## License
 
 See [`LICENSE`](LICENSE) for the full license text.

@@ -1,7 +1,8 @@
 /** "Date & Metrics" card shared by the A-Chart, B-Chart and A/B panels —
  *  ports the controls card from ProcessMapView.swift. */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { JourneyTimeSlider } from '../components/JourneyTimeSlider'
 import { Chevron, Divider, Segmented } from '../components/ui'
 import { useSetting } from '../settings'
@@ -117,15 +118,37 @@ function PresetMenu({
 }) {
   const store = useStore()
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
   // Alphabetical, ascending (A→Z).
   const groups = [...store.filterGroups].sort((a, b) => a.name.localeCompare(b.name))
   const current = groups.find((g) => g.id === selectedPresetId)
 
+  // Anchor the (portalled) menu to the button. Kept in a layout effect so the
+  // position is measured before paint, and refreshed on scroll/resize since a
+  // fixed-position element does not follow the anchor on its own.
+  useLayoutEffect(() => {
+    if (!open) return
+    const place = () => {
+      const r = wrapRef.current?.getBoundingClientRect()
+      if (r) setPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
+    }
+    place()
+    window.addEventListener('resize', place)
+    window.addEventListener('scroll', place, true)
+    return () => {
+      window.removeEventListener('resize', place)
+      window.removeEventListener('scroll', place, true)
+    }
+  }, [open])
+
   useEffect(() => {
     if (!open) return
     const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      const t = e.target as Node
+      if (wrapRef.current?.contains(t) || menuRef.current?.contains(t)) return
+      setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
     document.addEventListener('mousedown', onDoc)
@@ -139,7 +162,7 @@ function PresetMenu({
   if (groups.length === 0) return null
 
   return (
-    <div ref={ref} className="preset-menu-wrap">
+    <div ref={wrapRef} className="preset-menu-wrap">
       <button
         className="preset-menu-btn"
         onClick={() => setOpen((v) => !v)}
@@ -150,35 +173,45 @@ function PresetMenu({
         <span className="truncate">{current ? current.name : 'Presets'}</span>
         <span aria-hidden>▾</span>
       </button>
-      {open && (
-        <div className="preset-menu" role="menu">
-          {groups.map((group) => (
-            <div key={group.id} className="preset-menu-row">
-              <button
-                className="preset-menu-apply"
-                role="menuitem"
-                onClick={() => {
-                  onApply(group)
-                  setOpen(false)
-                }}
-              >
-                <span className="preset-menu-check" aria-hidden>
-                  {group.id === selectedPresetId ? '✓' : ''}
-                </span>
-                <span className="truncate">{group.name}</span>
-              </button>
-              <button
-                className="preset-menu-del"
-                title={`Delete “${group.name}”`}
-                aria-label={`Delete preset ${group.name}`}
-                onClick={() => store.deleteFilterGroup(group.id)}
-              >
-                🗑
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Portalled to the body so the card's overflow:hidden (rounded corners)
+          never clips the list; it scrolls once it exceeds its max-height. */}
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="preset-menu"
+            role="menu"
+            style={{ position: 'fixed', top: pos.top, right: pos.right }}
+          >
+            {groups.map((group) => (
+              <div key={group.id} className="preset-menu-row">
+                <button
+                  className="preset-menu-apply"
+                  role="menuitem"
+                  onClick={() => {
+                    onApply(group)
+                    setOpen(false)
+                  }}
+                >
+                  <span className="preset-menu-check" aria-hidden>
+                    {group.id === selectedPresetId ? '✓' : ''}
+                  </span>
+                  <span className="truncate">{group.name}</span>
+                </button>
+                <button
+                  className="preset-menu-del"
+                  title={`Delete “${group.name}”`}
+                  aria-label={`Delete preset ${group.name}`}
+                  onClick={() => store.deleteFilterGroup(group.id)}
+                >
+                  🗑
+                </button>
+              </div>
+            ))}
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }

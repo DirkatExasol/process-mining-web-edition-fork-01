@@ -1,6 +1,6 @@
 /** A-Chart / B-Chart panel — ports `aChartContent` / `bChartContent`. */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { FlowChart, type SyncState } from '../flow/FlowChart'
 import { Unavailable } from '../components/ui'
 import { useSetting } from '../settings'
@@ -24,6 +24,16 @@ export function ChartView({
   const [sliderFrom, setSliderFrom] = useState(store.fromDate)
   const [sliderTo, setSliderTo] = useState(store.toDate)
   const notes = useNoteHandlers()
+
+  // Re-sync the slider to the loaded window whenever a project (re)loads — the
+  // bootstrap sets fromDate/toDate together with initialFromDate/initialToDate,
+  // including the configurable "last N days" default. Keyed on the load-time
+  // values so a drag's local edits are never clobbered mid-interaction.
+  useEffect(() => {
+    setSliderFrom(store.fromDate)
+    setSliderTo(store.toDate)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store.selectedProject, store.initialFromDate, store.initialToDate])
 
   const hasData = store.processGraph.transitions.length > 0
   const rangeMin =

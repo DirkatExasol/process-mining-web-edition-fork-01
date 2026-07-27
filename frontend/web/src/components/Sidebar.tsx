@@ -997,17 +997,26 @@ function PresetList() {
 
   if (store.filterGroups.length === 0) return null
 
+  // Presets are listed alphabetically (A→Z), matching the chart header's picker.
+  const groups = [...store.filterGroups].sort((a, b) => a.name.localeCompare(b.name))
+
   return (
     <>
       <Divider />
       <div className="col" style={{ padding: '8px 20px 12px', gap: 4 }}>
         <span className="sub-title">Presets</span>
-        {store.filterGroups.map((group) => (
-          <div
-            key={group.id}
-            className={`card${store.selectedFilterGroupId === group.id ? ' selected' : ''}`}
-            style={{ minHeight: 32, padding: '5px 10px' }}
-          >
+        {/* At most four presets are shown at once; the rest scroll — same as the
+            Connections and Projects lists. Four rows of 32px plus 4px gaps. */}
+        <div
+          className="col"
+          style={{ gap: 4, maxHeight: 4 * 32 + 3 * 4, overflowY: 'auto' }}
+        >
+          {groups.map((group) => (
+            <div
+              key={group.id}
+              className={`card${store.selectedFilterGroupId === group.id ? ' selected' : ''}`}
+              style={{ minHeight: 32, flexShrink: 0, padding: '5px 10px' }}
+            >
             <button
               className="card-body"
               style={{ textAlign: 'left' }}
@@ -1034,8 +1043,9 @@ function PresetList() {
             >
               🗑
             </button>
-          </div>
-        ))}
+            </div>
+          ))}
+        </div>
       </div>
       {renaming && (
         <PromptSheet
@@ -1140,6 +1150,9 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
   )
   const [optimised, setOptimised] = useSetting<boolean>('graph.optimisedLayout')
   const [colorize, setColorize] = useSetting<boolean>('graph.edge.colorizeByWeight')
+  const [defaultWindowDays, setDefaultWindowDays] = useSetting<number>(
+    'graph.defaultWindowDays',
+  )
   const [nodeScale, setNodeScale] = useSetting<number>('graph.node.scale')
   const [edgeScale, setEdgeScale] = useSetting<number>('graph.edge.scale')
   const [groupScale, setGroupScale] = useSetting<number>('graph.group.scale')
@@ -1304,6 +1317,31 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
         checked={colorize}
         onChange={setColorize}
       />
+
+      <div className="col" style={{ padding: '8px 20px', gap: 4 }}>
+        <div className="row" style={{ gap: 10 }}>
+          <span aria-hidden className="fg-secondary">
+            🗓
+          </span>
+          <span className="t-caption fg-secondary spacer">Default date window</span>
+          <input
+            className="text-input"
+            type="number"
+            min={0}
+            step={1}
+            aria-label="Default date window (days)"
+            value={defaultWindowDays ?? 0}
+            onChange={(e) =>
+              setDefaultWindowDays(Math.max(0, Math.floor(Number(e.target.value) || 0)))
+            }
+            style={{ width: 64 }}
+          />
+          <span className="t-caption fg-secondary">days</span>
+        </div>
+        <span className="t-caption2 fg-tertiary" style={{ paddingLeft: 30 }}>
+          On load, show the last N days. 0 = full range. Applies next project load.
+        </span>
+      </div>
 
       <div className="row" style={{ padding: '8px 20px', gap: 10 }}>
         <span aria-hidden className="fg-secondary">

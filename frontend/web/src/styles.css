@@ -464,12 +464,13 @@ textarea {
   background: var(--bg-fill-strong);
 }
 .preset-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  z-index: 40;
+  /* Positioned via inline top/right (portalled to <body>, position: fixed). */
+  z-index: 3000;
   min-width: 190px;
   max-width: 280px;
+  /* Roughly eight rows tall, then scroll — never taller than the viewport. */
+  max-height: min(60vh, 280px);
+  overflow-y: auto;
   padding: 4px;
   display: flex;
   flex-direction: column;
@@ -483,6 +484,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 1px;
+  flex-shrink: 0;
 }
 .preset-menu-apply {
   flex: 1;
@@ -767,6 +769,7 @@ textarea.text-input {
 .range-track {
   position: relative;
   height: 22px;
+  touch-action: none;
 }
 
 .range-track .rail {
@@ -787,22 +790,9 @@ textarea.text-input {
   background: var(--accent);
 }
 
-.range-track input[type='range'] {
+.range-track .thumb {
   position: absolute;
   top: 0;
-  left: 0;
-  width: 100%;
-  height: 22px;
-  margin: 0;
-  background: none;
-  pointer-events: none;
-  -webkit-appearance: none;
-  appearance: none;
-}
-
-.range-track input[type='range']::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  pointer-events: auto;
   width: 22px;
   height: 22px;
   border-radius: 50%;
@@ -810,17 +800,16 @@ textarea.text-input {
   border: 0.5px solid rgba(0, 0, 0, 0.1);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
   cursor: grab;
+  touch-action: none;
 }
 
-.range-track input[type='range']::-moz-range-thumb {
-  pointer-events: auto;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: #fff;
-  border: 0.5px solid rgba(0, 0, 0, 0.1);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
-  cursor: grab;
+.range-track .thumb:active {
+  cursor: grabbing;
+}
+
+.range-track .thumb:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* ── Detail header: title capsule + KPI strip ─────────────────────────────── */
@@ -2287,13 +2276,28 @@ textarea.text-input {
   border-radius: 20px;
   background: var(--material);
   backdrop-filter: blur(30px);
-  box-shadow: var(--shadow-lg);
+  /* Layered elevation so the panel floats clearly above any background —
+     a solid colour or a busy photo — plus a faint hairline ring that keeps its
+     edge legible even over light imagery. */
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.07),
+    0 4px 12px rgba(0, 0, 0, 0.18),
+    0 30px 60px rgba(0, 0, 0, 0.34),
+    0 64px 120px rgba(0, 0, 0, 0.42);
   padding: 32px 28px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 14px;
   text-align: center;
+}
+
+:root[data-theme='dark'] .splash {
+  box-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.1),
+    0 4px 12px rgba(0, 0, 0, 0.6),
+    0 30px 64px rgba(0, 0, 0, 0.72),
+    0 68px 130px rgba(0, 0, 0, 0.82);
 }
 
 /* Over a custom background image the panel is 50% transparent so the image

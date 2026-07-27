@@ -62,6 +62,24 @@ describe('ChartControls preset menu', () => {
     expect(names).toEqual(['Alpha', 'Mid', 'Zeta'])
   })
 
+  it('shows every preset even when there are many (scrollable, none clipped)', () => {
+    useStore.setState({
+      filterGroups: Array.from({ length: 12 }, (_, i) =>
+        group(`g${i}`, `Preset ${String.fromCharCode(65 + i)}`),
+      ),
+      selectedFilterGroupId: null,
+      selectedProject: null,
+    })
+    render(<ChartControls {...baseProps} />)
+
+    fireEvent.click(screen.getByTitle('Filter presets'))
+    const menu = screen.getByRole('menu')
+    expect(within(menu).getAllByRole('menuitem')).toHaveLength(12)
+    // The list carries the .preset-menu scroll container (max-height + overflow
+    // live in styles.css) rather than being an unbounded column.
+    expect(menu).toHaveClass('preset-menu')
+  })
+
   it('lists presets and applies the chosen one', () => {
     useStore.setState({
       filterGroups: [group('g1', 'Q1'), group('g2', 'Q2')],

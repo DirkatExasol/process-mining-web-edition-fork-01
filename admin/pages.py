@@ -259,12 +259,18 @@ def login_page(error: str = "", inactivity: bool = False, bg_css: str = "") -> s
    in light and dark. Rules are scoped under .login-splash so they win over the
    base input/button styles in _STYLE. */
 :root {{
-  --l-material: rgba(255,255,255,.82); --l-shadow: 0 12px 40px rgba(0,0,0,.22);
+  --l-material: rgba(255,255,255,.82);
+  /* Layered elevation so the panel floats above any background — colour or
+     photo — with a faint hairline ring keeping its edge legible over imagery. */
+  --l-shadow: 0 0 0 0.5px rgba(0,0,0,.07), 0 4px 12px rgba(0,0,0,.18),
+    0 30px 60px rgba(0,0,0,.34), 0 64px 120px rgba(0,0,0,.42);
   --l-primary: #000; --l-secondary: rgba(60,60,67,.6);
   --l-fill: rgba(120,120,128,.12); --l-grouped: #f2f2f7;
 }}
 :root[data-theme='dark'] {{
-  --l-material: rgba(38,38,40,.86); --l-shadow: 0 12px 40px rgba(0,0,0,.6);
+  --l-material: rgba(38,38,40,.86);
+  --l-shadow: 0 0 0 0.5px rgba(255,255,255,.1), 0 4px 12px rgba(0,0,0,.6),
+    0 30px 64px rgba(0,0,0,.72), 0 68px 130px rgba(0,0,0,.82);
   --l-primary: #fff; --l-secondary: rgba(235,235,245,.6);
   --l-fill: rgba(120,120,128,.24); --l-grouped: #000;
 }}

@@ -15,6 +15,9 @@ import { defaultSchemaFor, type EdgeColorSchema } from './graph/colors'
 export const SETTING_DEFAULTS: Record<string, unknown> = {
   'app.theme': 'system',
   'slider.mode': 'Range' satisfies SliderMode,
+  // Initial date window when a project loads: show the last N days ending at the
+  // latest event date. 0 = show the project's full range (backend default).
+  'graph.defaultWindowDays': 30,
   'graph.startMode': 'expanded' satisfies GraphStartMode,
   'graph.optimisedLayout': true,
   'graph.edge.colorizeByWeight': true,

@@ -42,7 +42,7 @@ import {
   type StepInfo,
   type TransitionMetric,
 } from './types'
-import { addDays, toISODate } from './graph/format'
+import { addDays, fromISODate, toISODate } from './graph/format'
 
 export type ABSide = 'a' | 'b'
 
@@ -978,9 +978,20 @@ export const useStore = create<Store>((set, get) => {
         const toDate = boot.initialToDate
           ? toISODate(boot.initialToDate)
           : get().toDate
-        const fromDate = boot.initialFromDate
+        let fromDate = boot.initialFromDate
           ? toISODate(boot.initialFromDate)
           : get().fromDate
+
+        // Default window: show the last N days ending at the latest event date,
+        // clamped to the project's earliest date so it never goes empty. N = 0
+        // keeps the backend's full-range default.
+        const windowDays = readSetting<number>('graph.defaultWindowDays')
+        const toAnchor = fromISODate(toDate)
+        if (windowDays && windowDays > 0 && toAnchor) {
+          const minDate = boot.minDate ? toISODate(boot.minDate) : fromDate
+          const windowStart = toISODate(addDays(toAnchor, -windowDays))
+          fromDate = windowStart < minDate ? minDate : windowStart
+        }
 
         // A previously selected sample may no longer exist in the database.
         for (const side of ['a', 'b'] as ABSide[]) {

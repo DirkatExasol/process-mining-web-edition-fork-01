@@ -384,8 +384,8 @@ const chartViews: HelpTopic = {
     {
       heading: 'A-Chart',
       body: [
-        p('The primary process map. Shows all journeys matching the current filter set as an aggregated directly-follows graph; arrow thickness reflects the selected transition metric. When a project is first selected, A-Chart loads automatically using the last 30 days of data.'),
-        tip('A date slider sits above the map, in the Date & Metrics card. In Range mode it has two thumbs; in Day mode a single thumb selects one calendar day. Switch modes with the Range / Day control at the right of the metric row, just below the slider.'),
+        p('The primary process map. Shows all journeys matching the current filter set as an aggregated directly-follows graph; arrow thickness reflects the selected transition metric. When a project is first selected, A-Chart loads automatically using the last N days of data — N defaults to 30 and is set in Configuration → Default date window (0 shows the full range).'),
+        tip('A date slider sits above the map, in the Date & Metrics card. In Range mode it has two independently draggable thumbs — drag either to move the window start or end; in Day mode a single thumb selects one calendar day. Both thumbs also respond to the arrow keys once focused. Switch modes with the Range / Day control at the right of the metric row, just below the slider.'),
       ],
     },
     {
@@ -1186,6 +1186,7 @@ const configuration: HelpTopic = {
         def('Show node notes', 'Shows the shortened DESCRIPTION under the step name on each node, and the yellow note badges.'),
         def('Optimise layout', 'Enables barycenter crossing-minimisation for a cleaner arrangement on complex graphs.'),
         def('Colorise edges by weight', 'Turns on the per-metric colour scales (configure them from the map’s colour legend).'),
+        def('Default date window', 'How many days back the map shows when a project first loads — the window ends at the latest event date and spans the last N days. Defaults to 30; set 0 to load the project’s full range. Takes effect on the next project load; it does not move the slider on the current map.'),
         def('Flowchart Font Sizes', 'Scale the process-map text — separate S / M / L / XL settings for Nodes, Edges and Group titles. A node’s box grows with its font, so the label always stays inside the node; the edge setting enlarges the transition labels, and the group-title setting sizes the pill on each step-group box.'),
         def('Date slider', 'Switches the map’s date control between Range (two thumbs) and Day (single day) mode.'),
       ],
