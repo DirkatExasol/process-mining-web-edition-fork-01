@@ -9,12 +9,30 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { HELP_TOPICS, type HelpBlock, type HelpTopic } from '../help/content'
+import {
+  ADMIN_TOPIC_IDS,
+  HELP_TOPICS,
+  type HelpBlock,
+  type HelpTopic,
+} from '../help/content'
+import { useStore } from '../store'
 import { Logo } from './Logo'
 
 /** Table-of-contents sub-groups: the listed chapters are nested under one
- *  collapsible heading instead of sitting flat in the nav. */
-const HELP_GROUPS: { label: string; icon: string; topicIds: string[] }[] = [
+ *  collapsible heading instead of sitting flat in the nav. `adminOnly` groups
+ *  (and their chapters) are shown only to administrators. */
+const HELP_GROUPS: {
+  label: string
+  icon: string
+  topicIds: string[]
+  adminOnly?: boolean
+}[] = [
+  {
+    label: 'Administration',
+    icon: '⚙︎',
+    topicIds: ADMIN_TOPIC_IDS,
+    adminOnly: true,
+  },
   {
     label: 'Computational Insights',
     icon: '🧮',
@@ -209,6 +227,7 @@ function snippetOf(text: string, query: string): string {
 }
 
 export function HelpPanel({ onClose }: { onClose: () => void }) {
+  const isAdmin = useStore((s) => s.authIsAdmin)
   const [topicId, setTopicId] = useState(HELP_TOPICS[0].id)
   const [query, setQuery] = useState('')
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
@@ -221,9 +240,19 @@ export function HelpPanel({ onClose }: { onClose: () => void }) {
   // clearing it doesn't re-run the scroll effect and reset the scroll position.
   const pendingSection = useRef<number | null>(null)
 
+  // Chapters in an admin-only group are hidden from non-admins everywhere: the
+  // table of contents, search results and the printed documentation.
+  const visibleTopics = useMemo(() => {
+    if (isAdmin) return HELP_TOPICS
+    const adminOnly = new Set(
+      HELP_GROUPS.filter((g) => g.adminOnly).flatMap((g) => g.topicIds),
+    )
+    return HELP_TOPICS.filter((t) => !adminOnly.has(t.id))
+  }, [isAdmin])
+
   const topic = useMemo(
-    () => HELP_TOPICS.find((t) => t.id === topicId) ?? HELP_TOPICS[0],
-    [topicId],
+    () => visibleTopics.find((t) => t.id === topicId) ?? visibleTopics[0],
+    [topicId, visibleTopics],
   )
 
   // Match every section whose heading or body text contains the query.
@@ -231,7 +260,7 @@ export function HelpPanel({ onClose }: { onClose: () => void }) {
     const q = query.trim().toLowerCase()
     if (!q) return []
     const out: SearchResult[] = []
-    for (const t of HELP_TOPICS) {
+    for (const t of visibleTopics) {
       t.sections.forEach((section, idx) => {
         const hay = [section.heading, ...section.body.map(blockText)].join('  ')
         if (hay.toLowerCase().includes(q)) {
@@ -422,7 +451,7 @@ export function HelpPanel({ onClose }: { onClose: () => void }) {
                 <p className="help-search-empty">No matches for “{query.trim()}”.</p>
               )
             ) : (
-              buildNav(HELP_TOPICS).map((node) => {
+              buildNav(visibleTopics).map((node) => {
                 if (node.kind === 'topic') {
                   const t = node.topic
                   return (
@@ -514,7 +543,7 @@ export function HelpPanel({ onClose }: { onClose: () => void }) {
               <h1>Process Mining Demonstrator</h1>
               <p>User Documentation · Web Edition</p>
             </div>
-            {HELP_TOPICS.map((t) => (
+            {visibleTopics.map((t) => (
               <div key={t.id} className="help-print-chapter">
                 <TopicView topic={t} />
               </div>

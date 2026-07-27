@@ -224,40 +224,69 @@ const connecting: HelpTopic = {
 
 // ── Administration ──────────────────────────────────────────────────────────
 
-const administration: HelpTopic = {
-  id: 'administration',
-  title: 'Administration',
-  subtitle: 'The admin interface: TLS, users, connections and directory sign-in',
+// ── Administration (split into per-area chapters, grouped in the TOC) ─────────
+
+const adminInterface: HelpTopic = {
+  id: 'admin-interface',
+  title: 'Admin Interface',
+  subtitle: 'The separate administration interface for security and access',
   icon: '⚙︎',
   sections: [
     {
-      heading: 'The admin interface',
+      heading: 'Overview',
       body: [
         p('A separate administration interface runs on its own port (8090 by default) and is where all security and access is configured. It has its own sign-in and admits administrators only.'),
         p('On first run it seeds a local administrator — Administrator / Administrator — and prompts you to change the password. Local admin accounts always work as a break-glass route, even if a directory is later misconfigured.'),
-        tip('The admin interface is organised into tabs: App Control (restart the servers, manage the license), TLS / SSL, Users, Database Connections, Directory (LDAP), Logging and Backup.'),
+        tip('The admin interface is organised into tabs: App Control (restart the servers, manage the license), TLS / SSL, Users, Database Connections, Directory (LDAP), Logging, Backup and Customize.'),
       ],
     },
+  ],
+}
+
+const adminTls: HelpTopic = {
+  id: 'admin-tls',
+  title: 'TLS / SSL',
+  subtitle: 'HTTP/HTTPS mode and certificates',
+  icon: '🔒',
+  sections: [
     {
-      heading: 'TLS / SSL',
+      heading: 'Modes & certificates',
       body: [
         p('Choose how connections are accepted: Off (HTTP only), Optional (HTTP and HTTPS together) or Required (HTTPS only). Generate a self-signed certificate or upload your own PEM certificate and key, then mark one active.'),
         p('The main app and the admin interface both follow this one mode and share the same active certificate — the app on ports 8080/8443, the admin on 8090/8453. Changes take effect when the servers restart: the ↻ Restart app server button in the App Control tab rebinds both in place. If a mode needs a certificate but none is active, each server falls back to HTTP so nothing (including the admin itself) is left unreachable.'),
         warn('Certificate private keys are encrypted at rest. Keep the active certificate valid — an expired certificate makes HTTPS clients refuse to connect.'),
       ],
     },
+  ],
+}
+
+const adminUsers: HelpTopic = {
+  id: 'admin-users',
+  title: 'Users & Sign-in',
+  subtitle: 'Accounts, roles and the login gate',
+  icon: '👤',
+  sections: [
     {
-      heading: 'Users & sign-in',
+      heading: 'Accounts & roles',
       body: [
         p('The Users tab controls who may sign in to the main application: create local users, enable or disable access, grant or revoke the admin role, and reset local passwords. Only enabled users can sign in.'),
-        p('The Require sign-in toggle turns the login gate on or off for the main app (on by default). With it off, the app is open to anyone who can reach it.'),
+        p('The Require sign-in toggle turns the login gate on or off for the main app (on by default). With it off, the app is open to anyone who can reach it — and, since there is then no user identity, per-user settings and filter presets all fall back to one shared profile.'),
         def('Failed sign-in lockout', '“Disable an account after N failed sign-in attempts” automatically disables an account — including the built-in Administrator — once N wrong passwords are entered (0 turns it off). A locked account shows a clear message on the login panel and carries a Locked badge in the Users tab, where you can unlock it. If the sole administrator is ever locked out, restart the servers with PMW_RESET_LOCKOUTS=1 to clear all locks.'),
-        def('Power role', 'Make power / Remove power grants the power badge. Power users can create and manage their own database connections from within the main app and assign them to other users — without needing access to this admin interface. They manage only the connections they create; admins still see and manage every connection.'),
+        def('Power role', 'Make power / Remove power grants the power badge. Power users can create and manage their own database connections from within the main app and assign them to other users — without needing access to this admin interface. They manage only the connections they create; admins still see and manage every connection. Power users (and admins) also get the advanced-analysis views — Conformance Check, Happy Path and Simulation.'),
         def('Source badge', 'Each user is tagged local or LDAP so you can tell built-in accounts from directory accounts at a glance; the All / Local / LDAP filter narrows the list.'),
       ],
     },
+  ],
+}
+
+const adminConnections: HelpTopic = {
+  id: 'admin-connections',
+  title: 'Database Connections',
+  subtitle: 'Define Exasol/LLM connections and assign them to users',
+  icon: '🗄️',
+  sections: [
     {
-      heading: 'Database Connections',
+      heading: 'Defining connections',
       body: [
         p('Define each connection here — the Exasol host, port, user, password, schema and TLS options, plus an optional OpenAI-compatible LLM server — and assign it to one or more users. Each user then sees only the connections assigned to them.'),
         p('Use Test connection to verify the database (and LLM) before saving. Leaving a password or API-key field blank on an existing connection keeps the stored value. Secrets never leave the admin interface.'),
@@ -265,8 +294,17 @@ const administration: HelpTopic = {
         warn('This needs a database account with CREATE SCHEMA and CREATE TABLE privileges. Those can only be granted by the database administrator — the application cannot grant them.'),
       ],
     },
+  ],
+}
+
+const adminDirectory: HelpTopic = {
+  id: 'admin-directory',
+  title: 'Directory (LDAP)',
+  subtitle: 'Directory sign-in via search + bind',
+  icon: '📇',
+  sections: [
     {
-      heading: 'Directory (LDAP / Active Directory)',
+      heading: 'Directory sign-in',
       body: [
         p('When enabled, the main-app login also accepts directory accounts via search + bind: a read-only service account searches the base DN for the login name, then the app re-binds as that user with the supplied password.'),
         ul(
@@ -279,8 +317,52 @@ const administration: HelpTopic = {
         tip('Admin is never granted from the directory — a directory user stays a normal user until a local admin promotes them.'),
       ],
     },
+  ],
+}
+
+const adminLogging: HelpTopic = {
+  id: 'admin-logging',
+  title: 'Logging',
+  subtitle: 'The shared, structured application log',
+  icon: '🧾',
+  sections: [
     {
-      heading: 'License & Demo Mode',
+      heading: 'The application log',
+      body: [
+        p('The Logging tab is a shared, structured application log written by all three servers (main app, admin interface and compute backend). Each entry records a timestamp, severity, client IP, user, an operation tag and a message.'),
+        p('Severity is a cumulative ladder — INFO, USAGE, WARN, ERROR, DEBUG. Pick the maximum level to record (the cheaper levels are always kept; DEBUG only when explicitly selected). Filter the view by severity, client IP or operation, narrow it with a regular-expression search, page through the results, and Download the current log or Clear it.'),
+        def('Audited actions', 'Security- and configuration-relevant actions are recorded with a dedicated operation tag so you can filter to them: sign-in and sign-out (login / logout), LDAP server and account tests and config changes (ldap), certificate generate / upload / activate / delete (tls), database-connection create / edit / assign / delete and connection and LLM-server tests (connection / llm-test), backup export / inspect / restore (backup), and login-page customization (customize). Deletions are recorded as warnings.'),
+        tip('A fresh log file is started automatically once the live log passes the configured size (“New file after N MB”); rotated files are saved under data/logs/.'),
+      ],
+    },
+  ],
+}
+
+const adminCustomize: HelpTopic = {
+  id: 'admin-customize',
+  title: 'Customize',
+  subtitle: 'Appearance — the login-page background',
+  icon: '🎨',
+  sections: [
+    {
+      heading: 'Login page',
+      body: [
+        p('The Customize tab sets the login-page background for both sign-in pages — the main app and the admin interface. Keep the default theme colour (which follows light / dark mode), choose a solid colour, or upload a background image (PNG, JPEG, GIF, WebP or SVG, up to ~3 MB, scaled to cover). A live preview shows the result before you save.'),
+        p('Over a background image the login panel turns semi-transparent so the image shows through, while the title, fields and buttons stay fully legible. The choice applies to new sign-ins immediately.'),
+        tip('More appearance options will appear here over time; for now it covers the login page.'),
+      ],
+    },
+  ],
+}
+
+const adminLicense: HelpTopic = {
+  id: 'admin-license',
+  title: 'License & Demo Mode',
+  subtitle: 'Applying a license and the demo grace period',
+  icon: '🔑',
+  sections: [
+    {
+      heading: 'Licensing',
       body: [
         p('The application requires a valid license. Upload the license file you were issued in App Control → License; the panel shows who it is licensed to and when it expires, and lets you remove it again.'),
         p('With no valid license the app runs in Demo Mode for a one-time grace period — the sign-in panel shows “Demo Mode — remaining time”, or “No License installed” once that period is spent — after which the compute backend stops until a license is applied. Uploading a valid license during the grace period cancels the shutdown.'),
@@ -1145,7 +1227,16 @@ export const HELP_TOPICS: HelpTopic[] = [
   overview,
   database,
   connecting,
-  administration,
+  // Administration chapters — grouped under one admin-only TOC sub-menu.
+  adminInterface,
+  adminTls,
+  adminUsers,
+  adminConnections,
+  adminDirectory,
+  adminLogging,
+  backup,
+  adminCustomize,
+  adminLicense,
   chartViews,
   filters,
   filterPresets,
@@ -1159,7 +1250,19 @@ export const HELP_TOPICS: HelpTopic[] = [
   sampling,
   aiDocumentation,
   notes,
-  backup,
   configuration,
   troubleshooting,
+]
+
+/** Topic ids grouped under the admin-only "Administration" TOC sub-menu. */
+export const ADMIN_TOPIC_IDS = [
+  'admin-interface',
+  'admin-tls',
+  'admin-users',
+  'admin-connections',
+  'admin-directory',
+  'admin-logging',
+  'backup',
+  'admin-customize',
+  'admin-license',
 ]

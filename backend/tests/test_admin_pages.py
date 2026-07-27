@@ -224,3 +224,28 @@ def test_customize_preview_avoids_login_only_css_var(dashboard):
     # invalid (undefined-var) declaration, so the picked image never painted.
     assert "--l-grouped" not in dashboard
     assert 'id="lbg_preview"' in dashboard
+
+
+def test_dashboard_has_admin_help_overlay(dashboard):
+    # The "Administration" help menu structure is available on the admin page.
+    assert 'id="helpOv"' in dashboard
+    assert 'onclick="openHelp()"' in dashboard
+    assert "const ADMIN_HELP" in dashboard
+    assert "function renderHelp" in dashboard
+    # Its sections mirror the admin tabs / the app's Administration help group.
+    for title in [
+        "Admin Interface",
+        "TLS / SSL",
+        "Users & Sign-in",
+        "Database Connections",
+        "Directory (LDAP)",
+        "Logging",
+        "Backup & Restore",
+        "Customize",
+        "License & Demo Mode",
+    ]:
+        assert title in dashboard
+    # The nav buttons use the app's clean soft-accent active style (not the old
+    # native-button "boxed" look).
+    assert ".help-ov-nav button.sel" in dashboard
+    assert "border: none; background: none" in dashboard

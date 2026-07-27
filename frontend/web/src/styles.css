@@ -2188,7 +2188,8 @@ textarea.text-input {
 
 /* ── Help print document ──────────────────────────────────────────────────── */
 
-.help-print-doc {
+.help-print-doc,
+.ai-print-doc {
   display: none;
 }
 
@@ -2202,12 +2203,56 @@ textarea.text-input {
     overflow: visible !important;
     height: auto !important;
   }
-  .help-print-doc {
+  .help-print-doc,
+  .ai-print-doc {
     display: block !important;
     position: static;
     color: #000;
     background: #fff;
     font-size: 11pt;
+  }
+  /* Force legible dark-on-white for the AI report regardless of app theme, and
+     print its tables/code/quotes cleanly. */
+  .ai-print-doc,
+  .ai-print-doc .markdown,
+  .ai-print-doc h1,
+  .ai-print-doc h2,
+  .ai-print-doc h3,
+  .ai-print-doc h4,
+  .ai-print-doc p,
+  .ai-print-doc li,
+  .ai-print-doc td,
+  .ai-print-doc th,
+  .ai-print-doc strong,
+  .ai-print-doc em,
+  .ai-print-doc blockquote {
+    color: #000 !important;
+  }
+  .ai-print-doc table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+  .ai-print-doc th,
+  .ai-print-doc td {
+    border: 1px solid #999;
+    padding: 4px 8px;
+    text-align: left;
+  }
+  .ai-print-doc pre {
+    background: #f4f4f4;
+    border: 1px solid #ccc;
+    padding: 8px;
+    white-space: pre-wrap;
+  }
+  .ai-print-doc blockquote {
+    border-left: 3px solid #ccc;
+    padding-left: 10px;
+    color: #333 !important;
+  }
+  .ai-print-doc h2 {
+    page-break-before: auto;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 4px;
   }
   .help-print-cover {
     text-align: center;

@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { HelpPanel } from './HelpPanel'
+import { useStore } from '../store'
 
 describe('HelpPanel search', () => {
   it('shows the full table of contents until a query is entered', () => {
@@ -63,5 +64,29 @@ describe('HelpPanel TOC grouping', () => {
     expect(group).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('button', { name: /Process Goodness/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /Process Similarity/ })).toBeNull()
+  })
+})
+
+describe('HelpPanel Administration group (admin-only)', () => {
+  it('hides the Administration group and its chapters from non-admins', () => {
+    useStore.setState({ authIsAdmin: false })
+    render(<HelpPanel onClose={() => {}} />)
+    expect(screen.queryByRole('button', { name: /Administration/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /TLS \/ SSL/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Directory \(LDAP\)/ })).toBeNull()
+    // Non-admin chapters remain.
+    expect(screen.getByRole('button', { name: /Overview/ })).toBeInTheDocument()
+  })
+
+  it('shows the Administration group and its chapters to admins', () => {
+    useStore.setState({ authIsAdmin: true })
+    render(<HelpPanel onClose={() => {}} />)
+    const group = screen.getByRole('button', { name: /Administration/ })
+    expect(group).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('button', { name: /TLS \/ SSL/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Directory \(LDAP\)/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Logging/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Customize/ })).toBeInTheDocument()
+    useStore.setState({ authIsAdmin: false }) // reset shared store for other tests
   })
 })

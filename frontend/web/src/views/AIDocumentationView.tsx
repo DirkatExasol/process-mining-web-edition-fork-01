@@ -4,7 +4,8 @@
  * and norms. After: renders the assembled report (analysis, journey paths, happy
  * path conformance, conformance gaps, user comments, analysis parameters). */
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Markdown } from '../components/Markdown'
 import { Sheet, Unavailable } from '../components/ui'
 import { formatDateTime } from '../graph/format'
@@ -14,6 +15,17 @@ import { noteTargetLabel } from '../types'
 export function AIDocumentationView() {
   const store = useStore()
   const [showPrompt, setShowPrompt] = useState(false)
+  // The global print stylesheet hides #root (so the Help panel can print a doc
+  // portalled to <body>). The report lives inside #root, so it must print the
+  // same way — portal a print-only copy to <body> and reset afterwards.
+  const [printing, setPrinting] = useState(false)
+  const printReport = useCallback(() => {
+    setPrinting(true)
+    window.requestAnimationFrame(() => {
+      window.print()
+      window.setTimeout(() => setPrinting(false), 500)
+    })
+  }, [])
 
   const summary = aChartFilterSummary(store)
   const llmReachable = store.connection.isLLMReachable
@@ -42,6 +54,7 @@ export function AIDocumentationView() {
 
   const analysis = store.llmAnalysis
   if (analysis?.result) {
+    const report = buildReport(store, analysis)
     return (
       <div className="col" style={{ flex: 1, minHeight: 0, gap: 0 }}>
         <div
@@ -60,7 +73,7 @@ export function AIDocumentationView() {
           <button className="btn small" onClick={() => setShowPrompt(true)}>
             Show prompt
           </button>
-          <button className="btn small" onClick={() => window.print()}>
+          <button className="btn small" onClick={printReport}>
             ⎙ Print / PDF
           </button>
           <button
@@ -73,7 +86,7 @@ export function AIDocumentationView() {
         </div>
 
         <div className="scroll-view">
-          <Markdown text={buildReport(store, analysis)} />
+          <Markdown text={report} />
         </div>
 
         {showPrompt && (
@@ -81,6 +94,16 @@ export function AIDocumentationView() {
             <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{analysis.prompt}</pre>
           </Sheet>
         )}
+
+        {/* Print-only copy portalled to <body> (a sibling of #root, which the
+            print stylesheet hides), so the report actually appears on the page. */}
+        {printing &&
+          createPortal(
+            <div className="ai-print-doc">
+              <Markdown text={report} />
+            </div>,
+            document.body,
+          )}
       </div>
     )
   }

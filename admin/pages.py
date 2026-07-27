@@ -187,6 +187,32 @@ details summary { cursor: pointer; font-size: 13px; color: var(--accent); paddin
   font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 50; }
 .toast.show { opacity: 1; }
 .toast.err { border-color: rgba(255,69,58,.5); }
+/* Help overlay — mirrors the main app's Help panel (the master): a clean
+   borderless table of contents with a soft-accent active row, a subtle title
+   bar, and a titled content pane. */
+.help-ov { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+  background: rgba(0,0,0,.4); padding: 24px; }
+.help-ov[hidden] { display: none; }
+.help-ov-panel { width: min(880px, 100%); height: min(640px, 90vh); display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--border-soft); border-radius: var(--radius);
+  box-shadow: var(--shadow); overflow: hidden; }
+.help-ov-bar { display: flex; align-items: center; gap: 10px; padding: 11px 14px;
+  background: rgba(120,120,128,.08); font-weight: 600; }
+.help-ov-bar .spacer { flex: 1; }
+.help-ov-body { display: flex; flex: 1; min-height: 0; }
+.help-ov-nav { width: 210px; flex-shrink: 0; overflow-y: auto; padding: 8px;
+  border-right: 1px solid var(--border-soft); display: flex; flex-direction: column; gap: 2px; }
+.help-ov-nav button { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+  border: none; background: none; color: var(--text); padding: 6px 10px; border-radius: 8px; font-size: 13px; }
+.help-ov-nav button:hover { background: var(--fill); }
+.help-ov-nav button.sel { background: rgba(10,132,255,.14); color: var(--accent); font-weight: 600; }
+.help-ov-content { flex: 1; overflow-y: auto; padding: 20px 24px; font-size: 13px; line-height: 1.55; }
+.help-ov-content h2 { font-size: 20px; font-weight: 700; margin: 0 0 12px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-soft); }
+.help-ov-content p { margin: 0 0 10px; color: var(--text); }
+.help-ov-content .note { padding: 8px 12px; border-radius: 8px; margin: 10px 0 0;
+  background: rgba(10,132,255,.1); border: 1px solid rgba(10,132,255,.28); }
+.help-ov-content .warn { background: rgba(255,159,10,.12); border-color: rgba(255,159,10,.32); }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border-soft); margin: 8px 0 4px; }
 .tabs button { background: none; border: none; color: var(--muted); padding: 10px 16px; font-size: 14px;
   border-bottom: 2px solid transparent; margin-bottom: -1px; }
@@ -344,8 +370,19 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <button data-theme-choice="dark" title="Dark" aria-label="Dark theme" onclick="setTheme('dark')">☾</button>
   </div>
   <span class="muted">Signed in as <strong id="who">{html.escape(username)}</strong></span>
+  <button class="btn small" onclick="openHelp()" title="Administration help">❔ Help</button>
   <button class="btn small" onclick="changeOwnPassword()">Change password</button>
   <form method="post" action="/logout" style="display:inline"><button class="btn small">Log out</button></form>
+</div>
+<div class="help-ov" id="helpOv" hidden onclick="if(event.target===this)closeHelp()">
+  <div class="help-ov-panel" role="dialog" aria-label="Administration help">
+    <div class="help-ov-bar"><span aria-hidden>⚙︎</span><span class="spacer">Administration</span>
+      <button class="btn small" onclick="closeHelp()" aria-label="Close help">✕</button></div>
+    <div class="help-ov-body">
+      <nav class="help-ov-nav" id="helpNav"></nav>
+      <div class="help-ov-content" id="helpContent"></div>
+    </div>
+  </div>
 </div>
 <div class="wrap">
   <div id="defaultWarn"></div>
@@ -1649,4 +1686,71 @@ async function provisionSchema() {
 }
 
 loadSession().then(loadTls).then(loadUsers).catch(() => {});
+
+// ── Administration help overlay ─────────────────────────────────────────────
+// Mirrors the "Administration" group in the main app's Help, so the same guidance
+// is available here on the admin interface.
+const ADMIN_HELP = [
+  { id: 'interface', icon: '⚙︎', title: 'Admin Interface', html: `
+    <h2>Admin Interface</h2>
+    <p>This administration interface runs on its own port (8090 by default) and is where all security and access is configured. It has its own sign-in and admits administrators only.</p>
+    <p>On first run it seeds a local administrator (Administrator / Administrator) and prompts you to change the password. Local admin accounts always work as a break-glass route.</p>
+    <div class="note">Tabs: App Control, TLS / SSL, Users, Database Connections, Directory (LDAP), Logging, Backup and Customize.</div>` },
+  { id: 'tls', icon: '🔒', title: 'TLS / SSL', html: `
+    <h2>TLS / SSL</h2>
+    <p>Choose how connections are accepted: Off (HTTP only), Optional (HTTP and HTTPS) or Required (HTTPS only). Generate a self-signed certificate or upload your own PEM cert and key, then mark one active.</p>
+    <p>The app and this admin interface follow the same mode and share the active certificate. Changes take effect on restart (App Control &rarr; Restart app server); if a mode needs a certificate but none is active, each server falls back to HTTP so nothing is left unreachable.</p>
+    <div class="note warn">Keep the active certificate valid &mdash; an expired certificate makes HTTPS clients refuse to connect.</div>` },
+  { id: 'users', icon: '👤', title: 'Users & Sign-in', html: `
+    <h2>Users &amp; Sign-in</h2>
+    <p>Create local users, enable/disable access, grant or revoke the admin role, and reset passwords. Only enabled users can sign in. The <strong>Require sign-in</strong> toggle turns the login gate on or off (on by default) &mdash; with it off there is no user identity, so per-user settings and filter presets share one profile.</p>
+    <p><strong>Failed sign-in lockout</strong> disables an account after N wrong passwords (0 = off); unlock it in the Users tab, or restart with PMW_RESET_LOCKOUTS=1. <strong>Power</strong> users manage their own connections and get the advanced-analysis views (Conformance Check, Happy Path, Simulation).</p>` },
+  { id: 'connections', icon: '🗄️', title: 'Database Connections', html: `
+    <h2>Database Connections</h2>
+    <p>Define each connection (Exasol host, port, user, password, schema, TLS, and an optional OpenAI-compatible LLM server) and assign it to users; each user sees only the connections assigned to them. Use Test connection to verify the database and LLM before saving; a blank password/key keeps the stored value.</p>
+    <p>&ldquo;Create schema &amp; tables&rdquo; provisions the process-mining schema and tables (PROJECTS, JOURNEYS, STEPS, METAS, NOTES) if missing.</p>
+    <div class="note warn">Provisioning needs a DB account with CREATE SCHEMA / CREATE TABLE rights &mdash; only the database administrator can grant those.</div>` },
+  { id: 'directory', icon: '📇', title: 'Directory (LDAP)', html: `
+    <h2>Directory (LDAP)</h2>
+    <p>When enabled, the main-app login also accepts directory accounts via search + bind. Set the server URI, service-account bind DN/password, base DN, user filter and attributes. Test server connection checks the server alone; Test a user login also resolves and signs in an account.</p>
+    <p>Directory users are created locally on first sign-in as plain, enabled accounts. The admin interface stays local-only unless you tick &ldquo;Also allow directory sign-in to this admin interface&rdquo; &mdash; and even then only after a directory account is promoted to admin.</p>
+    <div class="note">Admin is never granted from the directory; a local admin must promote the user.</div>` },
+  { id: 'logging', icon: '🧾', title: 'Logging', html: `
+    <h2>Logging</h2>
+    <p>A shared, structured log written by all three servers. Each entry records a timestamp, severity, client IP, user, operation and message. Severity is a cumulative ladder &mdash; INFO, USAGE, WARN, ERROR, DEBUG; pick the maximum level to record. Filter by severity, client IP or operation, search by regular expression, page through, and Download or Clear.</p>
+    <p>Audited actions carry an operation tag: sign-in/out (login/logout), LDAP tests and config (ldap), certificate actions (tls), connection actions and connection/LLM tests (connection/llm-test), backup export/inspect/restore (backup) and login-page customization (customize). Deletions are logged as warnings.</p>
+    <div class="note">A new log file starts once the live log passes the configured size; rotated files are saved under data/logs/.</div>` },
+  { id: 'backup', icon: '💾', title: 'Backup & Restore', html: `
+    <h2>Backup &amp; Restore</h2>
+    <p>Export everything except the event data itself &mdash; connections, filter presets, node layouts, norms, happy paths, LLM prompts and app preferences &mdash; as one JSON file, and restore it again. Tick the boxes to include usernames, connection passwords and LLM API keys, and optionally protect the file with an AES-256-GCM password. Restore inspects the file and shows a summary before you pick which categories to apply.</p>
+    <div class="note warn">Including secrets without an encryption password writes them in plain text &mdash; always set a password when the backup contains secrets.</div>` },
+  { id: 'customize', icon: '🎨', title: 'Customize', html: `
+    <h2>Customize</h2>
+    <p>Set the login-page background for both sign-in pages (the app and this admin interface): keep the default theme colour, choose a solid colour, or upload a background image (PNG, JPEG, GIF, WebP or SVG, up to ~3 MB). A live preview shows the result before you save, and the choice applies to new sign-ins immediately.</p>
+    <p>Over a background image the login panel turns semi-transparent so the image shows through while the text and fields stay legible.</p>` },
+  { id: 'license', icon: '🔑', title: 'License & Demo Mode', html: `
+    <h2>License &amp; Demo Mode</h2>
+    <p>The application requires a valid license &mdash; upload it in App Control &rarr; License. Without one, the app runs in Demo Mode for a one-time grace period, then the compute backend stops until a license is applied. Uploading a valid license during the grace period cancels the shutdown.</p>
+    <div class="note">The admin interface keeps working even when the backend has stopped, so you can always apply a license here.</div>` },
+];
+let _helpTopic = ADMIN_HELP[0].id;
+
+function renderHelp() {
+  const nav = $('helpNav'), content = $('helpContent');
+  if (!nav || !content) return;
+  nav.innerHTML = '';
+  for (const t of ADMIN_HELP) {
+    const b = document.createElement('button');
+    b.className = t.id === _helpTopic ? 'sel' : '';
+    b.innerHTML = '<span aria-hidden style="width:18px;display:inline-block">' + t.icon + '</span>' + esc(t.title);
+    b.onclick = () => { _helpTopic = t.id; renderHelp(); };
+    nav.appendChild(b);
+  }
+  const topic = ADMIN_HELP.find(t => t.id === _helpTopic) || ADMIN_HELP[0];
+  content.innerHTML = topic.html;
+  content.scrollTop = 0;
+}
+function openHelp() { renderHelp(); $('helpOv').hidden = false; }
+function closeHelp() { $('helpOv').hidden = true; }
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('helpOv').hidden) closeHelp(); });
 """
