@@ -12,6 +12,46 @@ import { createPortal } from 'react-dom'
 import { HELP_TOPICS, type HelpBlock, type HelpTopic } from '../help/content'
 import { Logo } from './Logo'
 
+/** Table-of-contents sub-groups: the listed chapters are nested under one
+ *  collapsible heading instead of sitting flat in the nav. */
+const HELP_GROUPS: { label: string; icon: string; topicIds: string[] }[] = [
+  {
+    label: 'Computational Insights',
+    icon: '🧮',
+    topicIds: ['processgoodness', 'processsimilarity'],
+  },
+]
+
+type NavNode =
+  | { kind: 'topic'; topic: HelpTopic }
+  | { kind: 'group'; label: string; icon: string; topics: HelpTopic[] }
+
+/** Fold the grouped chapters into a single group node (placed where the first
+ *  member sits) while leaving every other chapter flat and in order. */
+function buildNav(topics: HelpTopic[]): NavNode[] {
+  const groupOf = new Map<string, (typeof HELP_GROUPS)[number]>()
+  for (const g of HELP_GROUPS) for (const id of g.topicIds) groupOf.set(id, g)
+
+  const nodes: NavNode[] = []
+  const emitted = new Set<string>()
+  for (const topic of topics) {
+    const group = groupOf.get(topic.id)
+    if (!group) {
+      nodes.push({ kind: 'topic', topic })
+      continue
+    }
+    if (emitted.has(group.label)) continue
+    emitted.add(group.label)
+    nodes.push({
+      kind: 'group',
+      label: group.label,
+      icon: group.icon,
+      topics: topics.filter((t) => groupOf.get(t.id)?.label === group.label),
+    })
+  }
+  return nodes
+}
+
 /** All searchable text in a block, flattened to one string. */
 function blockText(block: HelpBlock): string {
   switch (block.kind) {
@@ -171,6 +211,7 @@ function snippetOf(text: string, query: string): string {
 export function HelpPanel({ onClose }: { onClose: () => void }) {
   const [topicId, setTopicId] = useState(HELP_TOPICS[0].id)
   const [query, setQuery] = useState('')
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [pos, setPos] = useState({ x: window.innerWidth * 0.42, y: 80 })
   const [size, setSize] = useState({ width: 760, height: 640 })
   const [printAll, setPrintAll] = useState(false)
@@ -381,18 +422,67 @@ export function HelpPanel({ onClose }: { onClose: () => void }) {
                 <p className="help-search-empty">No matches for “{query.trim()}”.</p>
               )
             ) : (
-              HELP_TOPICS.map((t) => (
-                <button
-                  key={t.id}
-                  className={t.id === topicId ? 'active' : ''}
-                  onClick={() => setTopicId(t.id)}
-                >
-                  <span aria-hidden style={{ width: 18, display: 'inline-block' }}>
-                    {t.icon}
-                  </span>
-                  {t.title}
-                </button>
-              ))
+              buildNav(HELP_TOPICS).map((node) => {
+                if (node.kind === 'topic') {
+                  const t = node.topic
+                  return (
+                    <button
+                      key={t.id}
+                      className={t.id === topicId ? 'active' : ''}
+                      onClick={() => setTopicId(t.id)}
+                    >
+                      <span aria-hidden style={{ width: 18, display: 'inline-block' }}>
+                        {t.icon}
+                      </span>
+                      {t.title}
+                    </button>
+                  )
+                }
+                // Keep the group open while one of its chapters is the active one.
+                const open =
+                  !collapsedGroups.has(node.label) ||
+                  node.topics.some((t) => t.id === topicId)
+                return (
+                  <div key={node.label} className="help-toc-group">
+                    <button
+                      className="help-toc-group-head"
+                      aria-expanded={open}
+                      onClick={() =>
+                        setCollapsedGroups((prev) => {
+                          const next = new Set(prev)
+                          if (next.has(node.label)) next.delete(node.label)
+                          else next.add(node.label)
+                          return next
+                        })
+                      }
+                    >
+                      <span aria-hidden style={{ width: 18, display: 'inline-block' }}>
+                        {node.icon}
+                      </span>
+                      <span className="spacer">{node.label}</span>
+                      <span aria-hidden style={{ fontSize: 10 }}>
+                        {open ? '▾' : '▸'}
+                      </span>
+                    </button>
+                    {open &&
+                      node.topics.map((t) => (
+                        <button
+                          key={t.id}
+                          className={`help-toc-sub${t.id === topicId ? ' active' : ''}`}
+                          onClick={() => setTopicId(t.id)}
+                        >
+                          <span
+                            aria-hidden
+                            style={{ width: 18, display: 'inline-block' }}
+                          >
+                            {t.icon}
+                          </span>
+                          {t.title}
+                        </button>
+                      ))}
+                  </div>
+                )
+              })
             )}
           </nav>
 

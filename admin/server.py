@@ -775,6 +775,12 @@ def api_generate_cert(body: GenerateBody, user: User = Depends(require_admin)):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if body.activate:
         store.activate_certificate(cert.id)
+    logx.info(
+        f"admin {user.username} generated TLS certificate {cert.name!r} "
+        f"(CN={body.commonName})" + (" and activated it" if body.activate else ""),
+        username=user.username,
+        operation="tls",
+    )
     return cert.public()
 
 
@@ -788,6 +794,12 @@ def api_upload_cert(body: UploadBody, user: User = Depends(require_admin)):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if body.activate:
         store.activate_certificate(cert.id)
+    logx.info(
+        f"admin {user.username} uploaded TLS certificate {cert.name!r}"
+        + (" and activated it" if body.activate else ""),
+        username=user.username,
+        operation="tls",
+    )
     return cert.public()
 
 
@@ -797,12 +809,26 @@ def api_activate_cert(cert_id: str, user: User = Depends(require_admin)):
         store.activate_certificate(cert_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    cert = store.get_certificate(cert_id)
+    logx.info(
+        f"admin {user.username} activated TLS certificate "
+        f"{(cert.name if cert else cert_id)!r}",
+        username=user.username,
+        operation="tls",
+    )
     return {"ok": True}
 
 
 @app.delete("/api/certs/{cert_id}")
 def api_delete_cert(cert_id: str, user: User = Depends(require_admin)):
+    cert = store.get_certificate(cert_id)
     store.delete_certificate(cert_id)
+    logx.warn(
+        f"admin {user.username} deleted TLS certificate "
+        f"{(cert.name if cert else cert_id)!r}",
+        username=user.username,
+        operation="tls",
+    )
     return {"ok": True}
 
 
@@ -957,10 +983,17 @@ def api_connections(user: User = Depends(require_admin)):
 
 @app.post("/api/connections")
 def api_upsert_connection(body: ConnectionBody, user: User = Depends(require_admin)):
+    existed = bool(body.id) and store.get_connection(body.id) is not None
     try:
         conn = store.upsert_connection(_connection_payload(body))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logx.info(
+        f"admin {user.username} {'updated' if existed else 'created'} database "
+        f"connection {conn.name!r} ({conn.id})",
+        username=user.username,
+        operation="connection",
+    )
     return conn.admin_public()
 
 
@@ -972,12 +1005,25 @@ def api_set_assignments(
         store.set_assignments(conn_id, body.assignments)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    logx.info(
+        f"admin {user.username} set the user assignments for connection {conn_id} "
+        f"({len(body.assignments)} user(s))",
+        username=user.username,
+        operation="connection",
+    )
     return {"ok": True}
 
 
 @app.delete("/api/connections/{conn_id}")
 def api_delete_connection(conn_id: str, user: User = Depends(require_admin)):
+    conn = store.get_connection(conn_id)
     store.delete_connection(conn_id)
+    logx.warn(
+        f"admin {user.username} deleted database connection "
+        f"{(conn.name if conn else conn_id)!r} ({conn_id})",
+        username=user.username,
+        operation="connection",
+    )
     return {"ok": True}
 
 
@@ -998,6 +1044,12 @@ async def api_test_connection(body: ConnectionTestBody, user: User = Depends(req
         fingerprint=body.fingerprint,
         min_rsa_bits=body.minRSAKeySizeBits,
     )
+    logx.info(
+        f"admin {user.username} tested a database connection to "
+        f"{body.host}:{body.port} — {'ok' if not db_error else f'failed: {db_error}'}",
+        username=user.username,
+        operation="connection",
+    )
 
     llm_error: str | None = None
     llm_models: list[str] = []
@@ -1014,6 +1066,13 @@ async def api_test_connection(body: ConnectionTestBody, user: User = Depends(req
                 )
         else:
             llm_error = "LLM server not reachable."  # check_llm_reachable logged the cause
+        logx.info(
+            f"admin {user.username} tested an LLM server at {body.llmURL} — "
+            f"{'ok' if not llm_error else f'failed: {llm_error}'}"
+            + (f" ({len(llm_models)} models)" if llm_models else ""),
+            username=user.username,
+            operation="llm-test",
+        )
 
     return {"dbError": db_error, "llmError": llm_error, "llmModels": llm_models}
 
@@ -1092,6 +1151,13 @@ def api_ldap(user: User = Depends(require_admin)):
 @app.post("/api/ldap")
 def api_save_ldap(body: LdapConfigBody, user: User = Depends(require_admin)):
     store.set_ldap_config(_ldap_payload(body))
+    logx.info(
+        f"admin {user.username} saved the directory (LDAP) configuration — "
+        f"enabled={body.enabled}, server={body.serverURI or '—'}, "
+        f"admin-login={body.adminLoginEnabled}",
+        username=user.username,
+        operation="ldap",
+    )
     return store.ldap_admin_public()
 
 
@@ -1118,7 +1184,24 @@ def api_test_ldap(body: LdapTestBody, user: User = Depends(require_admin)):
         email_attr=body.emailAttr or "mail",
         display_attr=body.displayAttr or "cn",
     )
-    return test_settings(settings, body.testUsername, body.testPassword)
+    result = test_settings(settings, body.testUsername, body.testPassword)
+    if body.testUsername:
+        ok = bool(result.get("userOk"))
+        logx.info(
+            f"admin {user.username} tested a directory account login for "
+            f"{body.testUsername!r} — {'success' if ok else 'failed'}",
+            username=user.username,
+            operation="ldap",
+        )
+    else:
+        ok = bool(result.get("ok"))
+        logx.info(
+            f"admin {user.username} tested the directory server connection "
+            f"({body.serverURI or 'no URI'}) — {'reachable' if ok else 'failed'}",
+            username=user.username,
+            operation="ldap",
+        )
+    return result
 
 
 class CustomizeLoginBody(BaseModel):
@@ -1142,8 +1225,13 @@ def api_save_customize_login(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    logx.usage(
-        f"admin {user.username} set the login page background to {appearance['type']}",
+    detail = {
+        "color": f"a solid colour ({appearance['color']})",
+        "image": "an uploaded background image",
+        "default": "the default theme colour",
+    }.get(appearance["type"], appearance["type"])
+    logx.info(
+        f"admin {user.username} changed the login page background to {detail}",
         username=user.username,
         operation="customize",
     )

@@ -2033,6 +2033,21 @@ textarea.text-input {
   gap: 4px;
 }
 
+/* Collapsible TOC sub-group ("Computational Insights"): a heading with its
+   chapters nested (indented) beneath it. */
+.help-toc-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.help-toc-group-head {
+  color: var(--secondary);
+  font-weight: 600;
+}
+.help-toc button.help-toc-sub {
+  padding-left: 26px;
+}
+
 .help-resize {
   position: absolute;
   right: 0;

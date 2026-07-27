@@ -17,6 +17,14 @@ import { NotesView } from './NotesView'
 import { SimulationView } from './SimulationView'
 import { StatisticsView } from './StatisticsView'
 
+/** Advanced-analysis views shown only to power users (and admins) — hidden from
+ *  plain users in the view-mode menu. */
+const POWER_ONLY_MODES: DetailViewMode[] = [
+  'Conformance Check',
+  'Happy Path',
+  'Simulation',
+]
+
 /** Modes that render their own header instead of the shared KPI strip. */
 const SELF_MANAGED: DetailViewMode[] = [
   'A/B Comparison',
@@ -43,6 +51,12 @@ export function DetailPane({
 
   const mode = store.activeChartMode
   const connected = store.connection.isConnected && store.selectedProject != null
+
+  // Power users (and admins) get the advanced-analysis views; plain users don't.
+  const canSeePowerModes = store.authIsPower || store.authIsAdmin
+  const visibleModes = DETAIL_VIEW_MODES.filter(
+    (m) => canSeePowerModes || !POWER_ONLY_MODES.includes(m),
+  )
 
   const showSharedKpi =
     connected &&
@@ -93,7 +107,7 @@ export function DetailPane({
                   className="popover"
                   style={{ right: 0, top: 32, position: 'absolute', minWidth: 250 }}
                 >
-                  {DETAIL_VIEW_MODES.map((option) => (
+                  {visibleModes.map((option) => (
                     <button
                       key={option}
                       className="p-item"

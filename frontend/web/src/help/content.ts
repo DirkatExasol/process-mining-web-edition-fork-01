@@ -77,6 +77,7 @@ const overview: HelpTopic = {
       heading: 'The ten views',
       body: [
         p('Open the ☰ menu (top-right) to switch between: A-Chart, B-Chart, A/B Comparison, Individual Journey, AI supported Documentation, Statistics, Conformance Check, Happy Path, Notes and Simulation. A checkmark marks the active view, and the title capsule shows it on a second line so you always know your context.'),
+        tip('Conformance Check, Happy Path and Simulation are advanced-analysis views shown only to Power users (and administrators). Plain users do not see them in the ☰ menu.'),
         tip('Press ⌘/ (or Ctrl+/) at any time to open or close this Help panel. It floats, and can be dragged by its title bar and resized from the bottom-right corner.'),
       ],
     },

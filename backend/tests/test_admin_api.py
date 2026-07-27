@@ -219,6 +219,19 @@ def test_connection_test_reports_db_and_llm(admin, monkeypatch):
     assert body["dbError"] is None and body["llmError"] is None
     assert body["llmModels"] == ["gpt-4o", "gpt-4o-mini"]
 
+    # Both the DB and the LLM server test are logged at INFO.
+    conn_log = " ".join(
+        e["message"].lower() for e in server.log_store.query(operation="connection")
+    )
+    assert "tested a database connection to db.example.com:8563 — ok" in conn_log
+    llm_entries = server.log_store.query(operation="llm-test")
+    assert any(
+        e["severity"] == "INFO"
+        and "tested an llm server at https://llm.example.com/v1 — ok (2 models)"
+        in e["message"].lower()
+        for e in llm_entries
+    )
+
 
 def test_connection_test_surfaces_db_error(admin, monkeypatch):
     server, _ = admin
@@ -890,3 +903,76 @@ def test_login_page_uses_custom_background(admin):
     anon = TestClient(server.app)  # the sign-in page is served pre-auth
     html = anon.get("/login").text
     assert "background: #0a84ff;" in html
+
+
+def test_customize_login_is_logged_as_info(admin):
+    server, _ = admin
+    client = _login(server)
+    client.post("/api/customize/login", json={"type": "color", "color": "#0a84ff"})
+    entries = server.log_store.query(operation="customize", limit=10)
+    assert any(
+        e["severity"] == "INFO"
+        and "login page background" in e["message"].lower()
+        and "0a84ff" in e["message"]
+        for e in entries
+    )
+
+
+def test_ldap_cert_and_connection_actions_are_logged(admin, monkeypatch):
+    server, _ = admin
+    client = _login(server)
+
+    # ── LDAP: configure + test (server-only and account) ──────────────────────
+    client.post("/api/ldap", json={"enabled": True, "serverURI": "ldap://dir:389"})
+    import app.services.ldap_auth as ldap_auth
+
+    monkeypatch.setattr(
+        ldap_auth,
+        "test_settings",
+        lambda s, u, p: {"ok": True, "error": None, "userOk": bool(u and p)},
+    )
+    client.post("/api/ldap/test", json={"serverURI": "ldap://dir:389", "baseDN": "dc=x"})
+    client.post(
+        "/api/ldap/test",
+        json={
+            "serverURI": "ldap://dir:389",
+            "baseDN": "dc=x",
+            "testUsername": "alice",
+            "testPassword": "pw",
+        },
+    )
+    ldap_entries = server.log_store.query(operation="ldap", limit=50)
+    ldap_log = " ".join(e["message"].lower() for e in ldap_entries)
+    assert "saved the directory (ldap) configuration" in ldap_log
+    assert "tested the directory server connection" in ldap_log
+    assert "tested a directory account login for 'alice'" in ldap_log
+    assert all(e["severity"] == "INFO" for e in ldap_entries)
+
+    # ── Certificate actions: generate → activate → delete ─────────────────────
+    cert = client.post(
+        "/api/certs/generate",
+        json={"name": "Test Cert", "commonName": "localhost", "activate": True},
+    ).json()
+    client.post(f"/api/certs/{cert['id']}/activate")
+    client.delete(f"/api/certs/{cert['id']}")
+    tls_entries = server.log_store.query(operation="tls", limit=50)
+    tls_log = " ".join(e["message"].lower() for e in tls_entries)
+    assert "generated tls certificate 'test cert'" in tls_log
+    assert "activated tls certificate" in tls_log
+    assert any(
+        e["severity"] == "WARN" and "deleted tls certificate" in e["message"].lower()
+        for e in tls_entries
+    )
+
+    # ── Database connection: create → assign → delete ─────────────────────────
+    conn = client.post("/api/connections", json=_connection_body()).json()
+    client.post(f"/api/connections/{conn['id']}/assignments", json={"assignments": []})
+    client.delete(f"/api/connections/{conn['id']}")
+    conn_entries = server.log_store.query(operation="connection", limit=50)
+    conn_log = " ".join(e["message"].lower() for e in conn_entries)
+    assert "created database connection" in conn_log
+    assert "set the user assignments" in conn_log
+    assert any(
+        e["severity"] == "WARN" and "deleted database connection" in e["message"].lower()
+        for e in conn_entries
+    )

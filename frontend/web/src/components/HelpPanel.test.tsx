@@ -46,3 +46,22 @@ describe('HelpPanel search', () => {
     expect(screen.getByText(/No matches for/)).toBeInTheDocument()
   })
 })
+
+describe('HelpPanel TOC grouping', () => {
+  it('nests Process Goodness and Process Similarity under a Computational Insights group', () => {
+    render(<HelpPanel onClose={() => {}} />)
+    // The group heading is expanded by default, showing both chapters.
+    const group = screen.getByRole('button', { name: /Computational Insights/ })
+    expect(group).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('button', { name: /Process Goodness/ })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Process Similarity/ }),
+    ).toBeInTheDocument()
+
+    // Collapsing the group hides its chapters from the TOC.
+    fireEvent.click(group)
+    expect(group).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('button', { name: /Process Goodness/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Process Similarity/ })).toBeNull()
+  })
+})
