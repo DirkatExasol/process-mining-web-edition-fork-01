@@ -9,3 +9,6 @@ __pycache__/
 .pytest_cache/
 .vitest/
 coverage/
+
+# Local assets (e.g. login-background source images) — never repo content
+Background Images/

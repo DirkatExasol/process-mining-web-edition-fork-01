@@ -193,7 +193,7 @@ const connecting: HelpTopic = {
         p('If an administrator has given your account the power role, a ＋ button appears in the Connections header. Use it to create a connection — Exasol host, credentials, optional TLS and an optional LLM server — right from the app, and to tick the users it should be assigned to.'),
         p('You manage only the connections you create: an ✎ button appears on those cards so you can edit or delete them and change who they are assigned to. Every new connection is automatically assigned to you, so you can connect to it immediately. Passwords and API keys you enter are encrypted at rest and, once saved, are never sent back to the browser — leave those fields blank when editing to keep the stored secret unchanged.'),
         p('The editor has two tabs. “Database / LLM Details” holds the connection fields; it can also create a fresh process-mining schema for you — enter a schema name and the database credentials, then use “Create schema & tables” to build the schema and the required tables (PROJECTS, JOURNEYS, STEPS, METAS, NOTES) if they don’t already exist.'),
-        p('The “Demo Content” tab generates a ready-made dataset into the schema. Two are offered: a Retail dataset (📚 “Online Bookstore” — a synthetic order lifecycle with a returns flow and a flaky bank-transfer path) and a Finance/Insurance dataset (💶 “Online Credit Application” — bank/affiliate intake, an application-check rework loop, credit assessment, and score- and sum-driven approval with agent-review loops, ending in payment or rejection). For either, enter the schema and how many journeys, then Generate; it creates the schema and tables as needed and loads the journeys into that dataset’s own project (others are left untouched).'),
+        p('The “Demo Content” tab generates a ready-made dataset into the schema. Three are offered: a Retail dataset (📚 “Online Bookstore” — a synthetic order lifecycle with a returns flow and a flaky bank-transfer path), a Finance/Insurance dataset (💶 “Online Credit Application” — bank/affiliate intake, an application-check rework loop, credit assessment, and score- and sum-driven approval with agent-review loops, ending in payment or rejection), and a Transportation dataset (✈️ “Flight Booking & Management” — Star Alliance-style login → search → select → book → pay → confirm, where 50% of bookings are interline and query a partner airline, and 20% only manage an existing booking). For any of them, enter the schema and how many journeys, then Generate; it creates the schema and tables as needed and loads the journeys into that dataset’s own project (others are left untouched).'),
         warn('Creating a schema or generating demo data needs a database account with CREATE SCHEMA / CREATE TABLE (and, for demo data, INSERT) rights. Only your database administrator can grant those — the application cannot authorise you.'),
         tip('Use Test in the editor to check the database (and LLM, if set) before saving.'),
       ],
@@ -201,14 +201,15 @@ const connecting: HelpTopic = {
     {
       heading: 'Demo event-ID format',
       body: [
-        p('In both demo datasets the stored EVENT_ID — the case key that ties a journey’s rows together — is the MD5 hash of a simple synthetic reference: the dataset prefix plus a 1-based, zero-padded 6-digit sequence number. So the first journey uses ORD-000001 / CRA-000001, the second ORD-000002 / CRA-000002, and so on.'),
+        p('In every demo dataset the stored EVENT_ID — the case key that ties a journey’s rows together — is the MD5 hash of a simple synthetic reference: the dataset prefix plus a 1-based, zero-padded 6-digit sequence number. So the first journey uses ORD-000001 / CRA-000001 / FLT-000001, the second ORD-000002 / CRA-000002 / FLT-000002, and so on.'),
         code(
-          'Online Bookstore (BOOKSTORE):     EVENT_ID = md5("ORD-000001"), md5("ORD-000002"), …\n' +
-            'Online Credit Application (CREDIT): EVENT_ID = md5("CRA-000001"), md5("CRA-000002"), …\n' +
+          'Online Bookstore (BOOKSTORE):       EVENT_ID = md5("ORD-000001"), md5("ORD-000002"), …\n' +
+            'Online Credit Application (CREDIT):  EVENT_ID = md5("CRA-000001"), md5("CRA-000002"), …\n' +
+            'Flight Booking & Management (FLIGHTS): EVENT_ID = md5("FLT-000001"), md5("FLT-000002"), …\n' +
             '\n' +
             '# reproduce a specific ID from a shell:\n' +
             "printf 'ORD-%06d' 1 | md5      # macOS  →  the stored 32-char hex EVENT_ID\n" +
-            "printf 'CRA-%06d' 42 | md5sum  # Linux",
+            "printf 'FLT-%06d' 42 | md5sum  # Linux",
         ),
         tip('In the Individual Journey view you can type the friendly reference (e.g. ORD-000001) straight into the Event ID field — it is MD5-hashed for you — or paste a raw 32-character hash.'),
       ],

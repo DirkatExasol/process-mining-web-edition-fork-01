@@ -1,5 +1,6 @@
 """Tests for the demo-data generators (app.db.demo_data): the retail (Online
-Bookstore) and finance (Online Credit Application) datasets.
+Bookstore), finance (Online Credit Application) and transportation
+(Flight Booking & Management) datasets.
 
 The event-log generators are pure (seedable RNG) so structure and determinism are
 asserted directly; the loader is driven with a fake connection that records SQL.
@@ -191,3 +192,98 @@ def test_loader_reports_a_friendly_error(monkeypatch):
     res = _run(monkeypatch, conn, journeys=2)
     assert res["ok"] is False and "insufficient privileges" in res["error"]
     assert conn.closed
+
+
+# ── transportation: Flight Booking & Management ───────────────────────────────
+
+
+def test_transportation_structure_and_metas():
+    spec = d.DATASETS["transportation"]
+    assert spec.project_id == "FLIGHTS"
+    assert spec.meta_titles == ("Journey Type", "Airline", "Payment Method")
+
+    grouped = _by_journey(d.generate_transportation_rows(1200, random.Random(3)))
+    assert all(evs[0].step == "Login" for evs in grouped.values())
+
+    new = [e for e in grouped.values() if e[0].meta1 == "New Booking"]
+    manage = [e for e in grouped.values() if e[0].meta1 == "Manage Booking"]
+    assert 0.72 < len(new) / len(grouped) < 0.88  # ~80/20 split
+    assert len(manage) > 0
+    assert all(e[-1].step == "Confirm Booking" for e in new)
+    assert all(e[-1].step == "Confirm Changes" for e in manage)
+
+    # The two interline steps always appear together (a partner search implies a
+    # partner booking connection), and interline covers ~half of new bookings.
+    for e in grouped.values():
+        steps = [x.step for x in e]
+        assert ("Query Partner Airline System" in steps) == (
+            "Connect Partner Booking System" in steps
+        )
+    interline = sum(1 for e in new if "Query Partner Airline System" in [x.step for x in e])
+    assert 0.4 < interline / len(new) < 0.6
+
+    # All five payment options appear, including the rare Advance Payment.
+    pays = {e[-1].meta3 for e in grouped.values()}
+    for method in ("Credit Card", "SEPA", "Apple Pay", "Google Pay", "Advance Payment"):
+        assert method in pays
+
+    defined = {s[0] for s in spec.step_defs}
+    assert {x.step for e in grouped.values() for x in e} <= defined
+
+
+def test_transportation_determinism():
+    a = d.generate_transportation_rows(12, random.Random(7))
+    b = d.generate_transportation_rows(12, random.Random(7))
+    assert [(r.event_id, r.step, r.step_id, r.meta1, r.meta3) for r in a] == [
+        (r.event_id, r.step, r.step_id, r.meta1, r.meta3) for r in b
+    ]
+
+
+def test_loader_provisions_and_loads_transportation(monkeypatch):
+    conn = FakeConn()
+    res = _run(monkeypatch, conn, dataset="transportation", journeys=4)
+    assert res["ok"] and res["journeys"] == 4
+    assert res["project"] == "Flight Booking & Management"
+    assert res["dataset"] == "transportation"
+    joined = "\n".join(conn.calls)
+    assert "PROJECT_ID = 'FLIGHTS'" in joined
+    assert joined.count("INSERT INTO STEPS") == 15
+    assert conn.committed and conn.closed
+
+
+# ── cross-dataset invariants (guards every dataset, incl. future ones) ────────
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("key", sorted(d.DATASETS))
+def test_dataset_is_well_formed(key):
+    spec = d.DATASETS[key]
+    assert spec.key == key
+    assert len(spec.meta_titles) == 3 and all(spec.meta_titles)
+    names = [sd[0] for sd in spec.step_defs]
+    assert len(names) == len(set(names)), f"{key} has duplicate step names"
+    assert all(len(sd) == 8 for sd in spec.step_defs)
+    # At least one end-of-process step is defined.
+    assert any(sd[6] == 1 for sd in spec.step_defs), f"{key} has no end-of-process step"
+
+    defined = set(names)
+    grouped = _by_journey(spec.generate(200, random.Random(123)))
+    assert grouped
+    for evs in grouped.values():
+        ordered = sorted(evs, key=lambda r: r.step_id)
+        # sequential 1..N step ids, only defined steps, three meta values each.
+        assert [e.step_id for e in ordered] == list(range(1, len(ordered) + 1))
+        for e in ordered:
+            assert e.step in defined, f"{key} emits undefined step {e.step!r}"
+            assert e.meta1 is not None and e.meta2 is not None and e.meta3 is not None
+
+
+@pytest.mark.parametrize("key", sorted(d.DATASETS))
+def test_dataset_generation_is_deterministic(key):
+    spec = d.DATASETS[key]
+    a = spec.generate(15, random.Random(99))
+    b = spec.generate(15, random.Random(99))
+    assert [(r.event_id, r.step, r.step_id, r.meta1) for r in a] == [
+        (r.event_id, r.step, r.step_id, r.meta1) for r in b
+    ]

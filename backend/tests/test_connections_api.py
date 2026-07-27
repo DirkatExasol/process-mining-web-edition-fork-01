@@ -453,6 +453,14 @@ def test_generate_demo_power_user_invokes_generator(backend, monkeypatch):
     )
     assert resp.status_code == 200 and seen["dataset"] == "finance"
 
+    # …and the transportation (flight booking) dataset.
+    resp = client.post(
+        "/api/connections/generate-demo",
+        headers={"X-PMW-User": pat},
+        json={"host": "db", "password": "pw", "schema": "PM", "journeys": 50, "dataset": "transportation"},
+    )
+    assert resp.status_code == 200 and seen["dataset"] == "transportation"
+
 
 def test_legacy_db_password_endpoint_is_removed(backend):
     """The plaintext-password disclosure route must no longer exist (any authed

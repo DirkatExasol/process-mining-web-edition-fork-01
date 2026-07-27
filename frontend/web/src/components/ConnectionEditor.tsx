@@ -289,7 +289,7 @@ export function ConnectionEditor({
   }
 
   const runDemo = async (
-    dataset: 'retail' | 'finance',
+    dataset: 'retail' | 'finance' | 'transportation',
     journeys: number,
   ): Promise<{ ok: boolean; text: string }> => {
     const res = await store.generateDemo({
@@ -667,6 +667,20 @@ export function ConnectionEditor({
                 schema={draft.schema}
                 onSchema={(v) => set('schema', v)}
                 generate={(j) => runDemo('finance', j)}
+              />
+            </div>
+
+            <div className="col" style={{ gap: 6 }}>
+              <span className="t-caption fg-secondary" style={{ fontWeight: 600 }}>
+                Transportation
+              </span>
+              <DemoSection
+                icon="✈️"
+                title="Flight Booking & Management"
+                description="Star Alliance-style booking: login → search (with a modify loop) → select → book → payment (Credit Card, SEPA, Apple Pay, Google Pay, Advance Payment) → confirm. 50% of bookings are interline (multi-airline) and query a partner airline’s system; 20% only manage an existing booking (seat reservation / ancillary services). Each EVENT_ID is the MD5 hash of “FLT-000001”, “FLT-000002”, … (the prefix FLT- plus a 6-digit sequence number)."
+                schema={draft.schema}
+                onSchema={(v) => set('schema', v)}
+                generate={(j) => runDemo('transportation', j)}
               />
             </div>
           </div>

@@ -210,12 +210,19 @@ each with schema · journeys · Generate in one row:
   step for sums over €10,000 (5% declined) → *Accepted* → *Payment to Applicant* →
   *Payment* (payout takes up to ~7 days; higher sums take longer, affiliate is faster) or
   *Rejected*. Metas: Applied Credit Sum · Income Class · Channel (Bank/Affiliate).
+- **Transportation** — ✈️ *Flight Booking & Management* (`FLIGHTS` project): login →
+  search (with a 30% modify-search loop) → select → book → payment → confirm. 50% of
+  bookings are **interline** (multi-airline) and add a *Query Partner Airline System* /
+  *Connect Partner Booking System* pair; 20% only manage an existing booking (seat
+  reservation / ancillary services). Payment options: Credit Card, SEPA, Apple Pay,
+  Google Pay, Advance Payment (5%). Star Alliance-style airlines. Metas: Journey Type ·
+  Airline · Payment Method.
 
-Either provisions the schema + tables (if needed) and loads into that dataset's own
+Each provisions the schema + tables (if needed) and loads into that dataset's own
 project, replacing only that project's journeys. Needs `CREATE SCHEMA` / `CREATE TABLE` /
-`INSERT` rights (DBA-granted). Both generators live in `backend/app/db/demo_data.py`.
+`INSERT` rights (DBA-granted). The generators live in `backend/app/db/demo_data.py`.
 
-*Event-ID format.* In both datasets the stored `EVENT_ID` (the case/journey key that
+*Event-ID format.* In every dataset the stored `EVENT_ID` (the case/journey key that
 ties a journey's rows together) is an **MD5 hash** of a simple synthetic reference —
 the dataset prefix plus a **1-based, zero-padded 6-digit sequence number**:
 
@@ -223,6 +230,7 @@ the dataset prefix plus a **1-based, zero-padded 6-digit sequence number**:
 | --- | --- | --- | --- |
 | Online Bookstore | `BOOKSTORE` | `ORD-%06d` → `ORD-000001`, `ORD-000002`, … | `md5("ORD-000001")` = `4c2a8…` |
 | Online Credit Application | `CREDIT` | `CRA-%06d` → `CRA-000001`, `CRA-000002`, … | `md5("CRA-000001")` = `9f1b3…` |
+| Flight Booking & Management | `FLIGHTS` | `FLT-%06d` → `FLT-000001`, `FLT-000002`, … | `md5("FLT-000001")` = `…` |
 
 The hash is the UTF-8 MD5 lowercase hex digest (`hashlib.md5(raw).hexdigest()`). To
 reproduce a specific ID from the shell: `printf 'ORD-%06d' 1 | md5` (or `md5sum` on Linux).

@@ -129,6 +129,29 @@ describe('ConnectionEditor', () => {
     )
   })
 
+  it('generates the transportation (flight booking) dataset from the Transportation section', async () => {
+    generateDemo.mockResolvedValue({
+      ok: true,
+      error: null,
+      journeys: 300,
+      project: 'Flight Booking & Management',
+      message: 'Created 300 journeys for “Flight Booking & Management” in PM.JOURNEYS',
+    })
+    render(<ConnectionEditor connection={null} onClose={() => {}} />)
+
+    fireEvent.click(screen.getByText('Demo Content'))
+    const flight = screen.getByRole('group', { name: 'Flight Booking & Management' })
+    fireEvent.change(within(flight).getByLabelText('Schema'), { target: { value: 'PM' } })
+    fireEvent.change(within(flight).getByLabelText('Journeys'), { target: { value: '300' } })
+    fireEvent.click(within(flight).getByRole('button', { name: /Generate/ }))
+
+    await waitFor(() =>
+      expect(generateDemo).toHaveBeenCalledWith(
+        expect.objectContaining({ dataset: 'transportation', journeys: 300 }),
+      ),
+    )
+  })
+
   it('shows a red Test result when the database probe fails (no LLM configured)', async () => {
     testManagedConnection.mockResolvedValue({
       dbError: 'refused',

@@ -272,7 +272,9 @@ async def provision_managed_schema(body: ManagedConnectionTestBody, request: Req
 
 class DemoContentBody(ManagedConnectionTestBody):
     journeys: int = 500
-    dataset: str = "retail"  # "retail" (Online Bookstore) | "finance" (Credit Application)
+    # "retail" (Online Bookstore) | "finance" (Credit Application) |
+    # "transportation" (Flight Booking) — validated against demo_data.DATASETS.
+    dataset: str = "retail"
 
 
 @router.post("/connections/generate-demo")
