@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Iterable
 
+from .. import log_events as logx
 from ..config import QUERY_TIMEOUT_SECS
 from ..models import (
     INT_MAX,
@@ -131,6 +132,9 @@ class ProcessRepository:
     def __init__(self, manager: DatabaseManager) -> None:
         self.db = manager
         self.active_sample_set: SampleSet = SampleSet.original
+        # Which path the most recent load_transitions took: 'materialized' when it
+        # read TRANSITIONS_RAW, 'live' for the on-the-fly LEAD() (incl. fallback).
+        self.last_transitions_mode: str = "live"
 
     # ── clause builders (private helpers in the Swift original) ──────────────
 
@@ -507,8 +511,56 @@ class ProcessRepository:
         self, project_id: str, f: FilterSpec
     ) -> list[ProcessTransition]:
         filters = self._all_filters(project_id, f, date_only=False)
-        result = await self.db.execute(
-            f"""
+
+        # When the active connection opts into pre-materialised transitions, read
+        # the precomputed pairs (no LEAD() window at request time). The same
+        # {filters} applies unchanged — TRANSITIONS_RAW carries PROJECT_ID,
+        # SAMPLE_SET and EVENT_ID. Any failure (table not built yet, missing) is
+        # non-fatal: fall back to the live query so the map never breaks.
+        enabled = bool(getattr(self.db, "use_materialized_transitions", False))
+        if enabled:
+            try:
+                result = await self.db.execute(
+                    self._materialized_transitions_sql(project_id, filters)
+                )
+                self.last_transitions_mode = "materialized"
+                return self._rows_to_transitions(result.rows)
+            except Exception as exc:  # noqa: BLE001 — graceful fallback to live
+                # Loud on purpose: if materialized is enabled and TRANSITIONS_RAW
+                # exists but the read still fails, this is the only place the real
+                # cause surfaces (admin Logging tab, operation=materialize).
+                logx.warn(
+                    f"Pre-materialized transitions are enabled but reading "
+                    f"TRANSITIONS_RAW failed for project {project_id!r} — falling "
+                    f"back to the live query. Cause: {exc}",
+                    operation="materialize",
+                )
+
+        # 'fallback' = enabled but the table isn't usable yet (needs a rebuild);
+        # 'live' = not enabled at all. Both run the live query; the distinction
+        # lets the UI tell the user their setting is on but a rebuild is pending.
+        self.last_transitions_mode = "fallback" if enabled else "live"
+        result = await self.db.execute(self._live_transitions_sql(project_id, filters))
+        return self._rows_to_transitions(result.rows)
+
+    @staticmethod
+    def _materialized_transitions_sql(project_id: str, filters: str) -> str:
+        """Aggregate the precomputed pairs — no window function at request time."""
+        return f"""
+            SELECT FROM_STEP, TO_STEP, COUNT(*) AS CNT,
+                   AVG(DUR_SECS)    AS AVG_SECS,
+                   MIN(DUR_SECS)    AS MIN_SECS,
+                   MAX(DUR_SECS)    AS MAX_SECS,
+                   STDDEV(DUR_SECS) AS STDDEV_SECS
+            FROM TRANSITIONS_RAW
+            WHERE PROJECT_ID = '{esc(project_id)}'{filters}
+            GROUP BY FROM_STEP, TO_STEP
+            """
+
+    @staticmethod
+    def _live_transitions_sql(project_id: str, filters: str) -> str:
+        """Compute pairs on the fly with LEAD() — the always-available path."""
+        return f"""
             SELECT FROM_STEP, TO_STEP, COUNT(*) AS CNT,
                    AVG(DUR_SECS)    AS AVG_SECS,
                    MIN(DUR_SECS)    AS MIN_SECS,
@@ -530,8 +582,6 @@ class ProcessRepository:
             ) AS d
             GROUP BY FROM_STEP, TO_STEP
             """
-        )
-        return self._rows_to_transitions(result.rows)
 
     @staticmethod
     def _rows_to_transitions(rows: list[list[Any]]) -> list[ProcessTransition]:

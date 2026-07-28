@@ -703,3 +703,62 @@ def test_login_appearance_validates_non_active_fields(security):
         store.set_login_appearance(
             type="image", image='data:image/png;base64,abc"),url(http://evil'
         )
+
+
+# ── Pre-materialised transitions: per-connection flag, token, status ──────────
+
+
+def test_use_materialized_flag_persists_and_defaults_off(security):
+    store = security.store
+    off = _make_conn(store)
+    assert off.use_materialized_transitions is False  # off by default
+    assert off.admin_public()["useMaterializedTransitions"] is False
+
+    on = _make_conn(store, name="Mat", useMaterializedTransitions=True)
+    assert store.get_connection(on.id).use_materialized_transitions is True
+
+    # Updating with the flag off flips it back (it's an updatable column).
+    store.upsert_connection({"id": on.id, "name": "Mat", "useMaterializedTransitions": False})
+    assert store.get_connection(on.id).use_materialized_transitions is False
+
+
+def test_rebuild_token_generate_verify_rotate_clear(security):
+    store = security.store
+    assert store.rebuild_token_set is False
+    assert store.verify_rebuild_token("anything") is False  # none set yet
+
+    token = store.generate_rebuild_token()
+    assert token and store.rebuild_token_set is True
+    assert store.verify_rebuild_token(token) is True
+    assert store.verify_rebuild_token("wrong") is False
+    assert store.verify_rebuild_token("") is False
+
+    # Only the hash is stored — never the plaintext.
+    row = store._conn.execute(
+        "SELECT value FROM security_config WHERE key = 'rebuild_token_hash'"
+    ).fetchone()
+    assert row is not None and token not in row["value"]
+
+    # Rotating invalidates the previous token.
+    new = store.generate_rebuild_token()
+    assert new != token
+    assert store.verify_rebuild_token(token) is False
+    assert store.verify_rebuild_token(new) is True
+
+    # Revoking clears it entirely.
+    store.clear_rebuild_token()
+    assert store.rebuild_token_set is False
+    assert store.verify_rebuild_token(new) is False
+
+
+def test_materialization_status_round_trips_per_connection(security):
+    store = security.store
+    assert store.materialization_status("c1") is None  # nothing recorded yet
+
+    store.set_materialization_status(
+        "c1", {"ok": True, "rows": 12345, "built_at": "2026-07-28T00:00:00+00:00", "error": None}
+    )
+    st = store.materialization_status("c1")
+    assert st["ok"] is True and st["rows"] == 12345
+    # Independent per connection.
+    assert store.materialization_status("c2") is None

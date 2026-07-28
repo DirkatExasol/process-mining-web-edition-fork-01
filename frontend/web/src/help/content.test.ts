@@ -20,6 +20,7 @@ describe('help content integrity', () => {
       'admin-tls',
       'admin-users',
       'admin-connections',
+      'admin-api',
       'admin-directory',
       'admin-logging',
       'backup',

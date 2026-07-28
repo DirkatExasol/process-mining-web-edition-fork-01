@@ -899,6 +899,42 @@ textarea.text-input {
   color: var(--secondary);
 }
 
+/* Thin status bar under the process map showing the last query's execution time. */
+.chart-footer {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 3px 16px;
+  border-top: 1px solid var(--separator-soft);
+  background: var(--bg-tertiary-grouped);
+  font-size: 11px;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Indicates how the process map's transitions were computed on the last load. */
+.mode-pill {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.mode-pill.materialized {
+  background: color-mix(in srgb, var(--green) 16%, transparent);
+  color: var(--green);
+}
+.mode-pill.live {
+  background: rgba(120, 120, 128, 0.16);
+  color: var(--secondary);
+}
+.mode-pill.fallback {
+  background: color-mix(in srgb, var(--orange, #ff9500) 18%, transparent);
+  color: var(--orange, #ff9500);
+}
+
 .kpi-strip {
   display: flex;
   gap: 12px;

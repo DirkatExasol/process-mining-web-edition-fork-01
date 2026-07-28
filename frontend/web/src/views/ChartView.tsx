@@ -147,6 +147,18 @@ export function ChartView({
         />
       )}
 
+      {hasData && store.queryMs != null && (
+        <div className="chart-footer" title="Server-side execution time of the queries behind this view">
+          <span className="spacer" />
+          <span>
+            Query time:{' '}
+            {store.queryMs < 1000
+              ? `${store.queryMs} ms`
+              : `${(store.queryMs / 1000).toFixed(2)} s`}
+          </span>
+        </div>
+      )}
+
       {notes.element}
     </div>
   )

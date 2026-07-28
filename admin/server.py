@@ -927,6 +927,7 @@ class ConnectionBody(BaseModel):
     llmModel: str = ""
     llmKey: str | None = None
     assignments: list[str] = []
+    useMaterializedTransitions: bool = False
 
     model_config = {"populate_by_name": True}
 
@@ -947,6 +948,7 @@ class ConnectionTestBody(BaseModel):
     minRSAKeySizeBits: int = 2048
     llmURL: str = ""
     llmKey: str = ""
+    buildTransitions: bool = False  # provision only: also build TRANSITIONS_RAW
 
     model_config = {"populate_by_name": True}
 
@@ -967,6 +969,7 @@ def _connection_payload(body: ConnectionBody) -> dict:
         "llmURL": body.llmURL,
         "llmModel": body.llmModel,
         "assignments": body.assignments,
+        "useMaterializedTransitions": body.useMaterializedTransitions,
     }
     # Only forward secrets that were explicitly provided (None ⇒ keep existing).
     if body.password is not None:
@@ -978,7 +981,12 @@ def _connection_payload(body: ConnectionBody) -> dict:
 
 @app.get("/api/connections")
 def api_connections(user: User = Depends(require_admin)):
-    return [c.admin_public() for c in store.list_connections()]
+    out = []
+    for c in store.list_connections():
+        d = c.admin_public()
+        d["materialization"] = store.materialization_status(c.id)
+        out.append(d)
+    return out
 
 
 @app.post("/api/connections")
@@ -1084,9 +1092,12 @@ async def api_provision_schema(body: ConnectionTestBody, user: User = Depends(re
     Requires elevated database privileges (CREATE SCHEMA / CREATE TABLE) that only a
     database administrator can grant — the app cannot.
     """
-    from app.db.schema_ddl import provision_process_mining_schema
+    from app.db.schema_ddl import (
+        provision_process_mining_schema,
+        rebuild_materialized_transitions,
+    )
 
-    return await provision_process_mining_schema(
+    result = await provision_process_mining_schema(
         host=body.host,
         port=body.port,
         username=body.username,
@@ -1097,6 +1108,113 @@ async def api_provision_schema(body: ConnectionTestBody, user: User = Depends(re
         fingerprint=body.fingerprint,
         min_rsa_bits=body.minRSAKeySizeBits,
     )
+    # Optionally seed the pre-materialised transitions table straight away (empty
+    # until JOURNEYS is loaded, but the structure exists and the flag can be used).
+    if result.get("ok") and body.buildTransitions:
+        result["materialization"] = await rebuild_materialized_transitions(
+            host=body.host,
+            port=body.port,
+            username=body.username,
+            password=body.password,
+            schema=body.schema_,
+            use_tls=body.useTLS,
+            cert_mode=body.certModeRaw,
+            fingerprint=body.fingerprint,
+            min_rsa_bits=body.minRSAKeySizeBits,
+        )
+    return result
+
+
+# ── pre-materialised transitions: rebuild + external API token ────────────────
+
+
+def _rebuild_authorized(request: Request) -> str | None:
+    """Authorise a rebuild by EITHER an admin session OR the bearer rebuild token.
+    Returns an actor label to log, or None if unauthorised. The token lets an
+    external scheduler trigger a rebuild without an interactive admin login."""
+    user = _current_user(request)
+    if user is not None:
+        return user.username
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+        if store.verify_rebuild_token(token):
+            return "api-token"
+    return None
+
+
+@app.post("/api/connections/{conn_id}/rebuild-transitions")
+async def api_rebuild_transitions(conn_id: str, request: Request):
+    """(Re)build TRANSITIONS_RAW for a stored connection. Auth: admin session or
+    `Authorization: Bearer <rebuild-token>`. Uses the connection's stored
+    credentials, so the caller never handles them."""
+    actor = _rebuild_authorized(request)
+    if actor is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    conn = store.get_connection(conn_id, with_secrets=True)
+    if conn is None:
+        raise HTTPException(status_code=404, detail="No such connection.")
+
+    from app.db.schema_ddl import rebuild_materialized_transitions
+
+    result = await rebuild_materialized_transitions(
+        host=conn.host,
+        port=conn.port,
+        username=conn.username,
+        password=conn.password,
+        schema=conn.schema,
+        use_tls=conn.use_tls,
+        cert_mode=conn.cert_mode,
+        fingerprint=conn.fingerprint,
+        min_rsa_bits=conn.min_rsa_bits,
+    )
+    store.set_materialization_status(
+        conn_id,
+        {
+            "ok": result["ok"],
+            "rows": result["rows"],
+            "built_at": result["built_at"],
+            "error": result["error"],
+        },
+    )
+    logx.info(
+        f"{actor} rebuilt materialised transitions for connection {conn.name!r} "
+        f"({conn_id}) — "
+        + (f"ok, {result['rows']} pairs" if result["ok"] else f"failed: {result['error']}"),
+        username=actor,
+        operation="materialize",
+    )
+    return result
+
+
+@app.get("/api/rebuild-token")
+def api_rebuild_token_status(user: User = Depends(require_admin)):
+    return {"set": store.rebuild_token_set}
+
+
+@app.post("/api/rebuild-token")
+def api_rebuild_token_generate(user: User = Depends(require_admin)):
+    """Generate (or rotate) the external rebuild token. Returned in plaintext ONCE
+    — only its hash is stored, so it cannot be shown again."""
+    token = store.generate_rebuild_token()
+    logx.warn(
+        f"admin {user.username} generated a new transitions-rebuild API token",
+        username=user.username,
+        operation="materialize",
+    )
+    return {"token": token}
+
+
+@app.delete("/api/rebuild-token")
+def api_rebuild_token_clear(user: User = Depends(require_admin)):
+    store.clear_rebuild_token()
+    logx.warn(
+        f"admin {user.username} revoked the transitions-rebuild API token",
+        username=user.username,
+        operation="materialize",
+    )
+    return {"ok": True}
 
 
 # ── LDAP / directory ──────────────────────────────────────────────────────────

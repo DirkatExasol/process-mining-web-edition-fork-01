@@ -48,6 +48,24 @@ CREATE TABLE IF NOT EXISTS PROJECTS (
 
 # The event log: one row per (event, step). STEP_ID orders steps that share an
 # EVENT_TIME. SAMPLE_SET tags rows copied into a sample ('ORIGINAL' = source data).
+#
+# DISTRIBUTE BY EVENT_ID co-locates every event of a journey on one cluster node,
+# so the transition query's LEAD() OVER (PARTITION BY EVENT_ID ...) and every
+# filter's GROUP BY EVENT_ID run node-local with no cross-node redistribution.
+# EVENT_ID is high-cardinality, so rows spread evenly.
+#
+# PARTITION BY EVENT_TIME lets Exasol prune by date range — chiefly the
+# "active in window" EVENT_ID selection behind the last-N-days default and the
+# date filter. (The main scan still fetches whole journeys by EVENT_ID, which can
+# span partitions, so pruning helps the ID selection more than the final scan.)
+# The partition column must differ from the distribution column, which holds here
+# (EVENT_TIME vs EVENT_ID). If EVENT_TIME cardinality is extreme, a day-truncated
+# EVENT_DATE column would partition more coarsely — but that needs an extra column
+# the data load must populate, so EVENT_TIME is the zero-ETL-change default.
+#
+# Existing tables are unaffected by IF NOT EXISTS — apply to those with
+#   ALTER TABLE JOURNEYS DISTRIBUTE BY EVENT_ID;
+#   ALTER TABLE JOURNEYS PARTITION  BY EVENT_TIME;
 _JOURNEYS_DDL = """
 CREATE TABLE IF NOT EXISTS JOURNEYS (
     PROJECT_ID VARCHAR(100)  NOT NULL,
@@ -58,7 +76,9 @@ CREATE TABLE IF NOT EXISTS JOURNEYS (
     META_1     VARCHAR(1000),
     META_2     VARCHAR(1000),
     META_3     VARCHAR(1000),
-    SAMPLE_SET VARCHAR(20)   DEFAULT 'ORIGINAL'
+    SAMPLE_SET VARCHAR(20)   DEFAULT 'ORIGINAL',
+    DISTRIBUTE BY EVENT_ID,
+    PARTITION BY EVENT_TIME
 )
 """
 
@@ -102,9 +122,122 @@ PROCESS_MINING_TABLES: list[tuple[str, str]] = [
 TABLE_NAMES: list[str] = [name for name, _ in PROCESS_MINING_TABLES]
 
 
+# Optional pre-materialised directly-follows pairs (backlog item #3). Built on
+# demand per connection; the transition query reads it instead of running the
+# LEAD() window on every request. One row per consecutive step-pair, carrying the
+# precomputed gap so the map's timing aggregates are pure MIN/MAX/AVG/STDDEV.
+#
+# Built with CREATE TABLE AS SELECT so every column INHERITS its type from
+# JOURNEYS/STEPS — critically EVENT_ID, which varies by deployment (VARCHAR,
+# HASHTYPE, DECIMAL, …). Hard-coding it (e.g. VARCHAR) breaks the read query:
+# the semi-join `TRANSITIONS_RAW.EVENT_ID IN (SELECT JOURNEYS.EVENT_ID …)` then
+# compares mismatched types and Exasol raises "Incomparable Types". Distribution
+# is applied afterwards with ALTER (CTAS can't declare it inline).
+MATERIALIZED_TRANSITIONS_TABLE = "TRANSITIONS_RAW"
+
+
 def _quote_ident(name: str) -> str:
     """Quote an Exasol identifier, guarding against injection in the schema name."""
     return '"' + name.replace('"', '""') + '"'
+
+
+async def rebuild_materialized_transitions(
+    *,
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    schema: str,
+    use_tls: bool = False,
+    cert_mode: str = "verify",
+    fingerprint: str = "",
+    min_rsa_bits: int = 2048,
+) -> dict:
+    """(Re)build ``TRANSITIONS_RAW`` in ``schema`` from its ``JOURNEYS`` table.
+
+    Runs the expensive ``LEAD()`` pairing once and stores the result, so the
+    per-request transition query can drop the window function. The fresh copy is
+    built in a staging table alongside the live one and swapped in with a RENAME,
+    so readers are never blocked by the build and only ever see a complete table
+    (a sub-millisecond gap during the swap falls back to the live query).
+
+    Returns ``{"ok", "error", "rows", "built_at"}`` — ``rows`` is the pair count,
+    ``built_at`` an ISO-8601 UTC timestamp. Idempotent and safe to re-run.
+    """
+    import asyncio
+    from datetime import datetime, timezone
+
+    from ..models import DatabaseServer
+    from .manager import DatabaseManager, friendly_error
+
+    schema = (schema or "").strip()
+    if not schema:
+        return {"ok": False, "error": "A schema name is required.", "rows": 0, "built_at": None}
+
+    server = DatabaseServer(
+        id="materialize",
+        host=host,
+        port=port,
+        username=username,
+        useTLS=use_tls,
+        certModeRaw=cert_mode,
+        fingerprint=fingerprint,
+        minRSAKeySizeBits=min_rsa_bits,
+        **{"schema": ""},
+    )
+    mgr = DatabaseManager.__new__(DatabaseManager)  # no store side effects
+    ident = _quote_ident(schema)
+    final = MATERIALIZED_TRANSITIONS_TABLE
+    stage = f"{final}_STAGE"
+
+    def _run() -> int:
+        conn = mgr._open(server, password)
+        try:
+            conn.execute(f"OPEN SCHEMA {ident}")
+            # Build the fresh copy beside the live table so reads are unaffected.
+            # CTAS ⇒ column types (esp. EVENT_ID) match JOURNEYS/STEPS exactly.
+            conn.execute(
+                f"""
+                CREATE OR REPLACE TABLE {stage} AS
+                SELECT PROJECT_ID, EVENT_ID, FROM_STEP, TO_STEP, FROM_TIME, TO_TIME,
+                       SECONDS_BETWEEN(TO_TIME, FROM_TIME) AS DUR_SECS, SAMPLE_SET
+                FROM (
+                    SELECT PROJECT_ID, EVENT_ID, SAMPLE_SET,
+                           STEP       AS FROM_STEP,
+                           EVENT_TIME AS FROM_TIME,
+                           LEAD(STEP)       OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_STEP,
+                           LEAD(EVENT_TIME) OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_TIME
+                    FROM JOURNEYS
+                ) AS t
+                WHERE TO_STEP IS NOT NULL AND TO_TIME IS NOT NULL
+                """
+            )
+            # Co-locate by EVENT_ID for the semi-join. Distribution is a pure
+            # optimisation, so a failure here must not abort the rebuild.
+            try:
+                conn.execute(f"ALTER TABLE {stage} DISTRIBUTE BY EVENT_ID")
+            except Exception:  # noqa: BLE001
+                pass
+            rows = conn.execute(f"SELECT COUNT(*) FROM {stage}").fetchval()
+            # Swap the fresh copy in. DROP+RENAME leaves a sub-ms window with no
+            # live table; the query layer falls back to the live LEAD() for that.
+            conn.execute(f"DROP TABLE IF EXISTS {final}")
+            conn.execute(f"RENAME TABLE {stage} TO {final}")
+            conn.commit()
+            return int(rows or 0)
+        finally:
+            conn.close()
+
+    try:
+        rows = await asyncio.to_thread(_run)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": friendly_error(exc), "rows": 0, "built_at": None}
+    return {
+        "ok": True,
+        "error": None,
+        "rows": rows,
+        "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
 
 
 async def provision_process_mining_schema(

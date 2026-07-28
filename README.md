@@ -284,6 +284,48 @@ table and the `JOURNEYS.SAMPLE_SET` column are created automatically on first us
 if the connecting user has the necessary rights. The schema is documented in the
 in-app **Help → Database setup** chapter and `ARCHITECTURE.md`.
 
+`JOURNEYS` is created with `DISTRIBUTE BY EVENT_ID` so every event of a journey
+lives on one cluster node — the transition query's `LEAD() … PARTITION BY
+EVENT_ID` and the filter `GROUP BY EVENT_ID` then run node-local — and
+`PARTITION BY EVENT_TIME` so Exasol can prune by date range (chiefly the
+"active in window" EVENT_ID selection behind the last-N-days default). Tables
+that pre-date these clauses are unaffected by the `CREATE TABLE IF NOT EXISTS`;
+apply them once with `ALTER TABLE JOURNEYS DISTRIBUTE BY EVENT_ID` and
+`ALTER TABLE JOURNEYS PARTITION BY EVENT_TIME`.
+
+### Optional pre-materialized transitions
+
+Each connection can opt into reading the process map from a prebuilt
+`TRANSITIONS_RAW` table (the directly-follows pairs, with their gap precomputed)
+instead of running the `LEAD()` window on every request — a large speed-up for
+interactive filtering on big logs. It's **off by default** and **fails safe**:
+if the table isn't built (or a rebuild is mid-flight) the map falls back to the
+live query, so it never breaks. The active mode is shown as a pill on the chart —
+**⚡ Pre-materialized**, **↻ Live query**, or **⚠ Live (not built)** when it's
+enabled but the table isn't ready yet.
+
+Enable it per connection in the admin **Connections** tab (it takes effect on the
+next chart reload — no reconnect needed), then (re)build the table after each load
+of `JOURNEYS`. Three ways to rebuild:
+
+- **Manually** — the *Rebuild now* button on the connection (shows last-built time
+  and pair count).
+- **From a scheduler** — `POST /api/connections/<id>/rebuild-transitions` on the
+  admin server with header `Authorization: Bearer <token>`. Generate the token in
+  the admin **API** tab (shown once, stored only as a hash, rotatable/revocable);
+  that tab also renders a ready-to-copy `curl` example — pre-filled with the token
+  while it's still visible, with a copy button and the `-k` flag (skips the TLS
+  check for the self-signed admin certificate).
+- **During provisioning** — tick *Also build …* under *Create schema & tables*.
+
+The rebuild runs the pairing once with `CREATE TABLE … AS SELECT` — so every
+column (crucially `EVENT_ID`, which may be `HASHTYPE`, `VARCHAR`, …) inherits its
+type from `JOURNEYS` and the read query's `EVENT_ID` semi-join stays
+type-compatible — into a staging table that's swapped in with a `RENAME`, so live
+readers are never blocked. Whether it's worth it depends on how often you reload
+`JOURNEYS`: ideal for batch loads read heavily afterwards, less so for continuous
+updates (the table is stale until rebuilt).
+
 ## Tests
 
 The suite has two parts: pure model & simulation logic (no database required) and
@@ -333,9 +375,10 @@ Cover the model & simulation logic plus the web-specific compute layer.
 | `test_analytics.py` | Random / temporal-stratified / path-diverse sampling; happy-path conformance (full match, journey-weighting, best-branch); process-goodness coverage penalty; the A/B similarity Q-metric (identical → 1.0, disjoint → low) |
 | `test_repository.py` | Value coercion (`as_int` / `as_float` / `parse_date` / `dur_label`) and the SQL clause builders (sample-set, date, step include/exclude, score, combined filters) — verified without a database |
 | `test_backup.py` | AES-256-GCM encrypt/decrypt round-trip and wrong-password handling; backup summary; the connection-splitting logic on restore (against an in-memory store) |
-| `test_security.py` | User store (seeded admin, case-insensitive auth, enable/disable, last-admin guard), TLS mode & plan (off/optional/required), self-signed generation, cert/key pair validation, encrypted-at-rest keys, scrypt password hashing, per-user database connections (encrypted secrets, assignment filtering, secret-preserving updates), and LDAP directory auth (config encryption, JIT provisioning, local-first `authenticate_app`, admin-panel stays local-only) |
+| `test_security.py` | User store (seeded admin, case-insensitive auth, enable/disable, last-admin guard), TLS mode & plan (off/optional/required), self-signed generation, cert/key pair validation, encrypted-at-rest keys, scrypt password hashing, per-user database connections (encrypted secrets, assignment filtering, secret-preserving updates), the per-connection pre-materialized-transitions flag, the hash-stored rebuild token (generate/verify/rotate/clear) and per-connection materialization status, and LDAP directory auth (config encryption, JIT provisioning, local-first `authenticate_app`, admin-panel stays local-only) |
+| `test_materialized_transitions.py` | The optional pre-materialized transitions: `load_transitions` picks `TRANSITIONS_RAW` when enabled and gracefully falls back to the live `LEAD()` query when it isn't built (reporting `materialized` / `fallback` / `live`), and a SQLite proof that the materialized pairs aggregate to exactly the same directly-follows graph as the live query |
 | `test_auth.py` | The GUI server's sign-in gate — `/api/*` gated without a session, `/api/health` exempt, login/session/logout cookie flow, disabled-user rejection, and open access when sign-in is not required (drives the real GUI app with a stub backend) |
-| `test_admin_api.py` | The admin interface's connection + LDAP endpoints — admin guard, connection create/list/delete, per-user assignment roundtrip, password-preserving updates, the connection-test `{dbError, llmError, llmModels}` shape, and the LDAP config roundtrip (bind password hidden/preserved) + test endpoint (drives the real admin app with stubbed probes) |
+| `test_admin_api.py` | The admin interface's connection + LDAP endpoints — admin guard, connection create/list/delete, per-user assignment roundtrip, password-preserving updates, the connection-test `{dbError, llmError, llmModels}` shape, the LDAP config roundtrip (bind password hidden/preserved) + test endpoint, and the pre-materialized transitions surface: toggle persistence, the rebuild endpoint (admin session **or** bearer token, 401/404 paths), token generate/rotate/revoke, the provisioning build opt-in, and the dashboard render carrying the **API** tab (rebuild token + copy-able `curl` example, and the token moved out of the Connections tab) (drives the real admin app with stubbed probes) |
 | `test_ldap.py` | The directory search+bind flow against ldap3's in-memory `MOCK_SYNC` server — valid/invalid/unknown login, empty-password and filter-injection guards, canonical-username resolution, and the admin "Test" result shape (no real directory needed) |
 | `test_connections_api.py` | The compute backend's connection endpoints — `GET /api/connections` filtered by the trusted `X-PMW-User` header (secrets stripped, open access without it) and the `POST …/connect` authorization gate (403 unassigned, decrypted secret passed through when assigned, 404 unknown id) |
 | `test_docgen.py` | The AI-documentation report builder: transition table, journey-paths HTML, conformance gap analysis, happy-path section and prompt assembly |

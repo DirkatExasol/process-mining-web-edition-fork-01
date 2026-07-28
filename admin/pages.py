@@ -112,6 +112,13 @@ h2 { font-size: 15px; margin: 0 0 12px; }
 .spacer { flex: 1; }
 .card { background: var(--panel); border: 1px solid var(--border-soft); border-radius: var(--radius);
   padding: 18px; margin: 16px 0; }
+.codeblock { background: var(--panel2); border: 1px solid var(--border-soft); border-radius: 8px;
+  padding: 12px 40px 12px 14px; font-family: var(--mono); font-size: 12px; line-height: 1.5; overflow-x: auto; }
+.codeblock .tok { color: var(--accent, #0a84ff); font-weight: 600; }
+.codeblock-wrap { position: relative; }
+.copy-btn { position: absolute; top: 8px; right: 8px; padding: 3px 7px; border: 1px solid var(--border-soft);
+  border-radius: 6px; background: var(--panel); cursor: pointer; font-size: 13px; line-height: 1; }
+.copy-btn:hover { background: var(--fill2); }
 .row { display: flex; align-items: center; gap: 10px; }
 .col { display: flex; flex-direction: column; gap: 10px; }
 .muted { color: var(--muted); }
@@ -147,13 +154,20 @@ tr:last-child td { border-bottom: 0; }
 .pill.log-warn { background: rgba(255,159,10,.16); color: var(--orange); }
 .pill.log-error { background: rgba(255,69,58,.16); color: var(--red); }
 .pill.log-debug { background: var(--fill2); color: var(--muted); }
-#logTable table { table-layout: auto; }
+#logTable table { table-layout: fixed; width: 100%; }
 #logTable td { font-size: 12px; vertical-align: top; }
-/* Keep Date (and Time) on one line — the width they need comes off the Message
-   column, which wraps. */
 #logTable th:first-child, #logTable td:first-child { white-space: nowrap; width: 104px; }
-#logTable th:nth-child(2), #logTable td:nth-child(2) { white-space: nowrap; }
-#logTable td:last-child { word-break: break-word; }
+#logTable th:nth-child(2), #logTable td:nth-child(2) { white-space: nowrap; width: 76px; }
+/* Every row stays exactly one line regardless of message length — long SQL is
+   clipped with an ellipsis; a click opens the full entry in a popup. */
+#logTable td:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 0; }
+#logTable tbody tr { cursor: pointer; }
+#logTable tbody tr:hover { background: var(--fill); }
+/* Full-entry popup (mirrors the help overlay). */
+.log-ov { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(0,0,0,.4); }
+.log-ov[hidden] { display: none; }
+.log-ov-box { width: min(760px, 92vw); max-height: 84vh; overflow: auto; background: var(--panel);
+  border: 1px solid var(--border-soft); border-radius: 12px; padding: 18px; box-shadow: 0 20px 60px rgba(0,0,0,.4); }
 /* Theme-aware grey (the old near-white tint was invisible on the light card);
    the inset outline keeps it reading as a badge without changing its size. */
 .pill.neutral { background: var(--fill2); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-soft); }
@@ -398,6 +412,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <button data-tab="tls" onclick="selectTab('tls')">TLS / SSL</button>
     <button data-tab="users" onclick="selectTab('users')">Users</button>
     <button data-tab="connections" onclick="selectTab('connections')">Database Connections</button>
+    <button data-tab="api" onclick="selectTab('api')">API</button>
     <button data-tab="ldap" onclick="selectTab('ldap')">Directory (LDAP)</button>
     <button data-tab="logging" onclick="selectTab('logging')">Logging</button>
     <button data-tab="backup" onclick="selectTab('backup')">Backup</button>
@@ -586,6 +601,23 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
 
           <h2 style="font-size:13px; margin-top:18px">Assign to users</h2>
           <div class="assign-grid" id="c_assign"></div>
+
+          <h2 style="font-size:13px; margin-top:18px">Query performance</h2>
+          <label class="row" style="font-size:13px">
+            <input type="checkbox" id="c_useMaterialized" style="width:auto">
+            Use pre-materialized transitions
+          </label>
+          <p class="subtle" style="margin:6px 0 0">
+            Reads the process map from a prebuilt <code>TRANSITIONS_RAW</code> table instead of
+            running the windowed query live. Faster for interactive filtering; falls back to the
+            live query whenever the table isn't built yet. Rebuild it after each load of
+            <code>JOURNEYS</code>.
+          </p>
+          <div class="row" style="align-items:center; gap:10px; margin-top:8px">
+            <button class="btn" id="c_rebuildBtn" onclick="rebuildTransitions()">Rebuild now</button>
+            <span id="c_matResult" class="muted"></span>
+          </div>
+          <div id="c_matStatus" class="subtle" style="margin-top:6px"></div>
         </div>
       </div>
       <div class="row" style="margin-top:16px; align-items:center">
@@ -601,6 +633,10 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
           <button class="btn" onclick="provisionSchema()">Create schema &amp; tables</button>
           <span id="c_provisionResult" class="muted"></span>
         </div>
+        <label class="row" style="font-size:13px; margin-top:8px">
+          <input type="checkbox" id="c_provisionBuildMat" style="width:auto">
+          Also build pre-materialized transitions after provisioning
+        </label>
         <p class="subtle" style="margin:8px 0 0">
           Creates the schema named above and the process-mining tables
           (PROJECTS, JOURNEYS, STEPS, METAS, NOTES) if they don't exist, using the credentials
@@ -612,6 +648,44 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     </div>
   </div>
   </div><!-- /tab-connections -->
+
+  <div class="tabpanel" id="tab-api">
+  <div class="card">
+    <h2>API</h2>
+    <p class="muted" style="margin-top:0">Trigger a connection's pre-materialized transitions rebuild from outside the
+      admin interface — e.g. a cron job or ETL step run right after loading <code>JOURNEYS</code>.</p>
+
+    <h2 style="font-size:14px; margin-top:18px">Rebuild token</h2>
+    <div class="row" style="align-items:center; gap:10px">
+      <span id="rtStatus" class="subtle"></span>
+      <span class="spacer"></span>
+      <button class="btn" onclick="generateRebuildToken()">Generate / rotate</button>
+      <button class="btn danger" id="rtRevokeBtn" onclick="revokeRebuildToken()">Revoke</button>
+    </div>
+    <div id="rtValue" style="margin-top:8px"></div>
+    <p class="subtle" style="margin:8px 0 0">
+      A bearer token that authorizes the rebuild endpoint without an admin login. It is shown
+      <strong>once</strong>, right after you generate it — copy it now; only its hash is stored, so it
+      cannot be shown again. Rotating or revoking immediately invalidates the previous token.
+    </p>
+
+    <h2 style="font-size:14px; margin-top:20px">Example request</h2>
+    <div class="row" style="align-items:center; gap:10px">
+      <label class="subtle" for="api_conn">Connection</label>
+      <select id="api_conn" onchange="renderCurl()"></select>
+    </div>
+    <div class="codeblock-wrap" style="margin-top:10px">
+      <button class="copy-btn" onclick="copyCurl()" title="Copy to clipboard" aria-label="Copy curl command">📋</button>
+      <pre id="api_curl" class="codeblock" style="white-space:pre-wrap; word-break:break-all"></pre>
+    </div>
+    <p class="subtle" style="margin:6px 0 0">
+      The <code>Bearer</code> value is filled in with your real token only while it is visible above; after that it
+      shows <code>&lt;token&gt;</code>. On success the response is
+      <code>{{"ok": true, "rows": N, "built_at": "…"}}</code>; a failure returns <code>ok:false</code> with an
+      <code>error</code> string. Use the HTTPS admin URL in production.
+    </p>
+  </div>
+  </div><!-- /tab-api -->
 
   <div class="tabpanel" id="tab-ldap">
   <div class="card">
@@ -698,6 +772,15 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       <button class="btn small danger" onclick="clearLogs()">Clear</button>
     </div>
     <div id="logTable"></div>
+    <div id="logModal" class="log-ov" hidden onclick="if(event.target===this)closeLogModal()">
+      <div class="log-ov-box">
+        <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:12px">
+          <strong style="font-size:14px">Log entry</strong>
+          <button class="btn small" onclick="closeLogModal()">Close</button>
+        </div>
+        <div id="logModalBody"></div>
+      </div>
+    </div>
     <div class="row" id="logPager"
       style="justify-content:space-between; align-items:center; gap:12px; margin-top:12px; font-size:13px">
       <label class="row subtle" style="gap:6px">Per page
@@ -1170,6 +1253,7 @@ function selectTab(name) {
   for (const p of document.querySelectorAll('.tabpanel'))
     p.classList.toggle('sel', p.id === 'tab-' + name);
   if (name === 'connections') loadConnections().catch(e => toast(e.message, true));
+  if (name === 'api') loadApiTab().catch(e => toast(e.message, true));
   if (name === 'ldap') loadLdap().catch(e => toast(e.message, true));
   if (name === 'logging') loadLogs().catch(e => toast(e.message, true));
   if (name === 'customize') loadCustomize().catch(e => toast(e.message, true));
@@ -1237,8 +1321,9 @@ async function saveLoginBg() {
 }
 
 // ── Logging ───────────────────────────────────────────────────────────────
-let LOG_LEVELS = [], LOG_SEVS = new Set(), _logInited = false, _logReloadTimer = null;
-let _logPage = 1, _logPerPage = 25, _logTotal = 0, _logPages = 1;
+// Default display filter: show INFO + USAGE, hide WARN / ERROR / DEBUG.
+let LOG_LEVELS = [], LOG_SEVS = new Set(['INFO', 'USAGE']), _logInited = false, _logReloadTimer = null;
+let _logPage = 1, _logPerPage = 25, _logTotal = 0, _logPages = 1, _logEntries = [];
 
 function _logParams() {
   const p = new URLSearchParams();
@@ -1266,7 +1351,8 @@ async function loadLogs() {
     (r.operations || []).map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('');
   $('logOp').value = curOp;
   _logPage = r.page; _logPerPage = r.perPage; _logTotal = r.total; _logPages = r.pages;
-  renderLogRows(r.entries || []);
+  _logEntries = r.entries || [];
+  renderLogRows(_logEntries);
   renderLogPager();
 }
 // Filters/search span the entire log, so any filter change returns to page 1.
@@ -1304,14 +1390,98 @@ function toggleLogSeverity(lv) {
 function renderLogRows(entries) {
   if (!entries.length) { $('logTable').innerHTML = '<p class="subtle">No matching log entries.</p>'; return; }
   let h = '<table><thead><tr><th>Date</th><th>Time</th><th>Severity</th><th>Client IP</th><th>User</th><th>Message</th></tr></thead><tbody>';
-  for (const e of entries) {
-    h += `<tr><td class="mono">${e.date}</td><td class="mono">${e.time}</td>` +
+  entries.forEach((e, i) => {
+    h += `<tr onclick="showLogEntry(${i})" title="Click to view the full entry">` +
+      `<td class="mono">${e.date}</td><td class="mono">${e.time}</td>` +
       `<td><span class="pill log-${e.severity.toLowerCase()}">${e.severity}</span></td>` +
       `<td class="mono">${esc(e.clientIp || '—')}</td><td>${esc(e.user || '—')}</td>` +
       `<td>${esc(e.message)}</td></tr>`;
-  }
+  });
   $('logTable').innerHTML = h + '</tbody></table>';
 }
+// Minimal, dependency-free SQL pretty-printer: breaks before major clauses and
+// indents subqueries by parenthesis depth. String literals are tokenised first
+// so their contents (e.g. 'GROUP …') are never treated as keywords.
+function tokenizeSql(s) {
+  const toks = []; let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === "'") {                       // 'string' with '' escapes
+      let j = i + 1;
+      while (j < s.length) { if (s[j] === "'") { if (s[j+1] === "'") { j += 2; continue; } j++; break; } j++; }
+      toks.push({ t: 'str', v: s.slice(i, j) }); i = j;
+    } else if (c === '(' || c === ')' || c === ',') { toks.push({ t: c, v: c }); i++; }
+    else if (/\s/.test(c)) { i++; }
+    else { let j = i; while (j < s.length && !/[\s(),']/.test(s[j])) j++; toks.push({ t: 'word', v: s.slice(i, j) }); i = j; }
+  }
+  return toks;
+}
+function formatSql(raw) {
+  // Drop the "SQL:" / "SQL (12.3 ms):" trace prefix before formatting.
+  const s = String(raw).replace(/^\s*SQL\s*(\([^)]*\))?\s*:\s*/i, '').trim();
+  const toks = tokenizeSql(s);
+  const CLAUSE = new Set(['SELECT','FROM','WHERE','GROUP','ORDER','HAVING','LIMIT','UNION','ON','VALUES','SET']);
+  const JOINQ = new Set(['LEFT','RIGHT','INNER','FULL','CROSS','OUTER']);
+  // Keywords that keep a space before '(' (so it reads "IN (…)"); anything else
+  // before '(' is treated as a function call and attaches ("COUNT(*)").
+  const PAREN_SPACE = new Set(['IN','AND','OR','NOT','ON','EXISTS','ANY','ALL','SELECT','VALUES','BETWEEN','WHEN','THEN','ELSE','UNION','WHERE','HAVING']);
+  const lines = []; let line = '', indent = 0, lineIndent = 0, betweenPending = false;
+  const stack = [];
+  const add = (t) => {
+    if (line === '') { lineIndent = indent; line = t; }
+    else if (line.endsWith('(')) line += t;
+    else line += ' ' + t;
+  };
+  const flush = () => { if (line !== '') { lines.push('  '.repeat(Math.max(0, lineIndent)) + line); line = ''; } };
+  for (let k = 0; k < toks.length; k++) {
+    const tk = toks[k];
+    const up = tk.t === 'word' ? tk.v.toUpperCase() : '';
+    const prevUp = k > 0 && toks[k-1].t === 'word' ? toks[k-1].v.toUpperCase() : '';
+    const nextUp = k + 1 < toks.length && toks[k+1].t === 'word' ? toks[k+1].v.toUpperCase() : '';
+    if (tk.t === '(') {
+      const sub = nextUp === 'SELECT';
+      if (line !== '' && /\w$/.test(line) && !PAREN_SPACE.has(prevUp)) line += '(';  // function call
+      else add('(');
+      stack.push(sub); indent++; if (sub) flush(); continue;
+    }
+    if (tk.t === ')') { const sub = stack.pop(); indent = Math.max(0, indent - 1); if (sub) { flush(); add(')'); } else line += ')'; continue; }
+    if (tk.t === ',') { line += ','; continue; }
+    if (tk.t === 'str') { add(tk.v); continue; }
+    if (up === 'BETWEEN') { betweenPending = true; add(tk.v); continue; }
+    if ((up === 'AND' || up === 'OR') && prevUp !== 'CREATE') {
+      if (up === 'AND' && betweenPending) { betweenPending = false; add(tk.v); continue; }  // "BETWEEN x AND y"
+      flush(); add(tk.v); continue;
+    }
+    if (up === 'JOIN' && JOINQ.has(prevUp)) { add(tk.v); continue; }
+    if (JOINQ.has(up) || up === 'JOIN') { flush(); add(tk.v); continue; }
+    if (CLAUSE.has(up)) { if (!(up === 'SELECT' && line === '')) flush(); add(tk.v); continue; }
+    add(tk.v);
+  }
+  flush();
+  return lines.join('\n');
+}
+function showLogEntry(i) {
+  const e = _logEntries[i];
+  if (!e) return;
+  const field = (k, v) =>
+    `<div style="display:flex; gap:12px; margin-bottom:5px">` +
+    `<span class="subtle" style="min-width:92px">${k}</span>` +
+    `<span class="mono">${esc(v || '—')}</span></div>`;
+  // The verbose SQL trace (operation 'sql') is pretty-printed and its execution
+  // time surfaced as a field; anything else is shown verbatim.
+  const isSql = e.operation === 'sql';
+  const durMatch = isSql && e.message.match(/^\s*SQL\s*\(([^)]+)\)\s*:/i);
+  const body = isSql ? formatSql(e.message) : e.message;
+  $('logModalBody').innerHTML =
+    field('Date', e.date) + field('Time', e.time) + field('Severity', e.severity) +
+    field('Client IP', e.clientIp) + field('User', e.user) + field('Operation', e.operation) +
+    (durMatch ? field('Execution time', durMatch[1]) : '') +
+    `<div class="subtle" style="margin:12px 0 4px">${isSql ? 'SQL' : 'Message'}</div>` +
+    `<pre class="codeblock" style="white-space:pre-wrap; word-break:break-word; max-height:52vh; overflow:auto">${esc(body)}</pre>`;
+  $('logModal').hidden = false;
+}
+function closeLogModal() { $('logModal').hidden = true; }
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('logModal').hidden) closeLogModal(); });
 function scheduleLogReload() {
   clearTimeout(_logReloadTimer);
   _logReloadTimer = setTimeout(logResetReload, 300);
@@ -1584,11 +1754,26 @@ function fillEditor(c) {
   $('c_llmKey').value = '';
   $('c_llmKeyHint').textContent = c.hasLLMKey ? '(set — leave blank to keep)' : '';
   renderAssign(c.assignments);
+  $('c_useMaterialized').checked = !!c.useMaterializedTransitions;
+  renderMatStatus(c);
+  $('c_matResult').textContent = '';
+  $('c_rebuildBtn').disabled = !c.id;  // needs a saved connection to rebuild against
+  $('c_rebuildBtn').title = c.id ? '' : 'Save the connection first';
+  $('c_provisionBuildMat').checked = false;
   $('c_testResult').innerHTML = '';
   $('c_provisionResult').textContent = '';
   $('c_deleteBtn').style.display = c.id ? 'inline-flex' : 'none';
   $('connEditor').style.display = 'block';
   $('connEditor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function renderMatStatus(c) {
+  const m = c && c.materialization;
+  if (!m) { $('c_matStatus').textContent = 'Not built yet — the live query is used until you rebuild.'; return; }
+  if (m.ok) {
+    $('c_matStatus').innerHTML = `Last built: ${esc(m.built_at || '—')} · ${Number(m.rows || 0).toLocaleString()} pairs.`;
+  } else {
+    $('c_matStatus').innerHTML = `<span style="color:var(--red)">Last rebuild failed: ${esc(m.error || 'unknown error')}</span>`;
+  }
 }
 function newConnection() {
   renderAssign([]);
@@ -1616,6 +1801,7 @@ function editorBody() {
     llmURL: $('c_llmUrl').value.trim(),
     llmModel: $('c_llmModel').value.trim(),
     assignments: selectedAssignments(),
+    useMaterializedTransitions: $('c_useMaterialized').checked,
   };
   // Only send secrets when the user typed something (blank ⇒ keep existing).
   if ($('c_password').value) body.password = $('c_password').value;
@@ -1673,6 +1859,7 @@ async function provisionSchema() {
     password: $('c_password').value, schema: body.schema, useTLS: body.useTLS,
     certModeRaw: body.certModeRaw, fingerprint: body.fingerprint,
     minRSAKeySizeBits: body.minRSAKeySizeBits,
+    buildTransitions: $('c_provisionBuildMat').checked,
   };
   const out = $('c_provisionResult');
   out.textContent = 'Creating…'; out.style.color = '';
@@ -1680,7 +1867,10 @@ async function provisionSchema() {
     const r = await api('/api/connections/provision-schema', { method: 'POST', body: JSON.stringify(req) });
     if (r.ok) {
       out.style.color = 'var(--green)';
-      out.textContent = 'Created: ' + (r.created || []).join(', ');
+      out.textContent = 'Created: ' + (r.created || []).join(', ') +
+        (r.materialization ? (r.materialization.ok
+          ? ` · transitions built (${Number(r.materialization.rows || 0).toLocaleString()} pairs)`
+          : ` · transitions build failed: ${r.materialization.error || 'error'}`) : '');
     } else {
       out.style.color = 'var(--red)';
       out.textContent = r.error || 'Could not create the schema.';
@@ -1689,6 +1879,94 @@ async function provisionSchema() {
     out.style.color = 'var(--red)';
     out.textContent = e.message;
   }
+}
+
+async function rebuildTransitions() {
+  const id = $('c_id').value;
+  if (!id) { toast('Save the connection first.', true); return; }
+  const out = $('c_matResult');
+  out.textContent = 'Rebuilding… (this runs the pairing once and may take a while)';
+  out.style.color = '';
+  try {
+    const r = await api('/api/connections/' + encodeURIComponent(id) + '/rebuild-transitions', { method: 'POST' });
+    if (r.ok) {
+      out.style.color = 'var(--green)';
+      out.textContent = `Built ${Number(r.rows || 0).toLocaleString()} pairs.`;
+    } else {
+      out.style.color = 'var(--red)';
+      out.textContent = r.error || 'Rebuild failed.';
+    }
+    await loadConnections();
+    const fresh = CONNS.find(x => x.id === id);
+    if (fresh) renderMatStatus(fresh);
+  } catch (e) { out.style.color = 'var(--red)'; out.textContent = e.message; }
+}
+
+// The plaintext token, kept only while it is visible in the pane; the curl
+// example uses it verbatim until then, then reverts to a <token> placeholder.
+let LAST_TOKEN = '';
+
+async function loadApiTab() {
+  await loadRebuildToken();
+  try {
+    const conns = await api('/api/connections');
+    $('api_conn').innerHTML = conns.length
+      ? conns.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')
+      : '<option value="">(no connections defined)</option>';
+  } catch (e) { /* handled elsewhere */ }
+  renderCurl();
+}
+
+async function loadRebuildToken() {
+  try {
+    const r = await api('/api/rebuild-token');
+    $('rtStatus').textContent = r.set ? 'a token is set' : 'no token set';
+    $('rtRevokeBtn').style.display = r.set ? 'inline-flex' : 'none';
+  } catch (e) { /* not admin / not loaded yet */ }
+}
+
+function renderCurl() {
+  const connId = ($('api_conn') && $('api_conn').value) || '<connection-id>';
+  const token = LAST_TOKEN
+    ? `<span class="tok">${esc(LAST_TOKEN)}</span>`
+    : '&lt;token&gt;';
+  // -k skips the TLS certificate check (handy with the self-signed admin cert).
+  $('api_curl').innerHTML =
+    'curl -k -X POST \\\n' +
+    `  -H "Authorization: Bearer ${token}" \\\n` +
+    `  "${esc(window.location.origin)}/api/connections/${esc(connId)}/rebuild-transitions"`;
+}
+
+function copyCurl() {
+  const text = $('api_curl').textContent;  // plaintext incl. the real token if shown
+  navigator.clipboard.writeText(text).then(
+    () => toast('curl command copied'),
+    () => toast('Copy failed', true),
+  );
+}
+
+async function generateRebuildToken() {
+  if (!confirm('Generate a new rebuild token? Any existing token stops working.')) return;
+  try {
+    const r = await api('/api/rebuild-token', { method: 'POST' });
+    LAST_TOKEN = r.token;
+    $('rtValue').innerHTML = 'New token (copy it now — it is not shown again):<br>' +
+      `<code style="user-select:all; word-break:break-all">${esc(r.token)}</code>`;
+    await loadRebuildToken();
+    renderCurl();
+    toast('Rebuild token generated');
+  } catch (e) { toast(e.message, true); }
+}
+async function revokeRebuildToken() {
+  if (!confirm('Revoke the rebuild token? External schedulers using it will stop working.')) return;
+  try {
+    await api('/api/rebuild-token', { method: 'DELETE' });
+    LAST_TOKEN = '';
+    $('rtValue').textContent = '';
+    await loadRebuildToken();
+    renderCurl();
+    toast('Rebuild token revoked');
+  } catch (e) { toast(e.message, true); }
 }
 
 loadSession().then(loadTls).then(loadUsers).catch(() => {});
@@ -1716,6 +1994,10 @@ const ADMIN_HELP = [
     <p>Define each connection (Exasol host, port, user, password, schema, TLS, and an optional OpenAI-compatible LLM server) and assign it to users; each user sees only the connections assigned to them. Use Test connection to verify the database and LLM before saving; a blank password/key keeps the stored value.</p>
     <p>&ldquo;Create schema &amp; tables&rdquo; provisions the process-mining schema and tables (PROJECTS, JOURNEYS, STEPS, METAS, NOTES) if missing.</p>
     <div class="note warn">Provisioning needs a DB account with CREATE SCHEMA / CREATE TABLE rights &mdash; only the database administrator can grant those.</div>` },
+  { id: 'api', icon: '🔌', title: 'API', html: `
+    <h2>API</h2>
+    <p>Issues a bearer token so an external caller (a cron job or ETL step) can trigger a connection&rsquo;s pre-materialized transitions rebuild without an admin login. Generate / rotate or revoke it here &mdash; it is shown <strong>once</strong> (copy it then); only its hash is stored, and rotating/revoking invalidates the previous token immediately.</p>
+    <p>Call <code>POST /api/connections/&lt;id&gt;/rebuild-transitions</code> with header <code>Authorization: Bearer &lt;token&gt;</code>. The tab shows a copy-able <code>curl</code> example &mdash; pre-filled with your real token while it is still visible, and using <code>-k</code> to skip the TLS certificate check for the self-signed admin certificate. Run it right after each load of <code>JOURNEYS</code>.</p>` },
   { id: 'directory', icon: '📇', title: 'Directory (LDAP)', html: `
     <h2>Directory (LDAP)</h2>
     <p>When enabled, the main-app login also accepts directory accounts via search + bind. Set the server URI, service-account bind DN/password, base DN, user filter and attributes. Test server connection checks the server alone; Test a user login also resolves and signs in an account.</p>

@@ -362,11 +362,18 @@ export function noteTargetLabel(target: NoteTarget): string {
     : (target.value ?? '')
 }
 
+// 'materialized' = read from TRANSITIONS_RAW; 'live' = computed on the fly;
+// 'fallback' = materialized is enabled but the table isn't built, so it's
+// running live meanwhile (a rebuild is pending).
+export type TransitionsMode = 'materialized' | 'live' | 'fallback'
+
 export interface GraphResult {
   processGraph: ProcessGraph
   journeyCount: number | null
   durations: DurationStats
   processGoodness: number | null
+  transitionsMode: TransitionsMode | null
+  queryMs: number | null
   variants: JourneyPath[]
 }
 

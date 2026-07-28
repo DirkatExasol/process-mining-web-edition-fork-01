@@ -8,6 +8,7 @@ The shared LogStore is redirected to a temp instance (log_events references the
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 
 import pytest
@@ -219,3 +220,47 @@ def test_llm_ssrf_url_is_refused_and_logged(logstore):
     entries = logstore.query(operation="llm-test")
     assert entries and "ssrf guard" in entries[0]["message"].lower()
     assert "sk-secret" not in entries[0]["message"]  # the api key is never logged
+
+
+# ── Verbose SQL trace (DEBUG) ─────────────────────────────────────────────────
+
+
+def test_every_sql_statement_is_logged_at_debug(logstore):
+    class OkConn:
+        def execute(self, sql):
+            class _S:
+                def column_names(self):
+                    return []
+                result_type = "rowCount"
+                def fetchall(self):
+                    return []
+            return _S()
+
+    mgr = _bare_manager(OkConn())
+    asyncio.run(mgr.execute("SELECT FROM_STEP, TO_STEP FROM JOURNEYS WHERE PROJECT_ID = 'P'"))
+
+    hits = logstore.query(operation="sql")
+    assert len(hits) == 1
+    assert hits[0]["severity"] == "DEBUG"
+    # The full statement (with its inlined filters) is preserved verbatim, and the
+    # execution time is prefixed as "SQL (<n> ms): …".
+    assert "FROM JOURNEYS WHERE PROJECT_ID = 'P'" in hits[0]["message"]
+    assert re.match(r"^SQL \([\d.]+ ms\): SELECT ", hits[0]["message"])
+
+
+def test_sql_trace_is_dropped_below_debug_level(logstore):
+    logstore.set_level("ERROR")  # DEBUG not recorded
+
+    class OkConn:
+        def execute(self, sql):
+            class _S:
+                def column_names(self):
+                    return []
+                result_type = "rowCount"
+                def fetchall(self):
+                    return []
+            return _S()
+
+    mgr = _bare_manager(OkConn())
+    asyncio.run(mgr.execute("SELECT 1"))
+    assert logstore.query(operation="sql") == []

@@ -369,6 +369,10 @@ class GraphResponse(Base):
     journeyCount: int | None = None
     durations: DurationStats = Field(default_factory=DurationStats)
     processGoodness: float | None = None
+    # How the transitions were computed: 'materialized' (TRANSITIONS_RAW) or 'live'.
+    transitionsMode: str | None = None
+    # Server-side wall-clock of the DB queries behind this reload, in milliseconds.
+    queryMs: float | None = None
 
 
 class ProjectBootstrap(Base):

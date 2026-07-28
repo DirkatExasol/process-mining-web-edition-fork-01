@@ -976,3 +976,142 @@ def test_ldap_cert_and_connection_actions_are_logged(admin, monkeypatch):
         e["severity"] == "WARN" and "deleted database connection" in e["message"].lower()
         for e in conn_entries
     )
+
+
+# ── Pre-materialised transitions: toggle, rebuild, external token ─────────────
+
+
+def test_materialized_toggle_persists(admin):
+    server, store = admin
+    client = _login(server)
+
+    created = client.post(
+        "/api/connections", json=_connection_body(useMaterializedTransitions=True)
+    ).json()
+    assert created["useMaterializedTransitions"] is True
+    assert store.get_connection(created["id"]).use_materialized_transitions is True
+
+    body = _connection_body(id=created["id"], useMaterializedTransitions=False)
+    del body["password"]
+    del body["llmKey"]
+    updated = client.post("/api/connections", json=body).json()
+    assert updated["useMaterializedTransitions"] is False
+
+
+def test_rebuild_requires_admin_or_token(admin, monkeypatch):
+    server, store = admin
+    client = _login(server)
+    conn = client.post("/api/connections", json=_connection_body()).json()
+
+    async def _stub_rebuild(**kwargs):
+        return {"ok": True, "error": None, "rows": 7, "built_at": "2026-07-28T00:00:00+00:00"}
+
+    monkeypatch.setattr("app.db.schema_ddl.rebuild_materialized_transitions", _stub_rebuild)
+
+    # No auth at all → 401.
+    anon = TestClient(server.app)
+    assert anon.post(f"/api/connections/{conn['id']}/rebuild-transitions").status_code == 401
+
+    # Admin session → runs, echoes the result, and records the status.
+    resp = client.post(f"/api/connections/{conn['id']}/rebuild-transitions")
+    assert resp.status_code == 200 and resp.json()["rows"] == 7
+    assert store.materialization_status(conn["id"])["rows"] == 7
+
+    # Unknown connection → 404.
+    assert client.post("/api/connections/nope/rebuild-transitions").status_code == 404
+
+    # It is logged under the materialize operation.
+    mat_log = " ".join(
+        e["message"].lower() for e in server.log_store.query(operation="materialize")
+    )
+    assert "rebuilt materialised transitions" in mat_log
+
+
+def test_rebuild_bearer_token(admin, monkeypatch):
+    server, store = admin
+    client = _login(server)
+    conn = client.post("/api/connections", json=_connection_body()).json()
+
+    async def _stub_rebuild(**kwargs):
+        return {"ok": True, "error": None, "rows": 3, "built_at": "2026-07-28T00:00:00+00:00"}
+
+    monkeypatch.setattr("app.db.schema_ddl.rebuild_materialized_transitions", _stub_rebuild)
+
+    token = client.post("/api/rebuild-token").json()["token"]
+    assert client.get("/api/rebuild-token").json()["set"] is True
+
+    ext = TestClient(server.app)  # no admin cookie — a scheduler with only the token
+    ok = ext.post(
+        f"/api/connections/{conn['id']}/rebuild-transitions",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert ok.status_code == 200 and ok.json()["rows"] == 3
+
+    # A wrong token is rejected.
+    bad = ext.post(
+        f"/api/connections/{conn['id']}/rebuild-transitions",
+        headers={"Authorization": "Bearer not-the-token"},
+    )
+    assert bad.status_code == 401
+
+    # After rotation the old token stops working.
+    client.post("/api/rebuild-token")
+    stale = ext.post(
+        f"/api/connections/{conn['id']}/rebuild-transitions",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert stale.status_code == 401
+
+    # Revoke clears it entirely.
+    client.request("DELETE", "/api/rebuild-token")
+    assert client.get("/api/rebuild-token").json()["set"] is False
+
+
+def test_rebuild_token_endpoints_require_admin(admin):
+    server, _ = admin
+    anon = TestClient(server.app)
+    assert anon.get("/api/rebuild-token").status_code == 401
+    assert anon.post("/api/rebuild-token").status_code == 401
+
+
+def test_provision_can_also_build_transitions(admin, monkeypatch):
+    server, _ = admin
+    client = _login(server)
+
+    async def _stub_provision(**kwargs):
+        return {"ok": True, "error": None, "created": ["schema MINING", "JOURNEYS"]}
+
+    async def _stub_rebuild(**kwargs):
+        return {"ok": True, "error": None, "rows": 0, "built_at": "2026-07-28T00:00:00+00:00"}
+
+    monkeypatch.setattr("app.db.schema_ddl.provision_process_mining_schema", _stub_provision)
+    monkeypatch.setattr("app.db.schema_ddl.rebuild_materialized_transitions", _stub_rebuild)
+
+    resp = client.post(
+        "/api/connections/provision-schema",
+        json={"host": "h", "port": 8563, "username": "u", "password": "p",
+              "schema": "MINING", "buildTransitions": True},
+    )
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["materialization"]["ok"] is True
+
+
+# ── Dashboard render: the API tab (rebuild token + curl example) ──────────────
+
+
+def test_dashboard_has_api_tab_with_curl_example(admin):
+    server, _ = admin
+    client = _login(server)
+
+    html = client.get("/").text
+    # A dedicated API tab exists…
+    assert 'data-tab="api"' in html and 'id="tab-api"' in html
+    # …carrying the rebuild-token controls and the copy-able curl example.
+    assert "Rebuild token" in html
+    assert 'id="api_curl"' in html and "copyCurl(" in html
+    assert "curl -k -X POST" in html  # -k skips the TLS check
+    assert "rebuild-transitions" in html
+
+    # The token box was moved OUT of the Database Connections tab.
+    assert "rebuildTokenBox" not in html

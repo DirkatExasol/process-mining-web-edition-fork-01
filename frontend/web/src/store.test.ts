@@ -281,3 +281,38 @@ describe('selectProject sampling methods', () => {
     expect(useStore.getState().sampleMethods).toEqual({ SAMPLE_1: 'temporal' })
   })
 })
+
+describe('transitions mode indicator', () => {
+  const base = {
+    processGraph: {
+      steps: {},
+      transitions: [
+        { fromStep: 'A', toStep: 'B', occurrences: 1, avgSecs: 1, minSecs: null, maxSecs: null, stdDevSecs: null },
+      ],
+    },
+    journeyCount: 5,
+    durations: { minSecs: null, avgSecs: null, stdDevSecs: null, maxSecs: null },
+    processGoodness: null,
+    queryMs: 42.5,
+    variants: [],
+  }
+
+  it('reloadGraph records the effective mode and query time from the backend', async () => {
+    mockApi.graph.mockResolvedValue({ ...base, transitionsMode: 'materialized' })
+    useStore.setState({
+      selectedProject: { projectId: 'P', title: 'P', description: '' },
+      transitionsMode: null,
+      queryMs: null,
+    })
+    await useStore.getState().reloadGraph()
+    expect(useStore.getState().transitionsMode).toBe('materialized')
+    expect(useStore.getState().queryMs).toBe(42.5)
+  })
+
+  it('surfaces the fallback mode (enabled but TRANSITIONS_RAW not built)', async () => {
+    mockApi.graph.mockResolvedValue({ ...base, transitionsMode: 'fallback' })
+    useStore.setState({ selectedProject: { projectId: 'P', title: 'P', description: '' } })
+    await useStore.getState().reloadGraph()
+    expect(useStore.getState().transitionsMode).toBe('fallback')
+  })
+})

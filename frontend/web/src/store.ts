@@ -41,6 +41,7 @@ import {
   type StatisticsResponse,
   type StepInfo,
   type TransitionMetric,
+  type TransitionsMode,
 } from './types'
 import { addDays, fromISODate, toISODate } from './graph/format'
 
@@ -183,6 +184,10 @@ export interface AppState {
   durations: DurationStats
   transitionMetric: TransitionMetric
   processGoodnessScore: number | null
+  /** How the active connection's transitions were computed on the last load. */
+  transitionsMode: TransitionsMode | null
+  /** Server-side query time (ms) of the last graph reload. */
+  queryMs: number | null
 
   stepCountMin: number
   stepCountMax: number
@@ -457,6 +462,8 @@ const INITIAL_STATE: AppState = {
   durations: EMPTY_DURATIONS,
   transitionMetric: 'Count',
   processGoodnessScore: null,
+  transitionsMode: null,
+  queryMs: null,
 
   stepCountMin: 1,
   stepCountMax: 100,
@@ -1070,6 +1077,8 @@ export const useStore = create<Store>((set, get) => {
           journeyCount: result.journeyCount,
           durations: result.durations,
           processGoodnessScore: result.processGoodness,
+          transitionsMode: result.transitionsMode,
+          queryMs: result.queryMs,
         })
 
         // Seed the other chart modes with the same window and real bounds.
@@ -1330,6 +1339,8 @@ export const useStore = create<Store>((set, get) => {
           journeyCount: result.journeyCount,
           durations: result.durations,
           processGoodnessScore: result.processGoodness,
+          transitionsMode: result.transitionsMode,
+          queryMs: result.queryMs,
         })
 
         if (get().activeChartMode === 'A/B Comparison') {

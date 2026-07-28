@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
@@ -24,6 +25,7 @@ from ..models import (
     TimeGranularity,
 )
 from ..services.analytics import ab_similarity, apply_goodness_coverage
+from ..store.security import store as security_store
 from ..store.settings import store as settings_store
 
 router = APIRouter(prefix="/api", tags=["projects"])
@@ -32,7 +34,15 @@ router = APIRouter(prefix="/api", tags=["projects"])
 def repo(sample_set: SampleSet = SampleSet.original) -> ProcessRepository:
     # The current request's user resolves to their own DatabaseManager, so data
     # never crosses between users (see manager.current_db / main.UserContextMiddleware).
-    r = ProcessRepository(current_db())
+    db = current_db()
+    # Reflect the connection's *current* materialised-transitions setting on every
+    # request, so an admin toggling it takes effect on the next reload without the
+    # user having to reconnect (the flag was otherwise captured only at connect).
+    if db.active_profile_id:
+        conn = security_store.get_connection(db.active_profile_id)
+        if conn is not None:
+            db.use_materialized_transitions = conn.use_materialized_transitions
+    r = ProcessRepository(db)
     r.active_sample_set = sample_set
     return r
 
@@ -169,6 +179,11 @@ async def load_graph(project_id: str, request: GraphRequest) -> GraphResult:
     f = request.filter
     r = repo(f.sampleSet)
 
+    # Wall-clock of the DB work behind this reload — shown to the user under the
+    # chart. Covers the map + KPI queries (the operation they waited for), not the
+    # optional variant list below.
+    started = time.perf_counter()
+
     graph = await r.load_graph(project_id, f)
     count = await r.load_journey_count(project_id, f)
     durations = await r.load_journey_duration_stats(project_id, f)
@@ -182,6 +197,8 @@ async def load_graph(project_id: str, request: GraphRequest) -> GraphResult:
                 raw, filtered_count, request.totalJourneyCount
             )
 
+    query_ms = round((time.perf_counter() - started) * 1000.0, 1)
+
     variants: list[JourneyPath] = []
     if request.includeVariants:
         try:
@@ -194,6 +211,8 @@ async def load_graph(project_id: str, request: GraphRequest) -> GraphResult:
         journeyCount=count,
         durations=durations,
         processGoodness=goodness,
+        transitionsMode=r.last_transitions_mode,
+        queryMs=query_ms,
         variants=variants,
     )
 

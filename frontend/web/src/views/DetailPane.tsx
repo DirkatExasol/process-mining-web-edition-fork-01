@@ -142,6 +142,25 @@ export function DetailPane({
                 Journeys
               </span>
             )}
+            <span className="spacer" />
+            {store.transitionsMode && mode !== 'Individual Journey' && (
+              <span
+                className={`mode-pill ${store.transitionsMode}`}
+                title={
+                  store.transitionsMode === 'materialized'
+                    ? 'Transitions are read from the pre-materialized TRANSITIONS_RAW table.'
+                    : store.transitionsMode === 'fallback'
+                      ? 'Pre-materialized transitions are enabled for this connection, but TRANSITIONS_RAW is not built yet — running the live query meanwhile. Rebuild it in the admin interface (Connections → Rebuild now).'
+                      : 'Transitions are computed live from the event log on each load.'
+                }
+              >
+                {store.transitionsMode === 'materialized'
+                  ? '⚡ Pre-materialized'
+                  : store.transitionsMode === 'fallback'
+                    ? '⚠ Live (not built)'
+                    : '↻ Live query'}
+              </span>
+            )}
           </button>
           {kpiExpanded &&
             (mode === 'Individual Journey' ? (

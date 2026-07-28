@@ -12,6 +12,7 @@ import asyncio
 import logging
 import ssl
 import threading
+import time
 from contextvars import ContextVar
 from typing import Any
 
@@ -75,6 +76,9 @@ class DatabaseManager:
         # Set when connected via an admin-defined connection (the current model).
         self._active_db_server: DatabaseServer | None = None
         self._active_llm_server: LLMServer | None = None
+        # Whether the active connection opts into reading transitions from the
+        # pre-materialised TRANSITIONS_RAW table (ProcessRepository reads this).
+        self.use_materialized_transitions = False
 
     # ── persisted definitions ────────────────────────────────────────────────
 
@@ -283,6 +287,9 @@ class DatabaseManager:
         self.is_connected = True
         self._active_db_server = server
         self._active_llm_server = llm
+        self.use_materialized_transitions = bool(
+            getattr(conn_def, "use_materialized_transitions", False)
+        )
         self.is_llm_reachable = await check_llm_reachable(llm)
         return None
 
@@ -316,6 +323,7 @@ class DatabaseManager:
                 self.is_llm_reachable = False
                 self._active_db_server = None
                 self._active_llm_server = None
+                self.use_materialized_transitions = False
             if conn is not None:
                 conn.close()
 
@@ -339,11 +347,13 @@ class DatabaseManager:
     async def _run(
         self, sql: str, timeout: float | None, log_errors: bool
     ) -> QueryResult:
+        started = time.perf_counter()
         coro = asyncio.to_thread(self._execute_sync, sql)
         try:
             if timeout is None:
-                return await coro
-            return await asyncio.wait_for(coro, timeout=timeout)
+                result = await coro
+            else:
+                result = await asyncio.wait_for(coro, timeout=timeout)
         except (asyncio.TimeoutError, TimeoutError):
             if log_errors:
                 logx.error(
@@ -358,6 +368,12 @@ class DatabaseManager:
                     operation="db-sql",
                 )
             raise
+        # Every executed statement, verbatim (filters are inlined in the WHERE
+        # clause) with its execution time, at DEBUG under its own 'sql' operation
+        # — only persisted when the admin raises the log level to DEBUG.
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        logx.debug(f"SQL ({elapsed_ms:.1f} ms): {sql}", operation="sql")
+        return result
 
     async def execute(self, sql: str, timeout: float | None = None) -> QueryResult:
         return await self._run(sql, timeout, log_errors=True)

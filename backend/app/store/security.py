@@ -11,9 +11,13 @@ scrypt-hashed and never stored reversibly.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import logging
 import os
 import re
+import secrets
 import sqlite3
 import threading
 import uuid
@@ -215,6 +219,7 @@ class Connection:
     has_llm_key: bool = False
     owner: str = ""  # power user who created it from the app; '' = admin-defined
     created_at: str = ""
+    use_materialized_transitions: bool = False
 
     @property
     def has_llm(self) -> bool:
@@ -241,6 +246,7 @@ class Connection:
             "assignments": self.assignments,
             "owner": self.owner,
             "createdAt": self.created_at,
+            "useMaterializedTransitions": self.use_materialized_transitions,
         }
 
     def user_public(self) -> dict:
@@ -305,6 +311,13 @@ class SecurityStore:
         }
         if "owner" not in conn_cols:
             self._conn.execute("ALTER TABLE connections ADD COLUMN owner TEXT NOT NULL DEFAULT ''")
+        # Opt-in to reading transitions from the pre-materialised TRANSITIONS_RAW
+        # table instead of the live LEAD() query (falls back if it isn't built).
+        if "use_materialized_transitions" not in conn_cols:
+            self._conn.execute(
+                "ALTER TABLE connections ADD COLUMN "
+                "use_materialized_transitions INTEGER NOT NULL DEFAULT 0"
+            )
         # Directory sign-in to the admin interface is an explicit opt-in (default off).
         ldap_cols = {
             r["name"] for r in self._conn.execute("PRAGMA table_info(ldap_config)").fetchall()
@@ -666,6 +679,61 @@ class SecurityStore:
     def active_cert_id(self) -> str | None:
         with self._lock:
             return self._get_config("active_cert_id")
+
+    # ── materialised-transitions rebuild token ──────────────────────────────
+    # A high-entropy bearer token that lets an external scheduler (cron/ETL)
+    # trigger a rebuild after loading JOURNEYS, without an admin session. Only
+    # the SHA-256 hash is stored; the plaintext is shown once at generation.
+
+    def generate_rebuild_token(self) -> str:
+        """Create (or rotate) the rebuild token and return the plaintext ONCE."""
+        token = secrets.token_urlsafe(32)
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        with self._lock:
+            self._set_config("rebuild_token_hash", digest)
+            self._conn.commit()
+        return token
+
+    def clear_rebuild_token(self) -> None:
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM security_config WHERE key = ?", ("rebuild_token_hash",)
+            )
+            self._conn.commit()
+
+    @property
+    def rebuild_token_set(self) -> bool:
+        with self._lock:
+            return bool(self._get_config("rebuild_token_hash"))
+
+    def verify_rebuild_token(self, token: str) -> bool:
+        """Constant-time check of a presented token against the stored hash."""
+        if not token:
+            return False
+        with self._lock:
+            stored = self._get_config("rebuild_token_hash")
+        if not stored:
+            return False
+        presented = hashlib.sha256(token.encode()).hexdigest()
+        return hmac.compare_digest(stored, presented)
+
+    # ── per-connection materialisation status (for the admin display) ───────
+
+    def materialization_status(self, conn_id: str) -> dict | None:
+        """Last rebuild outcome for a connection: {ok, rows, built_at, error}."""
+        with self._lock:
+            raw = self._get_config(f"matview:{conn_id}")
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+
+    def set_materialization_status(self, conn_id: str, status: dict) -> None:
+        with self._lock:
+            self._set_config(f"matview:{conn_id}", json.dumps(status))
+            self._conn.commit()
 
     # ── login-page appearance ───────────────────────────────────────────────
 
@@ -1100,6 +1168,11 @@ class SecurityStore:
             has_llm_key=bool(row["llm_key_enc"]),
             owner=(row["owner"] if "owner" in row.keys() else "") or "",
             created_at=row["created_at"],
+            use_materialized_transitions=bool(
+                row["use_materialized_transitions"]
+                if "use_materialized_transitions" in row.keys()
+                else 0
+            ),
         )
 
     def list_connections(self) -> list[Connection]:
@@ -1196,15 +1269,17 @@ class SecurityStore:
                 INSERT INTO connections
                     (id, name, comment, host, port, username, db_schema, use_tls,
                      cert_mode, fingerprint, min_rsa_bits, password_enc,
-                     llm_url, llm_model, llm_key_enc, owner, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     llm_url, llm_model, llm_key_enc, owner,
+                     use_materialized_transitions, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name, comment=excluded.comment, host=excluded.host,
                     port=excluded.port, username=excluded.username, db_schema=excluded.db_schema,
                     use_tls=excluded.use_tls, cert_mode=excluded.cert_mode,
                     fingerprint=excluded.fingerprint, min_rsa_bits=excluded.min_rsa_bits,
                     password_enc=excluded.password_enc, llm_url=excluded.llm_url,
-                    llm_model=excluded.llm_model, llm_key_enc=excluded.llm_key_enc
+                    llm_model=excluded.llm_model, llm_key_enc=excluded.llm_key_enc,
+                    use_materialized_transitions=excluded.use_materialized_transitions
                 """,
                 (
                     conn_id,
@@ -1223,6 +1298,7 @@ class SecurityStore:
                     data.get("llmModel") or "",
                     llm_key_enc,
                     (data.get("owner") or "").strip(),  # only applied on INSERT (immutable after)
+                    int(bool(data.get("useMaterializedTransitions"))),
                     _now(),
                 ),
             )
