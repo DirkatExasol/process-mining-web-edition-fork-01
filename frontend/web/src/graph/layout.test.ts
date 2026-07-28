@@ -49,6 +49,32 @@ describe('computeLayout', () => {
     expect(layout.canvasSize.height).toBeGreaterThan(0)
   })
 
+  it('is independent of the order transitions arrive in', () => {
+    // The backend returns transitions unordered (no ORDER BY), so the layout
+    // must place nodes identically regardless of input order — including when
+    // equal-occurrence edges are reordered, which the DB never ordered anyway.
+    const edges: [string, string, number][] = [
+      ['A', 'B', 5], ['A', 'C', 5], ['B', 'D', 5], ['C', 'D', 5],
+      ['D', 'E', 9], ['D', 'F', 3], ['E', 'G', 3], ['F', 'G', 3],
+      ['B', 'C', 5], ['C', 'B', 5], ['G', 'A', 2],
+    ]
+    const base = JSON.stringify(computeLayout(graphFrom(edges)).nodePositions)
+
+    expect(
+      JSON.stringify(computeLayout(graphFrom([...edges].reverse())).nodePositions),
+    ).toBe(base)
+
+    // Deterministic pseudo-shuffles (no Math.random) covering tie reorderings.
+    for (let seed = 1; seed <= 20; seed++) {
+      const arr = [...edges]
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = (i * 2654435761 + seed * 40503) % (i + 1)
+        ;[arr[i], arr[j]] = [arr[j], arr[i]]
+      }
+      expect(JSON.stringify(computeLayout(graphFrom(arr)).nodePositions)).toBe(base)
+    }
+  })
+
   it('places a linear chain on descending layers', () => {
     const layout = computeLayout(
       graphFrom([

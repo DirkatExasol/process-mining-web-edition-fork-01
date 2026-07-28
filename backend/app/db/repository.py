@@ -156,119 +156,127 @@ class ProcessRepository:
             return ""
         return "\n                " + "\n                ".join(parts)
 
-    def _journey_activity_filter(
-        self,
-        frm: datetime | None,
-        to: datetime | None,
-        project_id: str,
-        meta1: str,
-        meta2: str,
-        meta3: str,
+    def _journey_qualifier(
+        self, project_id: str, f: FilterSpec, *, include_date_meta: bool
     ) -> str:
-        """Selects EVENT_IDs active in the window so LEAD() still sees every step
-        of a qualifying journey — cross-day transitions are never dropped."""
-        if frm is None and to is None and not (meta1 or meta2 or meta3):
-            return ""
-        parts = [f"PROJECT_ID = '{project_id}'", self.active_sample_set.sql_fragment()]
-        if frm is not None:
-            parts.append(f"EVENT_TIME >= TIMESTAMP '{frm:%Y-%m-%d} 00:00:00'")
-        if to is not None:
-            parts.append(f"EVENT_TIME <= TIMESTAMP '{to:%Y-%m-%d} 23:59:59'")
-        for column, value in (("META_1", meta1), ("META_2", meta2), ("META_3", meta3)):
-            if value:
-                parts.append(f"UPPER({column}) LIKE UPPER('%{esc(value)}%')")
-        joined = " AND ".join(parts)
-        return (
-            "\n                AND EVENT_ID IN "
-            f"(SELECT DISTINCT EVENT_ID FROM JOURNEYS WHERE {joined})"
-        )
+        """One EVENT_ID semi-join folding every *journey-level* filter — active
+        window + meta, included/excluded steps, step count, journey time and
+        score — into a single ``GROUP BY EVENT_ID`` pass over JOURNEYS.
 
-    def _step_clause(
-        self, included: Iterable[str], excluded: Iterable[str], project_id: str
-    ) -> str:
+        Replaces the previous stack of up to six separate
+        ``EVENT_ID IN (SELECT …)`` subqueries, so the event log is scanned once
+        for the whole filter set instead of once per active filter.
+
+        ``include_date_meta=True`` folds the date window + meta match in as an
+        "has ≥1 event in window (matching meta)" condition — used by the LEAD()
+        transition query, which must keep whole journeys. The row-level
+        ``date_only`` path filters date/meta in the outer query instead and
+        passes ``False``.
+        """
+        # STEPS also has a STEP column, so once the score join is present every
+        # JOURNEYS column must be qualified with `j.` to stay unambiguous.
+        score_active = f.minScore > INT_MIN or f.maxScore < INT_MAX
+        p = "j." if score_active else ""
+
         def in_list(steps: Iterable[str]) -> str:
             return ", ".join(f"'{esc(s)}'" for s in steps)
 
-        included = list(included)
-        excluded = list(excluded)
-        parts: list[str] = []
-        frag = self.active_sample_set.sql_fragment()
+        having: list[str] = []
+
+        # Active-in-window + meta match (same row must satisfy all, mirroring the
+        # old WHERE-based membership subquery).
+        if include_date_meta:
+            row: list[str] = []
+            if f.fromDate is not None:
+                row.append(f"{p}EVENT_TIME >= TIMESTAMP '{f.fromDate:%Y-%m-%d} 00:00:00'")
+            if f.toDate is not None:
+                row.append(f"{p}EVENT_TIME <= TIMESTAMP '{f.toDate:%Y-%m-%d} 23:59:59'")
+            for column, value in (
+                ("META_1", f.meta1),
+                ("META_2", f.meta2),
+                ("META_3", f.meta3),
+            ):
+                if value:
+                    row.append(f"UPPER({p}{column}) LIKE UPPER('%{esc(value)}%')")
+            if row:
+                having.append(
+                    f"MAX(CASE WHEN {' AND '.join(row)} THEN 1 ELSE 0 END) = 1"
+                )
+
+        included = list(f.includedSteps)
+        excluded = list(f.excludedSteps)
         if included:
-            parts.append(
-                "AND EVENT_ID IN (SELECT DISTINCT EVENT_ID FROM JOURNEYS WHERE "
-                f"PROJECT_ID = '{project_id}' AND {frag} "
-                f"AND STEP IN ({in_list(included)}))"
+            having.append(
+                f"MAX(CASE WHEN {p}STEP IN ({in_list(included)}) THEN 1 ELSE 0 END) = 1"
             )
         if excluded:
-            parts.append(
-                "AND EVENT_ID NOT IN (SELECT DISTINCT EVENT_ID FROM JOURNEYS WHERE "
-                f"PROJECT_ID = '{project_id}' AND {frag} "
-                f"AND STEP IN ({in_list(excluded)}))"
+            having.append(
+                f"MAX(CASE WHEN {p}STEP IN ({in_list(excluded)}) THEN 1 ELSE 0 END) = 0"
             )
-        if not parts:
-            return ""
-        return "\n                " + "\n                ".join(parts)
 
-    def _steps_count_clause(self, minimum: int, maximum: int, project_id: str) -> str:
-        if minimum <= 0 and maximum >= INT_MAX:
+        if f.minSteps > 0 or f.maxSteps < INT_MAX:
+            if f.minSteps > 0 and f.maxSteps < INT_MAX:
+                having.append(f"COUNT(*) BETWEEN {f.minSteps} AND {f.maxSteps}")
+            elif f.minSteps > 0:
+                having.append(f"COUNT(*) >= {f.minSteps}")
+            else:
+                having.append(f"COUNT(*) <= {f.maxSteps}")
+
+        if f.minJourneyTime > 0 or f.maxJourneyTime < INT_MAX:
+            expr = f"SECONDS_BETWEEN(MAX({p}EVENT_TIME), MIN({p}EVENT_TIME))"
+            if f.minJourneyTime > 0 and f.maxJourneyTime < INT_MAX:
+                having.append(f"{expr} BETWEEN {f.minJourneyTime} AND {f.maxJourneyTime}")
+            elif f.minJourneyTime > 0:
+                having.append(f"{expr} >= {f.minJourneyTime}")
+            else:
+                having.append(f"{expr} <= {f.maxJourneyTime}")
+
+        if score_active:
+            having.append(
+                f"SUM(COALESCE(s.SCORE, 0)) BETWEEN {f.minScore} AND {f.maxScore}"
+            )
+
+        if not having:
             return ""
-        if minimum > 0 and maximum < INT_MAX:
-            having = f"HAVING COUNT(*) BETWEEN {minimum} AND {maximum}"
-        elif minimum > 0:
-            having = f"HAVING COUNT(*) >= {minimum}"
+
+        if score_active:
+            source = (
+                "JOURNEYS j LEFT JOIN STEPS s "
+                "ON j.STEP = s.STEP AND j.PROJECT_ID = s.PROJECT_ID"
+            )
+            where = (
+                f"j.PROJECT_ID = '{project_id}' "
+                f"AND {self.active_sample_set.sql_fragment('j')}"
+            )
+            key = "j.EVENT_ID"
         else:
-            having = f"HAVING COUNT(*) <= {maximum}"
-        return (
-            "\n                AND EVENT_ID IN (SELECT EVENT_ID FROM JOURNEYS WHERE "
-            f"PROJECT_ID = '{project_id}' AND {self.active_sample_set.sql_fragment()} "
-            f"GROUP BY EVENT_ID {having})"
-        )
+            source = "JOURNEYS"
+            where = (
+                f"PROJECT_ID = '{project_id}' "
+                f"AND {self.active_sample_set.sql_fragment()}"
+            )
+            key = "EVENT_ID"
 
-    def _journey_time_clause(self, min_secs: int, max_secs: int, project_id: str) -> str:
-        if min_secs <= 0 and max_secs >= INT_MAX:
-            return ""
-        expr = "SECONDS_BETWEEN(MAX(EVENT_TIME), MIN(EVENT_TIME))"
-        if min_secs > 0 and max_secs < INT_MAX:
-            having = f"HAVING {expr} BETWEEN {min_secs} AND {max_secs}"
-        elif min_secs > 0:
-            having = f"HAVING {expr} >= {min_secs}"
-        else:
-            having = f"HAVING {expr} <= {max_secs}"
         return (
-            "\n                AND EVENT_ID IN (SELECT EVENT_ID FROM JOURNEYS WHERE "
-            f"PROJECT_ID = '{project_id}' AND {self.active_sample_set.sql_fragment()} "
-            f"GROUP BY EVENT_ID {having})"
-        )
-
-    def _score_clause(self, minimum: int, maximum: int, project_id: str) -> str:
-        if minimum <= INT_MIN and maximum >= INT_MAX:
-            return ""
-        return (
-            "\n                AND EVENT_ID IN (SELECT j.EVENT_ID FROM JOURNEYS j "
-            "LEFT JOIN STEPS s ON j.STEP = s.STEP AND j.PROJECT_ID = s.PROJECT_ID "
-            f"WHERE j.PROJECT_ID = '{project_id}' "
-            f"AND {self.active_sample_set.sql_fragment('j')} "
-            f"GROUP BY j.EVENT_ID HAVING SUM(COALESCE(s.SCORE, 0)) "
-            f"BETWEEN {minimum} AND {maximum})"
+            "\n                AND EVENT_ID IN ("
+            f"SELECT {key} FROM {source} WHERE {where} "
+            f"GROUP BY {key} HAVING {' AND '.join(having)})"
         )
 
     def _all_filters(self, project_id: str, f: FilterSpec, *, date_only: bool) -> str:
-        """`date_only=True` uses the plain date clause (row-level); `False` uses the
-        journey-activity subquery required by the LEAD()-based transition query."""
+        """`date_only=True` filters date + meta at row level (for row-level
+        aggregates); `date_only=False` folds them into the journey qualifier as an
+        "active in window" match, as the LEAD()-based transition query needs whole
+        journeys. Every other journey-level filter goes through one consolidated
+        EVENT_ID semi-join in both modes."""
         safe = esc(project_id)
         clauses = self._sample_clause()
         if date_only:
             clauses += self._date_clause(f.fromDate, f.toDate)
-            clauses += self._step_clause(f.includedSteps, f.excludedSteps, safe)
             clauses += self._meta_clause(f.meta1, f.meta2, f.meta3)
+            clauses += self._journey_qualifier(safe, f, include_date_meta=False)
         else:
-            clauses += self._journey_activity_filter(
-                f.fromDate, f.toDate, safe, f.meta1, f.meta2, f.meta3
-            )
-            clauses += self._step_clause(f.includedSteps, f.excludedSteps, safe)
-        clauses += self._steps_count_clause(f.minSteps, f.maxSteps, safe)
-        clauses += self._journey_time_clause(f.minJourneyTime, f.maxJourneyTime, safe)
-        clauses += self._score_clause(f.minScore, f.maxScore, safe)
+            clauses += self._journey_qualifier(safe, f, include_date_meta=True)
         return clauses
 
     # ── projects, steps, metas ───────────────────────────────────────────────
@@ -502,22 +510,25 @@ class ProcessRepository:
         result = await self.db.execute(
             f"""
             SELECT FROM_STEP, TO_STEP, COUNT(*) AS CNT,
-                   AVG(SECONDS_BETWEEN(TO_TIME, FROM_TIME)) AS AVG_SECS,
-                   MIN(SECONDS_BETWEEN(TO_TIME, FROM_TIME)) AS MIN_SECS,
-                   MAX(SECONDS_BETWEEN(TO_TIME, FROM_TIME)) AS MAX_SECS,
-                   STDDEV(SECONDS_BETWEEN(TO_TIME, FROM_TIME)) AS STDDEV_SECS
+                   AVG(DUR_SECS)    AS AVG_SECS,
+                   MIN(DUR_SECS)    AS MIN_SECS,
+                   MAX(DUR_SECS)    AS MAX_SECS,
+                   STDDEV(DUR_SECS) AS STDDEV_SECS
             FROM (
-                SELECT
-                    STEP       AS FROM_STEP,
-                    EVENT_TIME AS FROM_TIME,
-                    LEAD(STEP)       OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_STEP,
-                    LEAD(EVENT_TIME) OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_TIME
-                FROM JOURNEYS
-                WHERE PROJECT_ID = '{esc(project_id)}'{filters}
-            ) AS t
-            WHERE TO_STEP IS NOT NULL AND TO_TIME IS NOT NULL
+                SELECT FROM_STEP, TO_STEP,
+                       SECONDS_BETWEEN(TO_TIME, FROM_TIME) AS DUR_SECS
+                FROM (
+                    SELECT
+                        STEP       AS FROM_STEP,
+                        EVENT_TIME AS FROM_TIME,
+                        LEAD(STEP)       OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_STEP,
+                        LEAD(EVENT_TIME) OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_TIME
+                    FROM JOURNEYS
+                    WHERE PROJECT_ID = '{esc(project_id)}'{filters}
+                ) AS t
+                WHERE TO_STEP IS NOT NULL AND TO_TIME IS NOT NULL
+            ) AS d
             GROUP BY FROM_STEP, TO_STEP
-            ORDER BY CNT DESC
             """
         )
         return self._rows_to_transitions(result.rows)
@@ -834,24 +845,27 @@ class ProcessRepository:
         trans_result = await self.db.execute(
             f"""
             SELECT FROM_STEP, TO_STEP, COUNT(*) AS CNT,
-                   AVG(SECONDS_BETWEEN(TO_TIME, FROM_TIME)) AS AVG_SECS,
-                   MIN(SECONDS_BETWEEN(TO_TIME, FROM_TIME)) AS MIN_SECS,
-                   MAX(SECONDS_BETWEEN(TO_TIME, FROM_TIME)) AS MAX_SECS,
-                   STDDEV(SECONDS_BETWEEN(TO_TIME, FROM_TIME)) AS STDDEV_SECS
+                   AVG(DUR_SECS)    AS AVG_SECS,
+                   MIN(DUR_SECS)    AS MIN_SECS,
+                   MAX(DUR_SECS)    AS MAX_SECS,
+                   STDDEV(DUR_SECS) AS STDDEV_SECS
             FROM (
-                SELECT
-                    STEP       AS FROM_STEP,
-                    EVENT_TIME AS FROM_TIME,
-                    LEAD(STEP)       OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_STEP,
-                    LEAD(EVENT_TIME) OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_TIME
-                FROM JOURNEYS
-                WHERE PROJECT_ID = '{safe_pid}'
-                AND {frag}
-                AND EVENT_ID = '{safe_eid}'
-            ) AS t
-            WHERE TO_STEP IS NOT NULL AND TO_TIME IS NOT NULL
+                SELECT FROM_STEP, TO_STEP,
+                       SECONDS_BETWEEN(TO_TIME, FROM_TIME) AS DUR_SECS
+                FROM (
+                    SELECT
+                        STEP       AS FROM_STEP,
+                        EVENT_TIME AS FROM_TIME,
+                        LEAD(STEP)       OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_STEP,
+                        LEAD(EVENT_TIME) OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_TIME
+                    FROM JOURNEYS
+                    WHERE PROJECT_ID = '{safe_pid}'
+                    AND {frag}
+                    AND EVENT_ID = '{safe_eid}'
+                ) AS t
+                WHERE TO_STEP IS NOT NULL AND TO_TIME IS NOT NULL
+            ) AS d
             GROUP BY FROM_STEP, TO_STEP
-            ORDER BY CNT DESC
             """
         )
         transitions = self._rows_to_transitions(trans_result.rows)

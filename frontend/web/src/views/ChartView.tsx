@@ -25,15 +25,17 @@ export function ChartView({
   const [sliderTo, setSliderTo] = useState(store.toDate)
   const notes = useNoteHandlers()
 
-  // Re-sync the slider to the loaded window whenever a project (re)loads — the
-  // bootstrap sets fromDate/toDate together with initialFromDate/initialToDate,
-  // including the configurable "last N days" default. Keyed on the load-time
-  // values so a drag's local edits are never clobbered mid-interaction.
+  // Keep the slider in sync with the store's applied window. This covers project
+  // load (the "last N days" default), a Day snap to the nearest date, and — the
+  // reason this keys on fromDate/toDate rather than only the load-time values —
+  // applying a preset from the left sidebar, which sets the window in the store
+  // without going through the chart's own slider. A drag only moves local state
+  // (the store commits on release), so this never clobbers a drag in progress.
   useEffect(() => {
     setSliderFrom(store.fromDate)
     setSliderTo(store.toDate)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store.selectedProject, store.initialFromDate, store.initialToDate])
+  }, [store.selectedProject, store.fromDate, store.toDate])
 
   const hasData = store.processGraph.transitions.length > 0
   const rangeMin =

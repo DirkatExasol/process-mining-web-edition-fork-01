@@ -102,22 +102,69 @@ def test_date_clause_bounds():
     assert repo()._date_clause(None, None) == ""
 
 
-def test_step_clause_include_and_exclude():
-    clause = repo()._step_clause(["Login"], ["Return"], "PID")
-    assert "EVENT_ID IN" in clause and "STEP IN ('Login')" in clause
-    assert "EVENT_ID NOT IN" in clause and "STEP IN ('Return')" in clause
-    assert repo()._step_clause([], [], "PID") == ""
+def test_journey_qualifier_folds_all_filters_into_one_semijoin():
+    f = FilterSpec(
+        fromDate=datetime(2024, 1, 1),
+        toDate=datetime(2024, 1, 31),
+        includedSteps=["Login"],
+        excludedSteps=["Return"],
+        minSteps=2,
+        maxSteps=10,
+        minJourneyTime=60,
+        maxScore=100,
+    )
+    # Transition path folds date + meta in as an active-window match.
+    sql = repo()._journey_qualifier("PID", f, include_date_meta=True)
+    # The whole filter set is ONE semi-join / ONE scan (was up to six).
+    assert sql.count("EVENT_ID IN") == 1
+    assert sql.count("SELECT") == 1
+    # A score bound pulls in the STEPS join and qualifies journey columns with j.
+    assert "LEFT JOIN STEPS s" in sql
+    assert "SUM(COALESCE(s.SCORE, 0)) BETWEEN" in sql
+    assert "MAX(CASE WHEN j.STEP IN ('Login') THEN 1 ELSE 0 END) = 1" in sql
+    assert "MAX(CASE WHEN j.STEP IN ('Return') THEN 1 ELSE 0 END) = 0" in sql
+    assert "COUNT(*) BETWEEN 2 AND 10" in sql
+    assert "SECONDS_BETWEEN(MAX(j.EVENT_TIME), MIN(j.EVENT_TIME)) >= 60" in sql
+    assert "j.EVENT_TIME >= TIMESTAMP '2024-01-01 00:00:00'" in sql
+    assert "j.EVENT_TIME <= TIMESTAMP '2024-01-31 23:59:59'" in sql
 
 
-def test_step_clause_escapes_values():
-    clause = repo()._step_clause(["O'Neil"], [], "PID")
-    assert "'O''Neil'" in clause
+def test_journey_qualifier_without_score_needs_no_join():
+    f = FilterSpec(includedSteps=["Login"], minSteps=3)
+    sql = repo()._journey_qualifier("PID", f, include_date_meta=False)
+    assert "LEFT JOIN STEPS" not in sql  # no score bound → no join, no alias
+    assert "MAX(CASE WHEN STEP IN ('Login') THEN 1 ELSE 0 END) = 1" in sql
+    assert "COUNT(*) >= 3" in sql
+    assert sql.count("EVENT_ID IN") == 1
 
 
-def test_score_clause_only_when_bounded():
-    assert repo()._score_clause(-9223372036854775808, 9223372036854775807, "PID") == ""
-    clause = repo()._score_clause(-5, 20, "PID")
-    assert "BETWEEN -5 AND 20" in clause
+def test_journey_qualifier_is_empty_without_journey_filters():
+    # No step/count/time/score filters → the qualifier contributes nothing
+    # (date/meta are handled row-level in date_only mode).
+    assert repo()._journey_qualifier("PID", FilterSpec(), include_date_meta=False) == ""
+    assert repo()._journey_qualifier("PID", FilterSpec(), include_date_meta=True) == ""
+
+
+def test_journey_qualifier_escapes_values():
+    f = FilterSpec(includedSteps=["O'Neil"], meta1="A'B")
+    sql = repo()._journey_qualifier("PID", f, include_date_meta=True)
+    assert "'O''Neil'" in sql
+    assert "A''B" in sql
+
+
+def test_all_filters_transition_mode_uses_a_single_semijoin():
+    f = FilterSpec(
+        fromDate=datetime(2024, 1, 1),
+        toDate=datetime(2024, 1, 31),
+        includedSteps=["Login"],
+        minSteps=2,
+        minScore=-5,
+        maxScore=20,
+    )
+    sql = repo()._all_filters("PID", f, date_only=False)
+    # Previously one subquery per active filter; now consolidated to one.
+    assert sql.count("EVENT_ID IN") == 1
+    assert "SAMPLE_SET" in sql
 
 
 def test_all_filters_combines_clauses():

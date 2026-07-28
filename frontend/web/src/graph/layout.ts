@@ -80,7 +80,17 @@ export function computeLayout(
     return false
   }
 
-  for (const edge of [...allEdges].sort((a, b) => b.occurrences - a.occurrences)) {
+  // Sort by weight, then break ties on the step names so the greedy DAG (and
+  // hence the whole layout) is independent of the order transitions arrive in.
+  // The backend no longer sorts them, and equal-count ties were never ordered
+  // by the database anyway.
+  const byWeightThenName = [...allEdges].sort(
+    (a, b) =>
+      b.occurrences - a.occurrences ||
+      a.fromStep.localeCompare(b.fromStep) ||
+      a.toStep.localeCompare(b.toStep),
+  )
+  for (const edge of byWeightThenName) {
     if (!dagSucc[edge.fromStep] || !dagSucc[edge.toStep]) continue
     if (!wouldCreateCycle(edge.fromStep, edge.toStep)) {
       dagSucc[edge.fromStep].push(edge.toStep)
