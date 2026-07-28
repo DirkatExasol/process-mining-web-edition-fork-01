@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, type CSSProperties } from 'react'
 import type { NodeProps } from '@xyflow/react'
 import { COLLAPSE_BADGE_GREEN, COLLAPSE_BADGE_RED, rgba } from '../graph/colors'
 
@@ -23,14 +23,17 @@ function GroupBoxNodeComponent({ data }: NodeProps) {
 
   return (
     <div
-      className="group-box"
-      style={{
-        width,
-        height,
-        background: rgba(color, collapsed ? 0.13 : 0.07),
-        border: `${collapsed ? 2 : 1.5}px ${collapsed ? 'solid' : 'dashed'} ${rgba(color, 0.45)}`,
-        pointerEvents: 'all',
-      }}
+      className={`group-box${collapsed ? ' collapsed' : ''}`}
+      style={
+        {
+          width,
+          height,
+          // The box tint + border derive from this per-group colour in CSS, so
+          // the opacity can be theme-aware (stronger, and lightened on dark).
+          '--gc': color,
+          pointerEvents: 'all',
+        } as CSSProperties & Record<string, string | number>
+      }
     >
       <span
         className="group-label"

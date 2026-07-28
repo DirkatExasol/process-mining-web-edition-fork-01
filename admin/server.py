@@ -46,12 +46,14 @@ from app.services.certs import CertError  # noqa: E402
 from app.store.logs import LEVELS, store as log_store  # noqa: E402
 from app.store.crypto import read_session, sign_session  # noqa: E402
 from app.store.security import User, store  # noqa: E402
+from app.web_security import install_security_headers  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 )
 
 app = FastAPI(title="Process Mining Demonstrator — Administration", version="1.0.0")
+install_security_headers(app)
 
 COOKIE = "pmw_admin"
 
@@ -61,10 +63,16 @@ logx.install_request_logging(app, lambda r: _current_user(r))
 # ── session helpers ───────────────────────────────────────────────────────────
 
 
+_SESSION_AUDIENCE = "admin"  # this cookie is only valid for the admin interface
+
+
 def _issue_session(username: str) -> str:
     # Embed the user's session epoch so logout (which bumps it) invalidates this
     # token — otherwise the stateless Fernet token would stay valid until its TTL.
-    payload = {"u": username, "e": store.session_epoch(username)}
+    # The audience ("a") binds the token to THIS interface: admin and app tokens
+    # are signed with the same Fernet key, so without it an app session cookie
+    # would be structurally valid here (and vice-versa).
+    payload = {"u": username, "e": store.session_epoch(username), "a": _SESSION_AUDIENCE}
     return sign_session(json.dumps(payload).encode("utf-8"))
 
 
@@ -87,6 +95,8 @@ def _current_user(request: Request) -> User | None:
         username = data["u"]
     except (json.JSONDecodeError, KeyError, TypeError):
         return None
+    if data.get("a") != _SESSION_AUDIENCE:
+        return None  # an app session cookie is not accepted here
     user = store.get_user(username)
     if not (user and user.is_admin and user.is_enabled):
         return None
@@ -197,8 +207,78 @@ async def api_directory_status() -> Response:
     return JSONResponse(value)
 
 
+# ── Per-IP admin-login throttle ─────────────────────────────────────────────
+# Account lockout (max_failed_logins) stops password-guessing against ONE account
+# but not username-rotation from a single host; this throttle caps failed attempts
+# per source IP. It's a time-based cooldown (auto-recovers), unlike the account
+# lock, so a legitimate fat-fingered admin isn't stranded. In-memory (the admin
+# server is a single process); resets on restart, which is fine for brute-force.
+_LOGIN_IP_MAX = 3  # failed attempts within the window before a host is throttled
+_LOGIN_IP_WINDOW = 900.0  # 15 min sliding window over recent failures
+_LOGIN_IP_COOLDOWN = 300.0  # once tripped, seconds to wait from the last failure
+_LOGIN_IP_MAX_TRACKED = 4096  # bound the map so a distributed flood can't grow it
+_login_ip_failures: dict[str, list[float]] = {}
+
+
+def _client_ip(request: Request) -> str:
+    # Deliberately NOT trusting X-Forwarded-For: the admin panel is reached
+    # directly, and honouring a client-supplied header would let an attacker
+    # rotate fake IPs to evade the throttle. The socket peer can't be spoofed.
+    return request.client.host if request.client else "unknown"
+
+
+def _login_retry_after(ip: str) -> float:
+    """Seconds this IP must wait before another attempt (0 = allowed)."""
+    now = time.monotonic()
+    fails = [t for t in _login_ip_failures.get(ip, []) if now - t < _LOGIN_IP_WINDOW]
+    if fails:
+        _login_ip_failures[ip] = fails
+    else:
+        _login_ip_failures.pop(ip, None)
+    if len(fails) >= _LOGIN_IP_MAX:
+        return max(0.0, _LOGIN_IP_COOLDOWN - (now - fails[-1]))
+    return 0.0
+
+
+def _record_login_failure_ip(ip: str) -> None:
+    now = time.monotonic()
+    _login_ip_failures.setdefault(ip, []).append(now)
+    # Keep the map bounded: an entry is only pruned when its own IP retries, so a
+    # botnet of one-shot IPs would otherwise leak memory. When over the cap, first
+    # drop hosts whose failures have all aged out; if a real distributed flood keeps
+    # us over, drop the least-recently-active hosts.
+    if len(_login_ip_failures) > _LOGIN_IP_MAX_TRACKED:
+        for k in [
+            k
+            for k, ts in _login_ip_failures.items()
+            if not ts or now - ts[-1] >= _LOGIN_IP_WINDOW
+        ]:
+            _login_ip_failures.pop(k, None)
+        while len(_login_ip_failures) > _LOGIN_IP_MAX_TRACKED:
+            oldest = min(_login_ip_failures, key=lambda k: _login_ip_failures[k][-1])
+            _login_ip_failures.pop(oldest, None)
+
+
 @app.post("/login", response_class=HTMLResponse)
 def login_post(request: Request, username: str = Form(...), password: str = Form(...)):
+    ip = _client_ip(request)
+    retry_after = _login_retry_after(ip)
+    if retry_after > 0:
+        wait = int(retry_after) + 1
+        logx.warn(
+            f"admin sign-in throttled for {ip} ({wait}s remaining)",
+            request=request,
+            username=username,
+            operation="login",
+        )
+        return HTMLResponse(
+            pages.login_page(
+                f"Too many failed attempts. Try again in about {wait} seconds.",
+                bg_css=_login_bg_css(),
+            ),
+            status_code=429,
+            headers={"Retry-After": str(wait)},
+        )
     # Local accounts always work (break-glass). Directory accounts may sign in here
     # only when the admin explicitly enabled it in the Directory tab — and, either way,
     # the panel is admins only, so a valid non-admin is refused. A directory user must
@@ -208,6 +288,7 @@ def login_post(request: Request, username: str = Form(...), password: str = Form
     else:
         user = store.authenticate(username, password)  # local-only
     if user is None or not user.is_admin:
+        _record_login_failure_ip(ip)
         logx.warn(
             f"failed admin sign-in for username {username!r}",
             request=request,
@@ -220,6 +301,7 @@ def login_post(request: Request, username: str = Form(...), password: str = Form
         return HTMLResponse(
             pages.login_page(message, bg_css=_login_bg_css()), status_code=401
         )
+    _login_ip_failures.pop(ip, None)  # clear the throttle on a successful sign-in
     logx.usage(
         f"admin {user.username} signed in to the admin interface",
         request=request,
@@ -735,10 +817,15 @@ class GenerateBody(BaseModel):
     activate: bool = False
 
 
+# A real PEM cert+key pair is a few KB; cap the fields (like the license/backup
+# uploads) so a multi-hundred-MB "PEM" can't be decoded/parsed into memory.
+_MAX_PEM_CHARS = 200_000
+
+
 class UploadBody(BaseModel):
     name: str = ""
-    certPem: str
-    keyPem: str
+    certPem: str = Field(max_length=_MAX_PEM_CHARS)
+    keyPem: str = Field(max_length=_MAX_PEM_CHARS)
     activate: bool = False
 
 

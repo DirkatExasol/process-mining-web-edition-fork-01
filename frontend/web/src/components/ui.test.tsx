@@ -2,10 +2,37 @@
  *  They confirm the React + jsdom pipeline mounts the shared primitives and that
  *  the Markdown renderer produces the expected structure. */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { RangeSlider, Segmented, Switch, Unavailable } from './ui'
+import { AutocompleteField, RangeSlider, Segmented, Switch, Unavailable } from './ui'
 import { Markdown } from './Markdown'
+
+describe('AutocompleteField (searchable dropdown)', () => {
+  const values = ['Lufthansa', 'United', 'Swiss', 'Austrian']
+
+  it('shows every distinct value on focus (empty), then filters as you type', () => {
+    const onChange = vi.fn()
+    const { rerender } = render(
+      <AutocompleteField value="" suggestions={values} onChange={onChange} />,
+    )
+    // Focus with an empty value → the full distinct list (a dropdown).
+    fireEvent.focus(screen.getByRole('textbox'))
+    for (const v of values) expect(screen.getByRole('button', { name: v })).toBeInTheDocument()
+
+    // Typing narrows it (case-insensitive substring) — still searchable.
+    rerender(<AutocompleteField value="uni" suggestions={values} onChange={onChange} />)
+    expect(screen.getByRole('button', { name: 'United' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Swiss' })).toBeNull()
+  })
+
+  it('opens the list from the ▾ affordance and selects a value', () => {
+    const onChange = vi.fn()
+    render(<AutocompleteField value="" suggestions={values} onChange={onChange} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Show values' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Swiss' }))
+    expect(onChange).toHaveBeenCalledWith('Swiss')
+  })
+})
 
 describe('Unavailable', () => {
   it('renders a title and description', () => {

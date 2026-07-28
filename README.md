@@ -152,12 +152,21 @@ this user store — only enabled users get in. Sign-in is enforced at the GUI se
 (every `/api/*` call needs a valid session cookie); the **Require sign-in** toggle
 in the admin *Users* section can turn the gate off for single-user/kiosk use
 (on by default). A configurable **failed-sign-in lockout** (*Disable an account
-after N failed sign-in attempts*, `0` = off) automatically disables an account —
-including the built-in `Administrator` — after too many wrong passwords; the login
-panel then shows a clear message and the account carries a *Locked* badge in the
-*Users* tab where it can be unlocked (or restart with `PMW_RESET_LOCKOUTS=1` as a
-break-glass valve). Passwords are scrypt-hashed; certificate private keys are
-encrypted at rest. The security store lives in `data/security.sqlite3`.
+after N failed sign-in attempts*, **default 3**, `0` = off) automatically disables
+an account after too many wrong passwords; the login panel then shows a clear
+message and the account carries a *Locked* badge in the *Users* tab where it can be
+unlocked (or restart with `PMW_RESET_LOCKOUTS=1` as a break-glass valve). The
+built-in `Administrator` is deliberately **exempt from auto-lockout** — it's the
+sole recovery account, so letting an unauthenticated attacker who knows its name
+disable it would be a denial-of-service; it's protected instead by the throttle
+below plus scrypt cost. Independently, the **admin sign-in page is rate-limited per
+source IP** (a short auto-recovering cooldown after repeated failures from one
+host, returning `429`), so username-rotation guessing is throttled even when the
+account lockout doesn't apply. Passwords are scrypt-hashed; certificate private
+keys are encrypted at rest. Both the admin and app servers send hardening response
+headers (`X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` against
+clickjacking, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+and HSTS when TLS is on). The security store lives in `data/security.sqlite3`.
 
 **Customize.** The *Customize* tab sets the **login-page background** for *both*
 sign-in pages (the main app and the admin interface): keep the default
@@ -249,6 +258,12 @@ connections and, if you wish, the admin role to them. Key rules:
 
 - **Local accounts always work** (break-glass), and are checked first — a bad
   directory config can never lock out the local `Administrator`.
+- **A directory login never adopts a same-named local account.** If a directory
+  username collides with an existing *local* (non-directory) account, the LDAP
+  sign-in is refused rather than binding onto that account and inheriting its role
+  and connection assignments. Practical note when migrating from local accounts to
+  LDAP: delete (or rename) the old local rows first, or those users keep signing in
+  with their local password — a directory login won't silently take them over.
 - **Admin is never granted from LDAP** — a directory user is a normal user until an
   admin promotes them locally; disabling them locally blocks their sign-in.
 - **The admin panel (`:8090`) is admins only** — it accepts local admins *and*
@@ -325,9 +340,18 @@ The rebuild runs the pairing once with `CREATE TABLE … AS SELECT` — so every
 column (crucially `EVENT_ID`, which may be `HASHTYPE`, `VARCHAR`, …) inherits its
 type from `JOURNEYS` and the read query's `EVENT_ID` semi-join stays
 type-compatible — into a staging table that's swapped in with a `RENAME`, so live
-readers are never blocked. Whether it's worth it depends on how often you reload
-`JOURNEYS`: ideal for batch loads read heavily afterwards, less so for continuous
-updates (the table is stale until rebuilt).
+readers are never blocked. The pairing's `LEAD()` window partitions by
+`PROJECT_ID, SAMPLE_SET, EVENT_ID` (not `EVENT_ID` alone), because it runs over
+the whole `JOURNEYS` table at once and `EVENT_ID` is only unique within one
+project + sample set — partitioning any wider would pair events across journey
+boundaries and invent spurious edges. Whether it's worth it depends on how often
+you reload `JOURNEYS`: ideal for batch loads read heavily afterwards, less so for
+continuous updates (the table is stale until rebuilt).
+
+> **Rebuild any `TRANSITIONS_RAW` built before this fix.** Earlier builds
+> partitioned by `EVENT_ID` alone and can show wrong per-edge values wherever an
+> `EVENT_ID` recurs across projects or sample sets. Press *Rebuild now* (or hit
+> the API) once per affected connection after upgrading.
 
 ## Tests
 
@@ -376,12 +400,13 @@ Cover the model & simulation logic plus the web-specific compute layer.
 | `test_models.py` | `TimeGranularity.auto` bucketing; `TransitionMetric.is_time_based`; `ProcessTransition.metric_value` / `.id`; `ProcessGraph` maxima and the empty-graph fallback; `HappyPath` legacy decode + branch round-trip; `DatabaseServer` / `LLMServer` / `ConnectionProfile` defaults and round-trips; `NoteTarget` node/edge round-trips; `SampleSet` SQL fragments |
 | `test_simulation.py` | The Markov Monte-Carlo engine and `build_graph`: journey counts, per-journey event counts, chronological ordering, cycle-time stats, variant accounting/paths, excluded & required steps, the `maxStepsPerJourney` cap on cyclic graphs, and transition statistics (avg/min/max/stdDev) |
 | `test_analytics.py` | Random / temporal-stratified / path-diverse sampling; happy-path conformance (full match, journey-weighting, best-branch); process-goodness coverage penalty; the A/B similarity Q-metric (identical → 1.0, disjoint → low) |
-| `test_repository.py` | Value coercion (`as_int` / `as_float` / `parse_date` / `dur_label`) and the SQL clause builders (sample-set, date, step include/exclude, score, combined filters) — verified without a database |
+| `test_repository.py` | Value coercion (`as_int` / `as_float` / `parse_date` / `dur_label`) and the SQL clause builders (sample-set, date, step include/exclude, score, combined filters) — verified without a database; plus client-supplied `LIMIT` clamping and the generic-vs-verbose `friendly_error` (no raw driver text leaks to a plain user) |
 | `test_backup.py` | AES-256-GCM encrypt/decrypt round-trip and wrong-password handling; backup summary; the connection-splitting logic on restore (against an in-memory store) |
-| `test_security.py` | User store (seeded admin, case-insensitive auth, enable/disable, last-admin guard), TLS mode & plan (off/optional/required), self-signed generation, cert/key pair validation, encrypted-at-rest keys, scrypt password hashing, per-user database connections (encrypted secrets, assignment filtering, secret-preserving updates), the per-connection pre-materialized-transitions flag, the hash-stored rebuild token (generate/verify/rotate/clear) and per-connection materialization status, and LDAP directory auth (config encryption, JIT provisioning, local-first `authenticate_app`, admin-panel stays local-only) |
+| `test_crypto.py` | The `secret.key` first-run creation — atomic (`O_CREAT\|O_EXCL`, mode `0600` from birth, no chmod race), never overwritten by a second/concurrent process, a wedged 0-byte key is recreated rather than fatal, and `write_private_file` writes TLS keys `0600`-from-birth |
+| `test_security.py` | User store (seeded admin, case-insensitive auth, enable/disable, last-admin guard), TLS mode & plan (off/optional/required), self-signed generation, cert/key pair validation, encrypted-at-rest keys, scrypt password hashing, per-user database connections (encrypted secrets, assignment filtering, secret-preserving updates), the per-connection pre-materialized-transitions flag, the hash-stored rebuild token (generate/verify/rotate/clear) and per-connection materialization status, the failed-sign-in lockout (default 3, explicit-`0` off, built-in Administrator exempt), and LDAP directory auth (config encryption, JIT provisioning, local-first `authenticate_app`, a directory login refusing to adopt a same-named local account, admin-panel stays local-only) |
 | `test_materialized_transitions.py` | The optional pre-materialized transitions: `load_transitions` picks `TRANSITIONS_RAW` when enabled and gracefully falls back to the live `LEAD()` query when it isn't built (reporting `materialized` / `fallback` / `live`), and a SQLite proof that the materialized pairs aggregate to exactly the same directly-follows graph as the live query |
 | `test_auth.py` | The GUI server's sign-in gate — `/api/*` gated without a session, `/api/health` exempt, login/session/logout cookie flow, disabled-user rejection, and open access when sign-in is not required (drives the real GUI app with a stub backend) |
-| `test_admin_api.py` | The admin interface's connection + LDAP endpoints — admin guard, connection create/list/delete, per-user assignment roundtrip, password-preserving updates, the connection-test `{dbError, llmError, llmModels}` shape, the LDAP config roundtrip (bind password hidden/preserved) + test endpoint, and the pre-materialized transitions surface: toggle persistence, the rebuild endpoint (admin session **or** bearer token, 401/404 paths), token generate/rotate/revoke, the provisioning build opt-in, and the dashboard render carrying the **API** tab (rebuild token + copy-able `curl` example, and the token moved out of the Connections tab) (drives the real admin app with stubbed probes) |
+| `test_admin_api.py` | The admin interface's connection + LDAP endpoints — admin guard, connection create/list/delete, per-user assignment roundtrip, password-preserving updates, the connection-test `{dbError, llmError, llmModels}` shape, the LDAP config roundtrip (bind password hidden/preserved) + test endpoint, and the pre-materialized transitions surface: toggle persistence, the rebuild endpoint (admin session **or** bearer token, 401/404 paths), token generate/rotate/revoke, the provisioning build opt-in, the per-IP login throttle (repeated failures → `429`, cleared on success), and the dashboard render carrying the **API** tab (rebuild token + copy-able `curl` example, and the token moved out of the Connections tab) (drives the real admin app with stubbed probes) |
 | `test_ldap.py` | The directory search+bind flow against ldap3's in-memory `MOCK_SYNC` server — valid/invalid/unknown login, empty-password and filter-injection guards, canonical-username resolution, and the admin "Test" result shape (no real directory needed) |
 | `test_connections_api.py` | The compute backend's connection endpoints — `GET /api/connections` filtered by the trusted `X-PMW-User` header (secrets stripped, open access without it) and the `POST …/connect` authorization gate (403 unassigned, decrypted secret passed through when assigned, 404 unknown id) |
 | `test_docgen.py` | The AI-documentation report builder: transition table, journey-paths HTML, conformance gap analysis, happy-path section and prompt assembly |
@@ -428,6 +453,12 @@ The process map carries a date-window slider (Range mode with two independently
 draggable thumbs, or single-day mode). On first load a project shows the last *N*
 days ending at its latest event; *N* is configurable per user under
 **Configuration → Default date window** (default 30, `0` = full range).
+
+The three `META_` case-level filters are searchable dropdowns: focus the field
+(or tap the ▾) to browse the distinct values pulled from the database, then click
+one or type to narrow the list. Steps sharing a `BELONGS_TO` value are wrapped in
+a dashed group box whose tint and border are tuned per theme so it stays clearly
+visible in both light and dark mode.
 
 ## License
 

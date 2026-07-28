@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
@@ -237,6 +238,8 @@ class SimulateRequest(BaseModel):
 # A run beyond this exhausts memory / crashes the process, so it is refused up
 # front rather than attempted (the user reported ~200k journeys killing the app).
 _MAX_SIM_JOURNEYS = 100_000
+_MAX_SIM_STEPS = 10_000  # per-journey event cap
+_MAX_SIM_EVENTS = 20_000_000  # ceiling on total events (journeys × steps per journey)
 # Wall-clock ceiling for a single run — a slower run is abandoned (and logged)
 # instead of hanging the request indefinitely.
 _SIM_TIMEOUT_SECS = 120.0
@@ -245,20 +248,35 @@ _SIM_TIMEOUT_SECS = 120.0
 @router.post("/simulate", response_model=SimulationResult)
 async def simulate(request: SimulateRequest) -> SimulationResult:
     step_infos = request.stepInfos or request.graph.steps
-    count = request.config.journeyCount
-    # Guard against an oversized run that would otherwise exhaust memory / crash.
+    cfg = request.config
+    count = cfg.journeyCount
+    max_steps = cfg.maxStepsPerJourney
+    # Guard against an oversized/degenerate run that would otherwise exhaust memory
+    # or CPU and take the shared backend down for every user. The wall-clock timeout
+    # can't cancel the worker thread once it's looping, so the size must be bounded
+    # up front. journeyCount alone isn't enough: a cyclic graph with a huge
+    # maxStepsPerJourney appends an event per step, so both dimensions — and their
+    # product — need a ceiling. Non-finite inter-arrival (inf/nan) breaks timedelta.
+    def _reject(msg: str) -> None:
+        logx.warn(f"Simulation rejected: {msg}", operation="simulation")
+        raise HTTPException(status_code=400, detail=msg)
+
     if count > _MAX_SIM_JOURNEYS:
-        logx.warn(
-            f"Simulation rejected: {count} journeys exceeds the {_MAX_SIM_JOURNEYS} limit",
-            operation="simulation",
+        _reject(
+            f"Too many journeys to simulate ({count:,}). "
+            f"The maximum is {_MAX_SIM_JOURNEYS:,}."
         )
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Too many journeys to simulate ({count:,}). "
-                f"The maximum is {_MAX_SIM_JOURNEYS:,}."
-            ),
+    if max_steps > _MAX_SIM_STEPS:
+        _reject(
+            f"maxStepsPerJourney ({max_steps:,}) exceeds the limit of {_MAX_SIM_STEPS:,}."
         )
+    if count > 0 and max_steps > 0 and count * max_steps > _MAX_SIM_EVENTS:
+        _reject(
+            f"The requested run is too large ({count:,} journeys × {max_steps:,} steps). "
+            f"Keep journeys × steps under {_MAX_SIM_EVENTS:,}."
+        )
+    if not math.isfinite(cfg.avgInterArrivalHours):
+        _reject("avgInterArrivalHours must be a finite number.")
     # Run the CPU-bound simulation off the event loop, bounded by a timeout so a
     # pathological run surfaces as a logged error rather than a frozen request.
     try:
@@ -292,11 +310,15 @@ async def simulate(request: SimulateRequest) -> SimulationResult:
             ),
         ) from None
     except Exception as exc:  # noqa: BLE001
+        # Log the exception detail server-side, but return a generic message so
+        # internal errors don't leak to the client.
         logx.error(
             f"Simulation failed ({count} journeys): {exc.__class__.__name__}: {exc}",
             operation="simulation",
         )
-        raise HTTPException(status_code=500, detail=f"Simulation failed: {exc}") from exc
+        raise HTTPException(
+            status_code=500, detail="Simulation failed. Please try again."
+        ) from exc
 
 
 # ── Happy-path conformance ───────────────────────────────────────────────────

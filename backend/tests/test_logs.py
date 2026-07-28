@@ -155,6 +155,25 @@ def test_rotation_writes_archive_and_empties_store(logs):
     assert " -- " in lines[0] and len(lines[0].split(" -- ")) == 6
 
 
+def test_store_enables_busy_timeout(logs):
+    # A cross-process log write must retry rather than fail immediately on SQLITE_BUSY.
+    assert logs._conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+
+
+def test_rotation_prunes_to_newest_archives(logs):
+    import app.store.logs as logs_mod
+
+    # Seed more archives than the retention cap; timestamped names sort chronologically.
+    for i in range(logs_mod._MAX_ARCHIVES + 5):
+        (logs_mod.LOGS_DIR / f"pmw-20260101-0000{i:02d}.log").write_text("x\n")
+    logs._prune_archives()
+    remaining = sorted(p.name for p in logs_mod.LOGS_DIR.glob("pmw-*.log"))
+    assert len(remaining) == logs_mod._MAX_ARCHIVES  # only the newest N survive
+    assert remaining[-1] == f"pmw-20260101-0000{logs_mod._MAX_ARCHIVES + 4:02d}.log"
+    # The oldest were the ones deleted.
+    assert "pmw-20260101-000000.log" not in remaining
+
+
 def test_config_clamps_and_round_trips(logs):
     logs.set_level("bogus")  # invalid → default
     assert logs.level == "ERROR"

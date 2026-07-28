@@ -717,11 +717,102 @@ def test_backup_actions_are_logged(admin):
 def test_max_failed_logins_config_roundtrip(admin):
     server, store = admin
     client = _login(server)
-    assert client.get("/api/session").json()["maxFailedLogins"] == 0  # default off
+    # Secure-by-default: unset → 3 (not 0/off).
+    assert client.get("/api/session").json()["maxFailedLogins"] == 3
     resp = client.post("/api/access/max-failed-logins", json={"count": 5})
     assert resp.status_code == 200 and resp.json()["maxFailedLogins"] == 5
     assert store.max_failed_logins == 5
     assert client.get("/api/session").json()["maxFailedLogins"] == 5
+    # An explicit 0 still turns the lockout off (admin override).
+    assert client.post("/api/access/max-failed-logins", json={"count": 0}).json()[
+        "maxFailedLogins"
+    ] == 0
+    assert store.max_failed_logins == 0
+
+
+def test_admin_responses_carry_security_headers(admin):
+    server, _ = admin
+    r = TestClient(server.app).get("/login")
+    assert r.headers.get("x-frame-options") == "DENY"
+    assert "frame-ancestors 'none'" in (r.headers.get("content-security-policy") or "")
+    assert r.headers.get("x-content-type-options") == "nosniff"
+    assert r.headers.get("referrer-policy") == "no-referrer"
+
+
+def test_admin_rejects_foreign_audience_cookie(admin):
+    """An app session cookie (audience "app") must not authenticate the admin UI,
+    even though both interfaces sign tokens with the same key."""
+    import json as _json
+
+    server, store = admin
+    epoch = store.session_epoch("Administrator")
+    forged = server.sign_session(
+        _json.dumps({"u": "Administrator", "e": epoch, "a": "app"}).encode("utf-8")
+    )
+    client = TestClient(server.app)
+    client.cookies.set(server.COOKIE, forged)
+    assert client.get("/api/session").status_code == 401
+    # A correctly-scoped admin token is accepted (control).
+    client.cookies.set(server.COOKIE, server._issue_session("Administrator"))
+    assert client.get("/api/session").status_code == 200
+
+
+def test_admin_login_is_ip_throttled(admin):
+    """After too many failures from one host, further attempts are blocked with a
+    429 — even a correct password — independent of per-account lockout."""
+    server, store = admin
+    store.set_max_failed_logins(0)  # isolate the per-IP throttle from account lockout
+    client = TestClient(server.app)
+    for _ in range(server._LOGIN_IP_MAX):
+        r = client.post(
+            "/login",
+            data={"username": "Administrator", "password": "nope"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 401
+    blocked = client.post(
+        "/login",
+        data={"username": "Administrator", "password": "Administrator"},
+        follow_redirects=False,
+    )
+    assert blocked.status_code == 429
+    assert "retry-after" in {k.lower() for k in blocked.headers}
+
+
+def test_admin_login_throttle_clears_on_success(admin):
+    server, store = admin
+    store.set_max_failed_logins(0)
+    client = TestClient(server.app)
+    for _ in range(server._LOGIN_IP_MAX - 1):  # below the threshold
+        client.post(
+            "/login",
+            data={"username": "Administrator", "password": "nope"},
+            follow_redirects=False,
+        )
+    ok = client.post(
+        "/login",
+        data={"username": "Administrator", "password": "Administrator"},
+        follow_redirects=False,
+    )
+    assert ok.status_code in (200, 303)  # success resets the counter
+    # A fresh run of failures is needed to throttle again (counter was cleared).
+    for _ in range(server._LOGIN_IP_MAX - 1):
+        r = client.post(
+            "/login",
+            data={"username": "Administrator", "password": "nope"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 401  # not throttled yet
+
+
+def test_admin_login_throttle_map_is_bounded(admin):
+    """A distributed flood of one-shot IPs can't grow the throttle map without bound."""
+    server, _ = admin
+    server._login_ip_failures.clear()
+    cap = server._LOGIN_IP_MAX_TRACKED
+    for i in range(cap + 200):
+        server._record_login_failure_ip(f"10.{i // 65536}.{(i // 256) % 256}.{i % 256}")
+    assert len(server._login_ip_failures) <= cap
 
 
 def test_max_failed_logins_requires_admin(admin):
@@ -734,14 +825,17 @@ def test_max_failed_logins_requires_admin(admin):
 
 
 def test_admin_login_shows_lockout_message(admin):
-    """A locked account gets the lockout message on the admin login screen."""
+    """A locked (non-built-in) admin gets the lockout message on the login screen."""
     server, store = admin
+    store.create_user("ops", "opspw", is_admin=True)
     store.set_max_failed_logins(1)
-    # One bad attempt locks the built-in admin.
+    store.record_login_failure("ops")  # threshold 1 → locked
+    assert store.get_user("ops").is_enabled is False
     client = TestClient(server.app)
+    # Even the correct password is refused, and the panel explains why.
     r = client.post(
         "/login",
-        data={"username": "Administrator", "password": "wrong"},
+        data={"username": "ops", "password": "opspw"},
         follow_redirects=False,
     )
     assert r.status_code == 401

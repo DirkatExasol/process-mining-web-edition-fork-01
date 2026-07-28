@@ -44,7 +44,9 @@ async def connect_connection(conn_id: str, request: Request) -> ConnectionStatus
     if conn_def is None:
         raise HTTPException(status_code=404, detail="Connection not found.")
     mgr = current_db()  # this user's own connection
-    error = await mgr.connect_connection(conn_def)
+    # Route through the registry so a concurrent admin edit/delete of this
+    # connection during the (slow) open aborts the freshly-opened session.
+    error = await registry.connect(user, conn_def)
     return ConnectionStatus(
         isConnected=mgr.is_connected,
         isLLMReachable=mgr.is_llm_reachable,

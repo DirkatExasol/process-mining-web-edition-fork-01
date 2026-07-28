@@ -218,6 +218,29 @@ def test_directory_status_reports_unavailable_on_probe_failure(gui, monkeypatch)
 # ── Session invalidation on logout ────────────────────────────────────────────
 
 
+def test_app_responses_carry_security_headers(gui):
+    server, _ = gui
+    r = TestClient(server.app).get("/auth/session")
+    assert r.headers.get("x-frame-options") == "DENY"
+    assert "frame-ancestors 'none'" in (r.headers.get("content-security-policy") or "")
+    assert r.headers.get("x-content-type-options") == "nosniff"
+
+
+def test_app_rejects_admin_audience_cookie(gui):
+    """An admin session cookie (audience "admin") must not authenticate the main
+    app, even though both are signed with the same key and name a valid user."""
+    import json as _json
+
+    server, store = gui
+    epoch = store.session_epoch("Administrator")
+    forged = server.sign_session(
+        _json.dumps({"u": "Administrator", "e": epoch, "a": "admin"}).encode("utf-8")
+    )
+    client = TestClient(server.app)
+    client.cookies.set(server.SESSION_COOKIE, forged)
+    assert client.get("/api/projects").status_code == 401
+
+
 def test_logout_invalidates_captured_token(gui):
     """A token captured before logout must be rejected afterwards — server-side
     invalidation via the per-user session epoch, not just clearing the cookie."""

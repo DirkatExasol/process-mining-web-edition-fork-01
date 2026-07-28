@@ -11,6 +11,23 @@ import { useMemo, type ReactNode } from 'react'
 
 const RAW_BLOCK = /^\s*<(table|div|hr|h[1-6])[\s>]/i
 
+/** Allow only benign link schemes — a Markdown link can carry `javascript:` /
+ *  `data:` URLs, and React does NOT strip those from an `href`, so an anchor
+ *  built from note text or LLM output would be a script sink. Permit http(s),
+ *  mailto and relative/anchor targets; neutralise everything else to `#`. */
+function safeHref(url: string): string {
+  const trimmed = url.trim()
+  // Protocol-relative ("//host", or "/\host" which browsers normalise to "//host")
+  // navigates off-site with no scheme — reject it before the relative check below.
+  if (/^\/[/\\]/.test(trimmed)) return '#'
+  // Relative, root-relative or in-page anchors carry no scheme — always safe.
+  if (/^(\/|#|\.\/|\.\.\/)/.test(trimmed)) return trimmed
+  if (/^(https?:|mailto:)/i.test(trimmed)) return trimmed
+  // A token before ':' that isn't an allowed scheme (javascript:, data:, vbscript:…)
+  // — or any control character used to smuggle one — is rejected.
+  return '#'
+}
+
 /** Escapes text, then re-applies inline `**bold**`, `*italic*`, `` `code` ``. */
 function inline(text: string, keyPrefix: string): ReactNode[] {
   const nodes: ReactNode[] = []
@@ -31,7 +48,7 @@ function inline(text: string, keyPrefix: string): ReactNode[] {
       const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token)
       nodes.push(
         linkMatch ? (
-          <a key={key} href={linkMatch[2]}>
+          <a key={key} href={safeHref(linkMatch[2])} rel="noopener noreferrer nofollow">
             {linkMatch[1]}
           </a>
         ) : (

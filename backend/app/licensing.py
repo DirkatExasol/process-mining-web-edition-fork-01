@@ -159,6 +159,13 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# If the marker can't be persisted (read-only/unwritable data dir), we must NOT
+# re-anchor `now + grace` on every poll — that would make the demo never expire
+# (enforcement fail-open). Instead the first-anchored deadline is held in memory
+# for this process so the window still counts down.
+_unpersisted_deadline: datetime | None = None
+
+
 def demo_deadline(create: bool) -> datetime | None:
     """The one-time demo grace deadline (UTC), or None if no demo is available.
 
@@ -182,6 +189,12 @@ def demo_deadline(create: bool) -> datetime | None:
     if not create:
         return None
 
+    global _unpersisted_deadline
+    # A marker we anchored earlier this process but couldn't persist: reuse it so an
+    # unwritable data dir doesn't reset the countdown on every poll (fail-open).
+    if _unpersisted_deadline is not None:
+        return _unpersisted_deadline
+
     deadline = _now() + timedelta(seconds=LICENSE_GRACE_SECS)
     try:
         DEMO_MARKER_PATH.write_text(
@@ -190,7 +203,9 @@ def demo_deadline(create: bool) -> datetime | None:
             encoding="utf-8",
         )
     except OSError:
-        pass  # best-effort; a non-persistable marker just means the check re-anchors
+        # Couldn't persist — anchor in memory so the window still expires within this
+        # process instead of re-anchoring (and thus never expiring) on every poll.
+        _unpersisted_deadline = deadline
     return deadline
 
 

@@ -40,7 +40,43 @@ def test_simulation_rejects_too_many_journeys(logstore):
     resp = client.post("/api/simulate", json=body)
     assert resp.status_code == 400
     entries = logstore.query(operation="simulation")
-    assert entries and "exceeds" in entries[0]["message"].lower()
+    assert entries and "too many journeys" in entries[0]["message"].lower()
+
+
+def test_simulation_rejects_oversized_steps_and_product(logstore):
+    from app.main import app
+
+    client = TestClient(app)
+    base = {"graph": {"steps": {}, "transitions": []}}
+    # A huge per-journey step cap alone would append ~1e9 events → OOM the shared backend.
+    r = client.post(
+        "/api/simulate",
+        json={**base, "config": {"journeyCount": 10, "maxStepsPerJourney": 10_000_000}},
+    )
+    assert r.status_code == 400 and "maxstepsperjourney" in r.json()["detail"].lower()
+    # journeys × steps is bounded even when each dimension is individually in range.
+    r = client.post(
+        "/api/simulate",
+        json={**base, "config": {"journeyCount": 100_000, "maxStepsPerJourney": 10_000}},
+    )
+    assert r.status_code == 400 and "too large" in r.json()["detail"].lower()
+
+
+def test_simulation_rejects_non_finite_inter_arrival(logstore):
+    from app.main import app
+
+    client = TestClient(app)
+    # `Infinity` is a bare JSON literal Python's json.loads accepts (httpx's json=
+    # would refuse to serialise inf), so send the raw body a hostile client could.
+    raw = (
+        '{"graph": {"steps": {}, "transitions": []}, '
+        '"config": {"journeyCount": 10, "avgInterArrivalHours": Infinity}}'
+    )
+    resp = client.post(
+        "/api/simulate", content=raw, headers={"content-type": "application/json"}
+    )
+    # Either our explicit guard (400) or model validation (422) — never a 500/hang.
+    assert resp.status_code in (400, 422)
 
 
 def test_simulation_crash_is_logged(logstore, monkeypatch):

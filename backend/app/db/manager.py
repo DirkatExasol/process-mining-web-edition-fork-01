@@ -272,16 +272,18 @@ class DatabaseManager:
         self.last_error = None
         try:
             exa = await asyncio.to_thread(self._open, server, conn_def.password)
-        except Exception as exc:  # noqa: BLE001 — surfaced verbatim
-            msg = friendly_error(exc)
-            self.last_error = msg
+        except Exception as exc:  # noqa: BLE001
+            # A plain assigned user reaches this path, so return generic guidance;
+            # the full driver detail goes to the server log only.
+            client_msg = friendly_error(exc, detail=False)
+            self.last_error = client_msg
             self.is_connected = False
             logx.error(
                 f"Database connection failed for {conn_def.name!r} "
-                f"({server.host}:{server.port}): {msg}",
+                f"({server.host}:{server.port}): {friendly_error(exc)}",
                 operation="db-connect",
             )
-            return msg
+            return client_msg
 
         self._conn = exa
         self.is_connected = True
@@ -387,14 +389,24 @@ class DatabaseManager:
             return None
 
 
-def friendly_error(exc: Exception) -> str:
-    """Port of DatabaseManager.friendlyError — turns driver noise into guidance."""
+def friendly_error(exc: Exception, *, detail: bool = True) -> str:
+    """Port of DatabaseManager.friendlyError — turns driver noise into guidance.
+
+    `detail=True` (the default) appends the raw driver text — appropriate for the
+    power/admin connection-test flow, where the operator configuring the server
+    needs it. `detail=False` returns only the categorised guidance for surfaces a
+    plain assigned user can reach, so Exasol codes, internal hostnames and
+    SQL-state fragments don't leak; the full text is still logged server-side.
+    """
     text = str(exc) or exc.__class__.__name__
     lowered = text.lower()
 
     if isinstance(exc, pyexasol.ExaAuthError) or "authentication failed" in lowered:
-        return f"Authentication failed — check your username and password. ({text})"
+        base = "Authentication failed — check your username and password."
+        return f"{base} ({text})" if detail else base
     if isinstance(exc, pyexasol.ExaQueryError):
+        if not detail:
+            return "The database rejected the request."
         code = getattr(exc, "code", "") or ""
         message = getattr(exc, "message", "") or text
         return f"[{code}] {message}" if code else message
@@ -403,16 +415,17 @@ def friendly_error(exc: Exception) -> str:
     if "refused" in lowered:
         return "Connection refused. No server is accepting connections at this host and port."
     if any(k in lowered for k in ("certificate", "trust", "ssl", "tls")):
-        return (
+        base = (
             "TLS certificate error. Try 'Skip verification' or configure a "
-            f"fingerprint in the server's security settings. ({text})"
+            "fingerprint in the server's security settings."
         )
+        return f"{base} ({text})" if detail else base
     if any(
         k in lowered
         for k in ("no such host", "host not found", "nodename", "name or service")
     ):
         return "Host not found. Check the hostname spelling and your DNS / network connectivity."
-    return f"Connection failed: {text}"
+    return f"Connection failed: {text}" if detail else "Connection failed. Check the host, port, and credentials."
 
 
 async def test_db_connection(
@@ -531,9 +544,29 @@ class ConnectionRegistry:
     def __init__(self) -> None:
         self._by_user: dict[str, DatabaseManager] = {}
         self._lock = threading.RLock()
+        # Per-connection revocation counter, bumped whenever a definition is
+        # edited/deleted, so a connect racing with that revocation can detect it.
+        self._revocations: dict[str, int] = {}
+
+    # ASCII-only lowercase — MUST match the security store's identity model, which
+    # compares usernames with SQLite LOWER() (ASCII-only). A Unicode `.casefold()`/
+    # `.lower()` would map two store-DISTINCT names onto one key (e.g. "ß"→"ss",
+    # Kelvin-sign U+212A→"k"), collapsing two users onto ONE Exasol session =
+    # cross-user data leak. ASCII-lower collapses only true case-variants of the
+    # same account (the store treats them as one) and never merges distinct ones.
+    _ASCII_LOWER = str.maketrans(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"
+    )
+
+    @classmethod
+    def _key(cls, username: str | None) -> str:
+        # A username arriving in varying case (LDAP "Alice" vs local "alice") maps to
+        # ONE manager/Exasol session, consistent with the store's case-insensitive
+        # identity. Anonymous (sign-in disabled) shares one bucket.
+        return (username or "").translate(cls._ASCII_LOWER)
 
     def for_user(self, username: str | None) -> DatabaseManager:
-        key = username or ""  # anonymous (sign-in disabled) shares one bucket
+        key = self._key(username)
         with self._lock:
             mgr = self._by_user.get(key)
             if mgr is None:
@@ -541,17 +574,39 @@ class ConnectionRegistry:
                 self._by_user[key] = mgr
             return mgr
 
+    async def connect(self, username: str | None, conn_def) -> str | None:
+        """Connect a user to `conn_def`, closing the race with a concurrent
+        `disconnect_connection`. `connect_connection` opens the Exasol session
+        outside any lock (it's slow), so an admin edit/delete that fires during the
+        open could snapshot the manager before its `active_profile_id`/live socket
+        exist and thus fail to sever it. We capture the connection's revocation
+        counter before opening and re-check it after: if it advanced, the definition
+        changed mid-connect, so we drop the freshly-opened session."""
+        mgr = self.for_user(username)
+        with self._lock:
+            gen = self._revocations.get(conn_def.id, 0)
+        error = await mgr.connect_connection(conn_def)
+        if error is None:
+            with self._lock:
+                revoked = self._revocations.get(conn_def.id, 0) != gen
+            if revoked:
+                await mgr.disconnect()
+                return "This connection changed during sign-in. Please reconnect."
+        return error
+
     async def disconnect_user(self, username: str | None) -> None:
         """Release a user's connection (e.g. on sign-out)."""
         with self._lock:
-            mgr = self._by_user.pop(username or "", None)
+            mgr = self._by_user.pop(self._key(username), None)
         if mgr is not None:
             await mgr.disconnect()
 
     async def disconnect_connection(self, conn_id: str) -> None:
         """Drop every user whose live connection is `conn_id` — its definition was
-        edited or deleted, so their session must not continue."""
+        edited or deleted, so their session must not continue. Bumping the revocation
+        counter also aborts any connect to `conn_id` that is opening right now."""
         with self._lock:
+            self._revocations[conn_id] = self._revocations.get(conn_id, 0) + 1
             targets = [
                 m for m in self._by_user.values() if m.active_profile_id == conn_id
             ]

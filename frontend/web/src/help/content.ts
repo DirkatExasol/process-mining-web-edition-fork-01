@@ -272,7 +272,7 @@ const adminUsers: HelpTopic = {
       body: [
         p('The Users tab controls who may sign in to the main application: create local users, enable or disable access, grant or revoke the admin role, and reset local passwords. Only enabled users can sign in.'),
         p('The Require sign-in toggle turns the login gate on or off for the main app (on by default). With it off, the app is open to anyone who can reach it — and, since there is then no user identity, per-user settings and filter presets all fall back to one shared profile.'),
-        def('Failed sign-in lockout', '“Disable an account after N failed sign-in attempts” automatically disables an account — including the built-in Administrator — once N wrong passwords are entered (0 turns it off). A locked account shows a clear message on the login panel and carries a Locked badge in the Users tab, where you can unlock it. If the sole administrator is ever locked out, restart the servers with PMW_RESET_LOCKOUTS=1 to clear all locks.'),
+        def('Failed sign-in lockout', '“Disable an account after N failed sign-in attempts” automatically disables an account once N wrong passwords are entered (defaults to 3; set 0 to turn it off). A locked account shows a clear message on the login panel and carries a Locked badge in the Users tab, where you can unlock it. The built-in Administrator is exempt from auto-lockout — as the sole recovery account it must not be lockable by someone who merely knows its name; it is protected by the per-IP throttle instead. (If you ever need to clear all locks, restart the servers with PMW_RESET_LOCKOUTS=1.) Separately, the admin sign-in page throttles repeated failures from the same IP address with a short, self-clearing cooldown (HTTP 429), so password guessing is slowed even when the account lockout does not apply.'),
         def('Power role', 'Make power / Remove power grants the power badge. Power users can create and manage their own database connections from within the main app and assign them to other users — without needing access to this admin interface. They manage only the connections they create; admins still see and manage every connection. Power users (and admins) also get the advanced-analysis views — Conformance Check, Happy Path and Simulation.'),
         def('Source badge', 'Each user is tagged local or LDAP so you can tell built-in accounts from directory accounts at a glance; the All / Local / LDAP filter narrows the list.'),
       ],
@@ -484,7 +484,7 @@ const filters: HelpTopic = {
         def('Num Steps', 'Keep journeys whose total step count is within the range.'),
         def('Journey Time', 'Keep journeys whose first-to-last span is within the range.'),
         def('Journey Score', 'Keep journeys whose summed step scores are within the range. Negative scores are supported — drag the right handle below zero to isolate problem paths.'),
-        def('Meta 1–3', 'Case-level case-insensitive contains search, with autocomplete drawn from distinct values in the database.'),
+        def('Meta 1–3', 'Case-level, case-insensitive contains search. Each is a searchable dropdown: focus the field (or tap the ▾) to see the distinct values from the database, then click one or type to narrow the list. The ⊗ clears the selection.'),
       ],
     },
     {
@@ -582,7 +582,7 @@ const processMap: HelpTopic = {
       heading: 'Node appearance & groups',
       body: [
         p('Colours and shapes (stadium / round / hex / circle) come from the STEPS table and are editable in Configuration → Steps. An orange dot marks an end-of-process step; a score badge in the top-left is green for positive, red for negative, blue for zero. A yellow ✎ badge marks a node with a note.'),
-        p('Steps sharing a BELONGS_TO value are wrapped in a dashed, coloured group box with a name pill. The +/− badge on the box collapses or expands it — collapsed groups sum connection counts and weight-average the times. “Groups start” in Configuration controls whether groups load Expanded, Collapsed, or in their last Persisted state.'),
+        p('Steps sharing a BELONGS_TO value are wrapped in a dashed, coloured group box with a name pill. The box tint and border are tuned per theme so the group stays clearly visible in both light and dark mode. The +/− badge on the box collapses or expands it — collapsed groups sum connection counts and weight-average the times. “Groups start” in Configuration controls whether groups load Expanded, Collapsed, or in their last Persisted state.'),
       ],
     },
   ],

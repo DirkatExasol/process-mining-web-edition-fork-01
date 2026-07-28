@@ -202,11 +202,17 @@ async def rebuild_materialized_transitions(
                 SELECT PROJECT_ID, EVENT_ID, FROM_STEP, TO_STEP, FROM_TIME, TO_TIME,
                        SECONDS_BETWEEN(TO_TIME, FROM_TIME) AS DUR_SECS, SAMPLE_SET
                 FROM (
+                    -- This builds pairs for EVERY project + sample set at once, so
+                    -- the window MUST partition by (PROJECT_ID, SAMPLE_SET, EVENT_ID),
+                    -- not EVENT_ID alone: EVENT_ID is only unique within one project
+                    -- and sample set (the same id recurs across projects and in a
+                    -- sample's copy of ORIGINAL). The live query scopes this by
+                    -- filtering to one project+sample before the LEAD.
                     SELECT PROJECT_ID, EVENT_ID, SAMPLE_SET,
                            STEP       AS FROM_STEP,
                            EVENT_TIME AS FROM_TIME,
-                           LEAD(STEP)       OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_STEP,
-                           LEAD(EVENT_TIME) OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_TIME
+                           LEAD(STEP)       OVER (PARTITION BY PROJECT_ID, SAMPLE_SET, EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_STEP,
+                           LEAD(EVENT_TIME) OVER (PARTITION BY PROJECT_ID, SAMPLE_SET, EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_TIME
                     FROM JOURNEYS
                 ) AS t
                 WHERE TO_STEP IS NOT NULL AND TO_TIME IS NOT NULL

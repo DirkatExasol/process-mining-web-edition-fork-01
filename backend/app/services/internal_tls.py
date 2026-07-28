@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .. import config
 from . import certs
+from ..store.crypto import write_private_file
 
 # Loopback identities the backend is reached by; BACKEND_HOST is prepended.
 _BASE_SANS = ["127.0.0.1", "localhost", "::1"]
@@ -50,9 +51,7 @@ def ensure_internal_cert() -> tuple[Path, Path]:
 
     config.CERTS_DIR.mkdir(parents=True, exist_ok=True)
     cert_path.write_text(cert_pem, encoding="utf-8")
-    key_path.write_text(key_pem, encoding="utf-8")
-    try:
-        key_path.chmod(0o600)  # private key stays owner-only
-    except OSError:
-        pass
+    # The private key is written 0600-from-birth (no world-readable window between
+    # a plain write and a later chmod).
+    write_private_file(key_path, key_pem)
     return cert_path, key_path

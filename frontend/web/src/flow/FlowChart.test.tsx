@@ -61,6 +61,15 @@ describe('FlowChart', () => {
     }
   })
 
+  it('draws the group box with its per-group colour variable for theme-aware tinting', () => {
+    const { container } = renderChart()
+    const box = container.querySelector<HTMLElement>('.group-box')
+    expect(box).not.toBeNull()
+    // The tint + dashed border derive from --gc in CSS (theme-aware opacity),
+    // so the node must expose the per-group colour rather than an inline bg.
+    expect(box!.style.getPropertyValue('--gc')).not.toBe('')
+  })
+
   it('keeps nodes visible without measurement (declared dimensions)', () => {
     const { container } = renderChart()
     const nodes = [...container.querySelectorAll<HTMLElement>('.react-flow__node')]

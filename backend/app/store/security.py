@@ -32,7 +32,13 @@ from ..config import (
     SECURITY_DB_PATH,
 )
 from ..services import certs as cert_service
-from .crypto import decrypt_text, encrypt_text, hash_password, verify_password
+from .crypto import (
+    decrypt_text,
+    encrypt_text,
+    hash_password,
+    verify_password,
+    write_private_file,
+)
 
 log = logging.getLogger("security-store")
 
@@ -44,6 +50,11 @@ TLS_OFF = "off"
 TLS_OPTIONAL = "optional"
 TLS_REQUIRED = "required"
 _TLS_MODES = {TLS_OFF, TLS_OPTIONAL, TLS_REQUIRED}
+
+# Lock an account after this many consecutive failed sign-ins when the admin has
+# not configured a value. A secure-by-default: fresh installs get a lockout even
+# before anyone visits the Users tab. An admin can still set 0 (= never lock).
+_DEFAULT_MAX_FAILED_LOGINS = 3
 
 # ── Login-page appearance (admin "Customize" tab) ───────────────────────────
 # Applies to both the app and admin sign-in pages. "default" keeps each page's
@@ -268,8 +279,11 @@ class SecurityStore:
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        # WAL improves concurrency between the admin (writer) and backend (reader).
+        # WAL improves concurrency between the admin (writer) and backend (reader);
+        # busy_timeout makes a cross-process writer retry instead of failing a write
+        # immediately with SQLITE_BUSY (e.g. a dropped record_login_failure count).
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(_SCHEMA)
         self._migrate()
         self._conn.commit()
@@ -400,12 +414,16 @@ class SecurityStore:
     @property
     def max_failed_logins(self) -> int:
         """Disable an account after this many consecutive failed sign-ins
-        (0 = never lock). Applies to every account, including the Administrator."""
+        (0 = never lock). Applies to every account, including the Administrator.
+        Unset (fresh install) → the secure default; an explicit 0 keeps it off."""
         with self._lock:
-            try:
-                return max(0, int(self._get_config("max_failed_logins") or 0))
-            except (TypeError, ValueError):
-                return 0
+            raw = self._get_config("max_failed_logins")
+        if raw is None:
+            return _DEFAULT_MAX_FAILED_LOGINS
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            return _DEFAULT_MAX_FAILED_LOGINS
 
     def set_max_failed_logins(self, count: int) -> None:
         with self._lock:
@@ -414,8 +432,13 @@ class SecurityStore:
 
     def record_login_failure(self, username: str) -> bool:
         """Count a failed sign-in; lock (disable) the account once it reaches the
-        configured threshold. Returns True if this failure locked it. A direct write
-        so it can lock the built-in Administrator too (per the configured policy)."""
+        configured threshold. Returns True if this failure locked it.
+
+        The built-in Administrator is counted but NEVER auto-locked: it's the sole
+        break-glass recovery account, so letting an unauthenticated attacker who
+        knows its name disable it (3 bad POSTs) would be a denial-of-service. Its
+        brute-force protection is instead the per-IP login throttle plus scrypt
+        cost; a real admin can still disable a *rogue* extra admin the normal way."""
         threshold = self.max_failed_logins
         with self._lock:
             row = self._conn.execute(
@@ -425,7 +448,11 @@ class SecurityStore:
             if row is None:
                 return False
             count = int(row["failed_logins"] or 0) + 1
-            locked = threshold > 0 and count >= threshold
+            locked = (
+                threshold > 0
+                and count >= threshold
+                and not self._is_builtin_admin(username)
+            )
             self._conn.execute(
                 "UPDATE users SET failed_logins = ?, "
                 "is_enabled = CASE WHEN ? THEN 0 ELSE is_enabled END, "
@@ -1011,8 +1038,32 @@ class SecurityStore:
         if dir_user is None:
             return None
 
+        # A directory identity must never bind onto a LOCAL account (the break-glass
+        # admin, a local power user, …) that merely shares its name: merging would
+        # hand the directory user that local account's role and DB-connection
+        # assignments. Only ever merge onto a row that is itself directory-sourced.
+        # (A directory user an admin has locally promoted keeps auth_source='ldap',
+        # so legitimate promoted accounts are unaffected.)
+        #
+        # Normalise the directory username with the SAME strip() that
+        # provision_ldap_user applies, and use that single value for both the
+        # refusal check and provisioning — otherwise a directory name like
+        # "Administrator " (trailing space) would slip past a raw-name check yet be
+        # trimmed onto the local Administrator when provisioned.
+        canonical = dir_user.username.strip()
+        if not canonical:
+            return None
+        existing = self.get_user(canonical)
+        if existing is not None and existing.auth_source != "ldap":
+            log.warning(
+                "LDAP sign-in for %r refused: a local (non-directory) account with "
+                "that name already exists",
+                canonical,
+            )
+            return None
+
         user = self.provision_ldap_user(
-            dir_user.username, email=dir_user.email, display_name=dir_user.display_name
+            canonical, email=dir_user.email, display_name=dir_user.display_name
         )
         if not user.is_enabled:
             return None  # an admin has blocked this directory account locally
@@ -1137,9 +1188,9 @@ class SecurityStore:
             ACTIVE_KEY_PATH.unlink(missing_ok=True)
             return
         ACTIVE_CERT_PATH.write_text(row["cert_pem"], encoding="utf-8")
-        ACTIVE_KEY_PATH.write_text(decrypt_text(row["key_enc"]), encoding="utf-8")
         ACTIVE_CERT_PATH.chmod(0o600)
-        ACTIVE_KEY_PATH.chmod(0o600)
+        # The private key is written 0600-from-birth (no world-readable window).
+        write_private_file(ACTIVE_KEY_PATH, decrypt_text(row["key_enc"]))
 
     # ── connections & assignments ────────────────────────────────────────────
 

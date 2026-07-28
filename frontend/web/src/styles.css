@@ -1184,6 +1184,25 @@ textarea.text-input {
   position: relative;
   border-radius: var(--radius-lg);
   pointer-events: none;
+  /* Tint + border come from the group's colour (--gc). Kept in CSS so the
+     opacity is theme-aware: firmer on light, and lightened + stronger on dark
+     where a low-opacity tint over black would otherwise be near-invisible. */
+  border: 1.5px dashed color-mix(in srgb, var(--gc, #888) 58%, transparent);
+  background: color-mix(in srgb, var(--gc, #888) 12%, transparent);
+}
+.group-box.collapsed {
+  border-width: 2px;
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--gc, #888) 72%, transparent);
+  background: color-mix(in srgb, var(--gc, #888) 18%, transparent);
+}
+:root[data-theme='dark'] .group-box {
+  border-color: color-mix(in srgb, var(--gc, #888) 68%, white 32%);
+  background: color-mix(in srgb, var(--gc, #888) 22%, transparent);
+}
+:root[data-theme='dark'] .group-box.collapsed {
+  border-color: color-mix(in srgb, var(--gc, #888) 78%, white 22%);
+  background: color-mix(in srgb, var(--gc, #888) 30%, transparent);
 }
 
 .group-label {
@@ -1604,8 +1623,10 @@ textarea.text-input {
   border-radius: 7px;
   background: var(--bg-elevated);
   box-shadow: var(--shadow-md);
+  border: 1px solid var(--separator-soft);
   margin-top: 2px;
-  overflow: hidden;
+  max-height: 224px;
+  overflow-y: auto;
 }
 
 .suggestions button {

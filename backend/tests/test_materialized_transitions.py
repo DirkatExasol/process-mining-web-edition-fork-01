@@ -67,45 +67,9 @@ def test_uses_live_query_when_disabled():
     assert r.last_transitions_mode == "live"
 
 
-def test_materialized_dfg_matches_live_query():
-    """Building TRANSITIONS_RAW then aggregating it must equal the live LEAD()
-    aggregation, pair-for-pair with identical count/avg/min/max timings."""
-    con = sqlite3.connect(":memory:")
-    con.execute(
-        "CREATE TABLE JOURNEYS(PROJECT_ID,EVENT_ID,STEP,STEP_ID,EVENT_TIME,SAMPLE_SET)"
-    )
-    con.executemany(
-        "INSERT INTO JOURNEYS VALUES(?,?,?,?,?,?)",
-        [
-            ("P", "e1", "Login", 0, "2024-01-01 09:00:00", "ORIGINAL"),
-            ("P", "e1", "Search", 1, "2024-01-01 09:05:00", "ORIGINAL"),
-            ("P", "e1", "Pay", 2, "2024-01-01 09:20:00", "ORIGINAL"),
-            ("P", "e2", "Login", 0, "2024-01-02 10:00:00", "ORIGINAL"),
-            ("P", "e2", "Pay", 1, "2024-01-02 10:10:00", "ORIGINAL"),
-            ("P", "e3", "Login", 0, "2024-01-03 08:00:00", "ORIGINAL"),
-            ("P", "e3", "Search", 1, "2024-01-03 08:02:00", "ORIGINAL"),
-            ("P", "e3", "Search", 2, "2024-01-03 08:09:00", "ORIGINAL"),
-        ],
-    )
-
-    # Build the pairs like rebuild_materialized_transitions does — via CREATE
-    # TABLE AS SELECT so column types are inherited from JOURNEYS (the fix for the
-    # Exasol "Incomparable Types" HASHTYPE vs VARCHAR failure).
-    con.execute(
-        """
-        CREATE TABLE TRANSITIONS_RAW AS
-        SELECT PROJECT_ID, EVENT_ID, FROM_STEP, TO_STEP, FROM_TIME, TO_TIME,
-               (strftime('%s',TO_TIME) - strftime('%s',FROM_TIME)) AS DUR_SECS, SAMPLE_SET
-        FROM (
-            SELECT PROJECT_ID, EVENT_ID, SAMPLE_SET, STEP AS FROM_STEP, EVENT_TIME AS FROM_TIME,
-                   LEAD(STEP)       OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_STEP,
-                   LEAD(EVENT_TIME) OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_TIME
-            FROM JOURNEYS
-        ) WHERE TO_STEP IS NOT NULL
-        """
-    )
-
-    live = con.execute(
+def _dfg_live(con, pid, sample):
+    """The live DFG for one (project, sample): filter first, THEN pair."""
+    return con.execute(
         """
         SELECT FROM_STEP, TO_STEP, COUNT(*), AVG(DUR), MIN(DUR), MAX(DUR) FROM (
             SELECT FROM_STEP, TO_STEP,
@@ -114,18 +78,77 @@ def test_materialized_dfg_matches_live_query():
                 SELECT STEP AS FROM_STEP, EVENT_TIME AS FROM_TIME,
                        LEAD(STEP)       OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_STEP,
                        LEAD(EVENT_TIME) OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_TIME
-                FROM JOURNEYS
+                FROM JOURNEYS WHERE PROJECT_ID = ? AND SAMPLE_SET = ?
             ) WHERE TO_STEP IS NOT NULL
         ) GROUP BY FROM_STEP, TO_STEP ORDER BY FROM_STEP, TO_STEP
-        """
+        """,
+        (pid, sample),
     ).fetchall()
 
-    mat = con.execute(
+
+def _dfg_materialized(con, pid, sample):
+    """The DFG read from TRANSITIONS_RAW for one (project, sample)."""
+    return con.execute(
         """
         SELECT FROM_STEP, TO_STEP, COUNT(*), AVG(DUR_SECS), MIN(DUR_SECS), MAX(DUR_SECS)
-        FROM TRANSITIONS_RAW GROUP BY FROM_STEP, TO_STEP ORDER BY FROM_STEP, TO_STEP
-        """
+        FROM TRANSITIONS_RAW WHERE PROJECT_ID = ? AND SAMPLE_SET = ?
+        GROUP BY FROM_STEP, TO_STEP ORDER BY FROM_STEP, TO_STEP
+        """,
+        (pid, sample),
     ).fetchall()
 
-    assert len(mat) > 0
-    assert mat == live
+
+def test_materialized_dfg_matches_live_query_across_projects_and_samples():
+    """The materialised pairs must equal the live LEAD() aggregation for EVERY
+    (project, sample set). Regression guard: EVENT_ID is only unique within one
+    project + sample set (it recurs across projects and in a sample's copy of
+    ORIGINAL), so the build must partition by (PROJECT_ID, SAMPLE_SET, EVENT_ID) —
+    partitioning by EVENT_ID alone pairs events across journey boundaries."""
+    con = sqlite3.connect(":memory:")
+    con.execute(
+        "CREATE TABLE JOURNEYS(PROJECT_ID,EVENT_ID,STEP,STEP_ID,EVENT_TIME,SAMPLE_SET)"
+    )
+    con.executemany(
+        "INSERT INTO JOURNEYS VALUES(?,?,?,?,?,?)",
+        [
+            # Project P, ORIGINAL — journey 'e1' and 'e2'.
+            ("P", "e1", "Login", 0, "2024-01-01 09:00:00", "ORIGINAL"),
+            ("P", "e1", "Search", 1, "2024-01-01 09:05:00", "ORIGINAL"),
+            ("P", "e1", "Pay", 2, "2024-01-01 09:20:00", "ORIGINAL"),
+            ("P", "e2", "Login", 0, "2024-01-02 10:00:00", "ORIGINAL"),
+            ("P", "e2", "Pay", 1, "2024-01-02 10:10:00", "ORIGINAL"),
+            # Project Q reuses EVENT_ID 'e1' for a DIFFERENT journey.
+            ("Q", "e1", "Boarding", 0, "2024-01-01 09:01:00", "ORIGINAL"),
+            ("Q", "e1", "Gate", 1, "2024-01-01 09:06:00", "ORIGINAL"),
+            # A sample of P copies 'e1' with the SAME id under a different SAMPLE_SET.
+            ("P", "e1", "Login", 0, "2024-01-01 09:00:00", "SAMPLE_1"),
+            ("P", "e1", "Search", 1, "2024-01-01 09:05:00", "SAMPLE_1"),
+            ("P", "e1", "Pay", 2, "2024-01-01 09:20:00", "SAMPLE_1"),
+        ],
+    )
+
+    con.execute(
+        """
+        CREATE TABLE TRANSITIONS_RAW AS
+        SELECT PROJECT_ID, EVENT_ID, FROM_STEP, TO_STEP, FROM_TIME, TO_TIME,
+               (strftime('%s',TO_TIME) - strftime('%s',FROM_TIME)) AS DUR_SECS, SAMPLE_SET
+        FROM (
+            SELECT PROJECT_ID, EVENT_ID, SAMPLE_SET, STEP AS FROM_STEP, EVENT_TIME AS FROM_TIME,
+                   LEAD(STEP)       OVER (PARTITION BY PROJECT_ID, SAMPLE_SET, EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_STEP,
+                   LEAD(EVENT_TIME) OVER (PARTITION BY PROJECT_ID, SAMPLE_SET, EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_TIME
+            FROM JOURNEYS
+        ) WHERE TO_STEP IS NOT NULL
+        """
+    )
+
+    combos = [("P", "ORIGINAL"), ("Q", "ORIGINAL"), ("P", "SAMPLE_1")]
+    for pid, sample in combos:
+        live = _dfg_live(con, pid, sample)
+        assert live, f"expected edges for {pid}/{sample}"
+        assert _dfg_materialized(con, pid, sample) == live, f"mismatch for {pid}/{sample}"
+
+    # And the cross-project id never leaks: P's map has no Q steps.
+    p_steps = {r[0] for r in _dfg_materialized(con, "P", "ORIGINAL")} | {
+        r[1] for r in _dfg_materialized(con, "P", "ORIGINAL")
+    }
+    assert "Boarding" not in p_steps and "Gate" not in p_steps

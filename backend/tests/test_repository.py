@@ -514,3 +514,39 @@ def test_endpoint_comment_title_updates_note_title(monkeypatch):
     # The comment's title becomes the note's shown title and appears in the header.
     assert repo.update_kwargs["title"] == "Bottleneck"
     assert "Bottleneck" in repo.update_kwargs["comment_block"]
+
+
+def test_journey_paths_limit_is_clamped():
+    from app.db.repository import _MAX_PATH_ROWS
+
+    r, mgr = _cap_repo()
+    f = FilterSpec()
+    # A runaway limit is capped; a zero/negative one floors at 1.
+    asyncio.run(r.load_journey_paths("proj", f, limit=10**9))
+    assert f"LIMIT {_MAX_PATH_ROWS}" in mgr.executed[-1]
+    asyncio.run(r.load_journey_paths("proj", f, limit=0))
+    assert "LIMIT 1" in mgr.executed[-1]
+
+
+def test_event_id_suggestions_limit_is_clamped():
+    from app.db.repository import _MAX_SUGGESTIONS
+
+    r, mgr = _cap_repo()
+    asyncio.run(r.load_event_id_suggestions("proj", "pre", limit=10**9))
+    assert f"LIMIT {_MAX_SUGGESTIONS}" in mgr.executed[-1]
+
+
+def test_friendly_error_hides_raw_driver_text_without_detail():
+    """The client-facing (detail=False) message carries no raw driver text; the
+    verbose form (used by power/admin probes) still does."""
+    from app.db.manager import friendly_error
+
+    exc = RuntimeError("ORA-XYZ internal host db-prod-07.corp.example:8563 leaked")
+    generic = friendly_error(exc, detail=False)
+    verbose = friendly_error(exc, detail=True)
+    assert "db-prod-07" not in generic and "leaked" not in generic
+    assert "db-prod-07" in verbose  # operator setting up the connection still sees it
+
+    # Categorised guidance survives without echoing the raw text.
+    auth = friendly_error(RuntimeError("authentication failed for secret-user"), detail=False)
+    assert "Authentication failed" in auth and "secret-user" not in auth

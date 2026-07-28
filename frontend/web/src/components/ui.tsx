@@ -189,15 +189,16 @@ export function RangeSlider({
   )
 }
 
-/** Text field with a filtered suggestion list — ports `MetaFilterFieldView`. */
+/** Searchable dropdown (combobox) — ports `MetaFilterFieldView`. Focusing shows
+ *  the distinct values; typing filters them; the ▾ affordance opens the list. */
 export function AutocompleteField({
   label,
   value,
   suggestions,
-  placeholder = 'Filter',
+  placeholder = 'All values',
   onChange,
   onSubmit,
-  maxSuggestions = 7,
+  maxSuggestions = 50,
 }: {
   label?: string
   value: string
@@ -209,23 +210,30 @@ export function AutocompleteField({
 }) {
   const [focused, setFocused] = useState(false)
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   const trimmed = value.trim().toLowerCase()
-  const matches = trimmed
-    ? suggestions
-        .filter((s) => s.toLowerCase().includes(trimmed))
-        .slice(0, maxSuggestions)
-    : []
+  // Empty → the full distinct list (a dropdown); typing narrows it (still
+  // searchable). Capped, but the list scrolls, so large sets stay usable.
+  const matches = (
+    trimmed ? suggestions.filter((s) => s.toLowerCase().includes(trimmed)) : suggestions
+  ).slice(0, maxSuggestions)
 
   useEffect(() => () => {
     if (blurTimer.current) clearTimeout(blurTimer.current)
   }, [])
+
+  const openList = () => {
+    setFocused(true)
+    inputRef.current?.focus()
+  }
 
   return (
     <div className="field" style={{ position: 'relative', zIndex: focused ? 10 : 0 }}>
       {label && <span className="field-label">{label}</span>}
       <div className="row" style={{ gap: 6 }}>
         <input
+          ref={inputRef}
           className="text-input"
           value={value}
           placeholder={placeholder}
@@ -242,19 +250,36 @@ export function AutocompleteField({
             if (e.key === 'Enter') {
               setFocused(false)
               onSubmit?.()
+            } else if (e.key === 'Escape') {
+              setFocused(false)
             }
           }}
         />
-        {value && (
+        {value ? (
           <button
             className="icon-btn"
             style={{ color: 'var(--secondary)', width: 22, height: 22 }}
-            onClick={() => onChange('')}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              onChange('')
+              openList()
+            }}
             title="Clear"
           >
             ⊗
           </button>
-        )}
+        ) : suggestions.length > 0 ? (
+          <button
+            className="icon-btn"
+            style={{ color: 'var(--secondary)', width: 22, height: 22, fontSize: 11 }}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => (focused ? setFocused(false) : openList())}
+            title="Show values"
+            aria-label="Show values"
+          >
+            ▾
+          </button>
+        ) : null}
       </div>
       {focused && matches.length > 0 && (
         <div className="suggestions" style={{ position: 'absolute', top: '100%', left: 0, right: 0 }}>

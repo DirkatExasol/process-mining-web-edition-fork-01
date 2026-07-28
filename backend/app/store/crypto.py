@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
+import time
 
 from cryptography.fernet import Fernet
 
 from ..config import SECRET_KEY_PATH
+
+log = logging.getLogger("crypto")
 
 _fernet: Fernet | None = None
 
@@ -22,11 +26,79 @@ def get_fernet() -> Fernet:
     """Load (or create on first use) the process-wide Fernet instance."""
     global _fernet
     if _fernet is None:
+        # A symlinked key isn't blocked (Docker/k8s mount their secrets that way),
+        # but surface it once: the target holds the master key, so if it was
+        # pre-planted by someone else every stored secret is readable by them.
+        if SECRET_KEY_PATH.is_symlink():
+            log.warning(
+                "secret.key is a symlink (%s); its target holds the master "
+                "encryption key — verify it points where you intend.",
+                SECRET_KEY_PATH,
+            )
         if not SECRET_KEY_PATH.exists():
-            SECRET_KEY_PATH.write_bytes(Fernet.generate_key())
-            SECRET_KEY_PATH.chmod(0o600)
-        _fernet = Fernet(SECRET_KEY_PATH.read_bytes())
+            _create_key_atomically()
+        _fernet = Fernet(_read_key())
     return _fernet
+
+
+def _create_key_atomically() -> None:
+    """Create ``secret.key`` exactly once, 0600 from birth.
+
+    The compute backend, GUI proxy and admin server all reach this on a fresh
+    install at the same time (``run.sh`` boots them together). A plain
+    ``write_bytes`` + ``chmod`` race would let two processes generate *different*
+    keys (mutually unreadable secrets / proxy-auth mismatch until restart) and
+    briefly leave the file world-readable. ``O_CREAT | O_EXCL`` with mode 0600 makes
+    creation atomic: the winner writes the key; every loser gets ``FileExistsError``
+    and reads the winner's key (see ``_read_key`` for the empty-file window)."""
+    SECRET_KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(SECRET_KEY_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return  # another process created it first — read it below
+    try:
+        os.write(fd, Fernet.generate_key())
+        os.fsync(fd)  # ensure the bytes are visible to a losing reader
+    finally:
+        os.close(fd)
+
+
+def _read_key() -> bytes:
+    """Read the key, tolerating the brief window between a winner's ``O_EXCL``
+    create and its ``os.write``. A loser can observe the file as it exists but is
+    still empty; wait briefly for the bytes. If the file stays empty (a creator was
+    killed mid-write, leaving a 0-byte key that would wedge every service), recreate
+    it rather than raising on ``Fernet(b'')``."""
+    for _ in range(100):  # ~1s of 10 ms polls
+        data = SECRET_KEY_PATH.read_bytes()
+        if data:
+            return data
+        time.sleep(0.01)
+    try:
+        SECRET_KEY_PATH.unlink()  # discard the wedged 0-byte key and re-create
+    except FileNotFoundError:
+        pass
+    _create_key_atomically()
+    return SECRET_KEY_PATH.read_bytes()
+
+
+def write_private_file(path, text: str) -> None:
+    """Write ``text`` to ``path`` as an owner-only (0600) file with no world/group
+    window — used for TLS private keys. A plain ``write_text`` + ``chmod`` leaves the
+    key readable at the default umask between the two calls; creating with mode 0600
+    closes that window. ``O_NOFOLLOW`` refuses to write *through* a pre-planted
+    symlink at the path (which we own as an output file, so nothing legitimately
+    symlinks it) — that would otherwise redirect the private key onto, or truncate,
+    an attacker-chosen file. The trailing ``chmod`` re-asserts 0600 on a pre-existing
+    regular file with looser permissions."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_CREAT | os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        os.write(fd, text.encode("utf-8"))
+    finally:
+        os.close(fd)
+    os.chmod(path, 0o600)
 
 
 # ── Password hashing (scrypt) ─────────────────────────────────────────────────

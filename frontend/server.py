@@ -30,6 +30,7 @@ from app.store.crypto import (  # noqa: E402
     sign_session,
 )
 from app.store.security import User, store  # noqa: E402
+from app.web_security import install_security_headers  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -75,6 +76,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 logx.install_request_logging(app, lambda r: _current_user(r))
+install_security_headers(app)
 
 # The proxy client is created lazily and recreated if it was closed. This matters
 # because the TLS-aware launcher (frontend/launch.py) restarts uvicorn's listeners
@@ -132,10 +134,16 @@ SESSION_COOKIE = "pmw_session"
 _OPEN_API_PATHS = {"health"}
 
 
+_SESSION_AUDIENCE = "app"  # this cookie is only valid for the main application
+
+
 def _issue_session(username: str) -> str:
     # Embed the user's session epoch so logout (which bumps it) invalidates this
     # token — otherwise the stateless Fernet token would stay valid until its TTL.
-    payload = {"u": username, "e": store.session_epoch(username)}
+    # The audience ("a") binds the token to THIS interface: the admin panel signs
+    # its cookie with the same Fernet key, so without it an admin session cookie
+    # would be structurally valid here (and vice-versa).
+    payload = {"u": username, "e": store.session_epoch(username), "a": _SESSION_AUDIENCE}
     return sign_session(json.dumps(payload).encode("utf-8"))
 
 
@@ -171,6 +179,8 @@ def _current_user(request: Request) -> User | None:
         username = data["u"]
     except (json.JSONDecodeError, KeyError, TypeError):
         return None
+    if data.get("a") != _SESSION_AUDIENCE:
+        return None  # an admin session cookie is not accepted here
     user = store.get_user(username)
     if user is None or not user.is_enabled:
         return None

@@ -556,3 +556,62 @@ def test_editing_connection_disconnects_live_sessions(backend, monkeypatch):
     )
     assert r.status_code == 200
     assert calls == [conn.id]
+
+
+def test_registry_lowercases_username(backend):
+    """A username arriving in varying case maps to ONE manager/Exasol session."""
+    import app.db.manager as manager
+
+    reg = manager.ConnectionRegistry()
+    assert reg.for_user("Alice") is reg.for_user("alice")
+    assert reg.for_user("BOB") is reg.for_user("bob")
+    assert reg.for_user("Alice") is not reg.for_user("bob")
+
+
+def test_registry_does_not_merge_unicode_distinct_users(backend):
+    """ASCII-only lowercasing must match the store's SQLite LOWER() identity — a
+    Unicode casefold would map store-DISTINCT names (e.g. 'ß'→'ss') onto one
+    manager, sharing an Exasol session across users (cross-user data leak)."""
+    import app.db.manager as manager
+
+    reg = manager.ConnectionRegistry()
+    # 'ßuser'.casefold() == 'ssuser', but SQLite LOWER keeps them distinct accounts.
+    assert reg.for_user("ßuser") is not reg.for_user("ssuser")
+    # Kelvin sign (U+212A) lower()s to 'k' but is a distinct account under LOWER().
+    assert reg.for_user("Kelvin") is not reg.for_user("kelvin")
+
+
+def test_registry_connect_aborts_on_concurrent_revocation(backend, monkeypatch):
+    """If the connection is revoked (edited/deleted) while its open is in flight,
+    the freshly-opened session is dropped and an error returned — closing the race
+    where disconnect_connection snapshots the manager before its session exists."""
+    import asyncio
+
+    import app.db.manager as manager
+
+    reg = manager.ConnectionRegistry()
+
+    class _ConnDef:
+        id = "c-1"
+        password = "x"
+
+    dropped = {"n": 0}
+
+    async def _fake_connect(self, conn_def):
+        # An admin revokes THIS connection mid-open (before active_profile_id is set,
+        # so the snapshot in disconnect_connection can't see this manager yet).
+        await reg.disconnect_connection(conn_def.id)
+        self.is_connected = True
+        self.active_profile_id = conn_def.id
+        return None
+
+    async def _fake_disconnect(self):
+        dropped["n"] += 1
+        self.is_connected = False
+
+    monkeypatch.setattr(manager.DatabaseManager, "connect_connection", _fake_connect)
+    monkeypatch.setattr(manager.DatabaseManager, "disconnect", _fake_disconnect)
+
+    err = asyncio.run(reg.connect("alice", _ConnDef()))
+    assert err is not None and "reconnect" in err.lower()
+    assert dropped["n"] >= 1  # the session opened during the revocation was dropped

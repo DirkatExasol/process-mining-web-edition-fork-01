@@ -36,6 +36,9 @@ _RANK: dict[str, int] = {name: i for i, name in enumerate(LEVELS)}
 DEFAULT_LEVEL = "ERROR"  # INFO + USAGE + WARN + ERROR (everything but DEBUG)
 DEFAULT_MAX_BYTES = 5_000_000
 _MIN_MAX_BYTES = 50_000
+# Keep only the newest N rotated archives so the log directory can't grow without
+# bound (the DB itself is capped by max_bytes; the archive dir was not).
+_MAX_ARCHIVES = 10
 
 # Control chars (esp. CR/LF) are replaced before storing, so no field — even one
 # built from user-influenced text — can forge extra lines in the exported .log file.
@@ -79,8 +82,10 @@ class LogStore:
         self._conn.row_factory = sqlite3.Row
         # A regexp() SQL function powers wildcard/regex search in the viewer.
         self._conn.create_function("regexp", 2, _sql_regexp)
-        # WAL so the three processes can write/read concurrently.
+        # WAL so the three processes can write/read concurrently; busy_timeout so a
+        # cross-process writer retries instead of failing a log write with SQLITE_BUSY.
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
 
@@ -192,10 +197,22 @@ class LogStore:
             path.write_text(
                 "\n".join(format_line(r) for r in rows) + "\n", encoding="utf-8"
             )
+            self._prune_archives()
         except OSError:
             pass  # never let a rotation IO error break request handling
         self._conn.execute("DELETE FROM log_entries")
         self._conn.commit()
+
+    def _prune_archives(self) -> None:
+        """Delete all but the newest `_MAX_ARCHIVES` rotated `pmw-*.log` files.
+        Names are timestamped (`pmw-YYYYmmdd-HHMMSS.log`), so a lexical sort is
+        chronological — no reliance on filesystem mtimes."""
+        archives = sorted(LOGS_DIR.glob("pmw-*.log"))
+        for stale in archives[:-_MAX_ARCHIVES]:
+            try:
+                stale.unlink()
+            except OSError:
+                pass  # best effort; a locked/removed file must not break rotation
 
     # ── query / export ────────────────────────────────────────────────────────
 

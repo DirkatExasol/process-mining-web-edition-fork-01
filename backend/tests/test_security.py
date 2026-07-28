@@ -386,6 +386,48 @@ def test_authenticate_app_local_first_then_ldap(security, monkeypatch):
     assert store.get_user("alice") is not None  # persisted locally
 
 
+def test_authenticate_app_refuses_ldap_takeover_of_local_account(security, monkeypatch):
+    """A directory login whose canonical username collides with a LOCAL account
+    must be refused — it must never inherit that account's role/assignments."""
+    store = security.store
+    from app.services.ldap_auth import LdapUser
+
+    store.create_user("admin", "strong-local-pw", is_admin=True)  # break-glass local admin
+    # The directory returns the same canonical username for a different person, who
+    # binds with their own directory password (local password check fails for them).
+    _enable_stub_ldap(
+        store, monkeypatch, LdapUser(username="admin", email="e@x", display_name="Imposter")
+    )
+    assert store.authenticate_app("admin", "attacker-dir-pw") is None  # refused
+    u = store.get_user("admin")
+    # The local admin row is untouched — still local, still admin, still enabled.
+    assert u.auth_source == "local" and u.is_admin and u.is_enabled
+    # The legitimate local admin still signs in with the local password.
+    assert store.authenticate_app("admin", "strong-local-pw") is not None
+
+
+def test_authenticate_app_refuses_whitespace_padded_ldap_collision(security, monkeypatch):
+    """A directory username that only differs by surrounding whitespace still trims
+    onto a local account — the collision check must strip before comparing, so this
+    is refused too (regression for the raw-name bypass)."""
+    store = security.store
+    from app.services.ldap_auth import LdapUser
+
+    store.create_user("admin", "local-pw", is_admin=True)  # break-glass local admin
+    _enable_stub_ldap(
+        store, monkeypatch, LdapUser(username="admin ", email="e@x", display_name="Imposter")
+    )
+    assert store.authenticate_app("admin ", "attacker-dir-pw") is None  # refused
+    u = store.get_user("admin")
+    assert u.auth_source == "local" and u.is_admin and u.is_enabled
+    assert store.get_user("admin ") is None  # no stray padded row was provisioned
+
+
+def test_security_store_enables_busy_timeout(security):
+    # A cross-process writer must retry, not fail a write immediately with SQLITE_BUSY.
+    assert security.store._conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+
+
 def test_authenticate_app_rejects_when_ldap_denies(security, monkeypatch):
     store = security.store
     _enable_stub_ldap(store, monkeypatch, None)  # directory rejects
@@ -563,22 +605,41 @@ def test_reenabling_clears_lockout(security):
     assert store.authenticate("u", "pw") is not None
 
 
-def test_lockout_applies_to_builtin_administrator(security):
+def test_builtin_administrator_is_never_auto_locked(security):
+    """The sole break-glass account must not be lockable by an unauthenticated
+    attacker (that would be a DoS); the per-IP throttle guards it instead."""
     store = security.store
     store.set_max_failed_logins(2)
-    store.authenticate("Administrator", "x")
-    store.authenticate("Administrator", "x")
-    assert store.get_user("Administrator").is_enabled is False
-    assert store.get_user("Administrator").login_locked is True
+    for _ in range(6):
+        store.authenticate("Administrator", "x")
+    admin = store.get_user("Administrator")
+    assert admin.is_enabled is True and admin.login_locked is False
+    # A non-built-in admin, by contrast, still locks normally.
+    store.create_user("ops", "pw", is_admin=True)
+    store.authenticate("ops", "x")
+    store.authenticate("ops", "x")
+    assert store.get_user("ops").is_enabled is False
 
 
 def test_zero_threshold_never_locks(security):
     store = security.store
     store.create_user("u", "pw", is_admin=False)
-    store.set_max_failed_logins(0)  # off (default)
+    store.set_max_failed_logins(0)  # explicit off
     for _ in range(10):
         store.authenticate("u", "wrong")
     assert store.get_user("u").is_enabled is True
+
+
+def test_default_lockout_is_three_when_unset(security):
+    # Fresh store never sets max_failed_logins → secure default of 3, not off.
+    store = security.store
+    assert store.max_failed_logins == 3
+    store.create_user("u", "pw", is_admin=False)
+    assert store.authenticate("u", "wrong") is None
+    assert store.authenticate("u", "wrong") is None
+    assert store.get_user("u").is_enabled is True  # 2 failures: not yet
+    assert store.authenticate("u", "wrong") is None  # 3rd → lock
+    assert store.get_user("u").is_enabled is False
 
 
 def test_authenticate_nonexistent_user_returns_none_without_error(security):

@@ -41,6 +41,15 @@ log = logging.getLogger(__name__)
 
 _DATE_FORMATS = ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d")
 
+# Hard caps on client-supplied row limits so a caller can't request a runaway
+# result set (the query timeout bounds runtime, not the rows materialised/serialised).
+_MAX_PATH_ROWS = 10_000  # variant / route path listings
+_MAX_SUGGESTIONS = 100  # event-ID autocomplete
+
+
+def _clamp(value: int, low: int, high: int) -> int:
+    return max(low, min(int(value), high))
+
 
 def esc(value: str) -> str:
     """Escape a SQL string literal the way the Swift app did."""
@@ -743,6 +752,7 @@ class ProcessRepository:
     async def load_journey_paths(
         self, project_id: str, f: FilterSpec, limit: int = 500
     ) -> list[JourneyPath]:
+        limit = _clamp(limit, 1, _MAX_PATH_ROWS)
         filters = self._all_filters(project_id, f, date_only=True)
         sql = f"""
             WITH ordered_paths AS (
@@ -853,6 +863,7 @@ class ProcessRepository:
     async def load_event_id_suggestions(
         self, project_id: str, prefix: str, limit: int = 10
     ) -> list[str]:
+        limit = _clamp(limit, 1, _MAX_SUGGESTIONS)
         result = await self.db.execute(
             f"""
             SELECT DISTINCT EVENT_ID

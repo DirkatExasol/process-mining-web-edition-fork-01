@@ -160,6 +160,21 @@ def test_demo_window_is_granted_once_and_not_renewed(monkeypatch, tmp_path):
     assert marker.read_text() == anchored  # deadline unchanged
 
 
+def test_demo_does_not_reanchor_when_marker_unpersistable(monkeypatch, tmp_path):
+    """A read-only/unwritable data dir must not let the demo re-anchor now+grace on
+    every poll (that never expires = enforcement fail-open); the first deadline is
+    held in memory so the window still counts down within the process."""
+    unwritable = tmp_path / "as_dir"
+    unwritable.mkdir()  # a directory → read_text/write_text both raise OSError
+    monkeypatch.setattr(licensing, "DEMO_MARKER_PATH", unwritable)
+    monkeypatch.setattr(licensing, "LICENSE_GRACE_SECS", 1800)
+    monkeypatch.setattr(licensing, "_unpersisted_deadline", None)
+
+    d1 = licensing.demo_deadline(create=True)
+    d2 = licensing.demo_deadline(create=True)
+    assert d1 is not None and d1 == d2  # reused the anchor, did NOT re-anchor
+
+
 def test_naive_datetime_marker_does_not_crash(monkeypatch, tmp_path):
     """A corrupt/hand-edited marker with a naive (tz-less) deadline must not raise
     (it would otherwise 500 the status endpoint and kill the watchdog loop)."""
