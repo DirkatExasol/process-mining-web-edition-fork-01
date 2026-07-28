@@ -412,7 +412,6 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <button data-tab="tls" onclick="selectTab('tls')">TLS / SSL</button>
     <button data-tab="users" onclick="selectTab('users')">Users</button>
     <button data-tab="connections" onclick="selectTab('connections')">Database Connections</button>
-    <button data-tab="api" onclick="selectTab('api')">API</button>
     <button data-tab="ldap" onclick="selectTab('ldap')">Directory (LDAP)</button>
     <button data-tab="logging" onclick="selectTab('logging')">Logging</button>
     <button data-tab="backup" onclick="selectTab('backup')">Backup</button>
@@ -601,23 +600,6 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
 
           <h2 style="font-size:13px; margin-top:18px">Assign to users</h2>
           <div class="assign-grid" id="c_assign"></div>
-
-          <h2 style="font-size:13px; margin-top:18px">Query performance</h2>
-          <label class="row" style="font-size:13px">
-            <input type="checkbox" id="c_useMaterialized" style="width:auto">
-            Use pre-materialized transitions
-          </label>
-          <p class="subtle" style="margin:6px 0 0">
-            Reads the process map from a prebuilt <code>TRANSITIONS_RAW</code> table instead of
-            running the windowed query live. Faster for interactive filtering; falls back to the
-            live query whenever the table isn't built yet. Rebuild it after each load of
-            <code>JOURNEYS</code>.
-          </p>
-          <div class="row" style="align-items:center; gap:10px; margin-top:8px">
-            <button class="btn" id="c_rebuildBtn" onclick="rebuildTransitions()">Rebuild now</button>
-            <span id="c_matResult" class="muted"></span>
-          </div>
-          <div id="c_matStatus" class="subtle" style="margin-top:6px"></div>
         </div>
       </div>
       <div class="row" style="margin-top:16px; align-items:center">
@@ -645,47 +627,53 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
           administrator can grant those rights; this application cannot.
         </p>
       </div>
+
+      <div class="banner info" style="margin-top:14px">
+        <label class="row" style="font-size:13px">
+          <input type="checkbox" id="c_useMaterialized" style="width:auto">
+          <strong>Use pre-materialized transitions</strong>
+        </label>
+        <p class="subtle" style="margin:6px 0 12px">
+          Reads the process map from a prebuilt <code>TRANSITIONS_RAW</code> table instead of running the
+          windowed query live — much faster for interactive filtering on large logs. It falls back to the
+          live query until the table is built, so rebuild it after each load of <code>JOURNEYS</code>.
+        </p>
+        <div class="row" style="align-items:center; gap:12px; flex-wrap:wrap">
+          <button class="btn" id="c_rebuildBtn" onclick="rebuildTransitions()">Rebuild now</button>
+          <span id="c_matStatus" class="subtle"></span>
+          <span id="c_matResult" class="muted"></span>
+        </div>
+
+        <details id="c_apiBox" style="margin-top:14px">
+          <summary style="cursor:pointer; font-size:13px; font-weight:600">Rebuild from a script (API)</summary>
+          <div style="margin-top:10px">
+            <p class="subtle" style="margin:0 0 10px">
+              Let a scheduler (cron / ETL) rebuild <em>this connection</em> right after loading its
+              <code>JOURNEYS</code>, without an admin login. The token below is scoped to this connection only,
+              and calls are rate-limited.
+            </p>
+            <div class="row" style="align-items:center; gap:10px; flex-wrap:wrap">
+              <span id="rtStatus" class="subtle"></span>
+              <span class="spacer"></span>
+              <button class="btn small" onclick="generateRebuildToken()">Generate / rotate token</button>
+              <button class="btn small danger" id="rtRevokeBtn" onclick="revokeRebuildToken()">Revoke</button>
+            </div>
+            <div id="rtValue" style="margin-top:8px"></div>
+            <div class="codeblock-wrap" style="margin-top:10px">
+              <button class="copy-btn" onclick="copyCurl()" title="Copy to clipboard" aria-label="Copy curl command">📋</button>
+              <pre id="api_curl" class="codeblock" style="white-space:pre-wrap; word-break:break-all"></pre>
+            </div>
+            <p class="subtle" style="margin:6px 0 0">
+              The token is shown once — copy it now; only its hash is stored. The <code>Bearer</code> value appears
+              in the command only while the token is visible above, then shows <code>&lt;token&gt;</code>.
+              <code>-k</code> skips the self-signed TLS check.
+            </p>
+          </div>
+        </details>
+      </div>
     </div>
   </div>
   </div><!-- /tab-connections -->
-
-  <div class="tabpanel" id="tab-api">
-  <div class="card">
-    <h2>API</h2>
-    <p class="muted" style="margin-top:0">Trigger a connection's pre-materialized transitions rebuild from outside the
-      admin interface — e.g. a cron job or ETL step run right after loading <code>JOURNEYS</code>.</p>
-
-    <h2 style="font-size:14px; margin-top:18px">Rebuild token</h2>
-    <div class="row" style="align-items:center; gap:10px">
-      <span id="rtStatus" class="subtle"></span>
-      <span class="spacer"></span>
-      <button class="btn" onclick="generateRebuildToken()">Generate / rotate</button>
-      <button class="btn danger" id="rtRevokeBtn" onclick="revokeRebuildToken()">Revoke</button>
-    </div>
-    <div id="rtValue" style="margin-top:8px"></div>
-    <p class="subtle" style="margin:8px 0 0">
-      A bearer token that authorizes the rebuild endpoint without an admin login. It is shown
-      <strong>once</strong>, right after you generate it — copy it now; only its hash is stored, so it
-      cannot be shown again. Rotating or revoking immediately invalidates the previous token.
-    </p>
-
-    <h2 style="font-size:14px; margin-top:20px">Example request</h2>
-    <div class="row" style="align-items:center; gap:10px">
-      <label class="subtle" for="api_conn">Connection</label>
-      <select id="api_conn" onchange="renderCurl()"></select>
-    </div>
-    <div class="codeblock-wrap" style="margin-top:10px">
-      <button class="copy-btn" onclick="copyCurl()" title="Copy to clipboard" aria-label="Copy curl command">📋</button>
-      <pre id="api_curl" class="codeblock" style="white-space:pre-wrap; word-break:break-all"></pre>
-    </div>
-    <p class="subtle" style="margin:6px 0 0">
-      The <code>Bearer</code> value is filled in with your real token only while it is visible above; after that it
-      shows <code>&lt;token&gt;</code>. On success the response is
-      <code>{{"ok": true, "rows": N, "built_at": "…"}}</code>; a failure returns <code>ok:false</code> with an
-      <code>error</code> string. Use the HTTPS admin URL in production.
-    </p>
-  </div>
-  </div><!-- /tab-api -->
 
   <div class="tabpanel" id="tab-ldap">
   <div class="card">
@@ -1253,7 +1241,6 @@ function selectTab(name) {
   for (const p of document.querySelectorAll('.tabpanel'))
     p.classList.toggle('sel', p.id === 'tab-' + name);
   if (name === 'connections') loadConnections().catch(e => toast(e.message, true));
-  if (name === 'api') loadApiTab().catch(e => toast(e.message, true));
   if (name === 'ldap') loadLdap().catch(e => toast(e.message, true));
   if (name === 'logging') loadLogs().catch(e => toast(e.message, true));
   if (name === 'customize') loadCustomize().catch(e => toast(e.message, true));
@@ -1760,6 +1747,13 @@ function fillEditor(c) {
   $('c_rebuildBtn').disabled = !c.id;  // needs a saved connection to rebuild against
   $('c_rebuildBtn').title = c.id ? '' : 'Save the connection first';
   $('c_provisionBuildMat').checked = false;
+  // Per-connection rebuild API: reset the shown-once token, collapse the box,
+  // reflect whether this connection already has a token, and prime the example.
+  LAST_TOKEN = '';
+  $('rtValue').textContent = '';
+  $('c_apiBox').open = false;
+  renderTokenStatus(!!c.rebuildTokenSet);
+  renderCurl();
   $('c_testResult').innerHTML = '';
   $('c_provisionResult').textContent = '';
   $('c_deleteBtn').style.display = c.id ? 'inline-flex' : 'none';
@@ -1902,34 +1896,21 @@ async function rebuildTransitions() {
   } catch (e) { out.style.color = 'var(--red)'; out.textContent = e.message; }
 }
 
-// The plaintext token, kept only while it is visible in the pane; the curl
-// example uses it verbatim until then, then reverts to a <token> placeholder.
+// The plaintext token for the connection currently open in the editor, kept only
+// while it is visible after generation; the curl example uses it verbatim until
+// then, then reverts to a <token> placeholder.
 let LAST_TOKEN = '';
 
-async function loadApiTab() {
-  await loadRebuildToken();
-  try {
-    const conns = await api('/api/connections');
-    $('api_conn').innerHTML = conns.length
-      ? conns.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')
-      : '<option value="">(no connections defined)</option>';
-  } catch (e) { /* handled elsewhere */ }
-  renderCurl();
-}
-
-async function loadRebuildToken() {
-  try {
-    const r = await api('/api/rebuild-token');
-    $('rtStatus').textContent = r.set ? 'a token is set' : 'no token set';
-    $('rtRevokeBtn').style.display = r.set ? 'inline-flex' : 'none';
-  } catch (e) { /* not admin / not loaded yet */ }
+function renderTokenStatus(isSet) {
+  const saved = !!$('c_id').value;
+  $('rtStatus').textContent = !saved ? 'save the connection first'
+    : isSet ? 'a token is set for this connection' : 'no token set';
+  $('rtRevokeBtn').style.display = (saved && isSet) ? 'inline-flex' : 'none';
 }
 
 function renderCurl() {
-  const connId = ($('api_conn') && $('api_conn').value) || '<connection-id>';
-  const token = LAST_TOKEN
-    ? `<span class="tok">${esc(LAST_TOKEN)}</span>`
-    : '&lt;token&gt;';
+  const connId = $('c_id').value || '<connection-id>';
+  const token = LAST_TOKEN ? `<span class="tok">${esc(LAST_TOKEN)}</span>` : '&lt;token&gt;';
   // -k skips the TLS certificate check (handy with the self-signed admin cert).
   $('api_curl').innerHTML =
     'curl -k -X POST \\\n' +
@@ -1946,24 +1927,28 @@ function copyCurl() {
 }
 
 async function generateRebuildToken() {
-  if (!confirm('Generate a new rebuild token? Any existing token stops working.')) return;
+  const id = $('c_id').value;
+  if (!id) { toast('Save the connection first.', true); return; }
+  if (!confirm('Generate a new token for this connection? Any existing token stops working.')) return;
   try {
-    const r = await api('/api/rebuild-token', { method: 'POST' });
+    const r = await api('/api/connections/' + encodeURIComponent(id) + '/rebuild-token', { method: 'POST' });
     LAST_TOKEN = r.token;
     $('rtValue').innerHTML = 'New token (copy it now — it is not shown again):<br>' +
       `<code style="user-select:all; word-break:break-all">${esc(r.token)}</code>`;
-    await loadRebuildToken();
+    renderTokenStatus(true);
     renderCurl();
     toast('Rebuild token generated');
   } catch (e) { toast(e.message, true); }
 }
 async function revokeRebuildToken() {
-  if (!confirm('Revoke the rebuild token? External schedulers using it will stop working.')) return;
+  const id = $('c_id').value;
+  if (!id) return;
+  if (!confirm("Revoke this connection's token? A scheduler using it will stop working.")) return;
   try {
-    await api('/api/rebuild-token', { method: 'DELETE' });
+    await api('/api/connections/' + encodeURIComponent(id) + '/rebuild-token', { method: 'DELETE' });
     LAST_TOKEN = '';
     $('rtValue').textContent = '';
-    await loadRebuildToken();
+    renderTokenStatus(false);
     renderCurl();
     toast('Rebuild token revoked');
   } catch (e) { toast(e.message, true); }
@@ -1994,10 +1979,10 @@ const ADMIN_HELP = [
     <p>Define each connection (Exasol host, port, user, password, schema, TLS, and an optional OpenAI-compatible LLM server) and assign it to users; each user sees only the connections assigned to them. Use Test connection to verify the database and LLM before saving; a blank password/key keeps the stored value.</p>
     <p>&ldquo;Create schema &amp; tables&rdquo; provisions the process-mining schema and tables (PROJECTS, JOURNEYS, STEPS, METAS, NOTES) if missing.</p>
     <div class="note warn">Provisioning needs a DB account with CREATE SCHEMA / CREATE TABLE rights &mdash; only the database administrator can grant those.</div>` },
-  { id: 'api', icon: '🔌', title: 'API', html: `
-    <h2>API</h2>
-    <p>Issues a bearer token so an external caller (a cron job or ETL step) can trigger a connection&rsquo;s pre-materialized transitions rebuild without an admin login. Generate / rotate or revoke it here &mdash; it is shown <strong>once</strong> (copy it then); only its hash is stored, and rotating/revoking invalidates the previous token immediately.</p>
-    <p>Call <code>POST /api/connections/&lt;id&gt;/rebuild-transitions</code> with header <code>Authorization: Bearer &lt;token&gt;</code>. The tab shows a copy-able <code>curl</code> example &mdash; pre-filled with your real token while it is still visible, and using <code>-k</code> to skip the TLS certificate check for the self-signed admin certificate. Run it right after each load of <code>JOURNEYS</code>.</p>` },
+  { id: 'api', icon: '🔌', title: 'Rebuild from a script (API)', html: `
+    <h2>Rebuild from a script (API)</h2>
+    <p>Each connection can issue its own bearer token so an external caller (a cron job or ETL step) can trigger that connection&rsquo;s pre-materialized transitions rebuild without an admin login. Open the connection in <strong>Database Connections</strong>, expand &ldquo;Rebuild from a script (API)&rdquo;, and Generate / rotate or revoke the token there &mdash; it is shown <strong>once</strong> (copy it then); only its hash is stored, and the token is scoped to that connection only.</p>
+    <p>Call <code>POST /api/connections/&lt;id&gt;/rebuild-transitions</code> with header <code>Authorization: Bearer &lt;token&gt;</code>. That section shows a copy-able <code>curl</code> example &mdash; pre-filled with your real token while it is still visible, and using <code>-k</code> to skip the TLS certificate check. Token-triggered rebuilds are rate-limited per connection and never overlap. Run it right after each load of <code>JOURNEYS</code>.</p>` },
   { id: 'directory', icon: '📇', title: 'Directory (LDAP)', html: `
     <h2>Directory (LDAP)</h2>
     <p>When enabled, the main-app login also accepts directory accounts via search + bind. Set the server URI, service-account bind DN/password, base DN, user filter and attributes. Test server connection checks the server alone; Test a user login also resolves and signs in an account.</p>

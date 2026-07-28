@@ -722,33 +722,50 @@ def test_use_materialized_flag_persists_and_defaults_off(security):
     assert store.get_connection(on.id).use_materialized_transitions is False
 
 
-def test_rebuild_token_generate_verify_rotate_clear(security):
+def test_rebuild_token_is_per_connection(security):
     store = security.store
-    assert store.rebuild_token_set is False
-    assert store.verify_rebuild_token("anything") is False  # none set yet
+    a, b = "conn-a", "conn-b"
+    assert store.rebuild_token_set(a) is False
+    assert store.verify_rebuild_token(a, "anything") is False  # none set yet
 
-    token = store.generate_rebuild_token()
-    assert token and store.rebuild_token_set is True
-    assert store.verify_rebuild_token(token) is True
-    assert store.verify_rebuild_token("wrong") is False
-    assert store.verify_rebuild_token("") is False
+    ta = store.generate_rebuild_token(a)
+    assert ta and store.rebuild_token_set(a) is True
+    assert store.verify_rebuild_token(a, ta) is True
+    assert store.verify_rebuild_token(a, "wrong") is False
+    assert store.verify_rebuild_token(a, "") is False
+    # Scoped: connection A's token is NOT valid for connection B.
+    assert store.verify_rebuild_token(b, ta) is False
 
     # Only the hash is stored — never the plaintext.
     row = store._conn.execute(
-        "SELECT value FROM security_config WHERE key = 'rebuild_token_hash'"
+        "SELECT value FROM security_config WHERE key = ?", (f"rebuild_token:{a}",)
     ).fetchone()
-    assert row is not None and token not in row["value"]
+    assert row is not None and ta not in row["value"]
 
-    # Rotating invalidates the previous token.
-    new = store.generate_rebuild_token()
-    assert new != token
-    assert store.verify_rebuild_token(token) is False
-    assert store.verify_rebuild_token(new) is True
+    # Rotating A invalidates A's previous token; B is untouched.
+    tb = store.generate_rebuild_token(b)
+    ta2 = store.generate_rebuild_token(a)
+    assert ta2 != ta
+    assert store.verify_rebuild_token(a, ta) is False
+    assert store.verify_rebuild_token(a, ta2) is True
+    assert store.verify_rebuild_token(b, tb) is True
 
-    # Revoking clears it entirely.
-    store.clear_rebuild_token()
-    assert store.rebuild_token_set is False
-    assert store.verify_rebuild_token(new) is False
+    # Revoking A clears only A.
+    store.clear_rebuild_token(a)
+    assert store.rebuild_token_set(a) is False
+    assert store.rebuild_token_set(b) is True
+
+
+def test_deleting_connection_clears_its_token_and_status(security):
+    store = security.store
+    conn = _make_conn(store)
+    store.generate_rebuild_token(conn.id)
+    store.set_materialization_status(conn.id, {"ok": True, "rows": 1})
+    assert store.rebuild_token_set(conn.id) is True
+
+    store.delete_connection(conn.id)
+    assert store.rebuild_token_set(conn.id) is False
+    assert store.materialization_status(conn.id) is None
 
 
 def test_materialization_status_round_trips_per_connection(security):

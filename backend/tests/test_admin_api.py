@@ -1027,51 +1027,94 @@ def test_rebuild_requires_admin_or_token(admin, monkeypatch):
     assert "rebuilt materialised transitions" in mat_log
 
 
-def test_rebuild_bearer_token(admin, monkeypatch):
+def test_rebuild_bearer_token_is_per_connection(admin, monkeypatch):
     server, store = admin
     client = _login(server)
     conn = client.post("/api/connections", json=_connection_body()).json()
+    other = client.post("/api/connections", json=_connection_body(name="Other")).json()
 
     async def _stub_rebuild(**kwargs):
         return {"ok": True, "error": None, "rows": 3, "built_at": "2026-07-28T00:00:00+00:00"}
 
     monkeypatch.setattr("app.db.schema_ddl.rebuild_materialized_transitions", _stub_rebuild)
 
-    token = client.post("/api/rebuild-token").json()["token"]
-    assert client.get("/api/rebuild-token").json()["set"] is True
+    cid = conn["id"]
+    token = client.post(f"/api/connections/{cid}/rebuild-token").json()["token"]
+    # The token flag surfaces on the connection listing.
+    listing = {c["id"]: c for c in client.get("/api/connections").json()}
+    assert listing[cid]["rebuildTokenSet"] is True
 
     ext = TestClient(server.app)  # no admin cookie — a scheduler with only the token
     ok = ext.post(
-        f"/api/connections/{conn['id']}/rebuild-transitions",
+        f"/api/connections/{cid}/rebuild-transitions",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert ok.status_code == 200 and ok.json()["rows"] == 3
 
     # A wrong token is rejected.
-    bad = ext.post(
-        f"/api/connections/{conn['id']}/rebuild-transitions",
+    assert ext.post(
+        f"/api/connections/{cid}/rebuild-transitions",
         headers={"Authorization": "Bearer not-the-token"},
-    )
-    assert bad.status_code == 401
+    ).status_code == 401
+
+    # Scoped: the token cannot rebuild a DIFFERENT connection.
+    assert ext.post(
+        f"/api/connections/{other['id']}/rebuild-transitions",
+        headers={"Authorization": f"Bearer {token}"},
+    ).status_code == 401
 
     # After rotation the old token stops working.
-    client.post("/api/rebuild-token")
-    stale = ext.post(
-        f"/api/connections/{conn['id']}/rebuild-transitions",
+    client.post(f"/api/connections/{cid}/rebuild-token")
+    assert ext.post(
+        f"/api/connections/{cid}/rebuild-transitions",
         headers={"Authorization": f"Bearer {token}"},
-    )
-    assert stale.status_code == 401
+    ).status_code == 401
 
-    # Revoke clears it entirely.
-    client.request("DELETE", "/api/rebuild-token")
-    assert client.get("/api/rebuild-token").json()["set"] is False
+    # Revoke clears it.
+    client.request("DELETE", f"/api/connections/{cid}/rebuild-token")
+    assert {c["id"]: c for c in client.get("/api/connections").json()}[cid]["rebuildTokenSet"] is False
+
+
+def test_token_rebuild_is_throttled_but_admin_is_not(admin, monkeypatch):
+    server, _ = admin
+    client = _login(server)
+    conn = client.post("/api/connections", json=_connection_body()).json()
+    cid = conn["id"]
+
+    async def _stub(**kwargs):
+        return {"ok": True, "error": None, "rows": 1, "built_at": "2026-07-28T00:00:00+00:00"}
+
+    monkeypatch.setattr("app.db.schema_ddl.rebuild_materialized_transitions", _stub)
+    token = client.post(f"/api/connections/{cid}/rebuild-token").json()["token"]
+    ext = TestClient(server.app)
+    hdr = {"Authorization": f"Bearer {token}"}
+
+    assert ext.post(f"/api/connections/{cid}/rebuild-transitions", headers=hdr).status_code == 200
+    # A second token call right away is throttled…
+    assert ext.post(f"/api/connections/{cid}/rebuild-transitions", headers=hdr).status_code == 429
+    # …but an admin session may still force a rebuild.
+    assert client.post(f"/api/connections/{cid}/rebuild-transitions").status_code == 200
+
+
+def test_rebuild_rejects_a_concurrent_run(admin):
+    server, _ = admin
+    client = _login(server)
+    conn = client.post("/api/connections", json=_connection_body()).json()
+    cid = conn["id"]
+    server._rebuild_in_progress.add(cid)  # simulate a rebuild already running
+    try:
+        assert client.post(f"/api/connections/{cid}/rebuild-transitions").status_code == 409
+    finally:
+        server._rebuild_in_progress.discard(cid)
 
 
 def test_rebuild_token_endpoints_require_admin(admin):
     server, _ = admin
+    client = _login(server)
+    cid = client.post("/api/connections", json=_connection_body()).json()["id"]
     anon = TestClient(server.app)
-    assert anon.get("/api/rebuild-token").status_code == 401
-    assert anon.post("/api/rebuild-token").status_code == 401
+    assert anon.post(f"/api/connections/{cid}/rebuild-token").status_code == 401
+    assert anon.request("DELETE", f"/api/connections/{cid}/rebuild-token").status_code == 401
 
 
 def test_provision_can_also_build_transitions(admin, monkeypatch):
@@ -1097,21 +1140,17 @@ def test_provision_can_also_build_transitions(admin, monkeypatch):
     assert body["materialization"]["ok"] is True
 
 
-# ── Dashboard render: the API tab (rebuild token + curl example) ──────────────
+# ── Dashboard render: the per-connection rebuild API (in the editor) ──────────
 
 
-def test_dashboard_has_api_tab_with_curl_example(admin):
+def test_dashboard_has_per_connection_rebuild_api(admin):
     server, _ = admin
     client = _login(server)
 
     html = client.get("/").text
-    # A dedicated API tab exists…
-    assert 'data-tab="api"' in html and 'id="tab-api"' in html
-    # …carrying the rebuild-token controls and the copy-able curl example.
-    assert "Rebuild token" in html
+    # The rebuild-token + curl controls live in the connection editor…
     assert 'id="api_curl"' in html and "copyCurl(" in html
     assert "curl -k -X POST" in html  # -k skips the TLS check
     assert "rebuild-transitions" in html
-
-    # The token box was moved OUT of the Database Connections tab.
-    assert "rebuildTokenBox" not in html
+    # …and there is no longer a standalone global API tab.
+    assert 'data-tab="api"' not in html and 'id="tab-api"' not in html

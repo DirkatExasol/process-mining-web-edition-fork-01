@@ -680,38 +680,43 @@ class SecurityStore:
         with self._lock:
             return self._get_config("active_cert_id")
 
-    # ── materialised-transitions rebuild token ──────────────────────────────
+    # ── per-connection rebuild token ────────────────────────────────────────
     # A high-entropy bearer token that lets an external scheduler (cron/ETL)
-    # trigger a rebuild after loading JOURNEYS, without an admin session. Only
-    # the SHA-256 hash is stored; the plaintext is shown once at generation.
+    # trigger a rebuild of ONE connection after loading its JOURNEYS, without an
+    # admin session. Scoped per connection so a leaked token can only rebuild that
+    # connection. Only the SHA-256 hash is stored; the plaintext is shown once.
 
-    def generate_rebuild_token(self) -> str:
-        """Create (or rotate) the rebuild token and return the plaintext ONCE."""
+    @staticmethod
+    def _rebuild_token_key(conn_id: str) -> str:
+        return f"rebuild_token:{conn_id}"
+
+    def generate_rebuild_token(self, conn_id: str) -> str:
+        """Create (or rotate) this connection's rebuild token; return plaintext ONCE."""
         token = secrets.token_urlsafe(32)
         digest = hashlib.sha256(token.encode()).hexdigest()
         with self._lock:
-            self._set_config("rebuild_token_hash", digest)
+            self._set_config(self._rebuild_token_key(conn_id), digest)
             self._conn.commit()
         return token
 
-    def clear_rebuild_token(self) -> None:
+    def clear_rebuild_token(self, conn_id: str) -> None:
         with self._lock:
             self._conn.execute(
-                "DELETE FROM security_config WHERE key = ?", ("rebuild_token_hash",)
+                "DELETE FROM security_config WHERE key = ?",
+                (self._rebuild_token_key(conn_id),),
             )
             self._conn.commit()
 
-    @property
-    def rebuild_token_set(self) -> bool:
+    def rebuild_token_set(self, conn_id: str) -> bool:
         with self._lock:
-            return bool(self._get_config("rebuild_token_hash"))
+            return bool(self._get_config(self._rebuild_token_key(conn_id)))
 
-    def verify_rebuild_token(self, token: str) -> bool:
-        """Constant-time check of a presented token against the stored hash."""
+    def verify_rebuild_token(self, conn_id: str, token: str) -> bool:
+        """Constant-time check of a token against THIS connection's stored hash."""
         if not token:
             return False
         with self._lock:
-            stored = self._get_config("rebuild_token_hash")
+            stored = self._get_config(self._rebuild_token_key(conn_id))
         if not stored:
             return False
         presented = hashlib.sha256(token.encode()).hexdigest()
@@ -1338,6 +1343,11 @@ class SecurityStore:
                 "DELETE FROM connection_assignments WHERE connection_id = ?", (conn_id,)
             )
             self._conn.execute("DELETE FROM connections WHERE id = ?", (conn_id,))
+            # Drop the connection's rebuild token + materialisation status too.
+            self._conn.execute(
+                "DELETE FROM security_config WHERE key = ? OR key = ?",
+                (self._rebuild_token_key(conn_id), f"matview:{conn_id}"),
+            )
             self._conn.commit()
 
     # ── effective TLS plan (read by the GUI launcher) ─────────────────────────

@@ -985,6 +985,7 @@ def api_connections(user: User = Depends(require_admin)):
     for c in store.list_connections():
         d = c.admin_public()
         d["materialization"] = store.materialization_status(c.id)
+        d["rebuildTokenSet"] = store.rebuild_token_set(c.id)
         out.append(d)
     return out
 
@@ -1125,20 +1126,28 @@ async def api_provision_schema(body: ConnectionTestBody, user: User = Depends(re
     return result
 
 
-# ── pre-materialised transitions: rebuild + external API token ────────────────
+# ── pre-materialised transitions: rebuild + per-connection API token ──────────
+
+# In-process guards for the rebuild endpoint (it lives only on this single admin
+# process). Prevent two rebuilds of one connection at once (they'd race on the
+# staging-table swap), and throttle token-triggered rebuilds so a leaked token
+# can't hammer the customer database.
+_REBUILD_TOKEN_COOLDOWN_SECS = 60
+_rebuild_in_progress: set[str] = set()
+_rebuild_last_token_run: dict[str, float] = {}
 
 
-def _rebuild_authorized(request: Request) -> str | None:
-    """Authorise a rebuild by EITHER an admin session OR the bearer rebuild token.
-    Returns an actor label to log, or None if unauthorised. The token lets an
-    external scheduler trigger a rebuild without an interactive admin login."""
+def _rebuild_authorized(request: Request, conn_id: str) -> str | None:
+    """Authorise a rebuild of ``conn_id`` by EITHER an admin session OR that
+    connection's bearer rebuild token. Returns an actor label to log, or None if
+    unauthorised. A token only ever authorises its own connection."""
     user = _current_user(request)
     if user is not None:
         return user.username
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         token = auth[7:].strip()
-        if store.verify_rebuild_token(token):
+        if store.verify_rebuild_token(conn_id, token):
             return "api-token"
     return None
 
@@ -1146,9 +1155,9 @@ def _rebuild_authorized(request: Request) -> str | None:
 @app.post("/api/connections/{conn_id}/rebuild-transitions")
 async def api_rebuild_transitions(conn_id: str, request: Request):
     """(Re)build TRANSITIONS_RAW for a stored connection. Auth: admin session or
-    `Authorization: Bearer <rebuild-token>`. Uses the connection's stored
+    `Authorization: Bearer <the connection's rebuild-token>`. Uses the stored
     credentials, so the caller never handles them."""
-    actor = _rebuild_authorized(request)
+    actor = _rebuild_authorized(request, conn_id)
     if actor is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
@@ -1156,19 +1165,41 @@ async def api_rebuild_transitions(conn_id: str, request: Request):
     if conn is None:
         raise HTTPException(status_code=404, detail="No such connection.")
 
+    # Never overlap rebuilds of the same connection (staging-swap race).
+    if conn_id in _rebuild_in_progress:
+        raise HTTPException(
+            status_code=409, detail="A rebuild is already running for this connection."
+        )
+    # Throttle automated (token) callers; admins may force a rebuild anytime.
+    if actor == "api-token":
+        wait = _REBUILD_TOKEN_COOLDOWN_SECS - (
+            time.time() - _rebuild_last_token_run.get(conn_id, 0.0)
+        )
+        if wait > 0:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rebuild throttled — try again in {max(1, round(wait))}s.",
+            )
+        _rebuild_last_token_run[conn_id] = time.time()
+
     from app.db.schema_ddl import rebuild_materialized_transitions
 
-    result = await rebuild_materialized_transitions(
-        host=conn.host,
-        port=conn.port,
-        username=conn.username,
-        password=conn.password,
-        schema=conn.schema,
-        use_tls=conn.use_tls,
-        cert_mode=conn.cert_mode,
-        fingerprint=conn.fingerprint,
-        min_rsa_bits=conn.min_rsa_bits,
-    )
+    _rebuild_in_progress.add(conn_id)
+    try:
+        result = await rebuild_materialized_transitions(
+            host=conn.host,
+            port=conn.port,
+            username=conn.username,
+            password=conn.password,
+            schema=conn.schema,
+            use_tls=conn.use_tls,
+            cert_mode=conn.cert_mode,
+            fingerprint=conn.fingerprint,
+            min_rsa_bits=conn.min_rsa_bits,
+        )
+    finally:
+        _rebuild_in_progress.discard(conn_id)
+
     store.set_materialization_status(
         conn_id,
         {
@@ -1188,29 +1219,26 @@ async def api_rebuild_transitions(conn_id: str, request: Request):
     return result
 
 
-@app.get("/api/rebuild-token")
-def api_rebuild_token_status(user: User = Depends(require_admin)):
-    return {"set": store.rebuild_token_set}
-
-
-@app.post("/api/rebuild-token")
-def api_rebuild_token_generate(user: User = Depends(require_admin)):
-    """Generate (or rotate) the external rebuild token. Returned in plaintext ONCE
-    — only its hash is stored, so it cannot be shown again."""
-    token = store.generate_rebuild_token()
+@app.post("/api/connections/{conn_id}/rebuild-token")
+def api_rebuild_token_generate(conn_id: str, user: User = Depends(require_admin)):
+    """Generate (or rotate) this connection's rebuild token. Returned in plaintext
+    ONCE — only its hash is stored, so it cannot be shown again."""
+    if store.get_connection(conn_id) is None:
+        raise HTTPException(status_code=404, detail="No such connection.")
+    token = store.generate_rebuild_token(conn_id)
     logx.warn(
-        f"admin {user.username} generated a new transitions-rebuild API token",
+        f"admin {user.username} generated a rebuild API token for connection {conn_id}",
         username=user.username,
         operation="materialize",
     )
     return {"token": token}
 
 
-@app.delete("/api/rebuild-token")
-def api_rebuild_token_clear(user: User = Depends(require_admin)):
-    store.clear_rebuild_token()
+@app.delete("/api/connections/{conn_id}/rebuild-token")
+def api_rebuild_token_clear(conn_id: str, user: User = Depends(require_admin)):
+    store.clear_rebuild_token(conn_id)
     logx.warn(
-        f"admin {user.username} revoked the transitions-rebuild API token",
+        f"admin {user.username} revoked the rebuild API token for connection {conn_id}",
         username=user.username,
         operation="materialize",
     )

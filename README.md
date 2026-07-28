@@ -311,11 +311,14 @@ of `JOURNEYS`. Three ways to rebuild:
 - **Manually** — the *Rebuild now* button on the connection (shows last-built time
   and pair count).
 - **From a scheduler** — `POST /api/connections/<id>/rebuild-transitions` on the
-  admin server with header `Authorization: Bearer <token>`. Generate the token in
-  the admin **API** tab (shown once, stored only as a hash, rotatable/revocable);
-  that tab also renders a ready-to-copy `curl` example — pre-filled with the token
-  while it's still visible, with a copy button and the `-k` flag (skips the TLS
-  check for the self-signed admin certificate).
+  admin server with header `Authorization: Bearer <token>`. Each connection issues
+  its **own** token (Database Connections → the connection → *Rebuild from a
+  script (API)*): shown once, stored only as a hash, rotatable/revocable, and
+  **scoped to that connection only**. That section also renders a ready-to-copy
+  `curl` example — pre-filled with the token while it's still visible, with a copy
+  button and the `-k` flag (skips the TLS check for the self-signed admin cert).
+  Token-triggered rebuilds are **rate-limited per connection** and never overlap,
+  so a leaked token can't hammer the database.
 - **During provisioning** — tick *Also build …* under *Create schema & tables*.
 
 The rebuild runs the pairing once with `CREATE TABLE … AS SELECT` — so every

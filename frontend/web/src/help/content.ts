@@ -299,7 +299,7 @@ const adminConnections: HelpTopic = {
       heading: 'Pre-materialized transitions (performance)',
       body: [
         p('Each connection can opt into reading the process map from a prebuilt TRANSITIONS_RAW table instead of computing the directly-follows pairs live on every request — a large speed-up for interactive filtering on big event logs. It is off by default and fails safe: until the table is built (or while a rebuild is in flight) the map falls back to the live query, so it never breaks.'),
-        p('Tick “Use pre-materialized transitions” on the connection (it takes effect on the next chart reload — no reconnect needed), then rebuild the table after each load of JOURNEYS. Rebuild it three ways: the Rebuild now button here (shows the last-built time and pair count); a scheduler calling POST /api/connections/<id>/rebuild-transitions with an Authorization: Bearer token (generate the token in the admin API tab, which also shows a ready-to-copy curl example — the token is shown once and stored only as a hash); or by ticking “Also build …” when you Create schema & tables.'),
+        p('Tick “Use pre-materialized transitions” on the connection (it takes effect on the next chart reload — no reconnect needed), then rebuild the table after each load of JOURNEYS. Rebuild it three ways: the Rebuild now button here (shows the last-built time and pair count); a scheduler calling POST /api/connections/<id>/rebuild-transitions with an Authorization: Bearer token (generate the connection’s own token under “Rebuild from a script (API)”, which also shows a ready-to-copy curl example — the token is scoped to that connection, shown once, and stored only as a hash); or by ticking “Also build …” when you Create schema & tables.'),
         p('The active mode is shown as a pill on the process map: ⚡ Pre-materialized (reading the table), ↻ Live query (not enabled), or ⚠ Live (not built) — enabled but the table isn’t ready, so it is running live meanwhile; rebuild it. If a rebuild-enabled connection keeps showing “Live (not built)”, the admin Logging tab records the exact cause under the “materialize” operation.'),
         tip('Whether it pays off depends on how often JOURNEYS changes: ideal for batch loads that are then explored heavily, less so for continuously-updated data (the table is stale until the next rebuild).'),
       ],
@@ -309,20 +309,22 @@ const adminConnections: HelpTopic = {
 
 const adminApi: HelpTopic = {
   id: 'admin-api',
-  title: 'API',
-  subtitle: 'Trigger a transitions rebuild from a scheduler',
+  title: 'Rebuild from a script (API)',
+  subtitle: 'Trigger a per-connection rebuild from a scheduler',
   icon: '🔌',
   sections: [
     {
-      heading: 'Rebuild token',
+      heading: 'Per-connection rebuild token',
       body: [
-        p('The API tab issues a bearer token that lets an external caller — a cron job or ETL step — trigger a connection’s pre-materialized transitions rebuild without an admin login. Generate/rotate or revoke it here. It is shown once, right after generation (copy it then); only its hash is stored, so it cannot be shown again, and rotating or revoking invalidates the previous token immediately.'),
+        p('Each connection can issue its own bearer token so an external caller — a cron job or ETL step — can trigger that connection’s pre-materialized transitions rebuild without an admin login. Open the connection in Database Connections, expand “Rebuild from a script (API)”, and Generate / rotate or Revoke the token there. It is shown once, right after generation (copy it then); only its hash is stored, so it cannot be shown again, and rotating or revoking invalidates the previous token immediately.'),
+        tip('The token is scoped to its own connection — it cannot rebuild any other connection.'),
       ],
     },
     {
       heading: 'Triggering the rebuild',
       body: [
-        p('Call POST /api/connections/<id>/rebuild-transitions on the admin server with header Authorization: Bearer <token>. The tab shows a ready-to-copy curl example (with a copy button), pre-filled with your real token while it is still visible, and using the -k flag to skip the TLS certificate check for the self-signed admin certificate. On success the response is {"ok": true, "rows": N, "built_at": …}; on failure, ok:false with an error string.'),
+        p('Call POST /api/connections/<id>/rebuild-transitions on the admin server with header Authorization: Bearer <token>. That section shows a ready-to-copy curl example (with a copy button), pre-filled with your real token while it is still visible, and using the -k flag to skip the TLS certificate check for the self-signed admin certificate. On success the response is {"ok": true, "rows": N, "built_at": …}; on failure, ok:false with an error string.'),
+        p('Token-triggered rebuilds are rate-limited per connection, and a connection never runs two rebuilds at once, so a leaked token cannot hammer the database. An admin using the Rebuild now button is not throttled.'),
         tip('Run it right after each load of JOURNEYS so the materialized map reflects the new data. The connection must have “Use pre-materialized transitions” enabled to benefit.'),
       ],
     },
