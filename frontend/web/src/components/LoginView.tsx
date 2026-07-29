@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { loginBackground, type LoginAppearance } from '../loginAppearance'
+import { passkeysSupported } from '../passkey'
 import { useStore } from '../store'
 import { Logo } from './Logo'
 import { Spinner } from './ui'
@@ -80,6 +81,16 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
     } else {
       onSignedIn()
     }
+  }
+
+  const signInWithPasskey = async () => {
+    if (!username.trim() || busy) return
+    setBusy(true)
+    setError(null)
+    const message = await store.loginWithPasskey(username.trim())
+    setBusy(false)
+    if (message) setError(message) // '' = user cancelled → stay silent
+    else onSignedIn()
   }
 
   return (
@@ -186,14 +197,28 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
           />
         </div>
 
-        <button
-          className="btn prominent"
-          type="submit"
-          disabled={busy || !username.trim()}
-          style={{ width: '100%', padding: '10px', fontSize: 15 }}
-        >
-          {busy && <Spinner />} Sign in
-        </button>
+        <div className="row" style={{ gap: 8, width: '100%' }}>
+          <button
+            className="btn prominent"
+            type="submit"
+            disabled={busy || !username.trim()}
+            style={{ flex: 1, padding: '10px', fontSize: 15 }}
+          >
+            {busy && <Spinner />} Sign in
+          </button>
+          {passkeysSupported() && (
+            <button
+              className="btn"
+              type="button"
+              disabled={busy || !username.trim()}
+              onClick={signInWithPasskey}
+              title="Sign in with a passkey (Touch ID, Windows Hello, security key…)"
+              style={{ padding: '10px 12px', fontSize: 15, whiteSpace: 'nowrap' }}
+            >
+              🔑 Sign with Passkey
+            </button>
+          )}
+        </div>
 
         {directory?.configured && (
           <div

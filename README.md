@@ -168,6 +168,24 @@ headers (`X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` against
 clickjacking, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
 and HSTS when TLS is on). The security store lives in `data/security.sqlite3`.
 
+**Passkeys (WebAuthn).** Both the app and the admin interface accept **passkey**
+sign-in (Touch ID, Windows Hello, a hardware security key) as an *alternative* to
+the password — the password (or directory sign-in) always remains a fallback, so a
+lost device never locks anyone out. Passkeys are **admin-gated per user**: the
+*Passkey* column in the admin *Users* tab (with an all-users master checkbox) grants
+who may enrol and use one; both local and directory accounts qualify. An allowed
+user enrols a device while signed in — from the main app (**🔑 Passkeys**, next to
+*Sign out*) or, for admins, from **App Control → Passkeys** — then signs in by typing
+their username and clicking **Sign with Passkey**. Because the Relying-Party ID is
+the host without its port, **one passkey works for both** the app (`:8443`) and the
+admin panel (`:8453`) on the same host. Only the credential's public key and a
+replay-guarding signature counter are stored (`credentials` table); turning a user's
+permission off — or deleting the user — invalidates their passkeys immediately.
+WebAuthn requires a **secure context** (HTTPS, or `localhost` for local testing), so
+off-localhost run TLS *Optional*/*Required*. For split app/admin sub-domains, set
+`PMW_PASSKEY_RP_ID` to the shared parent domain and list allowed origins in
+`PMW_PASSKEY_ORIGINS` (both optional; single-host deployments need neither).
+
 **Scheduled backups.** The *Backup* tab can write an **encrypted backup on a
 schedule** while the admin server is running (an in-process scheduler; no external
 cron needed). Enable it, build the schedule like a crontab — a frequency

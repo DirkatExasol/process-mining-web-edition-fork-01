@@ -46,6 +46,7 @@ import {
 } from './types'
 import { addDays, fromISODate, toISODate } from './graph/format'
 import { migrateHappyPath } from './graph/happyPath'
+import { authenticateWithPasskey } from './passkey'
 
 export type ABSide = 'a' | 'b'
 
@@ -130,6 +131,7 @@ export interface AppState {
   authDisplayName: string | null
   authIsAdmin: boolean
   authIsPower: boolean
+  authPasskeyAllowed: boolean
   requireLogin: boolean
   idleTimeoutMins: number
   /** Set when the last sign-out was due to inactivity, so the login screen can say so. */
@@ -269,6 +271,7 @@ export interface AppActions {
 
   checkSession: () => Promise<void>
   login: (username: string, password: string) => Promise<string | null>
+  loginWithPasskey: (username: string) => Promise<string | null>
   logout: (opts?: { inactivity?: boolean }) => Promise<void>
 
   refreshConnections: () => Promise<void>
@@ -407,6 +410,7 @@ const INITIAL_STATE: AppState = {
   authDisplayName: null,
   authIsAdmin: false,
   authIsPower: false,
+  authPasskeyAllowed: false,
   requireLogin: true,
   idleTimeoutMins: 0,
   signedOutForInactivity: false,
@@ -861,6 +865,7 @@ export const useStore = create<Store>((set, get) => {
           authDisplayName: s.authenticated ? s.displayName : null,
           authIsAdmin: s.isAdmin,
           authIsPower: s.isPower,
+          authPasskeyAllowed: s.authenticated ? s.passkeyAllowed : false,
           requireLogin: s.requireLogin,
           idleTimeoutMins: s.idleTimeoutMins ?? 0,
         })
@@ -879,12 +884,35 @@ export const useStore = create<Store>((set, get) => {
           authDisplayName: result.displayName || null,
           authIsAdmin: result.isAdmin,
           authIsPower: result.isPower,
+          authPasskeyAllowed: result.passkeyAllowed,
           signedOutForInactivity: false,
         })
         void get().refreshManageable()
         return null
       } catch (error) {
         return error instanceof ApiError ? error.message : String(error)
+      }
+    },
+
+    loginWithPasskey: async (username) => {
+      try {
+        const result = await authenticateWithPasskey(username)
+        set({
+          authUser: result.username,
+          authDisplayName: result.displayName || null,
+          authIsAdmin: result.isAdmin,
+          authIsPower: result.isPower,
+          authPasskeyAllowed: result.passkeyAllowed,
+          signedOutForInactivity: false,
+        })
+        void get().refreshManageable()
+        return null
+      } catch (error) {
+        // A user-cancelled ceremony (NotAllowedError / AbortError) is not an error.
+        if (error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'AbortError')) {
+          return ''
+        }
+        return error instanceof Error ? error.message : String(error)
       }
     },
 
@@ -899,6 +927,7 @@ export const useStore = create<Store>((set, get) => {
         authDisplayName: null,
         authIsAdmin: false,
         authIsPower: false,
+        authPasskeyAllowed: false,
         manageableConnections: [],
         assignableUsers: [],
         signedOutForInactivity: opts?.inactivity ?? false,

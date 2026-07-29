@@ -80,6 +80,7 @@ export const api = {
       authSource: string | null
       requireLogin: boolean
       idleTimeoutMins: number
+      passkeyAllowed: boolean
     }>('/auth/session'),
   login: (username: string, password: string) =>
     post<{
@@ -88,6 +89,7 @@ export const api = {
       isPower: boolean
       displayName: string
       authSource: string
+      passkeyAllowed: boolean
     }>('/auth/login', { username, password }),
   logout: () => post<{ ok: boolean }>('/auth/logout'),
   // Directory (LDAP) availability for the login panel; configured=false ⇒ show nothing.

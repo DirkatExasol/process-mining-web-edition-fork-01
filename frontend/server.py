@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from app import licensing  # noqa: E402
 from app import log_events as logx  # noqa: E402
 from app.config import BACKEND_CA_PATH, BACKEND_URL, SESSION_TTL_SECS  # noqa: E402
+from app.services import passkey  # noqa: E402
 from app.store.crypto import (  # noqa: E402
     proxy_auth_secret,
     read_session,
@@ -224,10 +225,184 @@ async def auth_login(request: Request) -> Response:
             "isPower": user.is_power,
             "displayName": user.display_name,
             "authSource": user.auth_source,
+            "passkeyAllowed": user.passkey_allowed,
         }
     )
     _set_session_cookie(response, request, user.username)
     return response
+
+
+# ── Passkey (WebAuthn) sign-in — an alternative to the password ───────────────
+
+
+def _rp_and_origins(request: Request):
+    host = request.url.hostname or "localhost"
+    origin = request.headers.get("origin") or f"{request.url.scheme}://{request.url.netloc}"
+    return passkey.resolve_rp(host, origin)
+
+
+def _set_challenge_cookie(response: Response, request: Request, token: str) -> None:
+    response.set_cookie(
+        passkey.CHALLENGE_COOKIE, token,
+        httponly=True, samesite="lax",
+        secure=request.url.scheme == "https",
+        max_age=passkey.CHALLENGE_TTL_SECS, path="/",
+    )
+
+
+@app.post("/auth/passkey/auth/begin")
+async def passkey_auth_begin(request: Request) -> Response:
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        data = {}
+    username = str(data.get("username") or "").strip()
+    user = store.get_user(username) if username else None
+    ids = store.credential_ids_for(user.username) if user else []
+    if user is None or not user.is_enabled or not user.passkey_allowed or not ids:
+        return JSONResponse(
+            {"detail": "Passkey sign-in is not available for this account."},
+            status_code=403,
+        )
+    rp_id, _ = _rp_and_origins(request)
+    options_json, challenge = passkey.authentication_options(rp_id=rp_id, allow_ids=ids)
+    response = Response(content=options_json, media_type="application/json")
+    _set_challenge_cookie(
+        response, request,
+        passkey.make_challenge_cookie(
+            challenge=challenge, username=user.username, kind="auth", aud="app"
+        ),
+    )
+    return response
+
+
+@app.post("/auth/passkey/auth/finish")
+async def passkey_auth_finish(request: Request) -> Response:
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        data = {}
+    ch = passkey.read_challenge_cookie(
+        request.cookies.get(passkey.CHALLENGE_COOKIE) or "", kind="auth", aud="app"
+    )
+    if ch is None:
+        return JSONResponse({"detail": "Passkey challenge expired. Try again."}, status_code=400)
+    credential = data.get("credential")
+    cred_id = credential.get("id") if isinstance(credential, dict) else None
+    row = store.get_credential(cred_id) if cred_id else None
+    user = store.get_user(row["username"]) if row else None
+    rp_id, origins = _rp_and_origins(request)
+    ok = False
+    if (row is not None and user is not None and user.is_enabled and user.passkey_allowed
+            and (row["username"] or "").lower() == (ch["username"] or "").lower()):
+        try:
+            new_count = passkey.verify_authentication(
+                credential=credential, challenge=ch["challenge"], rp_id=rp_id,
+                origins=origins, public_key=row["public_key"], sign_count=row["sign_count"],
+            )
+            store.set_credential_sign_count(cred_id, new_count)
+            ok = True
+        except Exception as exc:  # noqa: BLE001
+            logx.warn(
+                f"passkey verification failed for {ch['username']!r}: {exc}",
+                request=request, operation="login",
+            )
+    if not ok:
+        r = JSONResponse({"detail": "Passkey sign-in failed."}, status_code=401)
+        r.delete_cookie(passkey.CHALLENGE_COOKIE, path="/")
+        return r
+    logx.usage(
+        f"user {user.username} signed in with a passkey",
+        request=request, username=user.username, operation="login",
+    )
+    response = JSONResponse({
+        "username": user.username, "isAdmin": user.is_admin, "isPower": user.is_power,
+        "displayName": user.display_name, "authSource": user.auth_source,
+        "passkeyAllowed": user.passkey_allowed,
+    })
+    response.delete_cookie(passkey.CHALLENGE_COOKIE, path="/")
+    _set_session_cookie(response, request, user.username)
+    return response
+
+
+@app.post("/auth/passkey/register/begin")
+async def passkey_register_begin(request: Request) -> Response:
+    user = _current_user(request)
+    if user is None:
+        return JSONResponse({"detail": "Not signed in."}, status_code=401)
+    if not user.passkey_allowed:
+        return JSONResponse({"detail": "Passkeys are not enabled for your account."}, status_code=403)
+    rp_id, _ = _rp_and_origins(request)
+    options_json, challenge = passkey.registration_options(
+        rp_id=rp_id, username=user.username,
+        display_name=user.display_name or user.username,
+        existing_ids=store.credential_ids_for(user.username),
+    )
+    response = Response(content=options_json, media_type="application/json")
+    _set_challenge_cookie(
+        response, request,
+        passkey.make_challenge_cookie(
+            challenge=challenge, username=user.username, kind="reg", aud="app"
+        ),
+    )
+    return response
+
+
+@app.post("/auth/passkey/register/finish")
+async def passkey_register_finish(request: Request) -> Response:
+    user = _current_user(request)
+    if user is None:
+        return JSONResponse({"detail": "Not signed in."}, status_code=401)
+    if not user.passkey_allowed:
+        return JSONResponse({"detail": "Passkeys are not enabled for your account."}, status_code=403)
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        data = {}
+    ch = passkey.read_challenge_cookie(
+        request.cookies.get(passkey.CHALLENGE_COOKIE) or "", kind="reg", aud="app"
+    )
+    if ch is None or (ch["username"] or "").lower() != user.username.lower():
+        return JSONResponse({"detail": "Passkey challenge expired. Try again."}, status_code=400)
+    rp_id, origins = _rp_and_origins(request)
+    try:
+        cred = passkey.verify_registration(
+            credential=data.get("credential"), challenge=ch["challenge"],
+            rp_id=rp_id, origins=origins,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"detail": f"Could not register passkey: {exc}"}, status_code=400)
+    store.add_credential(
+        user.username, credential_id=cred["credential_id"], public_key=cred["public_key"],
+        sign_count=cred["sign_count"], transports=str(data.get("transports") or ""),
+        name=str(data.get("name") or "").strip()[:60],
+    )
+    logx.usage(
+        f"user {user.username} registered a passkey",
+        request=request, username=user.username, operation="login",
+    )
+    r = JSONResponse({"ok": True})
+    r.delete_cookie(passkey.CHALLENGE_COOKIE, path="/")
+    return r
+
+
+@app.get("/auth/passkey/credentials")
+async def passkey_credentials(request: Request) -> Response:
+    user = _current_user(request)
+    if user is None:
+        return JSONResponse({"detail": "Not signed in."}, status_code=401)
+    return JSONResponse(
+        {"passkeyAllowed": user.passkey_allowed, "credentials": store.list_credentials(user.username)}
+    )
+
+
+@app.delete("/auth/passkey/credentials/{cred_id}")
+async def passkey_delete_credential(cred_id: str, request: Request) -> Response:
+    user = _current_user(request)
+    if user is None:
+        return JSONResponse({"detail": "Not signed in."}, status_code=401)
+    store.delete_credential(cred_id, user.username)
+    return JSONResponse({"ok": True})
 
 
 # Brief cache so the login panel (and any re-render) doesn't re-probe the directory
@@ -337,6 +512,7 @@ async def auth_session(request: Request) -> Response:
             "isPower": user.is_power if user else False,
             "displayName": user.display_name if user else None,
             "authSource": user.auth_source if user else None,
+            "passkeyAllowed": user.passkey_allowed if user else False,
             "requireLogin": store.require_login,
             "idleTimeoutMins": store.idle_timeout_mins,
         }

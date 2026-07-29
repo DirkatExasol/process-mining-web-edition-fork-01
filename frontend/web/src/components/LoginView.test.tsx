@@ -2,7 +2,7 @@
  *  only when a directory is configured and reflects its reachability. */
 
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 vi.mock('../api', () => ({
   ApiError: class ApiError extends Error {},
@@ -20,11 +20,19 @@ vi.mock('../api', () => ({
   },
 }))
 
+vi.mock('../passkey', () => ({
+  passkeysSupported: vi.fn(() => true),
+  authenticateWithPasskey: vi.fn(),
+}))
+
 import { api } from '../api'
+import { authenticateWithPasskey, passkeysSupported } from '../passkey'
 import { LoginView } from './LoginView'
 
 const directoryStatus = api.directoryStatus as unknown as ReturnType<typeof vi.fn>
 const licenseStatus = api.licenseStatus as unknown as ReturnType<typeof vi.fn>
+const supported = passkeysSupported as unknown as ReturnType<typeof vi.fn>
+const authPasskey = authenticateWithPasskey as unknown as ReturnType<typeof vi.fn>
 
 // Most tests don't care about the license label; default it to "licensed".
 licenseStatus.mockResolvedValue({
@@ -115,5 +123,59 @@ describe('LoginView demo-mode label', () => {
     render(<LoginView onSignedIn={() => {}} />)
     await waitFor(() => expect(licenseStatus).toHaveBeenCalled())
     expect(screen.queryByText(/Demo Mode/)).toBeNull()
+  })
+})
+
+describe('LoginView passkey button', () => {
+  it('is hidden when the browser does not support passkeys', async () => {
+    supported.mockReturnValue(false)
+    directoryStatus.mockResolvedValue({ configured: false, available: false })
+    render(<LoginView onSignedIn={() => {}} />)
+    await waitFor(() => expect(directoryStatus).toHaveBeenCalled())
+    expect(screen.queryByText(/Sign with Passkey/)).toBeNull()
+    supported.mockReturnValue(true) // restore for later tests
+  })
+
+  it('stays disabled until a username is entered', async () => {
+    supported.mockReturnValue(true)
+    directoryStatus.mockResolvedValue({ configured: false, available: false })
+    render(<LoginView onSignedIn={() => {}} />)
+    const btn = (await screen.findByText(/Sign with Passkey/)).closest('button')!
+    expect(btn.disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'alice' } })
+    expect(btn.disabled).toBe(false)
+  })
+
+  it('drives the passkey ceremony and signs in on success', async () => {
+    supported.mockReturnValue(true)
+    directoryStatus.mockResolvedValue({ configured: false, available: false })
+    authPasskey.mockResolvedValue({
+      username: 'alice',
+      isAdmin: false,
+      isPower: false,
+      displayName: null,
+      authSource: null,
+      passkeyAllowed: true,
+    })
+    const onSignedIn = vi.fn()
+    render(<LoginView onSignedIn={onSignedIn} />)
+    const btn = (await screen.findByText(/Sign with Passkey/)).closest('button')!
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'alice' } })
+    fireEvent.click(btn)
+    await waitFor(() => expect(authPasskey).toHaveBeenCalledWith('alice'))
+    await waitFor(() => expect(onSignedIn).toHaveBeenCalled())
+  })
+
+  it('shows an error when the passkey ceremony fails', async () => {
+    supported.mockReturnValue(true)
+    directoryStatus.mockResolvedValue({ configured: false, available: false })
+    authPasskey.mockRejectedValue(new Error('Passkey sign-in failed.'))
+    const onSignedIn = vi.fn()
+    render(<LoginView onSignedIn={onSignedIn} />)
+    const btn = (await screen.findByText(/Sign with Passkey/)).closest('button')!
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'alice' } })
+    fireEvent.click(btn)
+    await screen.findByText('Passkey sign-in failed.')
+    expect(onSignedIn).not.toHaveBeenCalled()
   })
 })

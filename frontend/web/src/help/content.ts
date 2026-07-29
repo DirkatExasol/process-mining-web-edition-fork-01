@@ -170,6 +170,7 @@ const connecting: HelpTopic = {
       heading: 'Signing in',
       body: [
         p('Unless an administrator has turned sign-in off, the application asks you to sign in. Use the username and password you were given — depending on how your organisation is set up this may be a local account or a directory (LDAP / Active Directory) account.'),
+        def('Passkeys', 'If your administrator has enabled passkeys for your account, you can sign in with Touch ID, Windows Hello, or a hardware security key instead of a password. First sign in with your password, then open 🔑 Passkeys next to Sign out and add a passkey for this device. After that, type your username on the login page and click “Sign with Passkey”. Your password always keeps working as a fallback, so you are never locked out.'),
         tip('Your app sign-in is completely separate from any database credentials. You never type a database password into the app — those live only in the administrator’s configuration.'),
       ],
     },
@@ -322,6 +323,16 @@ const adminUsers: HelpTopic = {
         def('Failed sign-in lockout', '“Disable an account after N failed sign-in attempts” automatically disables an account once N wrong passwords are entered (defaults to 3; set 0 to turn it off). A locked account shows a clear message on the login panel and carries a Locked badge in the Users tab, where you can unlock it. The built-in Administrator is exempt from auto-lockout — as the sole recovery account it must not be lockable by someone who merely knows its name; it is protected by the per-IP throttle instead. (If you ever need to clear all locks, restart the servers with PMW_RESET_LOCKOUTS=1.) Separately, the admin sign-in page throttles repeated failures from the same IP address with a short, self-clearing cooldown (HTTP 429), so password guessing is slowed even when the account lockout does not apply.'),
         def('Power role', 'Make power / Remove power grants the power badge. Power users can create and manage their own database connections from within the main app and assign them to other users — without needing access to this admin interface. They manage only the connections they create; admins still see and manage every connection. Power users (and admins) also get the advanced-analysis views — Conformance Check, Happy Path and Simulation — and journey sampling. See the Users & Permissions chapter for the full capability matrix.'),
         def('Source badge', 'Each user is tagged local or LDAP so you can tell built-in accounts from directory accounts at a glance; the All / Local / LDAP filter narrows the list.'),
+      ],
+    },
+    {
+      heading: 'Passkeys (WebAuthn)',
+      body: [
+        p('Passkeys let a user sign in with Touch ID, Windows Hello, or a hardware security key instead of typing a password. They are an alternative, never a replacement: the password (or directory sign-in) always remains as a fallback, so no one is locked out if a device is lost.'),
+        def('Who may use a passkey', 'The Passkey column in the Users tab gates this per account — tick it to let that user enrol and sign in with a passkey. The header checkbox is a master toggle that turns passkeys on or off for everyone at once. Both local and directory (LDAP) users can be allowed; a directory user enrols a local passkey that signs them in without contacting the directory.'),
+        def('Enrolling a device', 'Once allowed, a user adds a passkey from the main app (the 🔑 Passkeys button by Sign out) or, for administrators, from the App Control → Passkeys card here. Enrolment requires being signed in first, so only the real account owner can register a device. A passkey registered on this host works for both the main app and this admin interface — one passkey, both surfaces.'),
+        def('Signing in', 'On the login page the user types their username and clicks “Sign with Passkey”. Turning off the Passkey permission blocks further passkey sign-ins immediately (existing passkeys stop working until re-enabled); deleting a user also removes their passkeys.'),
+        warn('Passkeys need a secure context — HTTPS, or localhost for local testing. Off localhost, run the app with TLS set to Optional or Required. On a single host everything works out of the box; for split app/admin sub-domains, set PMW_PASSKEY_RP_ID to the shared parent domain and list the origins in PMW_PASSKEY_ORIGINS.'),
       ],
     },
   ],

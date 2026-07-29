@@ -100,6 +100,7 @@ def test_session_reports_unauthenticated_and_require_login(gui):
         "authSource": None,
         "requireLogin": True,
         "idleTimeoutMins": 0,
+        "passkeyAllowed": False,
     }
 
 
@@ -307,3 +308,76 @@ def test_login_appearance_endpoint_is_open(gui):
         "color": "#0a84ff",
         "image": "",
     }
+
+
+# ── Passkeys (WebAuthn) — the app's sign-in alternative ──────────────────────
+
+
+def test_session_reports_passkey_allowed_for_signed_in_user(gui):
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    store.set_passkey_allowed("alice", True)
+    client = TestClient(server.app)
+    client.post("/auth/login", json={"username": "alice", "password": "pw"})
+    body = client.get("/auth/session").json()
+    assert body["authenticated"] is True and body["passkeyAllowed"] is True
+
+
+def test_login_response_includes_passkey_allowed(gui):
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    store.set_passkey_allowed("alice", True)
+    client = TestClient(server.app)
+    body = client.post("/auth/login", json={"username": "alice", "password": "pw"}).json()
+    assert body["passkeyAllowed"] is True
+
+
+def test_passkey_auth_begin_denied_without_allow_or_credentials(gui):
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    client = TestClient(server.app)
+
+    # Not allowed, no credentials → 403 and no challenge cookie.
+    from app.services import passkey
+    r = client.post("/auth/passkey/auth/begin", json={"username": "alice"})
+    assert r.status_code == 403
+    assert passkey.CHALLENGE_COOKIE not in client.cookies
+
+    # Allowed but still no registered credential → still 403.
+    store.set_passkey_allowed("alice", True)
+    r = client.post("/auth/passkey/auth/begin", json={"username": "alice"})
+    assert r.status_code == 403
+
+
+def test_passkey_auth_begin_offers_options_when_eligible(gui):
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    store.set_passkey_allowed("alice", True)
+    store.add_credential("alice", credential_id="cred-a", public_key="K", sign_count=0)
+    client = TestClient(server.app)
+
+    from app.services import passkey
+    r = client.post("/auth/passkey/auth/begin", json={"username": "alice"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["challenge"] and len(body["allowCredentials"]) == 1
+    assert passkey.CHALLENGE_COOKIE in client.cookies
+
+
+def test_passkey_auth_begin_hides_whether_user_exists(gui):
+    # An unknown username and a real-but-ineligible one both return the same 403,
+    # so the endpoint doesn't leak which usernames exist.
+    server, _ = gui
+    client = TestClient(server.app)
+    r = client.post("/auth/passkey/auth/begin", json={"username": "ghost"})
+    assert r.status_code == 403
+
+
+def test_passkey_register_begin_requires_a_session(gui):
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    store.set_passkey_allowed("alice", True)
+    client = TestClient(server.app)
+    # No session cookie → enrolment is refused.
+    r = client.post("/auth/passkey/register/begin")
+    assert r.status_code in (401, 403)

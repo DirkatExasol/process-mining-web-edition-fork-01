@@ -102,6 +102,16 @@ CREATE TABLE IF NOT EXISTS security_config (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS credentials (
+    id            TEXT PRIMARY KEY,
+    username      TEXT NOT NULL,
+    credential_id TEXT NOT NULL UNIQUE,
+    public_key    TEXT NOT NULL,
+    sign_count    INTEGER NOT NULL DEFAULT 0,
+    transports    TEXT NOT NULL DEFAULT '',
+    name          TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS connections (
     id            TEXT PRIMARY KEY,
     name          TEXT NOT NULL,
@@ -161,6 +171,7 @@ class User:
     email: str = ""
     display_name: str = ""
     is_power: bool = False  # may create/manage their own DB connections from the app
+    passkey_allowed: bool = False  # may enrol + sign in with a passkey (admin-gated)
     failed_logins: int = 0
     login_locked: bool = False  # disabled by the failed-sign-in lockout
     session_epoch: int = 0  # bumped on logout; stale-epoch tokens are rejected
@@ -178,6 +189,7 @@ class User:
             "email": self.email,
             "displayName": self.display_name,
             "isPower": self.is_power,
+            "passkeyAllowed": self.passkey_allowed,
         }
 
 
@@ -314,6 +326,8 @@ class SecurityStore:
             ("email", "email TEXT NOT NULL DEFAULT ''"),
             ("display_name", "display_name TEXT NOT NULL DEFAULT ''"),
             ("is_power", "is_power INTEGER NOT NULL DEFAULT 0"),
+            # Admin-gated permission to enrol and sign in with a passkey (WebAuthn).
+            ("passkey_allowed", "passkey_allowed INTEGER NOT NULL DEFAULT 0"),
             # Failed-sign-in lockout (admin-configurable threshold).
             ("failed_logins", "failed_logins INTEGER NOT NULL DEFAULT 0"),
             ("login_locked", "login_locked INTEGER NOT NULL DEFAULT 0"),
@@ -931,6 +945,7 @@ class SecurityStore:
             email=(row["email"] if "email" in keys else "") or "",
             display_name=(row["display_name"] if "display_name" in keys else "") or "",
             is_power=bool(row["is_power"]) if "is_power" in keys else False,
+            passkey_allowed=bool(row["passkey_allowed"]) if "passkey_allowed" in keys else False,
             failed_logins=int(row["failed_logins"]) if "failed_logins" in keys else 0,
             login_locked=bool(row["login_locked"]) if "login_locked" in keys else False,
             session_epoch=int(row["session_epoch"]) if "session_epoch" in keys else 0,
@@ -1033,6 +1048,23 @@ class SecurityStore:
             )
             self._conn.commit()
 
+    def set_passkey_allowed(self, username: str, allowed: bool) -> None:
+        """Grant/revoke a user's permission to enrol and sign in with a passkey."""
+        if self.get_user(username) is None:
+            raise ValueError("No such user.")
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET passkey_allowed = ? WHERE LOWER(username) = LOWER(?)",
+                (int(allowed), username),
+            )
+            self._conn.commit()
+
+    def set_passkey_allowed_all(self, allowed: bool) -> None:
+        """Master toggle — allow/deny passkeys for every user at once."""
+        with self._lock:
+            self._conn.execute("UPDATE users SET passkey_allowed = ?", (int(allowed),))
+            self._conn.commit()
+
     def delete_user(self, username: str) -> None:
         user = self.get_user(username)
         if user is None:
@@ -1045,7 +1077,86 @@ class SecurityStore:
             self._conn.execute(
                 "DELETE FROM users WHERE LOWER(username) = LOWER(?)", (username,)
             )
+            self._conn.execute(
+                "DELETE FROM credentials WHERE LOWER(username) = LOWER(?)", (username,)
+            )
             self._conn.commit()
+
+    # ── Passkey (WebAuthn) credentials ──────────────────────────────────────
+    # Public keys aren't secret, but the sign counter guards against cloned-
+    # authenticator replay. Keyed on username (case-insensitive), so both local
+    # and directory users can own credentials.
+
+    def add_credential(
+        self,
+        username: str,
+        *,
+        credential_id: str,
+        public_key: str,
+        sign_count: int,
+        transports: str = "",
+        name: str = "",
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO credentials (id, username, credential_id, public_key, "
+                "sign_count, transports, name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), username, credential_id, public_key,
+                 int(sign_count), transports, name, _now()),
+            )
+            self._conn.commit()
+
+    def list_credentials(self, username: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM credentials WHERE LOWER(username) = LOWER(?) "
+                "ORDER BY created_at",
+                (username,),
+            ).fetchall()
+        return [self._cred_public(r) for r in rows]
+
+    def get_credential(self, credential_id: str) -> sqlite3.Row | None:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM credentials WHERE credential_id = ?", (credential_id,)
+            ).fetchone()
+
+    def credential_ids_for(self, username: str) -> list[str]:
+        """Raw credential_id (base64url) strings for a user — for allowCredentials
+        (login) and exclude_credentials (registration)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT credential_id FROM credentials WHERE LOWER(username) = LOWER(?)",
+                (username,),
+            ).fetchall()
+        return [r["credential_id"] for r in rows]
+
+    def set_credential_sign_count(self, credential_id: str, count: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE credentials SET sign_count = ? WHERE credential_id = ?",
+                (int(count), credential_id),
+            )
+            self._conn.commit()
+
+    def delete_credential(self, cred_id: str, username: str) -> bool:
+        """Remove one of a user's credentials (owner-scoped). Returns True if removed."""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM credentials WHERE id = ? AND LOWER(username) = LOWER(?)",
+                (cred_id, username),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    @staticmethod
+    def _cred_public(row: sqlite3.Row) -> dict:
+        return {
+            "id": row["id"],
+            "name": row["name"] or "",
+            "createdAt": row["created_at"],
+            "transports": row["transports"] or "",
+        }
 
     def _is_builtin_admin(self, username: str) -> bool:
         """The seeded default administrator, protected from disable / demote."""

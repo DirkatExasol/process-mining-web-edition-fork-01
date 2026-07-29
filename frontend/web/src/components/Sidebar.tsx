@@ -18,6 +18,7 @@ import { useSetting } from '../settings'
 import { DEFAULT_LLM_PROMPT, useStore } from '../store'
 import { ConnectionEditor } from './ConnectionEditor'
 import { Logo } from './Logo'
+import { PasskeysSheet } from './PasskeysSheet'
 import { SamplingSection } from './SamplingSection'
 import { StepEditor } from './StepEditor'
 import {
@@ -46,6 +47,7 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
   const [openSection, setOpenSection] = useState<SectionId | null>('connections')
   const [showPromptEditor, setShowPromptEditor] = useState(false)
   const [showSavePreset, setShowSavePreset] = useState(false)
+  const [showPasskeys, setShowPasskeys] = useState(false)
   const [theme, setTheme] = useSetting<string>('app.theme')
   // Power/admin only: the connection being created (null) or edited.
   const [connEditor, setConnEditor] = useState<
@@ -203,6 +205,15 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
               </span>
             )}
             <span className="spacer" />
+            {store.authPasskeyAllowed && (
+              <button
+                className="btn small"
+                title="Manage passkeys for this account"
+                onClick={() => setShowPasskeys(true)}
+              >
+                🔑 Passkeys
+              </button>
+            )}
             <button
               className="btn small"
               title="Sign out"
@@ -213,6 +224,8 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
           </div>
         </>
       )}
+
+      {showPasskeys && <PasskeysSheet onClose={() => setShowPasskeys(false)} />}
 
       <Divider />
       <div className="theme-bar">

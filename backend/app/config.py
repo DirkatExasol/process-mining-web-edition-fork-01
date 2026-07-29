@@ -65,6 +65,20 @@ SESSION_TTL_SECS = int(os.environ.get("PMW_SESSION_TTL", str(12 * 3600)))
 
 # Default bootstrap administrator (created on first run if no users exist).
 DEFAULT_ADMIN_USERNAME = os.environ.get("PMW_DEFAULT_ADMIN_USER", "Administrator")
+
+# Passkey (WebAuthn) login. The Relying Party ID is the registrable domain (host,
+# NO port), so the app and admin on the same host share one passkey. Leave unset to
+# derive it from the request Host header (correct for localhost and single-host
+# deployments); set it to the parent domain for split app/admin subdomains.
+PASSKEY_RP_ID = os.environ.get("PMW_PASSKEY_RP_ID", "").strip()
+PASSKEY_RP_NAME = os.environ.get("PMW_PASSKEY_RP_NAME", "Process Mining Demonstrator")
+# Optional comma-separated allowlist of expected origins (scheme://host[:port]).
+# Empty → accept the request's own origin (works for localhost / single host).
+PASSKEY_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("PMW_PASSKEY_ORIGINS", "").split(",")
+    if o.strip()
+]
 DEFAULT_ADMIN_PASSWORD = os.environ.get("PMW_DEFAULT_ADMIN_PASSWORD", "Administrator")
 
 # URL the GUI server uses to reach the compute backend. HTTPS by default: the

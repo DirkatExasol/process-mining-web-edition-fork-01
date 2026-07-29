@@ -44,7 +44,7 @@ from app import licensing  # noqa: E402
 from app import log_events as logx  # noqa: E402
 from app import timeutil  # noqa: E402
 from app.db.manager import db as legacy_db  # noqa: E402 — settings-backed backup state
-from app.services import backup as backup_service, cron  # noqa: E402
+from app.services import backup as backup_service, cron, passkey  # noqa: E402
 from app.services.certs import CertError  # noqa: E402
 from app.store.logs import LEVELS, set_display_timezone, store as log_store  # noqa: E402
 from app.store.crypto import read_session, sign_session  # noqa: E402
@@ -244,6 +244,150 @@ def _set_cookie(response: Response, request: Request, username: str) -> None:
         max_age=_admin_session_ttl(),
         path="/",
     )
+
+
+# ── Passkey (WebAuthn) sign-in — an alternative to the password ───────────────
+
+
+def _pk_rp_and_origins(request: Request):
+    host = request.url.hostname or "localhost"
+    origin = request.headers.get("origin") or f"{request.url.scheme}://{request.url.netloc}"
+    return passkey.resolve_rp(host, origin)
+
+
+def _set_pk_challenge(response: Response, request: Request, token: str) -> None:
+    response.set_cookie(
+        passkey.CHALLENGE_COOKIE, token, httponly=True, samesite="lax",
+        secure=request.url.scheme == "https",
+        max_age=passkey.CHALLENGE_TTL_SECS, path="/",
+    )
+
+
+class PasskeyLoginBody(BaseModel):
+    username: str = ""
+
+
+@app.post("/login/passkey/begin")
+def passkey_login_begin(body: PasskeyLoginBody, request: Request):
+    username = (body.username or "").strip()
+    user = store.get_user(username) if username else None
+    ids = store.credential_ids_for(user.username) if user else []
+    if (user is None or not user.is_admin or not user.is_enabled
+            or not user.passkey_allowed or not ids):
+        raise HTTPException(status_code=403, detail="Passkey sign-in is not available.")
+    rp_id, _ = _pk_rp_and_origins(request)
+    options_json, challenge = passkey.authentication_options(rp_id=rp_id, allow_ids=ids)
+    response = Response(content=options_json, media_type="application/json")
+    _set_pk_challenge(
+        response, request,
+        passkey.make_challenge_cookie(challenge=challenge, username=user.username, kind="auth", aud="admin"),
+    )
+    return response
+
+
+@app.post("/login/passkey/finish")
+async def passkey_login_finish(request: Request):
+    ip = _client_ip(request)
+    retry = _login_retry_after(ip)
+    if retry > 0:
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again shortly.")
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        data = {}
+    ch = passkey.read_challenge_cookie(
+        request.cookies.get(passkey.CHALLENGE_COOKIE) or "", kind="auth", aud="admin"
+    )
+    credential = data.get("credential")
+    cred_id = credential.get("id") if isinstance(credential, dict) else None
+    row = store.get_credential(cred_id) if cred_id else None
+    user = store.get_user(row["username"]) if row else None
+    rp_id, origins = _pk_rp_and_origins(request)
+    ok = False
+    if (ch is not None and row is not None and user is not None and user.is_admin
+            and user.is_enabled and user.passkey_allowed
+            and (row["username"] or "").lower() == (ch["username"] or "").lower()):
+        try:
+            new_count = passkey.verify_authentication(
+                credential=credential, challenge=ch["challenge"], rp_id=rp_id,
+                origins=origins, public_key=row["public_key"], sign_count=row["sign_count"],
+            )
+            store.set_credential_sign_count(cred_id, new_count)
+            ok = True
+        except Exception as exc:  # noqa: BLE001
+            logx.warn(f"admin passkey verification failed: {exc}", request=request, operation="login")
+    if not ok:
+        _record_login_failure_ip(ip)
+        r = JSONResponse({"detail": "Passkey sign-in failed."}, status_code=401)
+        r.delete_cookie(passkey.CHALLENGE_COOKIE, path="/")
+        return r
+    _login_ip_failures.pop(ip, None)
+    logx.usage(f"admin {user.username} signed in with a passkey", request=request,
+               username=user.username, operation="login")
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(passkey.CHALLENGE_COOKIE, path="/")
+    _set_cookie(response, request, user.username)
+    return response
+
+
+@app.post("/api/passkey/register/begin")
+def passkey_register_begin(request: Request, user: User = Depends(require_admin)):
+    if not user.passkey_allowed:
+        raise HTTPException(status_code=403, detail="Passkeys are not enabled for your account.")
+    rp_id, _ = _pk_rp_and_origins(request)
+    options_json, challenge = passkey.registration_options(
+        rp_id=rp_id, username=user.username, display_name=user.display_name or user.username,
+        existing_ids=store.credential_ids_for(user.username),
+    )
+    response = Response(content=options_json, media_type="application/json")
+    _set_pk_challenge(
+        response, request,
+        passkey.make_challenge_cookie(challenge=challenge, username=user.username, kind="reg", aud="admin"),
+    )
+    return response
+
+
+@app.post("/api/passkey/register/finish")
+async def passkey_register_finish(request: Request, user: User = Depends(require_admin)):
+    if not user.passkey_allowed:
+        raise HTTPException(status_code=403, detail="Passkeys are not enabled for your account.")
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        data = {}
+    ch = passkey.read_challenge_cookie(
+        request.cookies.get(passkey.CHALLENGE_COOKIE) or "", kind="reg", aud="admin"
+    )
+    if ch is None or (ch["username"] or "").lower() != user.username.lower():
+        raise HTTPException(status_code=400, detail="Passkey challenge expired. Try again.")
+    rp_id, origins = _pk_rp_and_origins(request)
+    try:
+        cred = passkey.verify_registration(
+            credential=data.get("credential"), challenge=ch["challenge"], rp_id=rp_id, origins=origins,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Could not register passkey: {exc}") from exc
+    store.add_credential(
+        user.username, credential_id=cred["credential_id"], public_key=cred["public_key"],
+        sign_count=cred["sign_count"], transports=str(data.get("transports") or ""),
+        name=str(data.get("name") or "").strip()[:60],
+    )
+    logx.usage(f"admin {user.username} registered a passkey", request=request,
+               username=user.username, operation="login")
+    r = JSONResponse({"ok": True})
+    r.delete_cookie(passkey.CHALLENGE_COOKIE, path="/")
+    return r
+
+
+@app.get("/api/passkey/credentials")
+def passkey_list_credentials(user: User = Depends(require_admin)):
+    return {"passkeyAllowed": user.passkey_allowed, "credentials": store.list_credentials(user.username)}
+
+
+@app.delete("/api/passkey/credentials/{cred_id}")
+def passkey_delete_credential(cred_id: str, user: User = Depends(require_admin)):
+    store.delete_credential(cred_id, user.username)
+    return {"ok": True}
 
 
 # ── pages ─────────────────────────────────────────────────────────────────────
@@ -990,6 +1134,39 @@ def api_set_power(username: str, body: PowerBody, user: User = Depends(require_a
         store.set_power(username, body.isPower)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+class PasskeyAllowedBody(BaseModel):
+    allowed: bool
+
+
+@app.post("/api/users/{username}/passkey-allowed")
+def api_set_passkey_allowed(
+    username: str, body: PasskeyAllowedBody, user: User = Depends(require_admin)
+):
+    try:
+        store.set_passkey_allowed(username, body.allowed)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logx.usage(
+        f"admin {user.username} {'allowed' if body.allowed else 'disallowed'} "
+        f"passkeys for {username!r}",
+        username=user.username, operation="config",
+    )
+    return {"ok": True}
+
+
+@app.post("/api/access/passkey-all")
+def api_set_passkey_allowed_all(
+    body: PasskeyAllowedBody, user: User = Depends(require_admin)
+):
+    store.set_passkey_allowed_all(body.allowed)
+    logx.usage(
+        f"admin {user.username} {'allowed' if body.allowed else 'disallowed'} "
+        f"passkeys for all users",
+        username=user.username, operation="config",
+    )
     return {"ok": True}
 
 

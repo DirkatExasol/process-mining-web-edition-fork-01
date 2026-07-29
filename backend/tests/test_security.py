@@ -883,3 +883,88 @@ def test_materialization_status_round_trips_per_connection(security):
     assert st["ok"] is True and st["rows"] == 12345
     # Independent per connection.
     assert store.materialization_status("c2") is None
+
+
+# ── Passkeys (WebAuthn) — allow flag + credential store ──────────────────────
+
+
+def test_passkey_allowed_flag_defaults_off_and_toggles(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=False)
+    assert store.get_user("alice").passkey_allowed is False
+    assert store.get_user("alice").public()["passkeyAllowed"] is False
+
+    store.set_passkey_allowed("alice", True)
+    assert store.get_user("alice").passkey_allowed is True
+    assert store.get_user("ALICE").public()["passkeyAllowed"] is True  # case-insensitive
+
+    store.set_passkey_allowed("alice", False)
+    assert store.get_user("alice").passkey_allowed is False
+
+
+def test_set_passkey_allowed_unknown_user_raises(security):
+    with pytest.raises(ValueError):
+        security.store.set_passkey_allowed("ghost", True)
+
+
+def test_passkey_allowed_all_is_a_master_toggle(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=False)
+    store.create_user("bob", "pw", is_admin=False)
+
+    store.set_passkey_allowed_all(True)
+    assert all(u.passkey_allowed for u in store.list_users())
+
+    store.set_passkey_allowed_all(False)
+    assert not any(u.passkey_allowed for u in store.list_users())
+
+
+def test_credential_crud_and_public_view_hides_secrets(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=False)
+    store.add_credential(
+        "alice", credential_id="cred-abc", public_key="PUBKEY",
+        sign_count=0, transports="internal,hybrid", name="MacBook",
+    )
+    creds = store.list_credentials("alice")
+    assert len(creds) == 1
+    pub = creds[0]
+    # The public view is safe to hand to the browser: no key material, no raw id.
+    assert set(pub.keys()) == {"id", "name", "createdAt", "transports"}
+    assert "public_key" not in pub and "credential_id" not in pub
+    assert pub["name"] == "MacBook" and pub["transports"] == "internal,hybrid"
+
+    # Raw ids are available for allow/exclude lists, keyed case-insensitively.
+    assert store.credential_ids_for("ALICE") == ["cred-abc"]
+
+    row = store.get_credential("cred-abc")
+    assert row["public_key"] == "PUBKEY" and row["sign_count"] == 0
+
+    store.set_credential_sign_count("cred-abc", 7)
+    assert store.get_credential("cred-abc")["sign_count"] == 7
+
+
+def test_delete_credential_is_owner_scoped(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=False)
+    store.create_user("bob", "pw", is_admin=False)
+    store.add_credential("alice", credential_id="cred-a", public_key="K", sign_count=0)
+    cred_id = store.list_credentials("alice")[0]["id"]
+
+    # Bob cannot delete Alice's credential.
+    assert store.delete_credential(cred_id, "bob") is False
+    assert len(store.list_credentials("alice")) == 1
+    # Alice can.
+    assert store.delete_credential(cred_id, "alice") is True
+    assert store.list_credentials("alice") == []
+
+
+def test_deleting_user_cascades_to_credentials(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=False)
+    store.add_credential("alice", credential_id="cred-x", public_key="K", sign_count=0)
+    assert store.credential_ids_for("alice") == ["cred-x"]
+
+    store.delete_user("alice")
+    assert store.credential_ids_for("alice") == []
+    assert store.get_credential("cred-x") is None

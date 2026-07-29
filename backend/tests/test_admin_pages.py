@@ -111,6 +111,25 @@ def test_login_page_has_directory_indicator(pages):
     assert "Directory server" in html
 
 
+def test_login_page_has_passkey_button(pages):
+    html = pages.login_page()
+    assert 'id="pkbtn"' in html
+    assert "Sign with Passkey" in html
+    assert "/login/passkey/begin" in html and "/login/passkey/finish" in html
+    assert "navigator.credentials.get" in html
+
+
+def test_dashboard_has_passkey_management_card(dashboard):
+    assert "function loadAdminPasskeys" in dashboard
+    assert "function addAdminPasskey" in dashboard
+    assert "/api/passkey/register/begin" in dashboard
+    assert "/api/passkey/register/finish" in dashboard
+    assert 'id="pkAdminList"' in dashboard
+    # The Users tab gates who may use passkeys.
+    assert "togglePasskey" in dashboard
+    assert "/api/access/passkey-all" in dashboard
+
+
 def test_dashboard_has_admin_idle_logout(dashboard):
     assert 'id="adminIdleTimeout"' in dashboard
     assert "function setAdminIdle" in dashboard

@@ -15,3 +15,5 @@ regex==2026.7.19
 # IANA timezone database for `zoneinfo` — the slim container image lacks system
 # tzdata, so named zones (the admin display-timezone setting) need this package.
 tzdata==2026.3
+# WebAuthn / FIDO2 passkey login (registration + assertion verification).
+webauthn==3.0.0

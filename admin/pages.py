@@ -316,6 +316,13 @@ body {{ display: grid; place-items: center; min-height: 100vh; background: {body
   background: var(--accent); color: #fff; border: none; white-space: nowrap; }}
 .login-splash .btn-prominent:hover:not(:disabled) {{ filter: brightness(1.08); }}
 .login-splash .btn-prominent:disabled {{ opacity: .4; cursor: default; }}
+.login-splash .btn-row {{ display: flex; gap: 8px; width: 100%; }}
+.login-splash .btn-row .btn-prominent {{ flex: 1; }}
+.login-splash .btn-secondary {{ width: auto; padding: 10px 12px; font-size: 15px; font-weight: 500; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap;
+  background: var(--l-fill); color: var(--l-primary); border: 1px solid var(--l-border, rgba(0,0,0,.12)); cursor: pointer; }}
+.login-splash .btn-secondary:hover:not(:disabled) {{ filter: brightness(.97); }}
+.login-splash .btn-secondary:disabled {{ opacity: .4; cursor: default; }}
 .login-splash .login-err, .login-splash .login-notice {{ width: 100%; padding: 10px 12px; border-radius: 6px;
   font-size: 12px; text-align: left; }}
 .login-splash .login-err {{ background: rgba(255,59,48,.12); border: 1px solid rgba(255,59,48,.32); color: #ff3b30; }}
@@ -340,9 +347,14 @@ body {{ display: grid; place-items: center; min-height: 100vh; background: {body
         autocapitalize="none" autocorrect="off" autofocus></div>
     <div class="field"><label class="field-label" for="p">Password</label>
       <input class="text-input" id="p" type="password" name="password" autocomplete="current-password"></div>
-    <button class="btn-prominent" type="submit" id="signin" disabled>
-      <span class="spinner" id="spin" style="display:none"></span> Sign in</button>
+    <div class="btn-row">
+      <button class="btn-prominent" type="submit" id="signin" disabled>
+        <span class="spinner" id="spin" style="display:none"></span> Sign in</button>
+      <button class="btn-secondary" type="button" id="pkbtn" disabled style="display:none"
+        title="Sign in with a passkey (Touch ID, Windows Hello, security key…)">🔑 Sign with Passkey</button>
+    </div>
   </form>
+  <div id="pkerr" class="login-err" style="display:none"></div>
   <div id="dirStatus" class="dir-row" style="display:none">
     <span id="dirDot" style="width:8px; height:8px; border-radius:50%; flex:0 0 auto"></span>
     <span id="dirLabel" class="t-caption2"></span>
@@ -358,6 +370,52 @@ body {{ display: grid; place-items: center; min-height: 100vh; background: {body
   form.addEventListener('submit', function () {{
     if (btn.disabled) return;
     btn.disabled = true; spin.style.display = 'inline-block';  // busy state during the POST
+  }});
+}})();
+// Passkey sign-in — an alternative to the password, shown when the browser supports WebAuthn.
+(function () {{
+  var u = document.getElementById('u'), pk = document.getElementById('pkbtn');
+  var err = document.getElementById('pkerr');
+  if (!window.PublicKeyCredential || !navigator.credentials) return;
+  pk.style.display = 'inline-flex';
+  function sync() {{ pk.disabled = !u.value.trim(); }}
+  u.addEventListener('input', function () {{ sync(); err.style.display = 'none'; }}); sync();
+  function b2b(b) {{ var a = new Uint8Array(b), s = '';
+    for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]);
+    return btoa(s).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, ''); }}
+  function b2a(s) {{ var pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4));
+    var bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + pad), a = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a.buffer; }}
+  pk.addEventListener('click', async function () {{
+    var name = u.value.trim(); if (!name) return;
+    pk.disabled = true; err.style.display = 'none';
+    try {{
+      var beginResp = await fetch('/login/passkey/begin', {{ method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }}, body: JSON.stringify({{ username: name }}) }});
+      if (!beginResp.ok) throw new Error('unavailable');
+      var opt = await beginResp.json();
+      var publicKey = {{ challenge: b2a(opt.challenge), rpId: opt.rpId, timeout: opt.timeout,
+        userVerification: opt.userVerification,
+        allowCredentials: (opt.allowCredentials || []).map(function (c) {{
+          return {{ id: b2a(c.id), type: c.type, transports: c.transports }}; }}) }};
+      var assertion = await navigator.credentials.get({{ publicKey: publicKey }});
+      if (!assertion) throw new Error('cancelled');
+      var r = assertion.response;
+      var cred = {{ id: assertion.id, rawId: b2b(assertion.rawId), type: assertion.type,
+        response: {{ clientDataJSON: b2b(r.clientDataJSON), authenticatorData: b2b(r.authenticatorData),
+          signature: b2b(r.signature), userHandle: r.userHandle ? b2b(r.userHandle) : undefined }},
+        clientExtensionResults: assertion.getClientExtensionResults(),
+        authenticatorAttachment: assertion.authenticatorAttachment || undefined }};
+      var finishResp = await fetch('/login/passkey/finish', {{ method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }}, body: JSON.stringify({{ credential: cred }}) }});
+      if (!finishResp.ok) throw new Error('failed');
+      window.location.href = '/';
+    }} catch (e) {{
+      pk.disabled = !u.value.trim();
+      if (e && (e.name === 'NotAllowedError' || e.name === 'AbortError')) return;  // user cancelled
+      err.textContent = 'Passkey sign-in failed. Check the passkey is registered and still enabled.';
+      err.style.display = 'block';
+    }}
   }});
 }})();
 // Directory-server availability LED — shown only when a directory is configured.
@@ -478,6 +536,21 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     </div>
     <div class="muted" id="tzPreview" style="font-size:13px; margin-top:8px"></div>
   </div>
+  <div class="card">
+    <h2>Passkeys</h2>
+    <p class="muted" style="margin-top:0">Sign in to this admin interface (and the main app) with
+      Touch&nbsp;ID, Windows&nbsp;Hello, or a security key instead of your password. Your password
+      always remains a fallback. Passkeys must be enabled for your account (Users tab) before you can
+      add one; the same passkey works on both the app and this admin panel.</p>
+    <div id="pkAdminNote" class="banner info" style="margin-top:4px">Checking passkeys…</div>
+    <div id="pkAdminList" class="col" style="gap:6px; margin-top:10px"></div>
+    <div class="row" id="pkAdminAdd" style="gap:8px; flex-wrap:wrap; align-items:flex-end; margin-top:12px; display:none">
+      <div class="field"><label>Passkey name</label>
+        <input type="text" id="pkAdminName" placeholder="e.g. MacBook Touch ID" style="min-width:240px"></div>
+      <button class="btn primary" onclick="addAdminPasskey()">Add a passkey</button>
+    </div>
+    <div id="pkAdminResult" class="col" style="margin-top:8px"></div>
+  </div>
   </div><!-- /tab-appcontrol -->
 
   <div class="tabpanel" id="tab-tls">
@@ -539,6 +612,12 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
         <input type="checkbox" id="requireLogin" style="width:auto" onchange="saveRequireLogin()"> Require sign-in for the main application
       </label>
       <span class="subtle" id="requireLoginHint"></span>
+    </div>
+    <div class="banner info" style="display:flex; align-items:center; gap:12px">
+      <label class="row" style="font-size:13px; cursor:pointer">
+        <input type="checkbox" id="passkeyAll" style="width:auto" onchange="togglePasskeyAll()"> Allow passkeys for all users
+      </label>
+      <span class="subtle">Passkeys are an alternative to the password (which always still works). Toggle per user in the table below, or all at once here.</span>
     </div>
     <div class="banner info" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">
       <label class="row" style="font-size:13px; gap:8px">
@@ -1270,10 +1349,12 @@ function renderUsers() {
 
   const rows = USERS.filter(u =>
     USER_FILTER === 'all' || (u.authSource === 'ldap' ? 'ldap' : 'local') === USER_FILTER);
-  let h = '<table><thead><tr><th>Username</th><th>Source</th><th>Role</th><th>Access</th><th>Last sign-in</th><th></th></tr></thead><tbody>';
+  let h = '<table><thead><tr><th>Username</th><th>Source</th><th>Role</th><th>Access</th><th>Passkey</th><th>Last sign-in</th><th></th></tr></thead><tbody>';
   if (rows.length === 0) {
-    h += '<tr><td colspan="6" class="muted">No matching users.</td></tr>';
+    h += '<tr><td colspan="7" class="muted">No matching users.</td></tr>';
   }
+  // The master "all users" checkbox reflects whether every user is allowed.
+  $('passkeyAll').checked = rows.length > 0 && USERS.every(u => u.passkeyAllowed);
   for (const u of rows) {
     const isLdap = u.authSource === 'ldap';
     // The built-in Administrator cannot be disabled or demoted (enforced server-side too).
@@ -1288,6 +1369,7 @@ function renderUsers() {
         : (u.loginLocked
             ? '<span class="pill off" title="Disabled after too many failed sign-ins — Unlock to restore.">locked</span>'
             : '<span class="pill off">disabled</span>')}</td>` +
+      `<td style="text-align:center"><input type="checkbox" data-user="${esc(u.username)}" ${u.passkeyAllowed ? 'checked' : ''} onchange="togglePasskey(this.dataset.user, this.checked)" style="width:auto" title="Allow this user to enrol and sign in with a passkey"></td>` +
       `<td class="muted">${fmtDate(u.lastLogin)}</td>` +
       `<td style="text-align:right; white-space:nowrap">` +
         (isBuiltin
@@ -1320,6 +1402,16 @@ async function toggleAdmin(u, isAdmin) {
 async function togglePower(u, isPower) {
   try { await api('/api/users/' + encodeURIComponent(u) + '/power', { method: 'POST', body: JSON.stringify({ isPower }) });
     toast('Updated'); await loadUsers(); } catch (e) { toast(e.message, true); }
+}
+async function togglePasskey(u, allowed) {
+  try { await api('/api/users/' + encodeURIComponent(u) + '/passkey-allowed', { method: 'POST', body: JSON.stringify({ allowed }) });
+    toast('Updated'); await loadUsers(); } catch (e) { toast(e.message, true); await loadUsers(); }
+}
+async function togglePasskeyAll() {
+  const allowed = $('passkeyAll').checked;
+  try { await api('/api/access/passkey-all', { method: 'POST', body: JSON.stringify({ allowed }) });
+    toast(allowed ? 'Passkeys allowed for all users' : 'Passkeys disabled for all users'); await loadUsers(); }
+  catch (e) { toast(e.message, true); $('passkeyAll').checked = !allowed; }
 }
 async function resetPw(u) {
   const pw = prompt('New password for ' + u + ':'); if (!pw) return;
@@ -2203,7 +2295,97 @@ async function revokeRebuildToken() {
   } catch (e) { toast(e.message, true); }
 }
 
-loadSession().then(loadTls).then(loadUsers).catch(() => {});
+// ── Passkeys (App Control) ──────────────────────────────────────────────────
+// The signed-in admin manages their own passkeys here. A passkey registered on
+// this host works for both this admin panel and the main app (same RP ID).
+function pkB2a(s) { var pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4));
+  var bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + pad), a = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a.buffer; }
+function pkB2b(b) { var a = new Uint8Array(b), s = '';
+  for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+
+async function loadAdminPasskeys() {
+  const note = $('pkAdminNote'), list = $('pkAdminList'), add = $('pkAdminAdd');
+  if (!window.PublicKeyCredential || !navigator.credentials) {
+    note.className = 'banner warn';
+    note.textContent = 'This browser does not support passkeys.';
+    add.style.display = 'none'; list.innerHTML = ''; return;
+  }
+  try {
+    const r = await api('/api/passkey/credentials');
+    if (!r.passkeyAllowed) {
+      note.className = 'banner warn';
+      note.textContent = 'Passkeys are not enabled for your account — enable them in the Users tab first.';
+      add.style.display = 'none'; list.innerHTML = ''; return;
+    }
+    note.className = 'banner info';
+    note.textContent = 'Passkeys are enabled for your account.';
+    add.style.display = 'flex';
+    const creds = r.credentials || [];
+    if (!creds.length) {
+      list.innerHTML = '<div class="muted" style="font-size:13px">No passkeys registered yet.</div>'; return;
+    }
+    list.innerHTML = creds.map(c =>
+      `<div class="row" style="gap:8px; align-items:center; padding:8px 10px; border-radius:8px; background:var(--l-fill)">
+         <span aria-hidden>🔑</span>
+         <div class="col" style="gap:0; min-width:0; line-height:1.2">
+           <span style="font-size:13px">${esc(c.name || 'Passkey')}</span>
+           <span class="muted" style="font-size:11px">Added ${esc(new Date(c.createdAt).toLocaleString())}</span>
+         </div>
+         <span class="spacer"></span>
+         <button class="btn small" data-pk="${esc(c.id)}" onclick="removeAdminPasskey(this.dataset.pk)">Remove</button>
+       </div>`).join('');
+  } catch (e) {
+    note.className = 'banner warn'; note.textContent = 'Could not load passkeys: ' + e.message;
+    add.style.display = 'none';
+  }
+}
+
+async function addAdminPasskey() {
+  const out = $('pkAdminResult'); out.textContent = '';
+  if (!window.PublicKeyCredential || !navigator.credentials) {
+    out.style.color = 'var(--red)'; out.textContent = 'This browser does not support passkeys.'; return;
+  }
+  try {
+    const opt = await api('/api/passkey/register/begin', { method: 'POST' });
+    const publicKey = Object.assign({}, opt, {
+      challenge: pkB2a(opt.challenge),
+      user: Object.assign({}, opt.user, { id: pkB2a(opt.user.id) }),
+      excludeCredentials: (opt.excludeCredentials || []).map(c => Object.assign({}, c, { id: pkB2a(c.id) })),
+    });
+    const cred = await navigator.credentials.create({ publicKey });
+    if (!cred) throw new Error('cancelled');
+    const r = cred.response;
+    const transports = (typeof r.getTransports === 'function' ? r.getTransports() : []);
+    const payload = {
+      credential: {
+        id: cred.id, rawId: pkB2b(cred.rawId), type: cred.type,
+        response: { clientDataJSON: pkB2b(r.clientDataJSON), attestationObject: pkB2b(r.attestationObject), transports: transports },
+        clientExtensionResults: cred.getClientExtensionResults(),
+        authenticatorAttachment: cred.authenticatorAttachment || undefined,
+      },
+      name: ($('pkAdminName').value || '').trim() || 'Passkey',
+      transports: transports.join(','),
+    };
+    await api('/api/passkey/register/finish', { method: 'POST', body: JSON.stringify(payload) });
+    $('pkAdminName').value = '';
+    toast('Passkey added');
+    await loadAdminPasskeys();
+  } catch (e) {
+    if (e && (e.name === 'NotAllowedError' || e.name === 'AbortError')) return;  // user cancelled
+    out.style.color = 'var(--red)'; out.textContent = e.message || 'Could not add the passkey.';
+  }
+}
+
+async function removeAdminPasskey(id) {
+  try {
+    await api('/api/passkey/credentials/' + encodeURIComponent(id), { method: 'DELETE' });
+    toast('Passkey removed'); await loadAdminPasskeys();
+  } catch (e) { toast(e.message, true); }
+}
+
+loadSession().then(loadTls).then(loadUsers).then(loadAdminPasskeys).catch(() => {});
 
 // ── Administration help overlay ─────────────────────────────────────────────
 // Mirrors the "Administration" group in the main app's Help, so the same guidance
@@ -2223,7 +2405,9 @@ const ADMIN_HELP = [
   { id: 'users', icon: '👤', title: 'Users & Sign-in', html: `
     <h2>Users &amp; Sign-in</h2>
     <p>Create local users, enable/disable access, grant or revoke the admin role, and reset passwords. Only enabled users can sign in. The <strong>Require sign-in</strong> toggle turns the login gate on or off (on by default) &mdash; with it off there is no user identity, so per-user settings and filter presets share one profile.</p>
-    <p><strong>Failed sign-in lockout</strong> disables an account after N wrong passwords (0 = off); unlock it in the Users tab, or restart with PMW_RESET_LOCKOUTS=1. <strong>Power</strong> users manage their own connections and get the advanced-analysis views (Conformance Check, Happy Path, Simulation).</p>` },
+    <p><strong>Failed sign-in lockout</strong> disables an account after N wrong passwords (0 = off); unlock it in the Users tab, or restart with PMW_RESET_LOCKOUTS=1. <strong>Power</strong> users manage their own connections and get the advanced-analysis views (Conformance Check, Happy Path, Simulation).</p>
+    <p><strong>Passkeys (WebAuthn).</strong> The <em>Passkey</em> column lets each user sign in with Touch&nbsp;ID / Windows&nbsp;Hello / a security key as an alternative to their password (which always stays as a fallback); the header checkbox toggles it for everyone. Local and directory users alike can be allowed. A passkey registered on this host works for both the app and this admin panel. Admins enrol their own device in <strong>App Control &rarr; Passkeys</strong>; app users do so from the main app. Turning the permission off blocks passkey sign-in immediately.</p>
+    <div class="note warn">Passkeys need a secure context (HTTPS, or localhost). Off localhost, run with TLS Optional/Required. For split app/admin sub-domains set PMW_PASSKEY_RP_ID to the shared parent domain and list origins in PMW_PASSKEY_ORIGINS.</div>` },
   { id: 'connections', icon: '🗄️', title: 'Database Connections', html: `
     <h2>Database Connections</h2>
     <p>Define each connection (Exasol host, port, user, password, schema, TLS, and an optional OpenAI-compatible LLM server) and assign it to users; each user sees only the connections assigned to them. Use Test connection to verify the database and LLM before saving; a blank password/key keeps the stored value.</p>

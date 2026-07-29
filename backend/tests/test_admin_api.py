@@ -1386,3 +1386,92 @@ def test_dashboard_has_per_connection_rebuild_api(admin):
     assert "rebuild-transitions" in html
     # …and there is no longer a standalone global API tab.
     assert 'data-tab="api"' not in html and 'id="tab-api"' not in html
+
+
+# ── Passkeys (WebAuthn) ───────────────────────────────────────────────────────
+
+
+def test_passkey_allowed_endpoint_toggles_role(admin):
+    server, store = admin
+    client = _login(server)
+    store.create_user("pat", "pw", is_admin=False)
+
+    r = client.post("/api/users/pat/passkey-allowed", json={"allowed": True})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert store.get_user("pat").passkey_allowed is True
+    # The users listing exposes the flag for the admin UI checkbox.
+    listed = {u["username"]: u for u in client.get("/api/users").json()}
+    assert listed["pat"]["passkeyAllowed"] is True
+
+    assert client.post("/api/users/pat/passkey-allowed", json={"allowed": False}).status_code == 200
+    assert store.get_user("pat").passkey_allowed is False
+
+
+def test_passkey_allowed_endpoint_requires_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    r = client.post("/api/users/pat/passkey-allowed", json={"allowed": True})
+    assert r.status_code == 401
+
+
+def test_passkey_all_endpoint_is_master_toggle(admin):
+    server, store = admin
+    client = _login(server)
+    store.create_user("alice", "pw", is_admin=False)
+    store.create_user("bob", "pw", is_admin=False)
+
+    assert client.post("/api/access/passkey-all", json={"allowed": True}).status_code == 200
+    assert all(u.passkey_allowed for u in store.list_users())
+
+    assert client.post("/api/access/passkey-all", json={"allowed": False}).status_code == 200
+    assert not any(u.passkey_allowed for u in store.list_users())
+
+
+def test_passkey_all_endpoint_requires_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    assert client.post("/api/access/passkey-all", json={"allowed": True}).status_code == 401
+
+
+def test_admin_passkey_login_begin_denied_without_allow_or_credentials(admin):
+    server, store = admin
+    client = TestClient(server.app)
+    store.create_user("padmin", "pw", is_admin=True)
+
+    # No passkey_allowed and no credentials → not available.
+    r = client.post("/login/passkey/begin", json={"username": "padmin"})
+    assert r.status_code == 403
+    assert server.passkey.CHALLENGE_COOKIE not in client.cookies
+
+    # Allowed but still no registered credential → still not available.
+    store.set_passkey_allowed("padmin", True)
+    r = client.post("/login/passkey/begin", json={"username": "padmin"})
+    assert r.status_code == 403
+
+
+def test_admin_passkey_login_begin_offers_options_when_eligible(admin):
+    server, store = admin
+    client = TestClient(server.app)
+    store.create_user("padmin", "pw", is_admin=True)
+    store.set_passkey_allowed("padmin", True)
+    store.add_credential("padmin", credential_id="cred-1", public_key="K", sign_count=0)
+
+    r = client.post("/login/passkey/begin", json={"username": "padmin"})
+    assert r.status_code == 200
+    body = r.json()
+    # Username-first: the response scopes the ceremony to this user's credential.
+    assert body["challenge"] and len(body["allowCredentials"]) == 1
+    # A short-lived signed challenge cookie is set for the finish step.
+    assert server.passkey.CHALLENGE_COOKIE in client.cookies
+
+
+def test_admin_passkey_login_begin_rejects_non_admin(admin):
+    server, store = admin
+    client = TestClient(server.app)
+    store.create_user("power", "pw", is_admin=False)
+    store.set_passkey_allowed("power", True)
+    store.add_credential("power", credential_id="cred-2", public_key="K", sign_count=0)
+
+    # Passkeys work on the app for non-admins, but the admin panel admits admins only.
+    r = client.post("/login/passkey/begin", json={"username": "power"})
+    assert r.status_code == 403
