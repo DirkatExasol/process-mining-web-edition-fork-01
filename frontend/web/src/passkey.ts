@@ -9,6 +9,8 @@ export interface PasskeyUser {
   displayName: string | null
   authSource: string | null
   passkeyAllowed: boolean
+  mfaAllowed: boolean
+  mfaEnabled: boolean
 }
 
 export interface PasskeyInfo {

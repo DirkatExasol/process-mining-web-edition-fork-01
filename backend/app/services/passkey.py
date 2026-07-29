@@ -12,6 +12,7 @@ Fernet-signed cookie via `crypto.sign_session` / `read_session` (TTL-checked).
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 from webauthn import (
@@ -94,6 +95,20 @@ def authentication_options(*, rp_id: str, allow_ids: list[str]) -> tuple[str, by
         user_verification=UserVerificationRequirement.PREFERRED,
     )
     return options_to_json(opts), opts.challenge
+
+
+def decoy_allow_ids(username: str) -> list[str]:
+    """A stable, plausible-looking credential id for an account that has no real
+    passkey (unknown / disabled / not allowed). Derived from an install secret so
+    it can't be told apart from a genuine id, and deterministic per-username so
+    repeated probes get the same answer — the two properties that let the *begin*
+    endpoint answer identically whether or not the account exists (no enumeration).
+
+    Verification later fails for these (no matching stored credential), exactly as
+    it would for a real id the user can't satisfy — so the decoy never grants access."""
+    seed = crypto.passkey_decoy_seed()
+    digest = hashlib.sha256(seed + b"|" + (username or "").strip().lower().encode("utf-8")).digest()
+    return [bytes_to_base64url(digest)]
 
 
 def verify_authentication(

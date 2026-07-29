@@ -181,6 +181,18 @@ tr:last-child td { border-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .pill.combo { animation: none; } }
 .u-ident { display: flex; flex-direction: column; line-height: 1.2; white-space: nowrap; }
 .u-real { font-size: 11px; color: var(--muted); margin-top: 1px; }
+/* Two-line user cards in a scroll box (~5 rows tall) so every control stays
+   inside the card no matter how many per-user toggles there are. */
+.user-list { max-height: 340px; overflow-y: auto; border: 1px solid var(--border);
+  border-radius: 10px; }
+.user-card { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px;
+  border-bottom: 1px solid var(--border); }
+.user-card:last-child { border-bottom: none; }
+.user-card .row1, .user-card .row2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.user-card .perm { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+.user-card .perm input { width: auto; }
+.user-empty { padding: 14px; color: var(--muted); }
+.user-search { width: 100%; margin-bottom: 10px; }
 .seg { display: inline-flex; background: var(--fill); border-radius: 8px; padding: 3px; gap: 3px; }
 .seg button { border: none; background: none; color: var(--text); padding: 6px 14px; border-radius: 6px; font-size: 13px; }
 .seg button.sel { background: rgba(10,132,255,.22); color: var(--accent); font-weight: 600;
@@ -242,7 +254,8 @@ details summary { cursor: pointer; font-size: 13px; color: var(--accent); paddin
 """
 
 
-def login_page(error: str = "", inactivity: bool = False, bg_css: str = "") -> str:
+def login_page(error: str = "", inactivity: bool = False, bg_css: str = "",
+               mfa_step: bool = False) -> str:
     """The admin sign-in screen — a faithful port of the main app's login panel
     (`LoginView.tsx`, the master): identical layout, field sizing and behaviour
     (submit stays disabled until a username is entered). The ONLY difference is
@@ -265,6 +278,37 @@ def login_page(error: str = "", inactivity: bool = False, bg_css: str = "") -> s
         if inactivity and not error
         else ""
     )
+    caption = "Enter your authentication code" if mfa_step else "Sign in to continue"
+    if mfa_step:
+        # Second step: the password already verified, ask for the TOTP (or recovery)
+        # code. A plain form POST to /login/mfa — no JS, no passkey button.
+        form_block = """  <form class="login-form" method="post" action="/login/mfa">
+    <div class="field"><label class="field-label" for="code">Authentication code</label>
+      <input class="text-input" id="code" name="code" inputmode="numeric" autocomplete="one-time-code"
+        autocapitalize="none" autocorrect="off" autofocus placeholder="6-digit code or a recovery code"></div>
+    <div class="btn-row"><button class="btn-prominent" type="submit">Verify</button></div>
+  </form>
+  <div class="t-caption2" style="text-align:center; margin-top:2px">
+    Enter the 6-digit code from your authenticator app, or one of your recovery codes.</div>"""
+    else:
+        form_block = """  <form class="login-form" method="post" action="/login" id="loginForm">
+    <div class="field"><label class="field-label" for="u">Username</label>
+      <input class="text-input" id="u" type="text" name="username" autocomplete="username"
+        autocapitalize="none" autocorrect="off" autofocus></div>
+    <div class="field"><label class="field-label" for="p">Password</label>
+      <input class="text-input" id="p" type="password" name="password" autocomplete="current-password"></div>
+    <div class="btn-row">
+      <button class="btn-prominent" type="submit" id="signin" disabled>
+        <span class="spinner" id="spin" style="display:none"></span> Sign in</button>
+      <button class="btn-secondary" type="button" id="pkbtn" disabled style="display:none"
+        title="Sign in with a passkey (Touch ID, Windows Hello, security key…)">🔑 Sign with Passkey</button>
+    </div>
+  </form>
+  <div id="pkerr" class="login-err" style="display:none"></div>
+  <div id="dirStatus" class="dir-row" style="display:none">
+    <span id="dirDot" style="width:8px; height:8px; border-radius:50%; flex:0 0 auto"></span>
+    <span id="dirLabel" class="t-caption2"></span>
+  </div>"""
     return f"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 {_FAVICON_LINK}{_THEME_BOOT}
@@ -338,33 +382,17 @@ body {{ display: grid; place-items: center; min-height: 100vh; background: {body
   <div class="title-col">
     <span class="t-title3">Process Mining Demonstrator</span>
     <span class="t-title3">Administration</span>
-    <span class="t-caption">Sign in to continue</span>
+    <span class="t-caption">{caption}</span>
   </div>
   {notice}{err}
-  <form class="login-form" method="post" action="/login" id="loginForm">
-    <div class="field"><label class="field-label" for="u">Username</label>
-      <input class="text-input" id="u" type="text" name="username" autocomplete="username"
-        autocapitalize="none" autocorrect="off" autofocus></div>
-    <div class="field"><label class="field-label" for="p">Password</label>
-      <input class="text-input" id="p" type="password" name="password" autocomplete="current-password"></div>
-    <div class="btn-row">
-      <button class="btn-prominent" type="submit" id="signin" disabled>
-        <span class="spinner" id="spin" style="display:none"></span> Sign in</button>
-      <button class="btn-secondary" type="button" id="pkbtn" disabled style="display:none"
-        title="Sign in with a passkey (Touch ID, Windows Hello, security key…)">🔑 Sign with Passkey</button>
-    </div>
-  </form>
-  <div id="pkerr" class="login-err" style="display:none"></div>
-  <div id="dirStatus" class="dir-row" style="display:none">
-    <span id="dirDot" style="width:8px; height:8px; border-radius:50%; flex:0 0 auto"></span>
-    <span id="dirLabel" class="t-caption2"></span>
-  </div>
+{form_block}
 </div>
 <script>
 // Submit stays disabled until a username is entered — mirrors the app's LoginView.
 (function () {{
   var u = document.getElementById('u'), btn = document.getElementById('signin');
   var form = document.getElementById('loginForm'), spin = document.getElementById('spin');
+  if (!u || !btn || !form) return;  // absent on the 2FA code step
   function sync() {{ btn.disabled = !u.value.trim(); }}
   u.addEventListener('input', sync); sync();
   form.addEventListener('submit', function () {{
@@ -376,6 +404,7 @@ body {{ display: grid; place-items: center; min-height: 100vh; background: {body
 (function () {{
   var u = document.getElementById('u'), pk = document.getElementById('pkbtn');
   var err = document.getElementById('pkerr');
+  if (!u || !pk) return;  // absent on the 2FA code step
   if (!window.PublicKeyCredential || !navigator.credentials) return;
   pk.style.display = 'inline-flex';
   function sync() {{ pk.disabled = !u.value.trim(); }}
@@ -551,6 +580,36 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     </div>
     <div id="pkAdminResult" class="col" style="margin-top:8px"></div>
   </div>
+  <div class="card">
+    <h2>Two-factor authentication</h2>
+    <p class="muted" style="margin-top:0">Add a one-time code from an authenticator app (Google
+      Authenticator, 1Password, Authy&hellip;) on top of your password when signing in to this admin
+      interface and the main app. Your password still signs you in &mdash; the code is an extra step.
+      Two-factor must be enabled for your account (Users tab) before you can set it up.</p>
+    <div id="mfaAdminNote" class="banner info" style="margin-top:4px">Checking two-factor&hellip;</div>
+    <div id="mfaAdminSetup" style="display:none; margin-top:12px">
+      <div class="row" style="gap:16px; flex-wrap:wrap; align-items:flex-start">
+        <div id="mfaQr" style="width:180px; height:180px; background:#fff; padding:8px; border-radius:8px"></div>
+        <div class="col" style="gap:8px; min-width:220px; flex:1">
+          <span class="muted" style="font-size:13px">Scan the QR with your authenticator app, then enter the 6-digit code it shows.</span>
+          <span class="subtle" style="word-break:break-all">Can&rsquo;t scan? Key: <strong id="mfaSecret"></strong></span>
+          <div class="row" style="gap:8px; align-items:flex-end">
+            <div class="field"><label>6-digit code</label>
+              <input type="text" id="mfaCode" inputmode="numeric" autocomplete="one-time-code" style="width:140px"></div>
+            <button class="btn primary" onclick="confirmAdminMfa()">Confirm</button>
+            <button class="btn" onclick="cancelAdminMfa()">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="mfaRecovery" style="display:none; margin-top:12px"></div>
+    <div class="row" id="mfaAdminActions" style="gap:8px; flex-wrap:wrap; margin-top:12px; display:none">
+      <button class="btn primary" id="mfaSetupBtn" onclick="beginAdminMfa()">Set up authenticator</button>
+      <button class="btn" id="mfaRegenBtn" onclick="regenAdminMfa()" style="display:none">Regenerate recovery codes</button>
+      <button class="btn" id="mfaOffBtn" onclick="disableAdminMfa()" style="display:none">Turn off</button>
+    </div>
+    <div id="mfaAdminResult" class="col" style="margin-top:8px"></div>
+  </div>
   </div><!-- /tab-appcontrol -->
 
   <div class="tabpanel" id="tab-tls">
@@ -617,7 +676,13 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       <label class="row" style="font-size:13px; cursor:pointer">
         <input type="checkbox" id="passkeyAll" style="width:auto" onchange="togglePasskeyAll()"> Allow passkeys for all users
       </label>
-      <span class="subtle">Passkeys are an alternative to the password (which always still works). Toggle per user in the table below, or all at once here.</span>
+      <span class="subtle">Passkeys are an alternative to the password (which always still works). Toggle per user in the list below, or all at once here.</span>
+    </div>
+    <div class="banner info" style="display:flex; align-items:center; gap:12px">
+      <label class="row" style="font-size:13px; cursor:pointer">
+        <input type="checkbox" id="mfaAll" style="width:auto" onchange="toggleMfaAll()"> Allow two-factor (TOTP) for all users
+      </label>
+      <span class="subtle">Two-factor adds a one-time code on top of the password (which always still works). Toggle per user in the list below, or all at once here.</span>
     </div>
     <div class="banner info" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">
       <label class="row" style="font-size:13px; gap:8px">
@@ -635,7 +700,11 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       <button class="btn small" onclick="saveMaxFailedLogins()">Save</button>
       <span class="subtle" id="maxFailedLoginsHint"></span>
     </div>
-    <div class="row" style="margin:12px 0 6px"><div class="seg" id="userFilter"></div></div>
+    <div class="row" style="margin:12px 0 6px; gap:10px; flex-wrap:wrap; align-items:center">
+      <div class="seg" id="userFilter"></div>
+      <input type="text" id="userSearch" class="user-search" style="flex:1; min-width:180px; width:auto"
+        placeholder="Search users by name…" oninput="renderUsers()">
+    </div>
     <div id="userTable"></div>
     <details style="margin-top:12px"><summary>Add a user</summary>
       <div class="row" style="flex-wrap:wrap; margin-top:10px; align-items:flex-end">
@@ -1347,43 +1416,56 @@ function renderUsers() {
     `${c.label} <span class="subtle" style="font-size:11px">${counts[c.key]}</span></button>`
   ).join('');
 
+  const q = ($('userSearch') ? $('userSearch').value : '').trim().toLowerCase();
   const rows = USERS.filter(u =>
-    USER_FILTER === 'all' || (u.authSource === 'ldap' ? 'ldap' : 'local') === USER_FILTER);
-  let h = '<table><thead><tr><th>Username</th><th>Source</th><th>Role</th><th>Access</th><th>Passkey</th><th>Last sign-in</th><th></th></tr></thead><tbody>';
+    (USER_FILTER === 'all' || (u.authSource === 'ldap' ? 'ldap' : 'local') === USER_FILTER) &&
+    (!q || u.username.toLowerCase().includes(q) ||
+      (u.displayName || '').toLowerCase().includes(q)));
+  // The master "all users" checkboxes reflect whether every user is allowed.
+  $('passkeyAll').checked = USERS.length > 0 && USERS.every(u => u.passkeyAllowed);
+  $('mfaAll').checked = USERS.length > 0 && USERS.every(u => u.mfaAllowed);
   if (rows.length === 0) {
-    h += '<tr><td colspan="7" class="muted">No matching users.</td></tr>';
+    $('userTable').innerHTML = '<div class="user-empty">No matching users.</div>';
+    return;
   }
-  // The master "all users" checkbox reflects whether every user is allowed.
-  $('passkeyAll').checked = rows.length > 0 && USERS.every(u => u.passkeyAllowed);
+  let h = '<div class="user-list">';
   for (const u of rows) {
     const isLdap = u.authSource === 'ldap';
     // The built-in Administrator cannot be disabled or demoted (enforced server-side too).
     const isBuiltin = !!BUILTIN_ADMIN && u.username.toLowerCase() === BUILTIN_ADMIN.toLowerCase();
-    const nameCell = `<div class="u-ident"><strong>${esc(u.username)}</strong>` +
-      (u.displayName ? `<span class="u-real">${esc(u.displayName)}</span>` : '') + `</div>`;
-    h += `<tr><td>${nameCell}</td>` +
-      `<td>${isLdap ? '<span class="pill ldap">LDAP</span>' : '<span class="pill neutral">local</span>'}</td>` +
-      `<td>${roleBadge(u)}</td>` +
-      `<td>${u.isEnabled
-        ? '<span class="pill on">enabled</span>'
-        : (u.loginLocked
-            ? '<span class="pill off" title="Disabled after too many failed sign-ins — Unlock to restore.">locked</span>'
-            : '<span class="pill off">disabled</span>')}</td>` +
-      `<td style="text-align:center"><input type="checkbox" data-user="${esc(u.username)}" ${u.passkeyAllowed ? 'checked' : ''} onchange="togglePasskey(this.dataset.user, this.checked)" style="width:auto" title="Allow this user to enrol and sign in with a passkey"></td>` +
-      `<td class="muted">${fmtDate(u.lastLogin)}</td>` +
-      `<td style="text-align:right; white-space:nowrap">` +
-        (isBuiltin
-          ? (u.loginLocked
-              ? `<button class="btn small" data-user="${esc(u.username)}" onclick="toggleEnabled(this.dataset.user,true)">Unlock</button> `
-              : '')
-          : `<button class="btn small" data-user="${esc(u.username)}" onclick="toggleEnabled(this.dataset.user,${!u.isEnabled})">${u.isEnabled ? 'Disable' : (u.loginLocked ? 'Unlock' : 'Enable')}</button> `) +
-        (isBuiltin ? '' : `<button class="btn small" data-user="${esc(u.username)}" onclick="toggleAdmin(this.dataset.user,${!u.isAdmin})">${u.isAdmin ? 'Remove admin' : 'Make admin'}</button> `) +
-        (isBuiltin ? '' : `<button class="btn small" data-user="${esc(u.username)}" onclick="togglePower(this.dataset.user,${!u.isPower})">${u.isPower ? 'Remove power' : 'Make power'}</button> `) +
-        (isLdap ? '' : `<button class="btn small" data-user="${esc(u.username)}" onclick="resetPw(this.dataset.user)">Reset password</button> `) +
-        (isBuiltin ? '<span class="subtle" title="The built-in administrator cannot be disabled, demoted or deleted.">built-in admin</span>' : `<button class="btn small danger" data-user="${esc(u.username)}" onclick="delUser(this.dataset.user)">Delete</button>`) +
-      `</td></tr>`;
+    const du = esc(u.username);
+    const access = u.isEnabled
+      ? '<span class="pill on">enabled</span>'
+      : (u.loginLocked
+          ? '<span class="pill off" title="Disabled after too many failed sign-ins — Unlock to restore.">locked</span>'
+          : '<span class="pill off">disabled</span>');
+    // Line 1 — identity, source, role, access, and the per-user permission toggles.
+    h += '<div class="user-card"><div class="row1">' +
+      `<div class="u-ident"><strong>${du}</strong>` +
+        (u.displayName ? `<span class="u-real">${esc(u.displayName)}</span>` : '') + '</div>' +
+      (isLdap ? '<span class="pill ldap">LDAP</span>' : '<span class="pill neutral">local</span>') +
+      roleBadge(u) + access +
+      '<span class="spacer" style="flex:1"></span>' +
+      `<label class="perm" title="Allow this user to enrol and sign in with a passkey">` +
+        `<input type="checkbox" data-user="${du}" ${u.passkeyAllowed ? 'checked' : ''} onchange="togglePasskey(this.dataset.user, this.checked)"> Passkey</label>` +
+      `<label class="perm" title="Allow this user to set up two-factor (TOTP)">` +
+        `<input type="checkbox" data-user="${du}" ${u.mfaAllowed ? 'checked' : ''} onchange="toggleMfa(this.dataset.user, this.checked)"> 2FA</label>` +
+      '</div>';
+    // Line 2 — last sign-in and the action buttons.
+    h += '<div class="row2"><span class="muted" style="font-size:12px">Last sign-in: ' +
+      fmtDate(u.lastLogin) + '</span><span class="spacer" style="flex:1"></span>' +
+      (isBuiltin
+        ? (u.loginLocked
+            ? `<button class="btn small" data-user="${du}" onclick="toggleEnabled(this.dataset.user,true)">Unlock</button> `
+            : '')
+        : `<button class="btn small" data-user="${du}" onclick="toggleEnabled(this.dataset.user,${!u.isEnabled})">${u.isEnabled ? 'Disable' : (u.loginLocked ? 'Unlock' : 'Enable')}</button> `) +
+      (isBuiltin ? '' : `<button class="btn small" data-user="${du}" onclick="toggleAdmin(this.dataset.user,${!u.isAdmin})">${u.isAdmin ? 'Remove admin' : 'Make admin'}</button> `) +
+      (isBuiltin ? '' : `<button class="btn small" data-user="${du}" onclick="togglePower(this.dataset.user,${!u.isPower})">${u.isPower ? 'Remove power' : 'Make power'}</button> `) +
+      (isLdap ? '' : `<button class="btn small" data-user="${du}" onclick="resetPw(this.dataset.user)">Reset password</button> `) +
+      (isBuiltin ? '<span class="subtle" title="The built-in administrator cannot be disabled, demoted or deleted.">built-in admin</span>' : `<button class="btn small danger" data-user="${du}" onclick="delUser(this.dataset.user)">Delete</button>`) +
+      '</div></div>';
   }
-  $('userTable').innerHTML = h + '</tbody></table>';
+  $('userTable').innerHTML = h + '</div>';
 }
 async function createUser() {
   const body = { username: $('nu_name').value.trim(), password: $('nu_pw').value, isAdmin: $('nu_admin').checked };
@@ -1412,6 +1494,16 @@ async function togglePasskeyAll() {
   try { await api('/api/access/passkey-all', { method: 'POST', body: JSON.stringify({ allowed }) });
     toast(allowed ? 'Passkeys allowed for all users' : 'Passkeys disabled for all users'); await loadUsers(); }
   catch (e) { toast(e.message, true); $('passkeyAll').checked = !allowed; }
+}
+async function toggleMfa(u, allowed) {
+  try { await api('/api/users/' + encodeURIComponent(u) + '/mfa-allowed', { method: 'POST', body: JSON.stringify({ allowed }) });
+    toast('Updated'); await loadUsers(); } catch (e) { toast(e.message, true); await loadUsers(); }
+}
+async function toggleMfaAll() {
+  const allowed = $('mfaAll').checked;
+  try { await api('/api/access/mfa-all', { method: 'POST', body: JSON.stringify({ allowed }) });
+    toast(allowed ? 'Two-factor allowed for all users' : 'Two-factor disabled for all users'); await loadUsers(); }
+  catch (e) { toast(e.message, true); $('mfaAll').checked = !allowed; }
 }
 async function resetPw(u) {
   const pw = prompt('New password for ' + u + ':'); if (!pw) return;
@@ -2385,7 +2477,102 @@ async function removeAdminPasskey(id) {
   } catch (e) { toast(e.message, true); }
 }
 
-loadSession().then(loadTls).then(loadUsers).then(loadAdminPasskeys).catch(() => {});
+// ── Two-factor (App Control) ────────────────────────────────────────────────
+// The signed-in admin sets up TOTP here. The same secret protects the app and
+// this admin panel (both check the one stored secret at sign-in).
+function renderRecoveryCodes(codes) {
+  const box = $('mfaRecovery');
+  box.style.display = 'block';
+  box.innerHTML =
+    '<div class="banner warn"><strong>Save your recovery codes.</strong> Each works once if you '
+    + 'lose your authenticator; they won’t be shown again.</div>'
+    + '<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-family:monospace; '
+    + 'font-size:13px; margin-top:8px">'
+    + codes.map(c => `<span>${esc(c)}</span>`).join('') + '</div>'
+    + '<div class="row" style="gap:8px; margin-top:8px">'
+    + '<button class="btn small" onclick="copyRecovery()">Copy codes</button>'
+    + '<button class="btn small" onclick="$(\'mfaRecovery\').style.display=\'none\'">Done</button></div>';
+  box.dataset.codes = codes.join('\n');
+}
+function copyRecovery() {
+  navigator.clipboard.writeText($('mfaRecovery').dataset.codes || '').then(
+    () => toast('Recovery codes copied'), () => toast('Copy failed', true));
+}
+async function loadAdminMfa() {
+  const note = $('mfaAdminNote'), actions = $('mfaAdminActions');
+  try {
+    const s = await api('/api/mfa/status');
+    if (!s.mfaAllowed) {
+      note.className = 'banner warn';
+      note.textContent = 'Two-factor is not enabled for your account — enable it in the Users tab first.';
+      actions.style.display = 'none'; return;
+    }
+    actions.style.display = 'flex';
+    if (s.enabled) {
+      note.className = 'banner ok';
+      note.textContent = `Two-factor is on. ${s.recoveryRemaining} recovery code`
+        + `${s.recoveryRemaining === 1 ? '' : 's'} left.`;
+      $('mfaSetupBtn').style.display = 'none';
+      $('mfaRegenBtn').style.display = 'inline-flex';
+      $('mfaOffBtn').style.display = 'inline-flex';
+    } else {
+      note.className = 'banner info';
+      note.textContent = 'Two-factor is off for your account.';
+      $('mfaSetupBtn').style.display = 'inline-flex';
+      $('mfaRegenBtn').style.display = 'none';
+      $('mfaOffBtn').style.display = 'none';
+    }
+  } catch (e) {
+    note.className = 'banner warn'; note.textContent = 'Could not load two-factor: ' + e.message;
+    actions.style.display = 'none';
+  }
+}
+async function beginAdminMfa() {
+  try {
+    const s = await api('/api/mfa/setup/begin', { method: 'POST' });
+    $('mfaQr').innerHTML = s.qrSvg;      // SVG from our own server
+    $('mfaSecret').textContent = s.secret;
+    $('mfaCode').value = '';
+    $('mfaAdminSetup').style.display = 'block';
+    $('mfaAdminActions').style.display = 'none';
+  } catch (e) { toast(e.message, true); }
+}
+function cancelAdminMfa() {
+  $('mfaAdminSetup').style.display = 'none';
+  $('mfaAdminActions').style.display = 'flex';
+}
+async function confirmAdminMfa() {
+  const out = $('mfaAdminResult'); out.textContent = '';
+  try {
+    const r = await api('/api/mfa/setup/finish', { method: 'POST',
+      body: JSON.stringify({ code: ($('mfaCode').value || '').trim() }) });
+    $('mfaAdminSetup').style.display = 'none';
+    toast('Two-factor enabled');
+    renderRecoveryCodes(r.recoveryCodes || []);
+    await loadAdminMfa();
+  } catch (e) { out.style.color = 'var(--red)'; out.textContent = e.message; }
+}
+async function regenAdminMfa() {
+  try {
+    const r = await api('/api/mfa/recovery/regenerate', { method: 'POST' });
+    toast('Recovery codes regenerated');
+    renderRecoveryCodes(r.recoveryCodes || []);
+    await loadAdminMfa();
+  } catch (e) { toast(e.message, true); }
+}
+async function disableAdminMfa() {
+  // Re-authenticate the downgrade: the current code is required to turn 2FA off.
+  const code = prompt('Enter your current authentication code (or a recovery code) to turn off two-factor:');
+  if (code === null) return;  // cancelled
+  try {
+    await api('/api/mfa/disable', { method: 'POST', body: JSON.stringify({ code: (code || '').trim() }) });
+    $('mfaRecovery').style.display = 'none';
+    toast('Two-factor turned off');
+    await loadAdminMfa();
+  } catch (e) { toast(e.message, true); }
+}
+
+loadSession().then(loadTls).then(loadUsers).then(loadAdminPasskeys).then(loadAdminMfa).catch(() => {});
 
 // ── Administration help overlay ─────────────────────────────────────────────
 // Mirrors the "Administration" group in the main app's Help, so the same guidance
@@ -2407,6 +2594,7 @@ const ADMIN_HELP = [
     <p>Create local users, enable/disable access, grant or revoke the admin role, and reset passwords. Only enabled users can sign in. The <strong>Require sign-in</strong> toggle turns the login gate on or off (on by default) &mdash; with it off there is no user identity, so per-user settings and filter presets share one profile.</p>
     <p><strong>Failed sign-in lockout</strong> disables an account after N wrong passwords (0 = off); unlock it in the Users tab, or restart with PMW_RESET_LOCKOUTS=1. <strong>Power</strong> users manage their own connections and get the advanced-analysis views (Conformance Check, Happy Path, Simulation).</p>
     <p><strong>Passkeys (WebAuthn).</strong> The <em>Passkey</em> column lets each user sign in with Touch&nbsp;ID / Windows&nbsp;Hello / a security key as an alternative to their password (which always stays as a fallback); the header checkbox toggles it for everyone. Local and directory users alike can be allowed. A passkey registered on this host works for both the app and this admin panel. Admins enrol their own device in <strong>App Control &rarr; Passkeys</strong>; app users do so from the main app. Turning the permission off blocks passkey sign-in immediately.</p>
+    <p><strong>Two-factor (TOTP).</strong> The <em>2FA</em> column (with an all-users master checkbox) lets each user add a one-time authenticator-app code as a second step after their password &mdash; optional and additive, so it never locks anyone out. After the password an enrolled user enters the current 6-digit code or a one-time recovery code; a passkey sign-in skips it. Users set up their own from <strong>🔒 Two-factor</strong> in the app; admins from <strong>App Control &rarr; Two-factor</strong>. Turning 2FA off requires the current code (so a hijacked session can&rsquo;t strip it). The secret is stored encrypted and recovery codes only as hashes &mdash; if a user is locked out of their authenticator, untick 2FA for them so they can sign in with their password and re-enrol.</p>
     <div class="note warn">Passkeys need a secure context (HTTPS, or localhost). Off localhost, run with TLS Optional/Required. For split app/admin sub-domains set PMW_PASSKEY_RP_ID to the shared parent domain and list origins in PMW_PASSKEY_ORIGINS.</div>` },
   { id: 'connections', icon: '🗄️', title: 'Database Connections', html: `
     <h2>Database Connections</h2>

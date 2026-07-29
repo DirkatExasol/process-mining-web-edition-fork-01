@@ -79,6 +79,9 @@ PASSKEY_ORIGINS = [
     for o in os.environ.get("PMW_PASSKEY_ORIGINS", "").split(",")
     if o.strip()
 ]
+# TOTP two-factor: the issuer label shown in the user's authenticator app.
+MFA_ISSUER = os.environ.get("PMW_MFA_ISSUER", "Process Mining Demonstrator").strip() \
+    or "Process Mining Demonstrator"
 DEFAULT_ADMIN_PASSWORD = os.environ.get("PMW_DEFAULT_ADMIN_PASSWORD", "Administrator")
 
 # URL the GUI server uses to reach the compute backend. HTTPS by default: the

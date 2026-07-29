@@ -78,6 +78,8 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
     if (message) {
       setError(message)
       setPassword('')
+    } else if (useStore.getState().mfaPending) {
+      // Password ok — the two-factor code step renders next; don't sign in yet.
     } else {
       onSignedIn()
     }
@@ -90,7 +92,28 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
     const message = await store.loginWithPasskey(username.trim())
     setBusy(false)
     if (message) setError(message) // '' = user cancelled → stay silent
-    else onSignedIn()
+    else if (!useStore.getState().mfaPending) onSignedIn()
+  }
+
+  // Two-factor second step.
+  const [code, setCode] = useState('')
+  const verifyMfa = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!code.trim() || busy) return
+    setBusy(true)
+    setError(null)
+    const message = await store.verifyMfa(code.trim())
+    setBusy(false)
+    if (message) {
+      setError(message)
+      setCode('')
+    } else onSignedIn()
+  }
+  const cancelMfa = () => {
+    store.cancelMfa()
+    setCode('')
+    setPassword('')
+    setError(null)
   }
 
   return (
@@ -101,14 +124,16 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
       <form
         className={`splash${appearance?.type === 'image' ? ' over-image' : ''}`}
         style={{ gap: 16, cursor: 'default' }}
-        onSubmit={submit}
+        onSubmit={store.mfaPending ? verifyMfa : submit}
       >
         <div className="brand-logo" style={{ width: 64, height: 64 }}>
           <Logo />
         </div>
         <div className="col" style={{ gap: 2, alignItems: 'center' }}>
           <span className="t-title3">Process Mining Demonstrator</span>
-          <span className="t-caption fg-secondary">Sign in to continue</span>
+          <span className="t-caption fg-secondary">
+            {store.mfaPending ? 'Enter your authentication code' : 'Sign in to continue'}
+          </span>
         </div>
 
         {demoSeconds !== null && (
@@ -167,60 +192,106 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
           </div>
         )}
 
-        <div className="field" style={{ width: '100%' }}>
-          <label className="field-label" htmlFor="login-username">
-            Username
-          </label>
-          <input
-            id="login-username"
-            className="text-input"
-            value={username}
-            autoFocus
-            autoComplete="username"
-            autoCapitalize="none"
-            autoCorrect="off"
-            onChange={(e) => setUsername(e.target.value)}
-          />
-        </div>
+        {store.mfaPending ? (
+          <>
+            <div className="field" style={{ width: '100%' }}>
+              <label className="field-label" htmlFor="login-code">
+                Authentication code
+              </label>
+              <input
+                id="login-code"
+                className="text-input"
+                value={code}
+                autoFocus
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                autoCapitalize="none"
+                autoCorrect="off"
+                placeholder="6-digit code or a recovery code"
+                onChange={(e) => setCode(e.target.value)}
+              />
+            </div>
+            <span className="t-caption2 fg-secondary" style={{ textAlign: 'center' }}>
+              Enter the code from your authenticator app, or one of your recovery codes.
+            </span>
+            <div className="row" style={{ gap: 8, width: '100%' }}>
+              <button
+                className="btn prominent"
+                type="submit"
+                disabled={busy || !code.trim()}
+                style={{ flex: 1, padding: '10px', fontSize: 15 }}
+              >
+                {busy && <Spinner />} Verify
+              </button>
+              <button
+                className="btn"
+                type="button"
+                disabled={busy}
+                onClick={cancelMfa}
+                style={{ padding: '10px 12px', fontSize: 15, whiteSpace: 'nowrap' }}
+              >
+                Back
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="field" style={{ width: '100%' }}>
+              <label className="field-label" htmlFor="login-username">
+                Username
+              </label>
+              <input
+                id="login-username"
+                className="text-input"
+                value={username}
+                autoFocus
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </div>
 
-        <div className="field" style={{ width: '100%' }}>
-          <label className="field-label" htmlFor="login-password">
-            Password
-          </label>
-          <input
-            id="login-password"
-            className="text-input"
-            type="password"
-            value={password}
-            autoComplete="current-password"
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </div>
+            <div className="field" style={{ width: '100%' }}>
+              <label className="field-label" htmlFor="login-password">
+                Password
+              </label>
+              <input
+                id="login-password"
+                className="text-input"
+                type="password"
+                value={password}
+                autoComplete="current-password"
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
 
-        <div className="row" style={{ gap: 8, width: '100%' }}>
-          <button
-            className="btn prominent"
-            type="submit"
-            disabled={busy || !username.trim()}
-            style={{ flex: 1, padding: '10px', fontSize: 15 }}
-          >
-            {busy && <Spinner />} Sign in
-          </button>
-          {passkeysSupported() && (
-            <button
-              className="btn"
-              type="button"
-              disabled={busy || !username.trim()}
-              onClick={signInWithPasskey}
-              title="Sign in with a passkey (Touch ID, Windows Hello, security key…)"
-              style={{ padding: '10px 12px', fontSize: 15, whiteSpace: 'nowrap' }}
-            >
-              🔑 Sign with Passkey
-            </button>
-          )}
-        </div>
+            <div className="row" style={{ gap: 8, width: '100%' }}>
+              <button
+                className="btn prominent"
+                type="submit"
+                disabled={busy || !username.trim()}
+                style={{ flex: 1, padding: '10px', fontSize: 15 }}
+              >
+                {busy && <Spinner />} Sign in
+              </button>
+              {passkeysSupported() && (
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={busy || !username.trim()}
+                  onClick={signInWithPasskey}
+                  title="Sign in with a passkey (Touch ID, Windows Hello, security key…)"
+                  style={{ padding: '10px 12px', fontSize: 15, whiteSpace: 'nowrap' }}
+                >
+                  🔑 Sign with Passkey
+                </button>
+              )}
+            </div>
+          </>
+        )}
 
-        {directory?.configured && (
+        {!store.mfaPending && directory?.configured && (
           <div
             className="row"
             style={{ gap: 6, alignItems: 'center', alignSelf: 'center' }}

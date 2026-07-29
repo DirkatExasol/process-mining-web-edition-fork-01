@@ -1433,45 +1433,137 @@ def test_passkey_all_endpoint_requires_admin(admin):
     assert client.post("/api/access/passkey-all", json={"allowed": True}).status_code == 401
 
 
-def test_admin_passkey_login_begin_denied_without_allow_or_credentials(admin):
+def test_admin_passkey_login_begin_is_enumeration_resistant(admin):
+    # Enumeration-resistant: an eligible admin, a non-admin, an admin without a
+    # passkey and an unknown username all return the SAME 200 shape (challenge +
+    # one allowCredentials + cookie). The admin-only restriction is enforced at
+    # the finish step (verification fails), not by a leaky 403 at begin.
     server, store = admin
-    client = TestClient(server.app)
-    store.create_user("padmin", "pw", is_admin=True)
-
-    # No passkey_allowed and no credentials → not available.
-    r = client.post("/login/passkey/begin", json={"username": "padmin"})
-    assert r.status_code == 403
-    assert server.passkey.CHALLENGE_COOKIE not in client.cookies
-
-    # Allowed but still no registered credential → still not available.
-    store.set_passkey_allowed("padmin", True)
-    r = client.post("/login/passkey/begin", json={"username": "padmin"})
-    assert r.status_code == 403
-
-
-def test_admin_passkey_login_begin_offers_options_when_eligible(admin):
-    server, store = admin
-    client = TestClient(server.app)
     store.create_user("padmin", "pw", is_admin=True)
     store.set_passkey_allowed("padmin", True)
     store.add_credential("padmin", credential_id="cred-1", public_key="K", sign_count=0)
-
-    r = client.post("/login/passkey/begin", json={"username": "padmin"})
-    assert r.status_code == 200
-    body = r.json()
-    # Username-first: the response scopes the ceremony to this user's credential.
-    assert body["challenge"] and len(body["allowCredentials"]) == 1
-    # A short-lived signed challenge cookie is set for the finish step.
-    assert server.passkey.CHALLENGE_COOKIE in client.cookies
-
-
-def test_admin_passkey_login_begin_rejects_non_admin(admin):
-    server, store = admin
-    client = TestClient(server.app)
-    store.create_user("power", "pw", is_admin=False)
+    store.create_user("power", "pw", is_admin=False)  # non-admin, has a passkey
     store.set_passkey_allowed("power", True)
     store.add_credential("power", credential_id="cred-2", public_key="K", sign_count=0)
+    store.create_user("plain", "pw", is_admin=True)   # admin, no passkey
 
-    # Passkeys work on the app for non-admins, but the admin panel admits admins only.
-    r = client.post("/login/passkey/begin", json={"username": "power"})
-    assert r.status_code == 403
+    def shape(username: str) -> tuple:
+        client = TestClient(server.app)
+        r = client.post("/login/passkey/begin", json={"username": username})
+        body = r.json()
+        return (
+            r.status_code,
+            "detail" in body,
+            len(body.get("allowCredentials", [])),
+            server.passkey.CHALLENGE_COOKIE in client.cookies,
+        )
+
+    eligible = shape("padmin")
+    assert eligible == (200, False, 1, True)
+    assert shape("power") == eligible   # a non-admin doesn't stand out
+    assert shape("plain") == eligible   # an admin without a passkey doesn't either
+    assert shape("ghost") == eligible   # nor an unknown username
+
+
+# ── Two-factor (TOTP) — admin gating + the admin two-step login ───────────────
+
+
+def test_mfa_allowed_endpoint_toggles_and_lists(admin):
+    server, store = admin
+    client = _login(server)
+    store.create_user("pat", "pw", is_admin=False)
+
+    r = client.post("/api/users/pat/mfa-allowed", json={"allowed": True})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert store.get_user("pat").mfa_allowed is True
+    listed = {u["username"]: u for u in client.get("/api/users").json()}
+    assert listed["pat"]["mfaAllowed"] is True and listed["pat"]["mfaEnabled"] is False
+
+    assert client.post("/api/users/pat/mfa-allowed", json={"allowed": False}).status_code == 200
+    assert store.get_user("pat").mfa_allowed is False
+
+
+def test_mfa_allowed_and_all_require_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    assert client.post("/api/users/pat/mfa-allowed", json={"allowed": True}).status_code == 401
+    assert client.post("/api/access/mfa-all", json={"allowed": True}).status_code == 401
+
+
+def test_mfa_all_endpoint_is_master_toggle(admin):
+    server, store = admin
+    client = _login(server)
+    store.create_user("alice", "pw", is_admin=False)
+    store.create_user("bob", "pw", is_admin=False)
+    assert client.post("/api/access/mfa-all", json={"allowed": True}).status_code == 200
+    assert all(u.mfa_allowed for u in store.list_users())
+    assert client.post("/api/access/mfa-all", json={"allowed": False}).status_code == 200
+    assert not any(u.mfa_allowed for u in store.list_users())
+
+
+def test_admin_login_asks_for_a_code_then_signs_in(admin):
+    import pyotp
+    import app.services.mfa as mfa
+    server, store = admin
+    secret = mfa.new_secret()
+    store.create_user("padmin", "pw", is_admin=True)
+    store.set_mfa_allowed("padmin", True)
+    store.set_totp_secret("padmin", secret)
+
+    client = TestClient(server.app)
+    r = client.post("/login", data={"username": "padmin", "password": "pw"},
+                    follow_redirects=False)
+    # Password ok, but the code step is shown — no admin cookie yet.
+    assert r.status_code == 200 and "Authentication code" in r.text
+    assert server.COOKIE not in client.cookies
+    assert server.passkey  # module wired (sanity)
+    assert mfa.PENDING_COOKIE in client.cookies
+
+    # Wrong code stays on the step, still no session.
+    bad = client.post("/login/mfa", data={"code": "000000"}, follow_redirects=False)
+    assert bad.status_code == 401 and server.COOKIE not in client.cookies
+
+    ok = client.post("/login/mfa", data={"code": pyotp.TOTP(secret).now()},
+                     follow_redirects=False)
+    assert ok.status_code == 303 and server.COOKIE in client.cookies
+
+
+def test_admin_login_mfa_without_pending_is_rejected(admin):
+    server, _ = admin
+    client = TestClient(server.app)  # never did the password step
+    r = client.post("/login/mfa", data={"code": "000000"}, follow_redirects=False)
+    assert r.status_code == 401 and server.COOKIE not in client.cookies
+
+
+def test_admin_mfa_setup_roundtrip(admin):
+    import pyotp
+    server, store = admin
+    client = _login(server)  # built-in Administrator
+    store.set_mfa_allowed("Administrator", True)
+
+    begin = client.post("/api/mfa/setup/begin")
+    assert begin.status_code == 200
+    secret = begin.json()["secret"]
+    fin = client.post("/api/mfa/setup/finish", json={"code": pyotp.TOTP(secret).now()})
+    assert fin.status_code == 200 and len(fin.json()["recoveryCodes"]) == 10
+    assert client.get("/api/mfa/status").json()["enabled"] is True
+
+    # Disable requires the current code (re-auth the downgrade).
+    assert client.post("/api/mfa/disable", json={"code": "000000"}).status_code == 401
+    assert store.get_user("Administrator").mfa_enabled is True
+    assert client.post("/api/mfa/disable", json={"code": pyotp.TOTP(secret).now()}).status_code == 200
+    assert store.get_user("Administrator").mfa_enabled is False
+
+
+def test_admin_mfa_disable_is_ip_throttled(admin):
+    import pyotp
+    server, store = admin
+    client = _login(server)  # built-in Administrator (correct password → throttle clear)
+    store.set_mfa_allowed("Administrator", True)
+    secret = client.post("/api/mfa/setup/begin").json()["secret"]
+    client.post("/api/mfa/setup/finish", json={"code": pyotp.TOTP(secret).now()})
+
+    for _ in range(server._LOGIN_IP_MAX):
+        assert client.post("/api/mfa/disable", json={"code": "000000"}).status_code == 401
+    assert client.post("/api/mfa/disable", json={"code": "000000"}).status_code == 429
+    assert store.get_user("Administrator").mfa_enabled is True  # never stripped

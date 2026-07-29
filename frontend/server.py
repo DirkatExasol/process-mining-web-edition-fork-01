@@ -24,7 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from app import licensing  # noqa: E402
 from app import log_events as logx  # noqa: E402
 from app.config import BACKEND_CA_PATH, BACKEND_URL, SESSION_TTL_SECS  # noqa: E402
-from app.services import passkey  # noqa: E402
+from app.services import mfa, passkey  # noqa: E402
+from app.services.login_throttle import LoginThrottle  # noqa: E402
 from app.store.crypto import (  # noqa: E402
     proxy_auth_secret,
     read_session,
@@ -137,6 +138,11 @@ _OPEN_API_PATHS = {"health"}
 
 _SESSION_AUDIENCE = "app"  # this cookie is only valid for the main application
 
+# Per-source-IP sign-in throttle (password + TOTP). The account lockout doesn't
+# apply to the break-glass Administrator or to the code step, so without this an
+# attacker who reached the app could brute-force those unthrottled.
+_login_throttle = LoginThrottle()
+
 
 def _issue_session(username: str) -> str:
     # Embed the user's session epoch so logout (which bumps it) invalidates this
@@ -193,6 +199,11 @@ def _current_user(request: Request) -> User | None:
 
 @app.post("/auth/login")
 async def auth_login(request: Request) -> Response:
+    ip = _login_throttle.client_ip(request)
+    if _login_throttle.retry_after(ip) > 0:
+        # Per-IP cooldown — covers accounts the lockout doesn't (the built-in admin).
+        return JSONResponse(
+            {"detail": "Too many attempts. Try again shortly."}, status_code=429)
     try:
         data = await request.json()
     except json.JSONDecodeError:
@@ -203,6 +214,7 @@ async def auth_login(request: Request) -> Response:
     # panel deliberately stays on local-only `authenticate`.
     user = store.authenticate_app(username, password)
     if user is None:
+        _login_throttle.record_failure(ip)
         # Tell the user when the account is disabled/locked; otherwise stay generic.
         detail = store.login_block_message(username) or "Invalid username or password."
         logx.warn(
@@ -212,22 +224,41 @@ async def auth_login(request: Request) -> Response:
             operation="login",
         )
         return JSONResponse({"detail": detail}, status_code=401)
+    # Two-factor: if the user has confirmed TOTP (and it's still allowed), the
+    # password alone isn't enough — hold a signed "password ok" cookie and ask for
+    # the code. A passkey sign-in is already strong auth, so it skips this step.
+    # The IP throttle is cleared only after the *full* sign-in (the code step).
+    if store.mfa_active(user.username):
+        response = JSONResponse({"mfaRequired": True, "username": user.username})
+        _set_pending_cookie(response, request, mfa.make_pending_cookie(
+            username=user.username, aud="app"))
+        return response
+    _login_throttle.clear(ip)
     logx.usage(
         f"user {user.username} signed in ({user.auth_source})",
         request=request,
         username=user.username,
         operation="login",
     )
-    response = JSONResponse(
-        {
-            "username": user.username,
-            "isAdmin": user.is_admin,
-            "isPower": user.is_power,
-            "displayName": user.display_name,
-            "authSource": user.auth_source,
-            "passkeyAllowed": user.passkey_allowed,
-        }
-    )
+    return _app_login_response(user, request)
+
+
+def _user_payload(user) -> dict:
+    return {
+        "username": user.username,
+        "isAdmin": user.is_admin,
+        "isPower": user.is_power,
+        "displayName": user.display_name,
+        "authSource": user.auth_source,
+        "passkeyAllowed": user.passkey_allowed,
+        "mfaAllowed": user.mfa_allowed,
+        "mfaEnabled": user.mfa_enabled,
+    }
+
+
+def _app_login_response(user, request: Request) -> JSONResponse:
+    """The successful-sign-in response: the user payload + a session cookie."""
+    response = JSONResponse(_user_payload(user))
     _set_session_cookie(response, request, user.username)
     return response
 
@@ -250,6 +281,24 @@ def _set_challenge_cookie(response: Response, request: Request, token: str) -> N
     )
 
 
+def _set_pending_cookie(response: Response, request: Request, token: str) -> None:
+    response.set_cookie(
+        mfa.PENDING_COOKIE, token,
+        httponly=True, samesite="lax",
+        secure=request.url.scheme == "https",
+        max_age=mfa.PENDING_TTL_SECS, path="/",
+    )
+
+
+def _set_mfa_setup_cookie(response: Response, request: Request, token: str) -> None:
+    response.set_cookie(
+        mfa.SETUP_COOKIE, token,
+        httponly=True, samesite="lax",
+        secure=request.url.scheme == "https",
+        max_age=mfa.SETUP_TTL_SECS, path="/",
+    )
+
+
 @app.post("/auth/passkey/auth/begin")
 async def passkey_auth_begin(request: Request) -> Response:
     try:
@@ -257,20 +306,25 @@ async def passkey_auth_begin(request: Request) -> Response:
     except json.JSONDecodeError:
         data = {}
     username = str(data.get("username") or "").strip()
+    # Do the SAME two lookups for any supplied username — an existing account must
+    # not run one extra query a nonexistent one skips, or response timing would
+    # re-open the enumeration channel the decoy response closes.
     user = store.get_user(username) if username else None
-    ids = store.credential_ids_for(user.username) if user else []
-    if user is None or not user.is_enabled or not user.passkey_allowed or not ids:
-        return JSONResponse(
-            {"detail": "Passkey sign-in is not available for this account."},
-            status_code=403,
-        )
+    ids = store.credential_ids_for(username) if username else []
+    eligible = user is not None and user.is_enabled and user.passkey_allowed and bool(ids)
+    # Enumeration-resistant: answer identically whether or not the account exists /
+    # is eligible. Eligible → the account's real credential ids; otherwise → a stable
+    # decoy id that looks the same but can never verify. Same 200 shape, same cookie,
+    # so a scripted probe learns nothing about which usernames have passkeys.
+    allow_ids = ids if eligible else passkey.decoy_allow_ids(username)
+    cookie_username = user.username if eligible else username
     rp_id, _ = _rp_and_origins(request)
-    options_json, challenge = passkey.authentication_options(rp_id=rp_id, allow_ids=ids)
+    options_json, challenge = passkey.authentication_options(rp_id=rp_id, allow_ids=allow_ids)
     response = Response(content=options_json, media_type="application/json")
     _set_challenge_cookie(
         response, request,
         passkey.make_challenge_cookie(
-            challenge=challenge, username=user.username, kind="auth", aud="app"
+            challenge=challenge, username=cookie_username, kind="auth", aud="app"
         ),
     )
     return response
@@ -315,13 +369,10 @@ async def passkey_auth_finish(request: Request) -> Response:
         f"user {user.username} signed in with a passkey",
         request=request, username=user.username, operation="login",
     )
-    response = JSONResponse({
-        "username": user.username, "isAdmin": user.is_admin, "isPower": user.is_power,
-        "displayName": user.display_name, "authSource": user.auth_source,
-        "passkeyAllowed": user.passkey_allowed,
-    })
+    # A passkey is already strong (phishing-resistant) auth, so it satisfies MFA
+    # on its own — no TOTP step here even if the user also has TOTP enrolled.
+    response = _app_login_response(user, request)
     response.delete_cookie(passkey.CHALLENGE_COOKIE, path="/")
-    _set_session_cookie(response, request, user.username)
     return response
 
 
@@ -402,6 +453,150 @@ async def passkey_delete_credential(cred_id: str, request: Request) -> Response:
     if user is None:
         return JSONResponse({"detail": "Not signed in."}, status_code=401)
     store.delete_credential(cred_id, user.username)
+    return JSONResponse({"ok": True})
+
+
+# ── Two-factor (TOTP) — the second step of the password sign-in ──────────────
+
+
+@app.post("/auth/mfa/verify")
+async def mfa_verify(request: Request) -> Response:
+    """Step 2 of sign-in: with the password already verified (proven by the pending
+    cookie), check the 6-digit code — or a one-time recovery code — and issue the
+    session. Wrong codes are throttled per-IP but do NOT count toward the account
+    lockout, so a mistyped/expired code can never disable the account."""
+    ip = _login_throttle.client_ip(request)
+    if _login_throttle.retry_after(ip) > 0:
+        return JSONResponse(
+            {"detail": "Too many attempts. Try again shortly."}, status_code=429)
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        data = {}
+    username = mfa.read_pending_cookie(
+        request.cookies.get(mfa.PENDING_COOKIE) or "", aud="app")
+    user = store.get_user(username) if username else None
+    secret = store.get_totp_secret(username) if username else None
+    if user is None or not user.is_enabled or secret is None:
+        r = JSONResponse({"detail": "Your sign-in session expired. Start again."}, status_code=401)
+        r.delete_cookie(mfa.PENDING_COOKIE, path="/")
+        return r
+    code = str(data.get("code") or "")
+    ok = mfa.verify_code(secret, code) or store.consume_recovery_code(user.username, code)
+    if not ok:
+        _login_throttle.record_failure(ip)  # per-IP only, not account lockout
+        logx.warn(f"failed 2FA for {user.username!r}", request=request,
+                  username=user.username, operation="login")
+        return JSONResponse({"detail": "Incorrect code. Try again."}, status_code=401)
+    _login_throttle.clear(ip)
+    logx.usage(f"user {user.username} signed in ({user.auth_source}) with 2FA",
+               request=request, username=user.username, operation="login")
+    response = _app_login_response(user, request)
+    response.delete_cookie(mfa.PENDING_COOKIE, path="/")
+    return response
+
+
+@app.get("/auth/mfa/status")
+async def mfa_status(request: Request) -> Response:
+    user = _current_user(request)
+    if user is None:
+        return JSONResponse({"detail": "Not signed in."}, status_code=401)
+    return JSONResponse({
+        "mfaAllowed": user.mfa_allowed,
+        "enabled": user.mfa_enabled,
+        "recoveryRemaining": store.recovery_codes_remaining(user.username),
+    })
+
+
+@app.post("/auth/mfa/setup/begin")
+async def mfa_setup_begin(request: Request) -> Response:
+    user = _current_user(request)
+    if user is None:
+        return JSONResponse({"detail": "Not signed in."}, status_code=401)
+    if not user.mfa_allowed:
+        return JSONResponse(
+            {"detail": "Two-factor authentication is not enabled for your account."},
+            status_code=403)
+    secret = mfa.new_secret()
+    uri = mfa.provisioning_uri(secret=secret, username=user.username)
+    response = JSONResponse({"secret": secret, "otpauthUri": uri, "qrSvg": mfa.qr_svg(uri)})
+    _set_mfa_setup_cookie(response, request, mfa.make_setup_cookie(
+        username=user.username, secret=secret, aud="app"))
+    return response
+
+
+@app.post("/auth/mfa/setup/finish")
+async def mfa_setup_finish(request: Request) -> Response:
+    user = _current_user(request)
+    if user is None:
+        return JSONResponse({"detail": "Not signed in."}, status_code=401)
+    if not user.mfa_allowed:
+        return JSONResponse(
+            {"detail": "Two-factor authentication is not enabled for your account."},
+            status_code=403)
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        data = {}
+    secret = mfa.read_setup_cookie(
+        request.cookies.get(mfa.SETUP_COOKIE) or "", username=user.username, aud="app")
+    if secret is None:
+        return JSONResponse({"detail": "Setup expired. Start again."}, status_code=400)
+    if not mfa.verify_code(secret, str(data.get("code") or "")):
+        return JSONResponse({"detail": "That code didn't match. Try again."}, status_code=400)
+    store.set_totp_secret(user.username, secret)
+    codes = mfa.generate_recovery_codes()
+    store.set_recovery_codes(user.username, codes)
+    logx.usage(f"user {user.username} enabled two-factor authentication",
+               request=request, username=user.username, operation="login")
+    r = JSONResponse({"recoveryCodes": codes})
+    r.delete_cookie(mfa.SETUP_COOKIE, path="/")
+    return r
+
+
+@app.post("/auth/mfa/recovery/regenerate")
+async def mfa_recovery_regenerate(request: Request) -> Response:
+    user = _current_user(request)
+    if user is None:
+        return JSONResponse({"detail": "Not signed in."}, status_code=401)
+    if not user.mfa_enabled:
+        return JSONResponse({"detail": "Two-factor authentication isn't set up."}, status_code=400)
+    codes = mfa.generate_recovery_codes()
+    store.set_recovery_codes(user.username, codes)
+    logx.usage(f"user {user.username} regenerated 2FA recovery codes",
+               request=request, username=user.username, operation="login")
+    return JSONResponse({"recoveryCodes": codes})
+
+
+@app.post("/auth/mfa/disable")
+async def mfa_disable(request: Request) -> Response:
+    user = _current_user(request)
+    if user is None:
+        return JSONResponse({"detail": "Not signed in."}, status_code=401)
+    # Re-authenticate the downgrade: turning off the second factor requires the
+    # current code (or a recovery code), so a hijacked session alone can't strip it.
+    # Throttled per-IP so that re-auth can't itself be brute-forced from a session.
+    ip = _login_throttle.client_ip(request)
+    if _login_throttle.retry_after(ip) > 0:
+        return JSONResponse(
+            {"detail": "Too many attempts. Try again shortly."}, status_code=429)
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        data = {}
+    secret = store.get_totp_secret(user.username)
+    if secret is None:
+        return JSONResponse({"detail": "Two-factor authentication isn't set up."}, status_code=400)
+    code = str(data.get("code") or "")
+    if not (mfa.verify_code(secret, code) or store.consume_recovery_code(user.username, code)):
+        _login_throttle.record_failure(ip)
+        return JSONResponse(
+            {"detail": "Enter your current authentication code to turn off two-factor."},
+            status_code=401)
+    _login_throttle.clear(ip)
+    store.clear_mfa(user.username)
+    logx.usage(f"user {user.username} disabled two-factor authentication",
+               request=request, username=user.username, operation="login")
     return JSONResponse({"ok": True})
 
 
@@ -513,6 +708,8 @@ async def auth_session(request: Request) -> Response:
             "displayName": user.display_name if user else None,
             "authSource": user.auth_source if user else None,
             "passkeyAllowed": user.passkey_allowed if user else False,
+            "mfaAllowed": user.mfa_allowed if user else False,
+            "mfaEnabled": user.mfa_enabled if user else False,
             "requireLogin": store.require_login,
             "idleTimeoutMins": store.idle_timeout_mins,
         }

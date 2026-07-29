@@ -1,7 +1,7 @@
 /** LoginView tests — the directory-server availability indicator, which appears
  *  only when a directory is configured and reflects its reachability. */
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 vi.mock('../api', () => ({
@@ -11,6 +11,7 @@ vi.mock('../api', () => ({
     licenseStatus: vi.fn(),
     loginAppearance: vi.fn(),
     login: vi.fn(),
+    verifyMfa: vi.fn(),
     session: vi.fn(),
     logout: vi.fn(),
     listConnections: vi.fn(),
@@ -27,7 +28,15 @@ vi.mock('../passkey', () => ({
 
 import { api } from '../api'
 import { authenticateWithPasskey, passkeysSupported } from '../passkey'
+import { useStore } from '../store'
 import { LoginView } from './LoginView'
+
+const login = api.login as unknown as ReturnType<typeof vi.fn>
+const verifyMfa = api.verifyMfa as unknown as ReturnType<typeof vi.fn>
+
+// Some tests leave a two-factor step pending on the shared store; reset it so the
+// next test starts on the username/password form.
+afterEach(() => useStore.getState().cancelMfa())
 
 const directoryStatus = api.directoryStatus as unknown as ReturnType<typeof vi.fn>
 const licenseStatus = api.licenseStatus as unknown as ReturnType<typeof vi.fn>
@@ -177,5 +186,61 @@ describe('LoginView passkey button', () => {
     fireEvent.click(btn)
     await screen.findByText('Passkey sign-in failed.')
     expect(onSignedIn).not.toHaveBeenCalled()
+  })
+})
+
+describe('LoginView two-factor step', () => {
+  const user = {
+    username: 'alice',
+    isAdmin: false,
+    isPower: false,
+    displayName: null,
+    authSource: null,
+    passkeyAllowed: false,
+    mfaAllowed: true,
+    mfaEnabled: true,
+  }
+
+  it('shows the code step after a password login that needs a second factor', async () => {
+    directoryStatus.mockResolvedValue({ configured: false, available: false })
+    login.mockResolvedValue({ mfaRequired: true, username: 'alice' })
+    const onSignedIn = vi.fn()
+    render(<LoginView onSignedIn={onSignedIn} />)
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'alice' } })
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw' } })
+    fireEvent.click(screen.getByRole('button', { name: /Sign in/ }))
+    // The password form gives way to the code field; not signed in yet.
+    await screen.findByLabelText('Authentication code')
+    expect(onSignedIn).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText('Password')).toBeNull()
+  })
+
+  it('verifies the code and signs in', async () => {
+    directoryStatus.mockResolvedValue({ configured: false, available: false })
+    login.mockResolvedValue({ mfaRequired: true, username: 'alice' })
+    verifyMfa.mockResolvedValue(user)
+    const onSignedIn = vi.fn()
+    render(<LoginView onSignedIn={onSignedIn} />)
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'alice' } })
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw' } })
+    fireEvent.click(screen.getByRole('button', { name: /Sign in/ }))
+    const codeField = await screen.findByLabelText('Authentication code')
+    fireEvent.change(codeField, { target: { value: '123456' } })
+    fireEvent.click(screen.getByText(/Verify/))
+    await waitFor(() => expect(verifyMfa).toHaveBeenCalledWith('123456'))
+    await waitFor(() => expect(onSignedIn).toHaveBeenCalled())
+  })
+
+  it('lets the user go back to the password form', async () => {
+    directoryStatus.mockResolvedValue({ configured: false, available: false })
+    login.mockResolvedValue({ mfaRequired: true, username: 'alice' })
+    render(<LoginView onSignedIn={() => {}} />)
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'alice' } })
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw' } })
+    fireEvent.click(screen.getByRole('button', { name: /Sign in/ }))
+    await screen.findByLabelText('Authentication code')
+    fireEvent.click(screen.getByText('Back'))
+    // Back to the username/password form.
+    await screen.findByLabelText('Password')
   })
 })

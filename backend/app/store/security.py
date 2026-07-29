@@ -36,6 +36,7 @@ from .crypto import (
     decrypt_text,
     encrypt_text,
     hash_password,
+    recovery_code_pepper,
     verify_password,
     write_private_file,
 )
@@ -112,6 +113,13 @@ CREATE TABLE IF NOT EXISTS credentials (
     name          TEXT NOT NULL DEFAULT '',
     created_at    TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS mfa_recovery_codes (
+    id         TEXT PRIMARY KEY,
+    username   TEXT NOT NULL,
+    code_hash  TEXT NOT NULL,
+    used_at    TEXT,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS connections (
     id            TEXT PRIMARY KEY,
     name          TEXT NOT NULL,
@@ -172,6 +180,8 @@ class User:
     display_name: str = ""
     is_power: bool = False  # may create/manage their own DB connections from the app
     passkey_allowed: bool = False  # may enrol + sign in with a passkey (admin-gated)
+    mfa_allowed: bool = False  # may enrol TOTP two-factor auth (admin-gated)
+    mfa_enabled: bool = False  # has a confirmed TOTP secret (derived, not a column)
     failed_logins: int = 0
     login_locked: bool = False  # disabled by the failed-sign-in lockout
     session_epoch: int = 0  # bumped on logout; stale-epoch tokens are rejected
@@ -190,6 +200,8 @@ class User:
             "displayName": self.display_name,
             "isPower": self.is_power,
             "passkeyAllowed": self.passkey_allowed,
+            "mfaAllowed": self.mfa_allowed,
+            "mfaEnabled": self.mfa_enabled,
         }
 
 
@@ -328,6 +340,10 @@ class SecurityStore:
             ("is_power", "is_power INTEGER NOT NULL DEFAULT 0"),
             # Admin-gated permission to enrol and sign in with a passkey (WebAuthn).
             ("passkey_allowed", "passkey_allowed INTEGER NOT NULL DEFAULT 0"),
+            # Admin-gated permission to enrol TOTP two-factor auth; the encrypted
+            # secret (empty until the user confirms enrolment).
+            ("mfa_allowed", "mfa_allowed INTEGER NOT NULL DEFAULT 0"),
+            ("totp_secret_enc", "totp_secret_enc TEXT NOT NULL DEFAULT ''"),
             # Failed-sign-in lockout (admin-configurable threshold).
             ("failed_logins", "failed_logins INTEGER NOT NULL DEFAULT 0"),
             ("login_locked", "login_locked INTEGER NOT NULL DEFAULT 0"),
@@ -946,6 +962,8 @@ class SecurityStore:
             display_name=(row["display_name"] if "display_name" in keys else "") or "",
             is_power=bool(row["is_power"]) if "is_power" in keys else False,
             passkey_allowed=bool(row["passkey_allowed"]) if "passkey_allowed" in keys else False,
+            mfa_allowed=bool(row["mfa_allowed"]) if "mfa_allowed" in keys else False,
+            mfa_enabled=bool(row["totp_secret_enc"]) if "totp_secret_enc" in keys else False,
             failed_logins=int(row["failed_logins"]) if "failed_logins" in keys else 0,
             login_locked=bool(row["login_locked"]) if "login_locked" in keys else False,
             session_epoch=int(row["session_epoch"]) if "session_epoch" in keys else 0,
@@ -1065,6 +1083,118 @@ class SecurityStore:
             self._conn.execute("UPDATE users SET passkey_allowed = ?", (int(allowed),))
             self._conn.commit()
 
+    # ── Two-factor authentication (TOTP) ────────────────────────────────────
+    # An admin allows a user to enrol; the user confirms a code, which stores the
+    # secret (encrypted at rest) and a set of one-time recovery codes (hashed).
+    # `mfa_active` — the login gate — is allowed AND enrolled, so revoking the
+    # permission relaxes the second factor rather than locking the user out.
+
+    def set_mfa_allowed(self, username: str, allowed: bool) -> None:
+        """Grant/revoke a user's permission to enrol two-factor authentication."""
+        if self.get_user(username) is None:
+            raise ValueError("No such user.")
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET mfa_allowed = ? WHERE LOWER(username) = LOWER(?)",
+                (int(allowed), username),
+            )
+            self._conn.commit()
+
+    def set_mfa_allowed_all(self, allowed: bool) -> None:
+        """Master toggle — allow/deny two-factor enrolment for every user at once."""
+        with self._lock:
+            self._conn.execute("UPDATE users SET mfa_allowed = ?", (int(allowed),))
+            self._conn.commit()
+
+    def set_totp_secret(self, username: str, secret: str) -> None:
+        """Store (encrypted) a confirmed TOTP secret for the user."""
+        if self.get_user(username) is None:
+            raise ValueError("No such user.")
+        enc = encrypt_text(secret) if secret else ""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET totp_secret_enc = ? WHERE LOWER(username) = LOWER(?)",
+                (enc, username),
+            )
+            self._conn.commit()
+
+    def get_totp_secret(self, username: str) -> str | None:
+        """Return the user's decrypted TOTP secret, or None if not enrolled."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT totp_secret_enc FROM users WHERE LOWER(username) = LOWER(?)",
+                (username,),
+            ).fetchone()
+        if not row or not row["totp_secret_enc"]:
+            return None
+        try:
+            return decrypt_text(row["totp_secret_enc"])
+        except Exception:  # noqa: BLE001 — a corrupt/rotated key means "not usable"
+            return None
+
+    def mfa_active(self, username: str) -> bool:
+        """The login gate: the user is both allowed AND enrolled."""
+        user = self.get_user(username)
+        return bool(user and user.mfa_allowed and user.mfa_enabled)
+
+    def clear_mfa(self, username: str) -> None:
+        """Turn two-factor off for the user: drop the secret and recovery codes."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET totp_secret_enc = '' WHERE LOWER(username) = LOWER(?)",
+                (username,),
+            )
+            self._conn.execute(
+                "DELETE FROM mfa_recovery_codes WHERE LOWER(username) = LOWER(?)", (username,)
+            )
+            self._conn.commit()
+
+    @staticmethod
+    def _recovery_hash(code: str) -> str:
+        """Recovery codes are high-entropy, so a fast salted SHA-256 is sufficient
+        (unlike low-entropy passwords, which need a slow KDF)."""
+        norm = code.replace("-", "").replace(" ", "").upper()
+        return hashlib.sha256((recovery_code_pepper() + norm).encode("utf-8")).hexdigest()
+
+    def set_recovery_codes(self, username: str, codes: list[str]) -> None:
+        """Replace the user's recovery codes with hashes of the supplied set."""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM mfa_recovery_codes WHERE LOWER(username) = LOWER(?)", (username,)
+            )
+            self._conn.executemany(
+                "INSERT INTO mfa_recovery_codes (id, username, code_hash, used_at, created_at) "
+                "VALUES (?, ?, ?, NULL, ?)",
+                [(str(uuid.uuid4()), username, self._recovery_hash(c), _now()) for c in codes],
+            )
+            self._conn.commit()
+
+    def consume_recovery_code(self, username: str, code: str) -> bool:
+        """Mark a matching unused recovery code as used. Returns True on success."""
+        target = self._recovery_hash(code)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id FROM mfa_recovery_codes WHERE LOWER(username) = LOWER(?) "
+                "AND code_hash = ? AND used_at IS NULL",
+                (username, target),
+            ).fetchone()
+            if row is None:
+                return False
+            self._conn.execute(
+                "UPDATE mfa_recovery_codes SET used_at = ? WHERE id = ?", (_now(), row["id"])
+            )
+            self._conn.commit()
+            return True
+
+    def recovery_codes_remaining(self, username: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM mfa_recovery_codes "
+                "WHERE LOWER(username) = LOWER(?) AND used_at IS NULL",
+                (username,),
+            ).fetchone()
+        return int(row["n"]) if row else 0
+
     def delete_user(self, username: str) -> None:
         user = self.get_user(username)
         if user is None:
@@ -1079,6 +1209,9 @@ class SecurityStore:
             )
             self._conn.execute(
                 "DELETE FROM credentials WHERE LOWER(username) = LOWER(?)", (username,)
+            )
+            self._conn.execute(
+                "DELETE FROM mfa_recovery_codes WHERE LOWER(username) = LOWER(?)", (username,)
             )
             self._conn.commit()
 

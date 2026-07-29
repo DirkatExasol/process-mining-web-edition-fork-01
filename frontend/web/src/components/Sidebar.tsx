@@ -20,6 +20,7 @@ import { ConnectionEditor } from './ConnectionEditor'
 import { Logo } from './Logo'
 import { PasskeysSheet } from './PasskeysSheet'
 import { SamplingSection } from './SamplingSection'
+import { TwoFactorSheet } from './TwoFactorSheet'
 import { StepEditor } from './StepEditor'
 import {
   AutocompleteField,
@@ -48,6 +49,7 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
   const [showPromptEditor, setShowPromptEditor] = useState(false)
   const [showSavePreset, setShowSavePreset] = useState(false)
   const [showPasskeys, setShowPasskeys] = useState(false)
+  const [showTwoFactor, setShowTwoFactor] = useState(false)
   const [theme, setTheme] = useSetting<string>('app.theme')
   // Power/admin only: the connection being created (null) or edited.
   const [connEditor, setConnEditor] = useState<
@@ -205,6 +207,15 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
               </span>
             )}
             <span className="spacer" />
+            {store.authMfaAllowed && (
+              <button
+                className="btn small"
+                title="Manage two-factor authentication"
+                onClick={() => setShowTwoFactor(true)}
+              >
+                🔒 Two-factor
+              </button>
+            )}
             {store.authPasskeyAllowed && (
               <button
                 className="btn small"
@@ -226,6 +237,7 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
       )}
 
       {showPasskeys && <PasskeysSheet onClose={() => setShowPasskeys(false)} />}
+      {showTwoFactor && <TwoFactorSheet onClose={() => setShowTwoFactor(false)} />}
 
       <Divider />
       <div className="theme-bar">

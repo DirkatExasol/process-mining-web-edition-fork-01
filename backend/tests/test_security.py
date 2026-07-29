@@ -968,3 +968,99 @@ def test_deleting_user_cascades_to_credentials(security):
     store.delete_user("alice")
     assert store.credential_ids_for("alice") == []
     assert store.get_credential("cred-x") is None
+
+
+# ── Two-factor (TOTP) — allow flag + secret + recovery codes ─────────────────
+
+
+def test_mfa_allowed_flag_defaults_off_and_toggles(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=False)
+    u = store.get_user("alice")
+    assert u.mfa_allowed is False and u.mfa_enabled is False
+    assert u.public()["mfaAllowed"] is False and u.public()["mfaEnabled"] is False
+
+    store.set_mfa_allowed("alice", True)
+    assert store.get_user("ALICE").mfa_allowed is True  # case-insensitive
+    store.set_mfa_allowed("alice", False)
+    assert store.get_user("alice").mfa_allowed is False
+
+
+def test_set_mfa_allowed_unknown_user_raises(security):
+    with pytest.raises(ValueError):
+        security.store.set_mfa_allowed("ghost", True)
+
+
+def test_mfa_allowed_all_is_a_master_toggle(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=False)
+    store.create_user("bob", "pw", is_admin=False)
+    store.set_mfa_allowed_all(True)
+    assert all(u.mfa_allowed for u in store.list_users())
+    store.set_mfa_allowed_all(False)
+    assert not any(u.mfa_allowed for u in store.list_users())
+
+
+def test_totp_secret_round_trips_encrypted_and_sets_enabled(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=False)
+    assert store.get_totp_secret("alice") is None
+
+    store.set_totp_secret("alice", "JBSWY3DPEHPK3PXP")
+    assert store.get_totp_secret("ALICE") == "JBSWY3DPEHPK3PXP"  # case-insensitive
+    assert store.get_user("alice").mfa_enabled is True
+    # Stored encrypted, not as plaintext.
+    row = store._conn.execute(
+        "SELECT totp_secret_enc FROM users WHERE username = 'alice'"
+    ).fetchone()
+    assert row["totp_secret_enc"] and "JBSWY3DPEHPK3PXP" not in row["totp_secret_enc"]
+
+
+def test_mfa_active_requires_both_allowed_and_enrolled(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=False)
+    store.set_totp_secret("alice", "JBSWY3DPEHPK3PXP")
+    assert store.mfa_active("alice") is False  # enrolled but not allowed
+    store.set_mfa_allowed("alice", True)
+    assert store.mfa_active("alice") is True
+    store.set_mfa_allowed("alice", False)
+    assert store.mfa_active("alice") is False  # allow revoked → factor relaxed
+
+
+def test_recovery_codes_are_one_time_and_hashed(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=False)
+    codes = ["aaaa1111-bbbb2222", "cccc3333-dddd4444"]
+    store.set_recovery_codes("alice", codes)
+    assert store.recovery_codes_remaining("alice") == 2
+    # Stored hashed, never in the clear.
+    rows = store._conn.execute(
+        "SELECT code_hash FROM mfa_recovery_codes WHERE LOWER(username) = 'alice'"
+    ).fetchall()
+    assert all(codes[0] not in r["code_hash"] for r in rows)
+
+    assert store.consume_recovery_code("alice", "aaaa1111-bbbb2222") is True
+    assert store.consume_recovery_code("alice", "aaaa1111-bbbb2222") is False  # once only
+    assert store.recovery_codes_remaining("alice") == 1
+    # Normalisation: dashes/spaces/case don't matter.
+    assert store.consume_recovery_code("alice", "CCCC3333 DDDD4444") is True
+    assert store.recovery_codes_remaining("alice") == 0
+
+
+def test_clear_mfa_drops_secret_and_recovery_codes(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=False)
+    store.set_totp_secret("alice", "JBSWY3DPEHPK3PXP")
+    store.set_recovery_codes("alice", ["aaaa1111-bbbb2222"])
+    store.clear_mfa("alice")
+    assert store.get_user("alice").mfa_enabled is False
+    assert store.get_totp_secret("alice") is None
+    assert store.recovery_codes_remaining("alice") == 0
+
+
+def test_deleting_user_cascades_to_recovery_codes(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=False)
+    store.set_recovery_codes("alice", ["aaaa1111-bbbb2222"])
+    store.delete_user("alice")
+    assert store.recovery_codes_remaining("alice") == 0

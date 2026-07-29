@@ -7,7 +7,7 @@
  */
 
 import { create } from 'zustand'
-import { api, ApiError } from './api'
+import { api, ApiError, type AuthUser } from './api'
 import {
   projectKeys,
   readJSON,
@@ -132,6 +132,10 @@ export interface AppState {
   authIsAdmin: boolean
   authIsPower: boolean
   authPasskeyAllowed: boolean
+  authMfaAllowed: boolean
+  authMfaEnabled: boolean
+  /** Username awaiting a TOTP code after a correct password (two-step sign-in). */
+  mfaPending: string | null
   requireLogin: boolean
   idleTimeoutMins: number
   /** Set when the last sign-out was due to inactivity, so the login screen can say so. */
@@ -270,7 +274,12 @@ export interface AppActions {
   dismissAlert: () => void
 
   checkSession: () => Promise<void>
+  /** Returns an error message, or null. On null, check `mfaPending`: if set, a
+   *  second factor is required; otherwise the user is signed in. */
   login: (username: string, password: string) => Promise<string | null>
+  /** Step 2 of a two-factor sign-in — submit the TOTP or recovery code. */
+  verifyMfa: (code: string) => Promise<string | null>
+  cancelMfa: () => void
   loginWithPasskey: (username: string) => Promise<string | null>
   logout: (opts?: { inactivity?: boolean }) => Promise<void>
 
@@ -404,6 +413,20 @@ export type Store = AppState & AppActions
 
 const today = toISODate(new Date())
 
+/** Map a signed-in user payload (password / passkey / MFA) to the store's auth
+ *  fields — the one place that shape is unpacked. */
+function hydrateAuth(u: AuthUser) {
+  return {
+    authUser: u.username,
+    authDisplayName: u.displayName || null,
+    authIsAdmin: u.isAdmin,
+    authIsPower: u.isPower,
+    authPasskeyAllowed: u.passkeyAllowed,
+    authMfaAllowed: u.mfaAllowed,
+    authMfaEnabled: u.mfaEnabled,
+  }
+}
+
 const INITIAL_STATE: AppState = {
   authChecked: false,
   authUser: null,
@@ -411,6 +434,9 @@ const INITIAL_STATE: AppState = {
   authIsAdmin: false,
   authIsPower: false,
   authPasskeyAllowed: false,
+  authMfaAllowed: false,
+  authMfaEnabled: false,
+  mfaPending: null,
   requireLogin: true,
   idleTimeoutMins: 0,
   signedOutForInactivity: false,
@@ -866,6 +892,8 @@ export const useStore = create<Store>((set, get) => {
           authIsAdmin: s.isAdmin,
           authIsPower: s.isPower,
           authPasskeyAllowed: s.authenticated ? s.passkeyAllowed : false,
+          authMfaAllowed: s.authenticated ? s.mfaAllowed : false,
+          authMfaEnabled: s.authenticated ? s.mfaEnabled : false,
           requireLogin: s.requireLogin,
           idleTimeoutMins: s.idleTimeoutMins ?? 0,
         })
@@ -879,14 +907,12 @@ export const useStore = create<Store>((set, get) => {
     login: async (username, password) => {
       try {
         const result = await api.login(username, password)
-        set({
-          authUser: result.username,
-          authDisplayName: result.displayName || null,
-          authIsAdmin: result.isAdmin,
-          authIsPower: result.isPower,
-          authPasskeyAllowed: result.passkeyAllowed,
-          signedOutForInactivity: false,
-        })
+        if ('mfaRequired' in result) {
+          // Password ok, but a second factor is needed — LoginView shows the code step.
+          set({ mfaPending: result.username, signedOutForInactivity: false })
+          return null
+        }
+        set({ ...hydrateAuth(result), mfaPending: null, signedOutForInactivity: false })
         void get().refreshManageable()
         return null
       } catch (error) {
@@ -894,15 +920,25 @@ export const useStore = create<Store>((set, get) => {
       }
     },
 
+    verifyMfa: async (code) => {
+      try {
+        const result = await api.verifyMfa(code)
+        set({ ...hydrateAuth(result), mfaPending: null, signedOutForInactivity: false })
+        void get().refreshManageable()
+        return null
+      } catch (error) {
+        return error instanceof ApiError ? error.message : String(error)
+      }
+    },
+
+    cancelMfa: () => set({ mfaPending: null }),
+
     loginWithPasskey: async (username) => {
       try {
         const result = await authenticateWithPasskey(username)
         set({
-          authUser: result.username,
-          authDisplayName: result.displayName || null,
-          authIsAdmin: result.isAdmin,
-          authIsPower: result.isPower,
-          authPasskeyAllowed: result.passkeyAllowed,
+          ...hydrateAuth(result),
+          mfaPending: null,
           signedOutForInactivity: false,
         })
         void get().refreshManageable()
@@ -928,6 +964,9 @@ export const useStore = create<Store>((set, get) => {
         authIsAdmin: false,
         authIsPower: false,
         authPasskeyAllowed: false,
+        authMfaAllowed: false,
+        authMfaEnabled: false,
+        mfaPending: null,
         manageableConnections: [],
         assignableUsers: [],
         signedOutForInactivity: opts?.inactivity ?? false,

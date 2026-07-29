@@ -23,6 +23,18 @@ import type {
 } from './types'
 import type { LoginAppearance } from './loginAppearance'
 
+/** The signed-in user payload returned by password, passkey and MFA sign-in. */
+export interface AuthUser {
+  username: string
+  isAdmin: boolean
+  isPower: boolean
+  displayName: string | null
+  authSource: string | null
+  passkeyAllowed: boolean
+  mfaAllowed: boolean
+  mfaEnabled: boolean
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -81,16 +93,18 @@ export const api = {
       requireLogin: boolean
       idleTimeoutMins: number
       passkeyAllowed: boolean
+      mfaAllowed: boolean
+      mfaEnabled: boolean
     }>('/auth/session'),
+  // A password login either signs the user in or asks for a second factor.
   login: (username: string, password: string) =>
-    post<{
-      username: string
-      isAdmin: boolean
-      isPower: boolean
-      displayName: string
-      authSource: string
-      passkeyAllowed: boolean
-    }>('/auth/login', { username, password }),
+    post<AuthUser | { mfaRequired: true; username: string }>('/auth/login', {
+      username,
+      password,
+    }),
+  // Step 2: submit the TOTP (or recovery) code after a password login that
+  // returned mfaRequired.
+  verifyMfa: (code: string) => post<AuthUser>('/auth/mfa/verify', { code }),
   logout: () => post<{ ok: boolean }>('/auth/logout'),
   // Directory (LDAP) availability for the login panel; configured=false ⇒ show nothing.
   directoryStatus: () =>

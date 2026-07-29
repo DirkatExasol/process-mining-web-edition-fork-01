@@ -171,6 +171,7 @@ const connecting: HelpTopic = {
       body: [
         p('Unless an administrator has turned sign-in off, the application asks you to sign in. Use the username and password you were given — depending on how your organisation is set up this may be a local account or a directory (LDAP / Active Directory) account.'),
         def('Passkeys', 'If your administrator has enabled passkeys for your account, you can sign in with Touch ID, Windows Hello, or a hardware security key instead of a password. First sign in with your password, then open 🔑 Passkeys next to Sign out and add a passkey for this device. After that, type your username on the login page and click “Sign with Passkey”. Your password always keeps working as a fallback, so you are never locked out.'),
+        def('Two-factor (authenticator app)', 'If your administrator has enabled two-factor for your account, you can add a one-time code as a second step. Open 🔒 Two-factor next to Sign out, scan the QR with an authenticator app (Google Authenticator, 1Password, Authy…) and save the recovery codes it gives you. From then on, after your password you’ll be asked for the current 6-digit code. Keep the recovery codes somewhere safe — each signs you in once if you lose your phone.'),
         tip('Your app sign-in is completely separate from any database credentials. You never type a database password into the app — those live only in the administrator’s configuration.'),
       ],
     },
@@ -333,6 +334,17 @@ const adminUsers: HelpTopic = {
         def('Enrolling a device', 'Once allowed, a user adds a passkey from the main app (the 🔑 Passkeys button by Sign out) or, for administrators, from the App Control → Passkeys card here. Enrolment requires being signed in first, so only the real account owner can register a device. A passkey registered on this host works for both the main app and this admin interface — one passkey, both surfaces.'),
         def('Signing in', 'On the login page the user types their username and clicks “Sign with Passkey”. Turning off the Passkey permission blocks further passkey sign-ins immediately (existing passkeys stop working until re-enabled); deleting a user also removes their passkeys.'),
         warn('Passkeys need a secure context — HTTPS, or localhost for local testing. Off localhost, run the app with TLS set to Optional or Required. On a single host everything works out of the box; for split app/admin sub-domains, set PMW_PASSKEY_RP_ID to the shared parent domain and list the origins in PMW_PASSKEY_ORIGINS.'),
+      ],
+    },
+    {
+      heading: 'Two-factor authentication (TOTP)',
+      body: [
+        p('Two-factor adds a one-time code from an authenticator app (Google Authenticator, 1Password, Authy…) as a second step after the password. Like passkeys it is optional and additive — the password still signs the user in, the code is just an extra step — so it can’t lock anyone out.'),
+        def('Who may use two-factor', 'The 2FA column in the Users tab gates it per account, with a master “Allow two-factor for all users” checkbox above the list. Both local and directory users qualify; for a directory user it’s a local second factor layered on their directory password. Revoking the permission relaxes the second factor (the user signs in with password alone again) rather than locking them out.'),
+        def('Setting it up', 'Once allowed, the user opens 🔒 Two-factor (next to Sign out), scans the QR with their authenticator app and confirms one code. They then get one-time recovery codes — shown once — to save for a lost phone. Administrators set up their own from App Control → Two-factor. The same secret protects both the app and the admin interface.'),
+        def('Signing in', 'After the password, an enrolled user is asked for the current 6-digit code (or one recovery code). A passkey sign-in is already strong authentication, so it skips the code step. Recovery codes can be regenerated at any time, which invalidates the old set. Repeated wrong codes are rate-limited by source IP (a short cooldown) but never disable the account.'),
+        def('Turning it off', 'A user turning two-factor off must enter their current code (or a recovery code) first, so a stolen session can’t silently remove it. If a user is locked out of their authenticator and their recovery codes, an administrator can’t read the secret — untick 2FA for them in the Users tab so they can sign in with their password and enrol again.'),
+        tip('The secret is stored encrypted and recovery codes only as hashes; deleting a user removes both. If a user loses their authenticator and their recovery codes, an administrator can’t read the secret — turn 2FA off for them (untick the box or have them removed and re-added) so they can sign in with their password and enrol again.'),
       ],
     },
   ],

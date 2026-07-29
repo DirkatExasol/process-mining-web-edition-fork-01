@@ -130,6 +130,31 @@ def test_dashboard_has_passkey_management_card(dashboard):
     assert "/api/access/passkey-all" in dashboard
 
 
+def test_login_page_has_mfa_code_step(pages):
+    step = pages.login_page(mfa_step=True)
+    assert "/login/mfa" in step and "Authentication code" in step
+    # The password + passkey controls are absent on the code step.
+    assert 'name="password"' not in step and "Sign with Passkey" not in step
+    # And the normal page still has the password form.
+    normal = pages.login_page()
+    assert 'name="password"' in normal and "/login/mfa" not in normal
+
+
+def test_dashboard_has_two_factor_card_and_master_toggle(dashboard):
+    assert "Two-factor authentication" in dashboard
+    assert "function loadAdminMfa" in dashboard
+    assert "/api/mfa/setup/begin" in dashboard and "/api/mfa/setup/finish" in dashboard
+    # Users tab: per-user toggle + all-users master checkbox.
+    assert "toggleMfa" in dashboard and 'id="mfaAll"' in dashboard
+    assert "/api/access/mfa-all" in dashboard and "mfa-allowed" in dashboard
+
+
+def test_dashboard_user_list_is_scrollable_with_search(dashboard):
+    assert 'id="userSearch"' in dashboard  # search field
+    assert ".user-list" in dashboard and "max-height" in dashboard  # scroll container
+    assert "user-card" in dashboard  # two-line rows
+
+
 def test_dashboard_has_admin_idle_logout(dashboard):
     assert 'id="adminIdleTimeout"' in dashboard
     assert "function setAdminIdle" in dashboard

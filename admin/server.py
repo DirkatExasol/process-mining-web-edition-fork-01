@@ -44,7 +44,8 @@ from app import licensing  # noqa: E402
 from app import log_events as logx  # noqa: E402
 from app import timeutil  # noqa: E402
 from app.db.manager import db as legacy_db  # noqa: E402 — settings-backed backup state
-from app.services import backup as backup_service, cron, passkey  # noqa: E402
+from app.services import backup as backup_service, cron, mfa, passkey  # noqa: E402
+from app.services.login_throttle import LoginThrottle  # noqa: E402
 from app.services.certs import CertError  # noqa: E402
 from app.store.logs import LEVELS, set_display_timezone, store as log_store  # noqa: E402
 from app.store.crypto import read_session, sign_session  # noqa: E402
@@ -270,17 +271,23 @@ class PasskeyLoginBody(BaseModel):
 @app.post("/login/passkey/begin")
 def passkey_login_begin(body: PasskeyLoginBody, request: Request):
     username = (body.username or "").strip()
+    # Same two lookups for any username, so timing can't distinguish existing from
+    # nonexistent accounts (see the app begin endpoint).
     user = store.get_user(username) if username else None
-    ids = store.credential_ids_for(user.username) if user else []
-    if (user is None or not user.is_admin or not user.is_enabled
-            or not user.passkey_allowed or not ids):
-        raise HTTPException(status_code=403, detail="Passkey sign-in is not available.")
+    ids = store.credential_ids_for(username) if username else []
+    eligible = (user is not None and user.is_admin and user.is_enabled
+                and user.passkey_allowed and bool(ids))
+    # Enumeration-resistant: the response is identical whether or not the account
+    # exists, is an admin, or has a passkey. Eligible → real credential ids; else a
+    # stable decoy that can never verify. No 403/200 oracle for username probing.
+    allow_ids = ids if eligible else passkey.decoy_allow_ids(username)
+    cookie_username = user.username if eligible else username
     rp_id, _ = _pk_rp_and_origins(request)
-    options_json, challenge = passkey.authentication_options(rp_id=rp_id, allow_ids=ids)
+    options_json, challenge = passkey.authentication_options(rp_id=rp_id, allow_ids=allow_ids)
     response = Response(content=options_json, media_type="application/json")
     _set_pk_challenge(
         response, request,
-        passkey.make_challenge_cookie(challenge=challenge, username=user.username, kind="auth", aud="admin"),
+        passkey.make_challenge_cookie(challenge=challenge, username=cookie_username, kind="auth", aud="admin"),
     )
     return response
 
@@ -390,6 +397,100 @@ def passkey_delete_credential(cred_id: str, user: User = Depends(require_admin))
     return {"ok": True}
 
 
+# ── Two-factor (TOTP) — the admin's own enrolment ────────────────────────────
+
+
+def _set_mfa_setup(response: Response, request: Request, token: str) -> None:
+    response.set_cookie(
+        mfa.SETUP_COOKIE, token, httponly=True, samesite="lax",
+        secure=request.url.scheme == "https", max_age=mfa.SETUP_TTL_SECS, path="/",
+    )
+
+
+@app.get("/api/mfa/status")
+def mfa_status(user: User = Depends(require_admin)):
+    return {
+        "mfaAllowed": user.mfa_allowed,
+        "enabled": user.mfa_enabled,
+        "recoveryRemaining": store.recovery_codes_remaining(user.username),
+    }
+
+
+@app.post("/api/mfa/setup/begin")
+def mfa_setup_begin(request: Request, user: User = Depends(require_admin)):
+    if not user.mfa_allowed:
+        raise HTTPException(status_code=403, detail="Two-factor is not enabled for your account.")
+    secret = mfa.new_secret()
+    uri = mfa.provisioning_uri(secret=secret, username=user.username)
+    response = JSONResponse({"secret": secret, "otpauthUri": uri, "qrSvg": mfa.qr_svg(uri)})
+    _set_mfa_setup(response, request, mfa.make_setup_cookie(
+        username=user.username, secret=secret, aud="admin"))
+    return response
+
+
+@app.post("/api/mfa/setup/finish")
+async def mfa_setup_finish(request: Request, user: User = Depends(require_admin)):
+    if not user.mfa_allowed:
+        raise HTTPException(status_code=403, detail="Two-factor is not enabled for your account.")
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        data = {}
+    secret = mfa.read_setup_cookie(
+        request.cookies.get(mfa.SETUP_COOKIE) or "", username=user.username, aud="admin")
+    if secret is None:
+        raise HTTPException(status_code=400, detail="Setup expired. Start again.")
+    if not mfa.verify_code(secret, str(data.get("code") or "")):
+        raise HTTPException(status_code=400, detail="That code didn't match. Try again.")
+    store.set_totp_secret(user.username, secret)
+    codes = mfa.generate_recovery_codes()
+    store.set_recovery_codes(user.username, codes)
+    logx.usage(f"admin {user.username} enabled two-factor authentication", request=request,
+               username=user.username, operation="login")
+    r = JSONResponse({"recoveryCodes": codes})
+    r.delete_cookie(mfa.SETUP_COOKIE, path="/")
+    return r
+
+
+@app.post("/api/mfa/recovery/regenerate")
+def mfa_recovery_regenerate(user: User = Depends(require_admin)):
+    if not user.mfa_enabled:
+        raise HTTPException(status_code=400, detail="Two-factor isn't set up.")
+    codes = mfa.generate_recovery_codes()
+    store.set_recovery_codes(user.username, codes)
+    logx.usage(f"admin {user.username} regenerated 2FA recovery codes", operation="login",
+               username=user.username)
+    return {"recoveryCodes": codes}
+
+
+class MfaDisableBody(BaseModel):
+    code: str = ""
+
+
+@app.post("/api/mfa/disable")
+def mfa_disable(request: Request, body: MfaDisableBody, user: User = Depends(require_admin)):
+    # Re-authenticate the downgrade: turning off the second factor requires the
+    # current code (or a recovery code), so a hijacked session alone can't strip it.
+    # Throttled per-IP so that re-auth can't itself be brute-forced from a session.
+    ip = _client_ip(request)
+    if _login_retry_after(ip) > 0:
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again shortly.")
+    secret = store.get_totp_secret(user.username)
+    if secret is None:
+        raise HTTPException(status_code=400, detail="Two-factor isn't set up.")
+    if not (mfa.verify_code(secret, body.code)
+            or store.consume_recovery_code(user.username, body.code)):
+        _record_login_failure_ip(ip)
+        raise HTTPException(
+            status_code=401,
+            detail="Enter your current authentication code to turn off two-factor.")
+    _login_throttle.clear(ip)
+    store.clear_mfa(user.username)
+    logx.usage(f"admin {user.username} disabled two-factor authentication", operation="login",
+               username=user.username)
+    return {"ok": True}
+
+
 # ── pages ─────────────────────────────────────────────────────────────────────
 
 
@@ -473,55 +574,15 @@ async def api_directory_status() -> Response:
 
 
 # ── Per-IP admin-login throttle ─────────────────────────────────────────────
-# Account lockout (max_failed_logins) stops password-guessing against ONE account
-# but not username-rotation from a single host; this throttle caps failed attempts
-# per source IP. It's a time-based cooldown (auto-recovers), unlike the account
-# lock, so a legitimate fat-fingered admin isn't stranded. In-memory (the admin
-# server is a single process); resets on restart, which is fine for brute-force.
-_LOGIN_IP_MAX = 3  # failed attempts within the window before a host is throttled
-_LOGIN_IP_WINDOW = 900.0  # 15 min sliding window over recent failures
-_LOGIN_IP_COOLDOWN = 300.0  # once tripped, seconds to wait from the last failure
-_LOGIN_IP_MAX_TRACKED = 4096  # bound the map so a distributed flood can't grow it
-_login_ip_failures: dict[str, list[float]] = {}
-
-
-def _client_ip(request: Request) -> str:
-    # Deliberately NOT trusting X-Forwarded-For: the admin panel is reached
-    # directly, and honouring a client-supplied header would let an attacker
-    # rotate fake IPs to evade the throttle. The socket peer can't be spoofed.
-    return request.client.host if request.client else "unknown"
-
-
-def _login_retry_after(ip: str) -> float:
-    """Seconds this IP must wait before another attempt (0 = allowed)."""
-    now = time.monotonic()
-    fails = [t for t in _login_ip_failures.get(ip, []) if now - t < _LOGIN_IP_WINDOW]
-    if fails:
-        _login_ip_failures[ip] = fails
-    else:
-        _login_ip_failures.pop(ip, None)
-    if len(fails) >= _LOGIN_IP_MAX:
-        return max(0.0, _LOGIN_IP_COOLDOWN - (now - fails[-1]))
-    return 0.0
-
-
-def _record_login_failure_ip(ip: str) -> None:
-    now = time.monotonic()
-    _login_ip_failures.setdefault(ip, []).append(now)
-    # Keep the map bounded: an entry is only pruned when its own IP retries, so a
-    # botnet of one-shot IPs would otherwise leak memory. When over the cap, first
-    # drop hosts whose failures have all aged out; if a real distributed flood keeps
-    # us over, drop the least-recently-active hosts.
-    if len(_login_ip_failures) > _LOGIN_IP_MAX_TRACKED:
-        for k in [
-            k
-            for k, ts in _login_ip_failures.items()
-            if not ts or now - ts[-1] >= _LOGIN_IP_WINDOW
-        ]:
-            _login_ip_failures.pop(k, None)
-        while len(_login_ip_failures) > _LOGIN_IP_MAX_TRACKED:
-            oldest = min(_login_ip_failures, key=lambda k: _login_ip_failures[k][-1])
-            _login_ip_failures.pop(oldest, None)
+# Shared implementation (app + admin) in app.services.login_throttle. The thin
+# module-level aliases below preserve this file's long-standing internal API.
+_login_throttle = LoginThrottle()
+_login_ip_failures = _login_throttle.fails  # same dict object (used by tests)
+_LOGIN_IP_MAX = _login_throttle.max_fails
+_LOGIN_IP_MAX_TRACKED = _login_throttle.max_tracked
+_client_ip = LoginThrottle.client_ip
+_login_retry_after = _login_throttle.retry_after
+_record_login_failure_ip = _login_throttle.record_failure
 
 
 @app.post("/login", response_class=HTMLResponse)
@@ -566,6 +627,19 @@ def login_post(request: Request, username: str = Form(...), password: str = Form
         return HTMLResponse(
             pages.login_page(message, bg_css=_login_bg_css()), status_code=401
         )
+    # Two-factor: password verified, but a TOTP-enrolled admin must also enter a
+    # code. Don't clear the IP throttle or issue the session yet — hold a signed
+    # "password ok" cookie and render the code step.
+    if store.mfa_active(user.username):
+        response = HTMLResponse(pages.login_page(mfa_step=True, bg_css=_login_bg_css()))
+        response.set_cookie(
+            mfa.PENDING_COOKIE,
+            mfa.make_pending_cookie(username=user.username, aud="admin"),
+            httponly=True, samesite="lax",
+            secure=request.url.scheme == "https",
+            max_age=mfa.PENDING_TTL_SECS, path="/",
+        )
+        return response
     _login_ip_failures.pop(ip, None)  # clear the throttle on a successful sign-in
     logx.usage(
         f"admin {user.username} signed in to the admin interface",
@@ -574,6 +648,56 @@ def login_post(request: Request, username: str = Form(...), password: str = Form
         operation="login",
     )
     response = RedirectResponse("/", status_code=303)
+    _set_cookie(response, request, user.username)
+    return response
+
+
+@app.post("/login/mfa", response_class=HTMLResponse)
+def login_mfa(request: Request, code: str = Form("")):
+    """Step 2 of admin sign-in: verify the TOTP (or a recovery code) against the
+    pending cookie, then issue the admin session."""
+    ip = _client_ip(request)
+    if _login_retry_after(ip) > 0:
+        return HTMLResponse(
+            pages.login_page("Too many failed attempts. Try again shortly.",
+                             bg_css=_login_bg_css()),
+            status_code=429)
+    username = mfa.read_pending_cookie(request.cookies.get(mfa.PENDING_COOKIE) or "", aud="admin")
+    user = store.get_user(username) if username else None
+    secret = store.get_totp_secret(username) if username else None
+    if user is None or not user.is_admin or not user.is_enabled or secret is None:
+        r = HTMLResponse(
+            pages.login_page("Your sign-in session expired. Please start again.",
+                             bg_css=_login_bg_css()),
+            status_code=401)
+        r.delete_cookie(mfa.PENDING_COOKIE, path="/")
+        return r
+    ok = mfa.verify_code(secret, code) or store.consume_recovery_code(user.username, code)
+    if not ok:
+        # A wrong code is throttled per-IP only — NOT counted toward account lockout,
+        # so a mistyped/expired code can never disable the account (the password was
+        # already proven in step 1).
+        _record_login_failure_ip(ip)
+        logx.warn(f"failed admin 2FA for {user.username!r}", request=request,
+                  username=user.username, operation="login")
+        r = HTMLResponse(
+            pages.login_page("Incorrect code. Try again.", mfa_step=True,
+                             bg_css=_login_bg_css()),
+            status_code=401)
+        # Keep the pending cookie so the user can retry the code without re-entering
+        # their password.
+        r.set_cookie(
+            mfa.PENDING_COOKIE, mfa.make_pending_cookie(username=user.username, aud="admin"),
+            httponly=True, samesite="lax", secure=request.url.scheme == "https",
+            max_age=mfa.PENDING_TTL_SECS, path="/",
+        )
+        return r
+    _login_ip_failures.pop(ip, None)
+    store.reset_login_failures(user.username)
+    logx.usage(f"admin {user.username} signed in to the admin interface with 2FA",
+               request=request, username=user.username, operation="login")
+    response = RedirectResponse("/", status_code=303)
+    response.delete_cookie(mfa.PENDING_COOKIE, path="/")
     _set_cookie(response, request, user.username)
     return response
 
@@ -1165,6 +1289,39 @@ def api_set_passkey_allowed_all(
     logx.usage(
         f"admin {user.username} {'allowed' if body.allowed else 'disallowed'} "
         f"passkeys for all users",
+        username=user.username, operation="config",
+    )
+    return {"ok": True}
+
+
+class MfaAllowedBody(BaseModel):
+    allowed: bool
+
+
+@app.post("/api/users/{username}/mfa-allowed")
+def api_set_mfa_allowed(
+    username: str, body: MfaAllowedBody, user: User = Depends(require_admin)
+):
+    try:
+        store.set_mfa_allowed(username, body.allowed)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logx.usage(
+        f"admin {user.username} {'allowed' if body.allowed else 'disallowed'} "
+        f"two-factor for {username!r}",
+        username=user.username, operation="config",
+    )
+    return {"ok": True}
+
+
+@app.post("/api/access/mfa-all")
+def api_set_mfa_allowed_all(
+    body: MfaAllowedBody, user: User = Depends(require_admin)
+):
+    store.set_mfa_allowed_all(body.allowed)
+    logx.usage(
+        f"admin {user.username} {'allowed' if body.allowed else 'disallowed'} "
+        f"two-factor for all users",
         username=user.username, operation="config",
     )
     return {"ok": True}

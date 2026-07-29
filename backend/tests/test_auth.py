@@ -101,6 +101,8 @@ def test_session_reports_unauthenticated_and_require_login(gui):
         "requireLogin": True,
         "idleTimeoutMins": 0,
         "passkeyAllowed": False,
+        "mfaAllowed": False,
+        "mfaEnabled": False,
     }
 
 
@@ -332,45 +334,56 @@ def test_login_response_includes_passkey_allowed(gui):
     assert body["passkeyAllowed"] is True
 
 
-def test_passkey_auth_begin_denied_without_allow_or_credentials(gui):
-    server, store = gui
-    store.create_user("alice", "pw", is_admin=False)
-    client = TestClient(server.app)
-
-    # Not allowed, no credentials → 403 and no challenge cookie.
+def test_passkey_auth_begin_is_enumeration_resistant(gui):
+    # An ineligible-but-real account, an unknown username and an eligible account
+    # must all return the SAME shape (200 + challenge + one allowCredentials + a
+    # challenge cookie), so a scripted probe can't tell which usernames have
+    # passkeys. Only genuine WebAuthn verification (finish) separates them.
     from app.services import passkey
-    r = client.post("/auth/passkey/auth/begin", json={"username": "alice"})
-    assert r.status_code == 403
-    assert passkey.CHALLENGE_COOKIE not in client.cookies
-
-    # Allowed but still no registered credential → still 403.
-    store.set_passkey_allowed("alice", True)
-    r = client.post("/auth/passkey/auth/begin", json={"username": "alice"})
-    assert r.status_code == 403
-
-
-def test_passkey_auth_begin_offers_options_when_eligible(gui):
     server, store = gui
-    store.create_user("alice", "pw", is_admin=False)
-    store.set_passkey_allowed("alice", True)
-    store.add_credential("alice", credential_id="cred-a", public_key="K", sign_count=0)
-    client = TestClient(server.app)
+    store.create_user("alice", "pw", is_admin=False)  # exists, no passkey
+    store.create_user("carol", "pw", is_admin=False)
+    store.set_passkey_allowed("carol", True)
+    store.add_credential("carol", credential_id="cred-a", public_key="K", sign_count=0)
 
-    from app.services import passkey
-    r = client.post("/auth/passkey/auth/begin", json={"username": "alice"})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["challenge"] and len(body["allowCredentials"]) == 1
-    assert passkey.CHALLENGE_COOKIE in client.cookies
+    def shape(username: str) -> tuple:
+        client = TestClient(server.app)
+        r = client.post("/auth/passkey/auth/begin", json={"username": username})
+        body = r.json()
+        return (
+            r.status_code,
+            "detail" in body,
+            len(body.get("allowCredentials", [])),
+            passkey.CHALLENGE_COOKIE in client.cookies,
+        )
+
+    eligible = shape("carol")
+    assert eligible == (200, False, 1, True)
+    # Same signature for a real-but-ineligible account and a nonexistent one.
+    assert shape("alice") == eligible          # exists, passkeys not enabled
+    assert shape("ghost") == eligible          # no such user
+    assert shape("") == eligible               # empty username
 
 
-def test_passkey_auth_begin_hides_whether_user_exists(gui):
-    # An unknown username and a real-but-ineligible one both return the same 403,
-    # so the endpoint doesn't leak which usernames exist.
-    server, _ = gui
-    client = TestClient(server.app)
-    r = client.post("/auth/passkey/auth/begin", json={"username": "ghost"})
-    assert r.status_code == 403
+def test_passkey_auth_begin_decoy_ids_are_stable_but_not_real(gui):
+    from webauthn.helpers import bytes_to_base64url
+    server, store = gui
+    cid = bytes_to_base64url(b"carol-credential")  # clean base64url (round-trips)
+    store.create_user("carol", "pw", is_admin=False)
+    store.set_passkey_allowed("carol", True)
+    store.add_credential("carol", credential_id=cid, public_key="K", sign_count=0)
+
+    def allow_id(username: str) -> str:
+        r = TestClient(server.app).post(
+            "/auth/passkey/auth/begin", json={"username": username})
+        return r.json()["allowCredentials"][0]["id"]
+
+    # A decoy id is deterministic per-username (repeat probes get the same answer)…
+    assert allow_id("ghost") == allow_id("ghost")
+    # …but differs per username and is not the real credential id.
+    assert allow_id("ghost") != allow_id("other")
+    assert allow_id("carol") == cid            # eligible → the genuine id
+    assert allow_id("ghost") != cid
 
 
 def test_passkey_register_begin_requires_a_session(gui):
@@ -381,3 +394,236 @@ def test_passkey_register_begin_requires_a_session(gui):
     # No session cookie → enrolment is refused.
     r = client.post("/auth/passkey/register/begin")
     assert r.status_code in (401, 403)
+
+
+# ── Two-factor (TOTP) — the app's second sign-in step ────────────────────────
+
+
+def _enrol_mfa(store, username: str) -> str:
+    """Give `username` a confirmed TOTP secret; returns it for code generation."""
+    import app.services.mfa as mfa
+    secret = mfa.new_secret()
+    store.set_mfa_allowed(username, True)
+    store.set_totp_secret(username, secret)
+    return secret
+
+
+def test_password_login_asks_for_a_code_when_mfa_active(gui):
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    secret = _enrol_mfa(store, "alice")
+    client = TestClient(server.app)
+
+    r = client.post("/auth/login", json={"username": "alice", "password": "pw"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body == {"mfaRequired": True, "username": "alice"}
+    # No session yet — a pending cookie is set instead, and the API stays gated.
+    assert server.SESSION_COOKIE not in client.cookies
+    assert client.get("/api/projects").status_code == 401
+
+
+def test_mfa_verify_with_totp_signs_in(gui):
+    import pyotp
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    secret = _enrol_mfa(store, "alice")
+    client = TestClient(server.app)
+    client.post("/auth/login", json={"username": "alice", "password": "pw"})
+
+    r = client.post("/auth/mfa/verify", json={"code": pyotp.TOTP(secret).now()})
+    assert r.status_code == 200
+    assert r.json()["username"] == "alice" and r.json()["mfaEnabled"] is True
+    assert server.SESSION_COOKIE in client.cookies
+    assert client.get("/auth/session").json()["authenticated"] is True
+
+
+def test_mfa_verify_rejects_a_wrong_code(gui):
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    _enrol_mfa(store, "alice")
+    client = TestClient(server.app)
+    client.post("/auth/login", json={"username": "alice", "password": "pw"})
+
+    r = client.post("/auth/mfa/verify", json={"code": "000000"})
+    assert r.status_code == 401
+    assert server.SESSION_COOKIE not in client.cookies
+
+
+def test_mfa_verify_accepts_a_recovery_code(gui):
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    _enrol_mfa(store, "alice")
+    store.set_recovery_codes("alice", ["aaaa1111-bbbb2222"])
+    client = TestClient(server.app)
+    client.post("/auth/login", json={"username": "alice", "password": "pw"})
+
+    r = client.post("/auth/mfa/verify", json={"code": "aaaa1111-bbbb2222"})
+    assert r.status_code == 200 and server.SESSION_COOKIE in client.cookies
+    assert store.recovery_codes_remaining("alice") == 0  # consumed
+
+
+def test_mfa_verify_without_a_pending_cookie_is_rejected(gui):
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    _enrol_mfa(store, "alice")
+    client = TestClient(server.app)  # never did the password step
+    r = client.post("/auth/mfa/verify", json={"code": "000000"})
+    assert r.status_code == 401
+
+
+def _sign_in(client, username="alice", password="pw"):
+    return client.post("/auth/login", json={"username": username, "password": password})
+
+
+def test_mfa_setup_requires_allow_and_confirms_a_code(gui):
+    import pyotp
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    client = TestClient(server.app)
+    _sign_in(client)
+
+    # Not allowed yet → setup is refused.
+    assert client.post("/auth/mfa/setup/begin").status_code == 403
+
+    store.set_mfa_allowed("alice", True)
+    begin = client.post("/auth/mfa/setup/begin")
+    assert begin.status_code == 200
+    secret = begin.json()["secret"]
+    assert begin.json()["otpauthUri"].startswith("otpauth://") and begin.json()["qrSvg"]
+
+    # A wrong confirmation code doesn't enable it.
+    assert client.post("/auth/mfa/setup/finish", json={"code": "000000"}).status_code == 400
+    assert store.get_user("alice").mfa_enabled is False
+
+    fin = client.post("/auth/mfa/setup/finish", json={"code": pyotp.TOTP(secret).now()})
+    assert fin.status_code == 200 and len(fin.json()["recoveryCodes"]) == 10
+    assert store.get_user("alice").mfa_enabled is True
+    assert client.get("/auth/mfa/status").json() == {
+        "mfaAllowed": True, "enabled": True, "recoveryRemaining": 10}
+
+
+def test_mfa_disable_requires_the_current_code(gui):
+    import pyotp
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    secret = _enrol_mfa(store, "alice")
+    client = TestClient(server.app)
+    _sign_in(client)
+    # Enrolled server-side; a fresh session is needed for the authed endpoints —
+    # sign-in above is mfa-gated, so complete it via the pending cookie.
+    client.post("/auth/mfa/verify", json={"code": pyotp.TOTP(secret).now()})
+
+    # A hijacked session can't strip the second factor without the code.
+    assert client.post("/auth/mfa/disable", json={}).status_code == 401
+    assert client.post("/auth/mfa/disable", json={"code": "000000"}).status_code == 401
+    assert store.get_user("alice").mfa_enabled is True
+
+    # The current code turns it off.
+    r = client.post("/auth/mfa/disable", json={"code": pyotp.TOTP(secret).now()})
+    assert r.status_code == 200
+    assert store.get_user("alice").mfa_enabled is False
+
+
+def test_passkey_login_skips_the_mfa_step(gui):
+    # A passkey is already strong auth, so an mfa-enrolled user signing in with a
+    # passkey is NOT asked for a code. The password path is the one that triggers
+    # MFA (covered above); here we just confirm the passkey begin stays reachable
+    # (enumeration-resistant 200, not a leaky refusal) for an mfa-enrolled account.
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    _enrol_mfa(store, "alice")
+    client = TestClient(server.app)
+    assert client.post("/auth/passkey/auth/begin", json={"username": "alice"}).status_code == 200
+
+
+# ── App sign-in throttle + MFA hardening (findings 1, 2, 4) ──────────────────
+
+
+def test_app_login_is_ip_throttled(gui):
+    # The app relies on account lockout, which exempts the built-in Administrator;
+    # the per-IP throttle covers that gap. After _LOGIN_IP_MAX failures the host is
+    # told to wait (429), even for the exempt Administrator.
+    server, _ = gui
+    client = TestClient(server.app)
+    for _ in range(server._login_throttle.max_fails):
+        r = client.post("/auth/login",
+                        json={"username": "Administrator", "password": "nope"})
+        assert r.status_code == 401
+    r = client.post("/auth/login", json={"username": "Administrator", "password": "nope"})
+    assert r.status_code == 429
+    # Even a correct password is refused while the cooldown is active.
+    assert client.post(
+        "/auth/login", json={"username": "Administrator", "password": "Administrator"}
+    ).status_code == 429
+
+
+def test_app_login_throttle_clears_on_success(gui):
+    server, _ = gui
+    client = TestClient(server.app)
+    for _ in range(server._login_throttle.max_fails - 1):  # stay below the threshold
+        client.post("/auth/login", json={"username": "Administrator", "password": "nope"})
+    ok = client.post(
+        "/auth/login", json={"username": "Administrator", "password": "Administrator"})
+    assert ok.status_code == 200  # (Administrator has no MFA here)
+    # A fresh burst of failures is allowed — the counter was cleared on success.
+    for _ in range(server._login_throttle.max_fails - 1):
+        assert client.post(
+            "/auth/login", json={"username": "Administrator", "password": "nope"}
+        ).status_code == 401
+
+
+def test_mfa_wrong_code_does_not_lock_the_account(gui):
+    # A mistyped/expired TOTP is throttled per-IP but must NOT count toward the
+    # account lockout — otherwise fat-fingering the code disables the account.
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    store.set_max_failed_logins(3)
+    _enrol_mfa(store, "alice")
+    client = TestClient(server.app)
+    client.post("/auth/login", json={"username": "alice", "password": "pw"})
+
+    for _ in range(3):
+        assert client.post("/auth/mfa/verify", json={"code": "000000"}).status_code == 401
+    # Still enabled and not locked, despite 3 wrong codes.
+    u = store.get_user("alice")
+    assert u.is_enabled is True and u.login_locked is False
+
+
+def test_mfa_pending_cookie_cannot_be_used_as_a_session(gui):
+    # The pre-auth pending cookie shares the Fernet key with the session cookie, so
+    # confirm it is NOT accepted as one (distinct name, namespaced audience, no epoch).
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    _enrol_mfa(store, "alice")
+    client = TestClient(server.app)
+    r = client.post("/auth/login", json={"username": "alice", "password": "pw"})
+    assert r.json().get("mfaRequired") is True
+    from app.services import mfa
+    pending = client.cookies.get(mfa.PENDING_COOKIE)
+    assert pending
+
+    forged = TestClient(server.app)
+    forged.cookies.set(server.SESSION_COOKIE, pending)
+    assert forged.get("/auth/session").json()["authenticated"] is False
+    assert forged.get("/api/projects").status_code == 401
+
+
+def test_mfa_disable_is_ip_throttled(gui):
+    # The re-auth code check on disable must itself be throttled, or a hijacked
+    # session could brute-force the 6-digit code to strip the second factor.
+    import pyotp
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    secret = _enrol_mfa(store, "alice")
+    client = TestClient(server.app)
+    client.post("/auth/login", json={"username": "alice", "password": "pw"})
+    client.post("/auth/mfa/verify", json={"code": pyotp.TOTP(secret).now()})  # clears throttle
+
+    for _ in range(server._login_throttle.max_fails):
+        assert client.post("/auth/mfa/disable", json={"code": "000000"}).status_code == 401
+    # Now throttled — even a correct code is refused, so 2FA stays on.
+    assert client.post("/auth/mfa/disable", json={"code": "000000"}).status_code == 429
+    assert client.post(
+        "/auth/mfa/disable", json={"code": pyotp.TOTP(secret).now()}).status_code == 429
+    assert store.get_user("alice").mfa_enabled is True

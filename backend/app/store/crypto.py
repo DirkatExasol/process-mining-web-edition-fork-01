@@ -185,3 +185,19 @@ def proxy_auth_secret() -> str:
     get_fernet()  # ensure the key exists on disk
     key = SECRET_KEY_PATH.read_bytes()
     return hashlib.sha256(key + b"pmw-proxy-auth-v1").hexdigest()
+
+
+def recovery_code_pepper() -> str:
+    """Install-specific pepper for hashing MFA recovery codes, derived from the
+    same Fernet key (so a stolen hash can't be attacked without the key file)."""
+    get_fernet()
+    return hashlib.sha256(SECRET_KEY_PATH.read_bytes() + b"pmw-recovery-v1").hexdigest()
+
+
+def passkey_decoy_seed() -> bytes:
+    """Install-specific seed for deriving *decoy* passkey credential IDs, so the
+    username-first passkey ceremony returns an identical-looking response for
+    accounts that don't exist / aren't eligible — an attacker can't tell a decoy
+    from a real credential ID without the key file, closing the enumeration oracle."""
+    get_fernet()
+    return hashlib.sha256(SECRET_KEY_PATH.read_bytes() + b"pmw-pk-decoy-v1").digest()

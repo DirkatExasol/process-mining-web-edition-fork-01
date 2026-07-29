@@ -159,10 +159,17 @@ unlocked (or restart with `PMW_RESET_LOCKOUTS=1` as a break-glass valve). The
 built-in `Administrator` is deliberately **exempt from auto-lockout** — it's the
 sole recovery account, so letting an unauthenticated attacker who knows its name
 disable it would be a denial-of-service; it's protected instead by the throttle
-below plus scrypt cost. Independently, the **admin sign-in page is rate-limited per
+below plus scrypt cost. Independently, **both sign-in pages are rate-limited per
 source IP** (a short auto-recovering cooldown after repeated failures from one
-host, returning `429`), so username-rotation guessing is throttled even when the
-account lockout doesn't apply. Passwords are scrypt-hashed; certificate private
+host, returning `429`; shared implementation in `app/services/login_throttle.py`),
+so username-rotation guessing — and TOTP-code guessing — is throttled even for
+accounts the lockout doesn't cover (the built-in Administrator) and for the code
+step (where a wrong code deliberately does **not** disable the account). The
+throttle keys on the **socket peer address** (it never trusts `X-Forwarded-For`,
+which a client can spoof), so run the app/admin server as the **edge TLS listener**
+(as `run.sh` does). Behind a reverse proxy the peer is the proxy, so every request
+would share one bucket — terminate TLS at the app, or add trusted-proxy handling
+before fronting it. Passwords are scrypt-hashed; certificate private
 keys are encrypted at rest. Both the admin and app servers send hardening response
 headers (`X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` against
 clickjacking, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
@@ -180,11 +187,34 @@ their username and clicking **Sign with Passkey**. Because the Relying-Party ID 
 the host without its port, **one passkey works for both** the app (`:8443`) and the
 admin panel (`:8453`) on the same host. Only the credential's public key and a
 replay-guarding signature counter are stored (`credentials` table); turning a user's
-permission off — or deleting the user — invalidates their passkeys immediately.
+permission off — or deleting the user — invalidates their passkeys immediately. The
+"Sign with Passkey" button is always shown; the ceremony is **enumeration-resistant** —
+the begin step returns the same response (a challenge with a stable *decoy* credential
+id derived from an install secret) for unknown or ineligible usernames as for real ones,
+so probing the endpoint never reveals which accounts exist or have a passkey. Only
+genuine WebAuthn verification at the finish step tells them apart.
 WebAuthn requires a **secure context** (HTTPS, or `localhost` for local testing), so
 off-localhost run TLS *Optional*/*Required*. For split app/admin sub-domains, set
 `PMW_PASSKEY_RP_ID` to the shared parent domain and list allowed origins in
 `PMW_PASSKEY_ORIGINS` (both optional; single-host deployments need neither).
+
+**Two-factor authentication (TOTP).** Both surfaces also support an authenticator-app
+**second factor** (Google Authenticator, 1Password, Authy…) after the password — again
+*optional* and *admin-gated*: the **2FA** column in the admin *Users* tab (with an
+all-users master checkbox) grants who may enrol. An allowed user sets it up from
+**🔒 Two-factor** in the app (or **App Control → Two-factor** for admins) by scanning a
+QR and confirming one code; they're then issued one-time **recovery codes** (shown once)
+for a lost device. At sign-in, after the password an enrolled user is asked for the
+current 6-digit code or a recovery code — a **passkey** sign-in already counts as strong
+auth and skips the step. The TOTP secret is stored **encrypted** and recovery codes only
+as **hashes** (`mfa_recovery_codes` table); revoking a user's 2FA permission relaxes the
+factor rather than locking them out, and deleting the user clears both. **Turning off 2FA
+(from the app or admin) requires the current code**, so a hijacked session alone can't
+strip the second factor; an admin who needs to help a locked-out user instead unticks 2FA
+for them in the *Users* tab. The two-step login holds the "password verified" state in a
+short-lived signed cookie (with a namespaced audience so it can never be accepted as a real
+session), so no session exists until the code checks out. Set `PMW_MFA_ISSUER` to change
+the label shown in the authenticator app (defaults to the product name).
 
 **Scheduled backups.** The *Backup* tab can write an **encrypted backup on a
 schedule** while the admin server is running (an in-process scheduler; no external
