@@ -56,6 +56,9 @@ _TLS_MODES = {TLS_OFF, TLS_OPTIONAL, TLS_REQUIRED}
 # before anyone visits the Users tab. An admin can still set 0 (= never lock).
 _DEFAULT_MAX_FAILED_LOGINS = 3
 
+# How many scheduled-backup files to retain (newest-first) when none is configured.
+_DEFAULT_BACKUP_RETENTION = 30
+
 # ── Login-page appearance (admin "Customize" tab) ───────────────────────────
 # Applies to both the app and admin sign-in pages. "default" keeps each page's
 # existing theme colour; "color" paints a solid colour; "image" uses an uploaded
@@ -430,6 +433,18 @@ class SecurityStore:
             self._set_config("max_failed_logins", str(max(0, int(count))))
             self._conn.commit()
 
+    @property
+    def display_timezone(self) -> str:
+        """IANA zone name for server-rendered timestamps (logs, backups). Empty
+        means the server's own local zone (the historical behaviour)."""
+        with self._lock:
+            return self._get_config("display_timezone") or ""
+
+    def set_display_timezone(self, name: str) -> None:
+        with self._lock:
+            self._set_config("display_timezone", (name or "").strip())
+            self._conn.commit()
+
     def record_login_failure(self, username: str) -> bool:
         """Count a failed sign-in; lock (disable) the account once it reaches the
         configured threshold. Returns True if this failure locked it.
@@ -479,6 +494,79 @@ class SecurityStore:
                 "WHERE LOWER(username) = LOWER(?)",
                 (username,),
             )
+            self._conn.commit()
+
+    # ── Scheduled backups ───────────────────────────────────────────────────
+    # Config for the admin's automatic-backup scheduler, kept as security_config
+    # rows. The encryption password is stored ENCRYPTED at rest (Fernet) so an
+    # unattended backup can run; it is never returned to the client — only a
+    # `hasPassword` flag is exposed, matching the connection/LDAP secret pattern.
+
+    def backup_schedule(self) -> dict:
+        """Public view of the scheduled-backup config (no password, only hasPassword)."""
+        with self._lock:
+            enabled = self._get_config("backup_sched_enabled") == "1"
+            cron = self._get_config("backup_sched_cron") or "0 2 * * *"
+            retention_raw = self._get_config("backup_sched_retention")
+            inc_pw = self._get_config("backup_sched_inc_passwords") != "0"
+            inc_user = self._get_config("backup_sched_inc_username") != "0"
+            inc_llm = self._get_config("backup_sched_inc_llm") != "0"
+            has_pw = bool(self._get_config("backup_sched_password_enc"))
+            status_raw = self._get_config("backup_sched_status")
+        try:
+            retention = max(1, int(retention_raw)) if retention_raw else _DEFAULT_BACKUP_RETENTION
+        except (TypeError, ValueError):
+            retention = _DEFAULT_BACKUP_RETENTION
+        try:
+            status = json.loads(status_raw) if status_raw else None
+        except (TypeError, ValueError):
+            status = None
+        return {
+            "enabled": enabled,
+            "cron": cron,
+            "retention": retention,
+            "includePasswords": inc_pw,
+            "includeUsername": inc_user,
+            "includeLlmKey": inc_llm,
+            "hasPassword": has_pw,
+            "status": status,
+        }
+
+    def set_backup_schedule(self, data: dict) -> None:
+        """Update the config. The password uses the standard secret pattern: a
+        present non-empty value is stored encrypted, an empty string clears it, and
+        omitting the key keeps the existing value."""
+        with self._lock:
+            if "enabled" in data:
+                self._set_config("backup_sched_enabled", "1" if data["enabled"] else "0")
+            if "cron" in data:
+                self._set_config("backup_sched_cron", str(data["cron"]))
+            if "retention" in data:
+                self._set_config("backup_sched_retention", str(max(1, int(data["retention"]))))
+            for key, col in (
+                ("includePasswords", "backup_sched_inc_passwords"),
+                ("includeUsername", "backup_sched_inc_username"),
+                ("includeLlmKey", "backup_sched_inc_llm"),
+            ):
+                if key in data:
+                    self._set_config(col, "1" if data[key] else "0")
+            if "password" in data:
+                pw = data["password"] or ""
+                self._set_config(
+                    "backup_sched_password_enc", encrypt_text(pw) if pw else ""
+                )
+            self._conn.commit()
+
+    def backup_schedule_password(self) -> str:
+        """Decrypted backup password for the scheduler (empty string if unset)."""
+        with self._lock:
+            enc = self._get_config("backup_sched_password_enc")
+        return decrypt_text(enc) if enc else ""
+
+    def set_backup_schedule_status(self, status: dict) -> None:
+        """Record the outcome of the most recent scheduled/manual backup run."""
+        with self._lock:
+            self._set_config("backup_sched_status", json.dumps(status))
             self._conn.commit()
 
     def session_epoch(self, username: str) -> int:

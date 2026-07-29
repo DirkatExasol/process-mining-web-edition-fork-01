@@ -82,6 +82,8 @@ function blockText(block: HelpBlock): string {
       return block.items.join(' ')
     case 'definition':
       return `${block.term} ${block.detail}`
+    case 'table':
+      return [...block.headers, ...block.rows.flat()].join(' ')
   }
 }
 
@@ -167,6 +169,33 @@ function Block({ block, query }: { block: HelpBlock; query: string }) {
             <Highlight text={block.text} query={query} />
           </code>
         </pre>
+      )
+    case 'table':
+      return (
+        <div className="help-table-wrap">
+          <table className="help-table">
+            <thead>
+              <tr>
+                {block.headers.map((h, i) => (
+                  <th key={i}>
+                    <Highlight text={h} query={query} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {block.rows.map((row, r) => (
+                <tr key={r}>
+                  {row.map((cell, c) => (
+                    <td key={c} className={c === 0 ? 'help-table-rowhead' : undefined}>
+                      <Highlight text={cell} query={query} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )
   }
 }

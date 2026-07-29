@@ -2273,6 +2273,53 @@ textarea.text-input {
   font: inherit;
 }
 
+.help-table-wrap {
+  margin: 10px 0;
+  overflow-x: auto;
+  border: 1px solid var(--separator-soft);
+  border-radius: var(--radius-sm);
+}
+
+.help-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.help-table th,
+.help-table td {
+  text-align: left;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--separator-soft);
+  vertical-align: top;
+}
+
+.help-table thead th {
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--bg-fill);
+  white-space: nowrap;
+}
+
+.help-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.help-table .help-table-rowhead {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+/* Happy Path ideal-panel resize handle — highlights on hover/drag. */
+.hp-resize-handle {
+  transition: background 0.12s ease;
+}
+.hp-resize-handle:hover,
+.hp-resize-handle:active {
+  background: var(--accent) !important;
+}
+
 /* ── Help print document ──────────────────────────────────────────────────── */
 
 .help-print-doc,
@@ -2373,15 +2420,20 @@ textarea.text-input {
   width: min(460px, 100%);
   border-radius: 20px;
   background: var(--material);
-  backdrop-filter: blur(30px);
-  /* Layered elevation so the panel floats clearly above any background —
-     a solid colour or a busy photo — plus a faint hairline ring that keeps its
-     edge legible even over light imagery. */
+  /* A stronger blur pushes the background further back through the glass. */
+  -webkit-backdrop-filter: blur(40px);
+  backdrop-filter: blur(40px);
+  /* Layered elevation so the panel floats clearly above any background — a solid
+     colour or a busy photo — plus a faint hairline ring that keeps its edge legible
+     even over light imagery. The far, ultra-diffuse layers give it real virtual
+     distance: the higher an object sits above its background, the larger, softer
+     and more offset the shadow it casts. */
   box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.07),
-    0 4px 12px rgba(0, 0, 0, 0.18),
-    0 30px 60px rgba(0, 0, 0, 0.34),
-    0 64px 120px rgba(0, 0, 0, 0.42);
+    0 0 0 0.5px rgba(0, 0, 0, 0.08),
+    0 6px 18px rgba(0, 0, 0, 0.2),
+    0 28px 56px rgba(0, 0, 0, 0.3),
+    0 60px 120px rgba(0, 0, 0, 0.4),
+    0 110px 200px rgba(0, 0, 0, 0.46);
   padding: 32px 28px;
   display: flex;
   flex-direction: column;
@@ -2393,9 +2445,10 @@ textarea.text-input {
 :root[data-theme='dark'] .splash {
   box-shadow:
     0 0 0 0.5px rgba(255, 255, 255, 0.1),
-    0 4px 12px rgba(0, 0, 0, 0.6),
-    0 30px 64px rgba(0, 0, 0, 0.72),
-    0 68px 130px rgba(0, 0, 0, 0.82);
+    0 6px 18px rgba(0, 0, 0, 0.62),
+    0 28px 60px rgba(0, 0, 0, 0.74),
+    0 64px 130px rgba(0, 0, 0, 0.82),
+    0 120px 210px rgba(0, 0, 0, 0.86);
 }
 
 /* Over a custom background image the panel is 50% transparent so the image

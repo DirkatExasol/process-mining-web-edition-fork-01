@@ -168,6 +168,19 @@ headers (`X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` against
 clickjacking, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
 and HSTS when TLS is on). The security store lives in `data/security.sqlite3`.
 
+**Scheduled backups.** The *Backup* tab can write an **encrypted backup on a
+schedule** while the admin server is running (an in-process scheduler; no external
+cron needed). Enable it, build the schedule like a crontab — a frequency
+(hourly/daily/weekly/monthly) + time via dropdowns, or a raw five-field cron
+expression, with a live cron string and plain-English preview — set the retention
+count and the AES-256-GCM password, then save. The password is stored **encrypted
+at rest** (Fernet) so unattended runs work, and is never returned to the client
+(only a *set* flag). Files are written under `data/backups/` (git-ignored) as
+timestamped encrypted `.json` envelopes; older files beyond the retention count are
+pruned. A *Run backup now* button tests the configuration, and the last run's
+outcome is shown. Endpoints: `GET|POST /api/backup/schedule`, `POST
+/api/backup/run-now` (admin only).
+
 **Customize.** The *Customize* tab sets the **login-page background** for *both*
 sign-in pages (the main app and the admin interface): keep the default
 theme colour (which follows light/dark mode), pick a solid colour, or upload a
@@ -176,6 +189,18 @@ is stored in the security store and applied to new sign-ins immediately; a live
 preview shows the result before you save. Uploaded values are validated so they
 can never inject CSS.
 
+**Timezone.** *App Control* has a **display-timezone** setting (a searchable list of
+all IANA zones, populated from the browser). It governs every server-rendered
+timestamp — the **log viewer and exported `.log`**, **backup times**, and the
+**backup schedule** itself (so "daily at 02:00" fires at 02:00 in the chosen zone,
+DST-aware). Timestamps that the admin panel renders client-side (last sign-in,
+certificate dates, last-built) follow it too. Leave it *Server local* to use the
+server's own clock (the default). Log instants are stored as UTC epochs, so
+changing the zone re-renders history correctly — nothing is rewritten. Named zones
+need the IANA database, so `tzdata` is a backend dependency (the slim container
+image ships no system zoneinfo). The **main app** shows each user their own
+browser's local time, independent of this setting.
+
 **Power role.** Beyond admins, a user can be granted the **power** role
 (*Make power* / *Remove power* in the admin *Users* tab). Power users create and
 manage their **own** database connections from within the main app — a ＋ button in
@@ -183,8 +208,12 @@ the sidebar *Connections* header opens an editor with the same DB/TLS/LLM fields
 an assign-to-users list — and edit or delete only the connections they created (an
 ✎ button on those cards). Every connection a power user creates is auto-assigned to
 them so they can connect immediately. Admins still see and manage every connection.
-The role is enforced server-side: the power endpoints reject non-power users and any
-attempt to touch a connection the caller does not own.
+Power users (and admins) also get the advanced-analysis views — Conformance Check,
+Happy Path and Simulation — and the **journey Sampling** section of the left panel
+(creating or deleting samples rewrites the shared sample sets for everyone on the
+connection). The role is enforced server-side: the power/sampling endpoints reject
+non-power users, and any attempt to touch a connection the caller does not own. The
+in-app Help has a **Users & Permissions** chapter with the full capability matrix.
 
 **Database Connections.** Administrators define each connection here — the Exasol
 host/port/user/password/schema, an optional OpenAI-compatible LLM server, and TLS
@@ -397,16 +426,18 @@ Cover the model & simulation logic plus the web-specific compute layer.
 
 | File | What it covers |
 |---|---|
-| `test_models.py` | `TimeGranularity.auto` bucketing; `TransitionMetric.is_time_based`; `ProcessTransition.metric_value` / `.id`; `ProcessGraph` maxima and the empty-graph fallback; `HappyPath` legacy decode + branch round-trip; `DatabaseServer` / `LLMServer` / `ConnectionProfile` defaults and round-trips; `NoteTarget` node/edge round-trips; `SampleSet` SQL fragments |
+| `test_models.py` | `TimeGranularity.auto` bucketing; `TransitionMetric.is_time_based`; `ProcessTransition.metric_value` / `.id`; `ProcessGraph` maxima and the empty-graph fallback; `HappyPath` node model (legacy `{steps,branches}` migrated to nodes, nested split/rejoin round-trip); `DatabaseServer` / `LLMServer` / `ConnectionProfile` defaults and round-trips; `NoteTarget` node/edge round-trips; `SampleSet` SQL fragments |
 | `test_simulation.py` | The Markov Monte-Carlo engine and `build_graph`: journey counts, per-journey event counts, chronological ordering, cycle-time stats, variant accounting/paths, excluded & required steps, the `maxStepsPerJourney` cap on cyclic graphs, and transition statistics (avg/min/max/stdDev) |
-| `test_analytics.py` | Random / temporal-stratified / path-diverse sampling; happy-path conformance (full match, journey-weighting, best-branch); process-goodness coverage penalty; the A/B similarity Q-metric (identical → 1.0, disjoint → low) |
+| `test_analytics.py` | Random / temporal-stratified / path-diverse sampling; happy-path conformance (full match, journey-weighting, best-matching-route over enumerated routes through nested splits + rejoins, route cap); process-goodness coverage penalty; the A/B similarity Q-metric (identical → 1.0, disjoint → low) |
 | `test_repository.py` | Value coercion (`as_int` / `as_float` / `parse_date` / `dur_label`) and the SQL clause builders (sample-set, date, step include/exclude, score, combined filters) — verified without a database; plus client-supplied `LIMIT` clamping and the generic-vs-verbose `friendly_error` (no raw driver text leaks to a plain user) |
 | `test_backup.py` | AES-256-GCM encrypt/decrypt round-trip and wrong-password handling; backup summary; the connection-splitting logic on restore (against an in-memory store) |
+| `test_cron.py` | The dependency-free cron matcher powering scheduled backups — minute/hour/day/month/weekday matching incl. `*`, ranges, lists and `*/n` steps, Sunday-as-0-or-7, the Vixie DOM-and-DOW OR rule, and validation rejecting malformed / out-of-range expressions |
+| `test_timeutil.py` | The display-timezone resolver — `resolve_zone` (empty/unknown → server-local, never raises), `is_valid_zone`, and correct UTC→zone conversion for a known instant (CEST/EDT) |
 | `test_crypto.py` | The `secret.key` first-run creation — atomic (`O_CREAT\|O_EXCL`, mode `0600` from birth, no chmod race), never overwritten by a second/concurrent process, a wedged 0-byte key is recreated rather than fatal, and `write_private_file` writes TLS keys `0600`-from-birth |
-| `test_security.py` | User store (seeded admin, case-insensitive auth, enable/disable, last-admin guard), TLS mode & plan (off/optional/required), self-signed generation, cert/key pair validation, encrypted-at-rest keys, scrypt password hashing, per-user database connections (encrypted secrets, assignment filtering, secret-preserving updates), the per-connection pre-materialized-transitions flag, the hash-stored rebuild token (generate/verify/rotate/clear) and per-connection materialization status, the failed-sign-in lockout (default 3, explicit-`0` off, built-in Administrator exempt), and LDAP directory auth (config encryption, JIT provisioning, local-first `authenticate_app`, a directory login refusing to adopt a same-named local account, admin-panel stays local-only) |
+| `test_security.py` | User store (seeded admin, case-insensitive auth, enable/disable, last-admin guard), TLS mode & plan (off/optional/required), self-signed generation, cert/key pair validation, encrypted-at-rest keys, scrypt password hashing, per-user database connections (encrypted secrets, assignment filtering, secret-preserving updates), the per-connection pre-materialized-transitions flag, the hash-stored rebuild token (generate/verify/rotate/clear) and per-connection materialization status, the failed-sign-in lockout (default 3, explicit-`0` off, built-in Administrator exempt), the scheduled-backup config (cron/retention/include-flags round-trip with the password stored encrypted at rest and exposed only as a `hasPassword` flag), and LDAP directory auth (config encryption, JIT provisioning, local-first `authenticate_app`, a directory login refusing to adopt a same-named local account, admin-panel stays local-only) |
 | `test_materialized_transitions.py` | The optional pre-materialized transitions: `load_transitions` picks `TRANSITIONS_RAW` when enabled and gracefully falls back to the live `LEAD()` query when it isn't built (reporting `materialized` / `fallback` / `live`), and a SQLite proof that the materialized pairs aggregate to exactly the same directly-follows graph as the live query |
 | `test_auth.py` | The GUI server's sign-in gate — `/api/*` gated without a session, `/api/health` exempt, login/session/logout cookie flow, disabled-user rejection, and open access when sign-in is not required (drives the real GUI app with a stub backend) |
-| `test_admin_api.py` | The admin interface's connection + LDAP endpoints — admin guard, connection create/list/delete, per-user assignment roundtrip, password-preserving updates, the connection-test `{dbError, llmError, llmModels}` shape, the LDAP config roundtrip (bind password hidden/preserved) + test endpoint, and the pre-materialized transitions surface: toggle persistence, the rebuild endpoint (admin session **or** bearer token, 401/404 paths), token generate/rotate/revoke, the provisioning build opt-in, the per-IP login throttle (repeated failures → `429`, cleared on success), and the dashboard render carrying the **API** tab (rebuild token + copy-able `curl` example, and the token moved out of the Connections tab) (drives the real admin app with stubbed probes) |
+| `test_admin_api.py` | The admin interface's connection + LDAP endpoints — admin guard, connection create/list/delete, per-user assignment roundtrip, password-preserving updates, the connection-test `{dbError, llmError, llmModels}` shape, the LDAP config roundtrip (bind password hidden/preserved) + test endpoint, and the pre-materialized transitions surface: toggle persistence, the rebuild endpoint (admin session **or** bearer token, 401/404 paths), token generate/rotate/revoke, the provisioning build opt-in, the per-IP login throttle (repeated failures → `429`, cleared on success), the scheduled-backup endpoints (get/set with cron validation, enabling requires a password, run-now writes a decryptable encrypted file and prunes to the retention count, password never echoed) and the scheduler lifespan starting/stopping cleanly, and the dashboard render carrying the **API** tab (rebuild token + copy-able `curl` example, and the token moved out of the Connections tab) (drives the real admin app with stubbed probes) |
 | `test_ldap.py` | The directory search+bind flow against ldap3's in-memory `MOCK_SYNC` server — valid/invalid/unknown login, empty-password and filter-injection guards, canonical-username resolution, and the admin "Test" result shape (no real directory needed) |
 | `test_connections_api.py` | The compute backend's connection endpoints — `GET /api/connections` filtered by the trusted `X-PMW-User` header (secrets stripped, open access without it) and the `POST …/connect` authorization gate (403 unassigned, decrypted secret passed through when assigned, 404 unknown id) |
 | `test_docgen.py` | The AI-documentation report builder: transition table, journey-paths HTML, conformance gap analysis, happy-path section and prompt assembly |

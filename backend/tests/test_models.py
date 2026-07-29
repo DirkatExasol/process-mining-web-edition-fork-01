@@ -14,7 +14,7 @@ from app.models import (
     ConnectionProfile,
     DatabaseServer,
     HappyPath,
-    HappyPathBranch,
+    HappyPathNode,
     LLMServer,
     NoteTarget,
     ProcessGraph,
@@ -100,24 +100,61 @@ def test_empty_process_graph_falls_back_to_one():
 # ── HappyPath backward-compatible decoding ───────────────────────────────────
 
 
-def test_happy_path_decodes_legacy_json_without_branches():
+def test_happy_path_migrates_legacy_trunk_only():
+    # Legacy flat JSON (trunk, no branches) folds into a linear list of step nodes.
     payload = json.loads('{"id":"X","name":"Ideal","steps":["A","B","C"]}')
     path = HappyPath(**payload)
     assert path.name == "Ideal"
-    assert path.steps == ["A", "B", "C"]
-    assert path.branches == []  # missing "branches" key → []
+    assert [n.step for n in path.nodes] == ["A", "B", "C"]
+    assert all(not n.branches for n in path.nodes)
 
 
-def test_happy_path_round_trips_branches():
+def test_happy_path_migrates_legacy_branches_to_trailing_split():
+    # Legacy trunk + flat branches → step nodes + one trailing split (empty branch dropped).
+    payload = {
+        "id": "Y", "name": "Main", "steps": ["A", "B"],
+        "branches": [{"label": "l", "steps": ["C"]}, {"steps": ["D"]}, {"steps": []}],
+    }
+    path = HappyPath(**payload)
+    assert [n.step for n in path.nodes[:2]] == ["A", "B"]
+    split = path.nodes[2]
+    assert split.step == "" and [[m.step for m in br] for br in split.branches] == [["C"], ["D"]]
+
+
+def test_happy_path_round_trips_nested_nodes():
+    # A -> split{ (B -> split{(C)|(D)}) | (E) } -> F  (nesting + rejoin) survives JSON.
     original = HappyPath(
-        name="Main",
-        steps=["A", "B"],
-        branches=[HappyPathBranch(label="alt", steps=["B", "X"])],
+        name="Nested",
+        nodes=[
+            HappyPathNode(step="A"),
+            HappyPathNode(branches=[
+                [HappyPathNode(step="B"),
+                 HappyPathNode(branches=[[HappyPathNode(step="C")], [HappyPathNode(step="D")]])],
+                [HappyPathNode(step="E")],
+            ]),
+            HappyPathNode(step="F"),
+        ],
     )
     decoded = HappyPath(**json.loads(original.model_dump_json(by_alias=True)))
-    assert decoded.name == "Main"
-    assert len(decoded.branches) == 1
-    assert decoded.branches[0].steps == ["B", "X"]
+    assert decoded.model_dump() == original.model_dump()
+    assert decoded.nodes[1].branches[0][1].branches[0][0].step == "C"
+
+
+def test_happy_path_split_carries_a_rejoin_label():
+    original = HappyPath(
+        name="Named",
+        nodes=[
+            HappyPathNode(label="Fork", rejoinLabel="Merge", branches=[
+                [HappyPathNode(step="A")], [HappyPathNode(step="B")],
+            ]),
+            HappyPathNode(step="C"),
+        ],
+    )
+    decoded = HappyPath(**json.loads(original.model_dump_json(by_alias=True)))
+    assert decoded.nodes[0].label == "Fork" and decoded.nodes[0].rejoinLabel == "Merge"
+    # Legacy blobs (no rejoinLabel) still decode, defaulting to "".
+    legacy = HappyPath(**{"id": "X", "name": "P", "steps": ["A", "B"]})
+    assert all(n.rejoinLabel == "" for n in legacy.nodes)
 
 
 # ── Server definitions & connection pairing ──────────────────────────────────

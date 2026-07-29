@@ -38,6 +38,22 @@ from .projects import repo, require_connection
 router = APIRouter(prefix="/api", tags=["features"])
 
 
+def _require_power() -> None:
+    """Restrict an action to power users and administrators (the same bar as
+    managing connections). Used for journey sampling, which rewrites the shared
+    JOURNEYS table for everyone on the connection. Mirrors `connections._require_power`
+    but reads the caller from the request ContextVar. When sign-in is disabled there
+    is no user identity and every power feature is hidden client-side, so an absent
+    user is likewise refused here (defence in depth against a direct API call)."""
+    username = current_user()
+    user = security_store.get_user(username) if username else None
+    if user is None or not user.is_enabled or not (user.is_admin or user.is_power):
+        raise HTTPException(
+            status_code=403,
+            detail="Journey sampling is available to power users and administrators only.",
+        )
+
+
 # ── Notes ────────────────────────────────────────────────────────────────────
 
 
@@ -187,6 +203,7 @@ async def sample_counts(project_id: str) -> dict[str, object]:
 @router.post("/projects/{project_id}/samples")
 async def create_sample(project_id: str, request: CreateSampleRequest) -> dict[str, object]:
     require_connection()
+    _require_power()
     if request.sampleSet.is_original:
         raise HTTPException(status_code=400, detail="Cannot overwrite the original data.")
 
@@ -220,6 +237,7 @@ async def create_sample(project_id: str, request: CreateSampleRequest) -> dict[s
 @router.delete("/projects/{project_id}/samples/{sample_set}")
 async def delete_sample(project_id: str, sample_set: SampleSet) -> dict[str, object]:
     require_connection()
+    _require_power()
     r = repo()
     await r.delete_sample(project_id, sample_set)
     store.delete(f"sampling.method.{sample_set.value}.{project_id}")

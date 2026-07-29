@@ -263,17 +263,33 @@ export interface FilterGroup {
   maxScore: number
 }
 
-export interface HappyPathBranch {
+/** One node in a Happy Path's series-parallel sequence. A node is a single STEP
+ *  when `branches` is empty (and `step` is set), or a SPLIT when `branches` is
+ *  non-empty — each inner list is one alternative sub-path (itself a node list,
+ *  hence nesting). Steps following a split node in the same list are the shared
+ *  "after-rejoin" continuation. */
+export interface HappyPathNode {
   id: string
+  step: string
   label: string
-  steps: string[]
+  /** Name of the point where a split's branches rejoin (splits only; optional). */
+  rejoinLabel?: string
+  branches: HappyPathNode[][]
 }
 
 export interface HappyPath {
   id: string
   name: string
-  steps: string[]
-  branches: HappyPathBranch[]
+  nodes: HappyPathNode[]
+}
+
+/** The legacy flat shape (trunk + one level of branches) for migration on load. */
+export interface LegacyHappyPath {
+  id: string
+  name: string
+  steps?: string[]
+  branches?: { id?: string; label?: string; steps: string[] }[]
+  nodes?: HappyPathNode[]
 }
 
 export interface FilterSnapshot {

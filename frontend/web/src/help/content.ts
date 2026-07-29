@@ -14,6 +14,7 @@ export type HelpBlock =
   | { kind: 'bullets'; items: string[] }
   | { kind: 'definition'; term: string; detail: string }
   | { kind: 'code'; text: string }
+  | { kind: 'table'; headers: string[]; rows: string[][] }
 
 export interface HelpSection {
   heading: string
@@ -35,6 +36,11 @@ const warn = (text: string): HelpBlock => ({ kind: 'warning', text })
 const ul = (...items: string[]): HelpBlock => ({ kind: 'bullets', items })
 const def = (term: string, detail: string): HelpBlock => ({ kind: 'definition', term, detail })
 const code = (text: string): HelpBlock => ({ kind: 'code', text })
+const table = (headers: string[], rows: string[][]): HelpBlock => ({
+  kind: 'table',
+  headers,
+  rows,
+})
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 
@@ -223,6 +229,47 @@ const connecting: HelpTopic = {
   ],
 }
 
+// ── Users & permissions ──────────────────────────────────────────────────────
+
+const roles: HelpTopic = {
+  id: 'roles',
+  title: 'Users & Permissions',
+  subtitle: 'The three roles and what each one can do',
+  icon: '🔑',
+  sections: [
+    {
+      heading: 'The three roles',
+      body: [
+        p('Every signed-in account carries one of three permission levels. They build on each other: a Power user can do everything a Regular user can, plus more; an Administrator can do everything a Power user can, plus manage the whole installation. Roles are granted in the admin interface (Users tab); by default a new account is a Regular user.'),
+        def('Regular user', 'Explores the process — views the maps and charts, applies filters and saved presets, reads and writes notes, and adjusts their own KPIs, layout and personal settings. They work with the database connections an administrator (or Power user) has assigned to them.'),
+        def('Power user', 'A Regular user who can also create, manage and assign their own database connections from within the app (they manage only the connections they created), provision schemas, generate demo data, run journey sampling, and use the advanced-analysis views (Conformance Check, Happy Path, Simulation) — all without needing the separate admin interface.'),
+        def('Administrator', 'Full control. Everything a Power user can do over every connection, plus the admin interface (:8090): managing all users and roles, TLS certificates, the LDAP directory, licensing, logging, backups and login customization.'),
+        tip('Roles require a signed-in identity. If an administrator turns off “Require sign-in for the main application” (the login gate, in the admin Users tab), the app runs with no user identity — so every Power/Admin-only capability below is unavailable: the Sampling section and the advanced views (Conformance, Happy Path, Simulation) are hidden, and their APIs return 403. To use those features, keep Require sign-in on and sign in with a Power or Admin account. There is no way to have both no-login access and the power features at once.'),
+      ],
+    },
+    {
+      heading: 'Capability matrix',
+      body: [
+        table(
+          ['Capability', 'Regular', 'Power', 'Admin'],
+          [
+            ['View process maps, charts & KPIs', '✓', '✓', '✓'],
+            ['Filters, saved presets & date window', '✓', '✓', '✓'],
+            ['Read & write notes and comments', '✓', '✓', '✓'],
+            ['Personal settings, layout & backup of preferences', '✓', '✓', '✓'],
+            ['Advanced views: Conformance, Happy Path, Simulation', '—', '✓', '✓'],
+            ['Journey sampling (create / delete samples)', '—', '✓', '✓'],
+            ['Create, manage & assign own DB connections', '—', '✓', '✓'],
+            ['Provision schema & generate demo data', '—', '✓', '✓'],
+            ['Admin interface: all users, connections, TLS, LDAP, licensing, logging', '—', '—', '✓'],
+          ],
+        ),
+        tip('Journey sampling rewrites the shared sample sets for everyone on the connection, which is why it sits with the Power/Admin capabilities rather than being a personal, per-user action.'),
+      ],
+    },
+  ],
+}
+
 // ── Administration ──────────────────────────────────────────────────────────
 
 // ── Administration (split into per-area chapters, grouped in the TOC) ─────────
@@ -273,7 +320,7 @@ const adminUsers: HelpTopic = {
         p('The Users tab controls who may sign in to the main application: create local users, enable or disable access, grant or revoke the admin role, and reset local passwords. Only enabled users can sign in.'),
         p('The Require sign-in toggle turns the login gate on or off for the main app (on by default). With it off, the app is open to anyone who can reach it — and, since there is then no user identity, per-user settings and filter presets all fall back to one shared profile.'),
         def('Failed sign-in lockout', '“Disable an account after N failed sign-in attempts” automatically disables an account once N wrong passwords are entered (defaults to 3; set 0 to turn it off). A locked account shows a clear message on the login panel and carries a Locked badge in the Users tab, where you can unlock it. The built-in Administrator is exempt from auto-lockout — as the sole recovery account it must not be lockable by someone who merely knows its name; it is protected by the per-IP throttle instead. (If you ever need to clear all locks, restart the servers with PMW_RESET_LOCKOUTS=1.) Separately, the admin sign-in page throttles repeated failures from the same IP address with a short, self-clearing cooldown (HTTP 429), so password guessing is slowed even when the account lockout does not apply.'),
-        def('Power role', 'Make power / Remove power grants the power badge. Power users can create and manage their own database connections from within the main app and assign them to other users — without needing access to this admin interface. They manage only the connections they create; admins still see and manage every connection. Power users (and admins) also get the advanced-analysis views — Conformance Check, Happy Path and Simulation.'),
+        def('Power role', 'Make power / Remove power grants the power badge. Power users can create and manage their own database connections from within the main app and assign them to other users — without needing access to this admin interface. They manage only the connections they create; admins still see and manage every connection. Power users (and admins) also get the advanced-analysis views — Conformance Check, Happy Path and Simulation — and journey sampling. See the Users & Permissions chapter for the full capability matrix.'),
         def('Source badge', 'Each user is tagged local or LDAP so you can tell built-in accounts from directory accounts at a glance; the All / Local / LDAP filter narrows the list.'),
       ],
     },
@@ -1070,8 +1117,11 @@ const happyPath: HelpTopic = {
     {
       heading: 'Defining an ideal path',
       body: [
-        p('A Happy Path is the ideal sequence a process should follow. Create one, then add trunk steps in order. You can add optional named branches — alternative continuations from the trunk — so a process with legitimate variations is scored fairly.'),
-        p('The left panel shows the actual process map; the right panel is your ideal definition. Toggle Edit mode to add, reorder or remove steps.'),
+        p('A Happy Path is the ideal sequence a process should follow. Create one, then add steps in order. The left panel shows the actual process map; the right panel is your ideal definition — toggle Edit mode to add (＋), reorder (▲ ▼) or remove (⊖) steps.'),
+        def('⑂ Split', 'Add a split where the process may legitimately take one of several alternatives — each is a branch you fill with its own steps, so a process with legitimate variations is scored fairly. Give the split a name with its ✎ button.'),
+        def('Rejoin & continue', 'A split’s branches reconverge: any steps you add after a split are the shared continuation that all branches lead into. When a split has a continuation you can name the rejoin point too (the ✎ Rejoin button on the split, shown as ⑃ in the diagram). If a split is the last thing on the path, its branches are simply alternative endings — there is no rejoin to name.'),
+        def('Nesting', 'A branch can itself contain a split, so you can branch further inside an already-branched path — the editor and the diagram nest accordingly.'),
+        tip('Drag the divider between the two panels to widen the ideal-path editor (handy for deeply nested splits); double-click it to reset. The width is remembered.'),
       ],
     },
     {
@@ -1082,7 +1132,7 @@ const happyPath: HelpTopic = {
           '1.00 — every journey follows the ideal path perfectly.',
           '0.00 — no journey shares a single transition with the ideal sequence.',
         ),
-        p('When branches are defined, each journey is scored against whichever branch it matches best, so a case taking a legitimate alternative is not unfairly penalised.'),
+        p('Every start-to-end route through the splits is considered, and each journey is scored against the route it matches best — so a case taking a legitimate alternative is not unfairly penalised.'),
         tip('Steps in your ideal path that are absent from the currently filtered process are shown dimmed, so you can immediately see which ideal steps never actually occur under the current filters.'),
       ],
     },
@@ -1100,6 +1150,7 @@ const sampling: HelpTopic = {
     {
       heading: 'Why sample?',
       body: [
+        p('Because samples are shared by everyone on the connection, the Sampling section is available to Power users and administrators only — Regular users don’t see it (see Users & Permissions).'),
         p('On very large event logs, working with a representative subset keeps exploration interactive while preserving the process’s shape. Create up to three named sample sets from the original data; the A and B chart slots can each select their own sample independently.'),
         p('Samples are written to a SAMPLE_SET column on the JOURNEYS table (added automatically on first use). The original rows are never modified, and deleting a sample removes only its rows.'),
         p('Because sample sets live in the project database, they are shared by everyone connected to that project — unlike your personal settings and filter presets, which are stored per user. Creating or deleting a sample changes it for all users of the project.'),
@@ -1201,6 +1252,15 @@ const backup: HelpTopic = {
         warn('If you include passwords or API keys without setting an encryption password, they are written in plain text in the JSON file. Set a password whenever the backup contains secrets.'),
       ],
     },
+    {
+      heading: 'Scheduled (automatic) backups',
+      body: [
+        p('The Backup tab can also write an encrypted backup automatically on a schedule, for as long as the admin server is running. Enable it, choose how often it runs and set an encryption password — the password is stored encrypted on the server so unattended backups can run, and is never shown again (leave it blank on a later save to keep it).'),
+        p('The schedule is built like a crontab: pick a frequency (hourly, daily, weekly or monthly) and the time, or switch to Custom for a raw five-field cron expression (minute hour day-of-month month weekday). The panel shows the resulting cron string and a plain-English summary, and a “Run backup now” button lets you test the configuration immediately.'),
+        def('Where they go', 'Scheduled backups are written on the server under data/backups/ as encrypted .json files, named by timestamp. “Keep newest N” prunes older files so the directory can’t grow without bound. The last run (success or failure) is shown under the controls.'),
+        warn('Automatic backups need the encryption password stored to run unattended, so treat the server as a secret store. A scheduled backup can only be restored with that password — keep a copy somewhere safe. Enabling automatic backups requires a password to be set.'),
+      ],
+    },
   ],
 }
 
@@ -1262,6 +1322,7 @@ export const HELP_TOPICS: HelpTopic[] = [
   overview,
   database,
   connecting,
+  roles,
   // Administration chapters — grouped under one admin-only TOC sub-menu.
   adminInterface,
   adminTls,

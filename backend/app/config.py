@@ -28,6 +28,10 @@ CERTS_DIR.mkdir(parents=True, exist_ok=True)
 ACTIVE_CERT_PATH = CERTS_DIR / "active.crt"
 ACTIVE_KEY_PATH = CERTS_DIR / "active.key"
 
+# Automatic (scheduled) encrypted backups are written here as .json envelopes.
+BACKUPS_DIR = DATA_DIR / "backups"
+BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
+
 # Always-on self-signed cert for the internal GUI → compute-backend hop (loopback).
 # Independent of the user-facing TLS mode; minted on backend start (internal_tls).
 INTERNAL_CERT_PATH = CERTS_DIR / "internal.crt"

@@ -659,6 +659,144 @@ def test_backup_endpoints_require_admin(admin):
     assert client.post("/api/backup/restore", json={"content": ""}).status_code == 401
 
 
+def test_display_timezone_requires_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)  # no session
+    assert client.post("/api/access/timezone", json={"timezone": "UTC"}).status_code == 401
+
+
+def test_display_timezone_set_validates_and_applies(admin):
+    import app.store.logs as logs_mod
+
+    server, store = admin
+    client = _login(server)
+    assert client.get("/api/session").json()["displayTimezone"] == ""  # default server-local
+
+    # An unknown zone is rejected.
+    r = client.post("/api/access/timezone", json={"timezone": "Not/AZone"})
+    assert r.status_code == 400 and "timezone" in r.json()["detail"].lower()
+
+    # A valid zone is stored, surfaced in the session, and applied to the log store.
+    r = client.post("/api/access/timezone", json={"timezone": "Europe/Berlin"})
+    assert r.status_code == 200 and r.json()["displayTimezone"] == "Europe/Berlin"
+    assert client.get("/api/session").json()["displayTimezone"] == "Europe/Berlin"
+    assert store.display_timezone == "Europe/Berlin"
+    assert logs_mod._display_tz is not None  # log rendering now uses the zone
+
+    # Empty clears back to server-local.
+    assert client.post("/api/access/timezone", json={"timezone": ""}).json()[
+        "displayTimezone"
+    ] == ""
+
+
+def test_scheduler_lifespan_starts_and_stops_cleanly(admin):
+    # Entering the TestClient context runs the admin app's lifespan — this creates
+    # the backup-scheduler task on startup and cancels it on shutdown. A clean
+    # enter/exit proves the wiring (and, with a disabled default schedule, that the
+    # first tick writes nothing).
+    server, _ = admin
+    with TestClient(server.app) as client:
+        assert client.get("/login").status_code == 200
+    assert not list(server.BACKUPS_DIR.glob("pmw-backup-*.json"))
+
+
+def test_backup_schedule_endpoints_require_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)  # no session
+    assert client.get("/api/backup/schedule").status_code == 401
+    assert client.post(
+        "/api/backup/schedule", json={"enabled": False, "cron": "0 2 * * *"}
+    ).status_code == 401
+    assert client.post("/api/backup/run-now").status_code == 401
+
+
+def test_backup_schedule_get_set_and_validation(admin):
+    server, _ = admin
+    client = _login(server)
+    s = client.get("/api/backup/schedule").json()
+    assert s["enabled"] is False and s["hasPassword"] is False and s["cron"] == "0 2 * * *"
+
+    # Enabling without a password is refused.
+    r = client.post("/api/backup/schedule", json={"enabled": True, "cron": "0 2 * * *"})
+    assert r.status_code == 400 and "password" in r.json()["detail"].lower()
+    # An invalid cron is refused.
+    r = client.post("/api/backup/schedule", json={"enabled": False, "cron": "99 2 * * *"})
+    assert r.status_code == 400 and "invalid" in r.json()["detail"].lower()
+
+    # Valid save with a password; the password is never echoed back.
+    r = client.post("/api/backup/schedule", json={
+        "enabled": True, "cron": "30 3 * * 1", "retention": 5, "password": "pw-123",
+    })
+    assert r.status_code == 200
+    s = r.json()
+    assert s["enabled"] and s["cron"] == "30 3 * * 1" and s["retention"] == 5
+    assert s["hasPassword"] is True and "pw-123" not in str(s)
+    # Omitting the password on a later save keeps it.
+    r = client.post("/api/backup/schedule", json={"enabled": False, "cron": "30 3 * * 1"})
+    assert r.json()["hasPassword"] is True
+
+
+def test_backup_run_now_writes_encrypted_file_and_prunes(admin):
+    import json as _json
+
+    import app.services.backup as backup_service
+
+    server, _ = admin
+    client = _login(server)
+    # No password yet → refused.
+    assert client.post("/api/backup/run-now").status_code == 400
+    # Configure a password + a small retention.
+    client.post("/api/backup/schedule", json={
+        "enabled": True, "cron": "0 2 * * *", "retention": 2, "password": "pw-xyz",
+    })
+    for _ in range(3):
+        r = client.post("/api/backup/run-now")
+        assert r.status_code == 200 and r.json()["ok"] is True and r.json()["file"]
+
+    # Retention 2 keeps only the newest two files on disk.
+    on_disk = sorted(server.BACKUPS_DIR.glob("pmw-backup-*.json"))
+    assert len(on_disk) == 2
+    # The written file is a valid encrypted backup, decryptable with the password.
+    data = on_disk[-1].read_bytes()
+    assert backup_service.is_encrypted(data)
+    payload = _json.loads(backup_service.decrypt(data, "pw-xyz"))
+    assert "version" in payload
+    # The last run is recorded in the schedule status; "at" is UTC-aware ISO so the
+    # admin UI can render it in the configured display timezone.
+    status = client.get("/api/backup/schedule").json()["status"]
+    assert status["ok"] is True and status["at"].endswith("+00:00")
+
+
+def test_export_download_reuses_stored_backup_password(admin):
+    """The unified Backup card shares one password: a download with a blank field
+    reuses the stored automatic-backup password (useStoredPassword)."""
+    import json as _json
+
+    import app.services.backup as backup_service
+
+    server, _ = admin
+    client = _login(server)
+    client.post("/api/backup/schedule", json={
+        "enabled": False, "cron": "0 2 * * *", "password": "stored-pw",
+    })
+    # Blank password + useStoredPassword → encrypted with the stored password.
+    r = client.post("/api/backup/export", json={"password": "", "useStoredPassword": True})
+    assert r.status_code == 200 and backup_service.is_encrypted(r.content)
+    assert "version" in _json.loads(backup_service.decrypt(r.content, "stored-pw"))
+    # Without the flag, a blank password still yields an unencrypted file (unchanged).
+    r2 = client.post("/api/backup/export", json={"password": ""})
+    assert not backup_service.is_encrypted(r2.content)
+
+
+def test_run_now_accepts_a_typed_password_when_none_stored(admin):
+    server, _ = admin
+    client = _login(server)
+    # No stored password, but a typed one lets a manual server backup run.
+    r = client.post("/api/backup/run-now", json={"password": "typed-pw"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert list(server.BACKUPS_DIR.glob("pmw-backup-*.json"))
+
+
 def test_encrypted_backup_inspect_without_password_is_400_not_401(admin):
     """A 401 makes the admin fetch helper redirect to /login (the 'jumps to App
     Control / looks like a refresh' bug); the encrypted-backup case must be 400."""

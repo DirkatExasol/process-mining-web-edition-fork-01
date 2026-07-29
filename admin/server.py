@@ -15,6 +15,7 @@ import os
 import signal
 import sys
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # local `pages` module
@@ -33,6 +34,7 @@ import pages  # noqa: E402
 from app.config import (  # noqa: E402
     ADMIN_PID_PATH,
     ADMIN_SESSION_TTL_SECS,
+    BACKUPS_DIR,
     DEFAULT_ADMIN_USERNAME,
     FRONTEND_HTTPS_PORT,
     FRONTEND_PORT,
@@ -40,10 +42,11 @@ from app.config import (  # noqa: E402
 )
 from app import licensing  # noqa: E402
 from app import log_events as logx  # noqa: E402
+from app import timeutil  # noqa: E402
 from app.db.manager import db as legacy_db  # noqa: E402 — settings-backed backup state
-from app.services import backup as backup_service  # noqa: E402
+from app.services import backup as backup_service, cron  # noqa: E402
 from app.services.certs import CertError  # noqa: E402
-from app.store.logs import LEVELS, store as log_store  # noqa: E402
+from app.store.logs import LEVELS, set_display_timezone, store as log_store  # noqa: E402
 from app.store.crypto import read_session, sign_session  # noqa: E402
 from app.store.security import User, store  # noqa: E402
 from app.web_security import install_security_headers  # noqa: E402
@@ -52,8 +55,126 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 )
 
-app = FastAPI(title="Process Mining Demonstrator — Administration", version="1.0.0")
+# ── Scheduled backups ─────────────────────────────────────────────────────────
+# An in-process scheduler writes encrypted backups on a cron schedule while the
+# admin server is running. It lives here (not the compute backend) because backups
+# are an admin capability and this process runs continuously. Config + the (Fernet-
+# encrypted) password live in the security store; files land in BACKUPS_DIR.
+
+_scheduler_log = logging.getLogger("backup-scheduler")
+
+
+def _display_zone():
+    """The admin's configured display timezone (or None = server-local)."""
+    return timeutil.resolve_zone(store.display_timezone)
+
+
+def _apply_display_timezone() -> None:
+    """Push the configured display timezone into the log store so the viewer and the
+    exported .log render in it. Called at startup and whenever the setting changes."""
+    set_display_timezone(_display_zone())
+
+
+def _prune_backups(keep: int) -> None:
+    """Keep only the newest `keep` scheduled-backup files (timestamped names sort
+    chronologically), so the backups directory can't grow without bound."""
+    files = sorted(BACKUPS_DIR.glob("pmw-backup-*.json"))
+    for stale in (files[:-keep] if keep > 0 else files):
+        try:
+            stale.unlink()
+        except OSError:
+            pass  # best effort
+
+
+def _write_scheduled_backup(trigger: str, password: str | None = None) -> dict:
+    """Create one encrypted backup file from the current schedule config. Records
+    and returns a status dict. Raises on an unexpected failure (after recording it).
+    `password` overrides the stored password when given (e.g. a manual run with a
+    just-typed, not-yet-saved password); None uses the stored one."""
+    sched = store.backup_schedule()
+    if password is None:
+        password = store.backup_schedule_password()
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    now = now_utc.astimezone(_display_zone())  # display-tz wall clock (or server-local)
+    stamp = now_utc.isoformat(timespec="seconds")  # UTC-aware; the UI renders it in-zone
+    if not password:
+        status = {"at": stamp, "ok": False, "trigger": trigger,
+                  "error": "No backup password is set."}
+        store.set_backup_schedule_status(status)
+        return status
+    try:
+        payload = backup_service.export_payload(
+            legacy_db,
+            include_passwords=sched["includePasswords"],
+            include_username=sched["includeUsername"],
+            include_llm_api_key=sched["includeLlmKey"],
+        )
+        data = backup_service.encrypt(backup_service.encode(payload), password)
+        BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
+        # Microseconds keep successive files unique (scheduled runs are ≥1 min apart,
+        # but "Run now" can fire several within a second); the timestamp prefix keeps
+        # the names sorting chronologically for retention pruning.
+        name = f"pmw-backup-{now.strftime('%Y%m%d-%H%M%S')}-{now.microsecond:06d}.json"
+        (BACKUPS_DIR / name).write_bytes(data)
+        _prune_backups(sched["retention"])
+    except Exception as exc:  # noqa: BLE001
+        status = {"at": stamp, "ok": False, "trigger": trigger, "error": str(exc)}
+        store.set_backup_schedule_status(status)
+        logx.error(f"scheduled backup failed ({trigger}): {exc}", operation="backup")
+        raise
+    status = {"at": stamp, "ok": True, "trigger": trigger, "file": name, "bytes": len(data)}
+    store.set_backup_schedule_status(status)
+    logx.usage(f"automatic backup written: {name} ({trigger})", operation="backup")
+    return status
+
+
+async def _backup_scheduler() -> None:
+    """Once per minute, fire a backup if the configured cron matches and automatic
+    backups are enabled with a password. Ticks every 15 s but acts at most once per
+    minute (deduped on the minute-truncated clock)."""
+    last_minute = None
+    while True:
+        try:
+            # Match the cron against the configured display zone's wall clock, so
+            # "daily at 02:00" means 02:00 in the admin's timezone. A tuple key
+            # dedupes per minute without comparing aware/naive datetimes.
+            now = datetime.datetime.now(_display_zone()).replace(second=0, microsecond=0)
+            key = (now.year, now.month, now.day, now.hour, now.minute)
+            if key != last_minute:
+                last_minute = key
+                sched = store.backup_schedule()
+                if (sched["enabled"] and sched["hasPassword"]
+                        and cron.matches(sched["cron"], now)):
+                    await asyncio.to_thread(_write_scheduled_backup, "schedule")
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a bad tick must never kill the loop
+            _scheduler_log.exception("backup scheduler tick failed")
+        await asyncio.sleep(15)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    _apply_display_timezone()  # render logs in the configured zone from startup
+    # Re-created cleanly on every TLS restart (the launcher re-runs the lifespan).
+    task = asyncio.create_task(_backup_scheduler())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(
+    title="Process Mining Demonstrator — Administration",
+    version="1.0.0",
+    lifespan=_lifespan,
+)
 install_security_headers(app)
+_apply_display_timezone()  # apply at import too (log rendering works before serving)
 
 COOKIE = "pmw_admin"
 
@@ -350,6 +471,7 @@ def api_session(request: Request, response: Response, user: User = Depends(requi
         "idleTimeoutMins": store.idle_timeout_mins,
         "adminIdleTimeoutMins": store.admin_idle_timeout_mins,
         "maxFailedLogins": store.max_failed_logins,
+        "displayTimezone": store.display_timezone,
         "builtinAdmin": DEFAULT_ADMIN_USERNAME,
         "license": licensing.evaluate().public(),
     }
@@ -380,6 +502,24 @@ def api_admin_idle_timeout(body: IdleTimeoutBody, user: User = Depends(require_a
     """Idle timeout for the admin interface itself — separate from the app's."""
     store.set_admin_idle_timeout_mins(body.minutes)
     return {"ok": True, "adminIdleTimeoutMins": store.admin_idle_timeout_mins}
+
+
+class TimezoneBody(BaseModel):
+    timezone: str = ""  # IANA name, or "" for the server's local zone
+
+
+@app.post("/api/access/timezone")
+def api_set_timezone(body: TimezoneBody, user: User = Depends(require_admin)):
+    tz = (body.timezone or "").strip()
+    if not timeutil.is_valid_zone(tz):
+        raise HTTPException(status_code=400, detail=f"Unknown timezone: {tz!r}")
+    store.set_display_timezone(tz)
+    _apply_display_timezone()  # take effect immediately (logs, backups, schedule)
+    logx.usage(
+        f"admin {user.username} set the display timezone to {tz or 'server-local'}",
+        username=user.username, operation="config",
+    )
+    return {"ok": True, "displayTimezone": store.display_timezone}
 
 
 class MaxFailedLoginsBody(BaseModel):
@@ -561,6 +701,9 @@ class BackupExportBody(BaseModel):
     includeUsername: bool = True
     includeLlmApiKey: bool = False
     password: str = ""
+    # Fall back to the stored automatic-backup password when no password is typed
+    # (the unified Backup card shares one password field for downloads + schedule).
+    useStoredPassword: bool = False
 
 
 class BackupInspectBody(BaseModel):
@@ -605,7 +748,7 @@ def _decode_backup(body: BackupInspectBody) -> dict:
         ) from exc
 
 
-def _export_desc(body: BackupExportBody) -> str:
+def _export_desc(body: BackupExportBody, encrypted: bool) -> str:
     inc = []
     if body.includeUsername:
         inc.append("usernames")
@@ -615,7 +758,7 @@ def _export_desc(body: BackupExportBody) -> str:
         inc.append("LLM keys")
     return (
         f"includes: {', '.join(inc) or 'none'}; "
-        f"{'encrypted' if body.password else 'PLAINTEXT'}"
+        f"{'encrypted' if encrypted else 'PLAINTEXT'}"
     )
 
 
@@ -630,6 +773,9 @@ def _restore_opts_desc(options: dict[str, bool]) -> str:
 def api_backup_export(
     body: BackupExportBody, request: Request, user: User = Depends(require_admin)
 ):
+    password = body.password or (
+        store.backup_schedule_password() if body.useStoredPassword else ""
+    )
     try:
         payload = backup_service.export_payload(
             legacy_db,
@@ -638,8 +784,8 @@ def api_backup_export(
             include_llm_api_key=body.includeLlmApiKey,
         )
         data = backup_service.encode(payload)
-        if body.password:
-            data = backup_service.encrypt(data, body.password)
+        if password:
+            data = backup_service.encrypt(data, password)
     except Exception as exc:  # noqa: BLE001
         logx.error(
             f"admin {user.username} backup export failed: {exc}",
@@ -647,7 +793,7 @@ def api_backup_export(
         )
         raise
     logx.usage(
-        f"admin {user.username} exported a settings backup — {_export_desc(body)}",
+        f"admin {user.username} exported a settings backup — {_export_desc(body, bool(password))}",
         request=request, username=user.username, operation="backup",
     )
     stamp = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -707,6 +853,74 @@ def api_backup_restore(
         request=request, username=user.username, operation="backup",
     )
     return {"ok": True}
+
+
+# ── API: scheduled backups ──────────────────────────────────────────────────
+
+
+class BackupScheduleBody(BaseModel):
+    enabled: bool
+    cron: str
+    retention: int = 30
+    includePasswords: bool = True
+    includeUsername: bool = True
+    includeLlmKey: bool = True
+    # Omit to keep the stored password, "" to clear it, a value to set it.
+    password: str | None = None
+
+
+@app.get("/api/backup/schedule")
+def api_backup_schedule_get(user: User = Depends(require_admin)):
+    return store.backup_schedule()
+
+
+@app.post("/api/backup/schedule")
+def api_backup_schedule_set(
+    body: BackupScheduleBody, request: Request, user: User = Depends(require_admin)
+):
+    try:
+        cron.validate(body.cron)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid schedule: {exc}") from None
+    # Enabling requires a password (either provided now or already stored).
+    if body.enabled and not (body.password or store.backup_schedule()["hasPassword"]):
+        raise HTTPException(
+            status_code=400,
+            detail="Set a backup password before enabling automatic backups.",
+        )
+    store.set_backup_schedule(body.model_dump(exclude_none=True))
+    logx.usage(
+        f"admin {user.username} updated the backup schedule "
+        f"(enabled={body.enabled}, cron={body.cron!r})",
+        request=request, username=user.username, operation="backup",
+    )
+    return store.backup_schedule()
+
+
+class RunNowBody(BaseModel):
+    password: str = ""  # a just-typed password; falls back to the stored one
+
+
+@app.post("/api/backup/run-now")
+async def api_backup_run_now(
+    request: Request, body: RunNowBody | None = None, user: User = Depends(require_admin)
+):
+    password = (body.password.strip() if body and body.password else "") or (
+        store.backup_schedule_password()
+    )
+    if not password:
+        raise HTTPException(status_code=400, detail="Set a backup password first.")
+    try:
+        status = await asyncio.to_thread(_write_scheduled_backup, "manual", password)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Backup failed: {exc}") from exc
+    if not status.get("ok"):
+        raise HTTPException(status_code=400, detail=status.get("error", "Backup failed."))
+    logx.usage(
+        f"admin {user.username} ran a manual scheduled backup → {status.get('file')}",
+        request=request, username=user.username, operation="backup",
+    )
+    return status
 
 
 @app.post("/api/self/password")

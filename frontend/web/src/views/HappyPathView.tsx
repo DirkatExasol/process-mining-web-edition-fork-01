@@ -5,11 +5,19 @@
  * columns, each card showing its coverage (max(incoming, outgoing) / journeys)
  * as a green percentage. Edit mode swaps in the step editor. */
 
-import { useEffect, useMemo, useState } from 'react'
-import { Divider, PromptSheet, Unavailable } from '../components/ui'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { PromptSheet, Unavailable } from '../components/ui'
 import { FlowChart } from '../flow/FlowChart'
+import { useSetting } from '../settings'
+import {
+  isSplit,
+  splitNode,
+  stepNode,
+  updateNode,
+  usedSteps,
+} from '../graph/happyPath'
 import { useStore } from '../store'
-import type { HappyPath, HappyPathBranch } from '../types'
+import type { HappyPath, HappyPathNode } from '../types'
 import { useNoteHandlers } from './useNoteHandlers'
 
 export function HappyPathView() {
@@ -18,11 +26,50 @@ export function HappyPathView() {
   const [editMode, setEditMode] = useState(false)
   const [newPathName, setNewPathName] = useState<string | null>(null)
   const [renaming, setRenaming] = useState<HappyPath | null>(null)
-  const [renamingBranch, setRenamingBranch] = useState<{
+  const [renamingSplit, setRenamingSplit] = useState<{
     pathId: string
-    branchId: string
-    label: string
+    splitId: string
+    field: 'label' | 'rejoinLabel'
+    value: string
   } | null>(null)
+
+  // Drag-resizable right (ideal-path) pane. The persisted width is the source of
+  // truth; during a drag we track a live width and commit it on release so we
+  // don't write to storage on every mouse move.
+  const [savedWidth, setSavedWidth] = useSetting<number>('happyPath.editorWidth', 460)
+  const [dragWidth, setDragWidth] = useState<number | null>(null)
+  // `lastW` on the ref holds the live width so commit-on-release doesn't depend on
+  // a possibly-stale render closure.
+  const dragRef = useRef<{ startX: number; startW: number; lastW: number } | null>(null)
+  const rawWidth = dragWidth ?? savedWidth
+  const editorWidth = Number.isFinite(rawWidth)
+    ? Math.min(Math.max(rawWidth, 300), 1000)
+    : 460
+
+  const onResizeDown = (e: React.PointerEvent) => {
+    dragRef.current = { startX: e.clientX, startW: editorWidth, lastW: editorWidth }
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+    e.preventDefault()
+  }
+  const onResizeMove = (e: React.PointerEvent) => {
+    const d = dragRef.current
+    if (!d) return
+    // Dragging the handle left widens the right pane.
+    const w = d.startW + (d.startX - e.clientX)
+    if (Number.isFinite(w)) {
+      d.lastW = Math.min(Math.max(w, 300), 1000)
+      setDragWidth(d.lastW)
+    }
+  }
+  const onResizeUp = (e: React.PointerEvent) => {
+    const d = dragRef.current
+    if (d) {
+      dragRef.current = null
+      e.currentTarget.releasePointerCapture?.(e.pointerId)
+      setSavedWidth(d.lastW)
+      setDragWidth(null)
+    }
+  }
 
   const path = store.happyPaths.find((p) => p.id === store.selectedHappyPathId) ?? null
   const score = path ? store.happyPathScores[path.id] : null
@@ -78,9 +125,10 @@ export function HappyPathView() {
           : 'var(--orange)'
 
   const available = path
-    ? store.allSteps.filter(
-        (s) => !path.steps.includes(s) && !path.branches.some((b) => b.steps.includes(s)),
-      )
+    ? (() => {
+        const used = usedSteps(path.nodes)
+        return store.allSteps.filter((s) => !used.has(s))
+      })()
     : []
 
   return (
@@ -213,12 +261,34 @@ export function HappyPathView() {
           )}
         </div>
 
+        {/* Drag handle: resize the ideal-path pane by dragging left/right. */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize the ideal-path panel"
+          title="Drag to resize"
+          onPointerDown={onResizeDown}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeUp}
+          onDoubleClick={() => {
+            setDragWidth(null)
+            setSavedWidth(460)
+          }}
+          className="hp-resize-handle"
+          style={{
+            width: 6,
+            flexShrink: 0,
+            cursor: 'col-resize',
+            background: 'var(--separator)',
+            touchAction: 'none',
+          }}
+        />
+
         <div
           className="col"
           style={{
-            width: 460,
+            width: editorWidth,
             flexShrink: 0,
-            borderLeft: '1px solid var(--separator)',
             background: 'var(--bg-secondary-grouped)',
             gap: 0,
             minHeight: 0,
@@ -241,9 +311,10 @@ export function HappyPathView() {
                 label="＋"
                 steps={available}
                 onPick={(step) =>
-                  store.updateHappyPath(path.id, (p) =>
-                    p.steps.includes(step) ? p : { ...p, steps: [...p.steps, step] },
-                  )
+                  store.updateHappyPath(path.id, (p) => ({
+                    ...p,
+                    nodes: [...p.nodes, stepNode(step)],
+                  }))
                 }
               />
             )}
@@ -256,7 +327,7 @@ export function HappyPathView() {
                 your intended design. Create one with “＋ New”.
               </span>
             </div>
-          ) : path.steps.length === 0 ? (
+          ) : path.nodes.length === 0 ? (
             <Unavailable
               glyph="🪧"
               title="No Steps Defined"
@@ -270,10 +341,9 @@ export function HappyPathView() {
             <HappyPathEditor
               path={path}
               available={available}
-              coverage={coverage}
               inGraph={inGraph}
-              onRenameBranch={(branchId, label) =>
-                setRenamingBranch({ pathId: path.id, branchId, label })
+              onRename={(splitId, field, value) =>
+                setRenamingSplit({ pathId: path.id, splitId, field, value })
               }
             />
           ) : (
@@ -306,20 +376,19 @@ export function HappyPathView() {
           }}
         />
       )}
-      {renamingBranch && (
+      {renamingSplit && (
         <PromptSheet
-          title="Rename Branch"
-          initialValue={renamingBranch.label}
-          confirmLabel="Rename"
-          onCancel={() => setRenamingBranch(null)}
-          onConfirm={(label) => {
-            store.updateHappyPath(renamingBranch.pathId, (p) => ({
+          title={renamingSplit.field === 'rejoinLabel' ? 'Name Rejoin' : 'Rename Split'}
+          initialValue={renamingSplit.value}
+          confirmLabel="Save"
+          onCancel={() => setRenamingSplit(null)}
+          onConfirm={(value) => {
+            const field = renamingSplit.field
+            store.updateHappyPath(renamingSplit.pathId, (p) => ({
               ...p,
-              branches: p.branches.map((b) =>
-                b.id === renamingBranch.branchId ? { ...b, label } : b,
-              ),
+              nodes: updateNode(p.nodes, renamingSplit.splitId, (n) => ({ ...n, [field]: value })),
             }))
-            setRenamingBranch(null)
+            setRenamingSplit(null)
           }}
         />
       )}
@@ -384,6 +453,100 @@ function Chevron() {
   )
 }
 
+function ForkLine({ glyph, label }: { glyph: string; label: string }) {
+  return (
+    <div className="row" style={{ gap: 6, padding: '8px 24px 0', alignItems: 'center' }}>
+      <div style={{ flex: 1, height: 1, background: 'rgba(120,120,128,0.25)' }} />
+      <span className="fg-secondary t-caption2" aria-hidden>
+        {glyph} {label}
+      </span>
+      <div style={{ flex: 1, height: 1, background: 'rgba(120,120,128,0.25)' }} />
+    </div>
+  )
+}
+
+/** Recursive view of a node list: step cards in sequence; a split renders a fork,
+ *  side-by-side branch columns (each a recursive NodeListViz), and — when steps
+ *  follow the split — a rejoin marker before the shared continuation. */
+function NodeListViz({
+  nodes,
+  coverage,
+  inGraph,
+}: {
+  nodes: HappyPathNode[]
+  coverage: Record<string, number>
+  inGraph: Set<string>
+}) {
+  return (
+    <div className="col" style={{ gap: 0 }}>
+      {nodes.map((node, i) => (
+        <div key={node.id}>
+          {isSplit(node) ? (
+            <SplitViz
+              node={node}
+              coverage={coverage}
+              inGraph={inGraph}
+              showRejoin={i < nodes.length - 1}
+            />
+          ) : (
+            <div style={{ padding: '0 24px' }}>
+              <StepVizCard
+                name={node.step}
+                inGraph={inGraph.has(node.step)}
+                coverage={coverage[node.step]}
+              />
+            </div>
+          )}
+          {i < nodes.length - 1 && <Chevron />}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function SplitViz({
+  node,
+  coverage,
+  inGraph,
+  showRejoin,
+}: {
+  node: HappyPathNode
+  coverage: Record<string, number>
+  inGraph: Set<string>
+  showRejoin: boolean
+}) {
+  return (
+    <div className="col" style={{ gap: 0 }}>
+      <ForkLine glyph="⑂" label={node.label || 'Split'} />
+      <div className="row" style={{ alignItems: 'flex-start', gap: 0 }}>
+        {node.branches.map((branch, bi) => (
+          <div key={bi} className="row" style={{ flex: 1, minWidth: 0, gap: 0 }}>
+            {bi > 0 && (
+              <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--separator)' }} />
+            )}
+            <div className="col" style={{ flex: 1, minWidth: 0, gap: 0, padding: '10px 6px 12px' }}>
+              <span
+                className="t-caption2 fg-secondary"
+                style={{ fontWeight: 600, textAlign: 'center', paddingBottom: 6 }}
+              >
+                Branch {bi + 1}
+              </span>
+              {branch.length === 0 ? (
+                <span className="t-caption2 fg-tertiary" style={{ textAlign: 'center', padding: 12 }}>
+                  No steps
+                </span>
+              ) : (
+                <NodeListViz nodes={branch} coverage={coverage} inGraph={inGraph} />
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      {showRejoin && <ForkLine glyph="⑃" label={node.rejoinLabel || 'rejoin'} />}
+    </div>
+  )
+}
+
 function HappyPathVisualisation({
   path,
   coverage,
@@ -393,120 +556,9 @@ function HappyPathVisualisation({
   coverage: Record<string, number>
   inGraph: Set<string>
 }) {
-  const hasBranches = path.branches.length > 0
-
   return (
     <div className="scroll-view" style={{ gap: 0, padding: '16px 0 24px' }}>
-      {/* Trunk */}
-      <div style={{ padding: '0 24px' }}>
-        {path.steps.map((step, i) => (
-          <div key={`${step}-${i}`}>
-            <div style={{ position: 'relative' }}>
-              <StepVizCard
-                name={step}
-                inGraph={inGraph.has(step)}
-                coverage={coverage[step]}
-              />
-              {hasBranches && i === path.steps.length - 1 && (
-                <span
-                  style={{
-                    position: 'absolute',
-                    top: 8,
-                    right: -10,
-                    width: 20,
-                    height: 20,
-                    borderRadius: '50%',
-                    background: 'var(--accent)',
-                    color: '#fff',
-                    display: 'grid',
-                    placeItems: 'center',
-                    fontSize: 12,
-                    fontWeight: 700,
-                    boxShadow: 'var(--shadow-sm)',
-                  }}
-                  title="Branches fork from here"
-                  aria-hidden
-                >
-                  +
-                </span>
-              )}
-            </div>
-            {i < path.steps.length - 1 && <Chevron />}
-          </div>
-        ))}
-      </div>
-
-      {/* Fork divider + branch columns */}
-      {hasBranches && (
-        <>
-          <div className="row" style={{ gap: 6, padding: '8px 24px 0' }}>
-            <div style={{ flex: 1, height: 1, background: 'rgba(120,120,128,0.25)' }} />
-            <span className="fg-secondary" style={{ fontSize: 12 }} aria-hidden>
-              ⑂
-            </span>
-            <div style={{ flex: 1, height: 1, background: 'rgba(120,120,128,0.25)' }} />
-          </div>
-
-          <div className="row" style={{ alignItems: 'flex-start', gap: 0 }}>
-            {path.branches.map((branch, bi) => (
-              <div key={branch.id} className="row" style={{ flex: 1, minWidth: 0, gap: 0 }}>
-                {bi > 0 && (
-                  <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--separator)' }} />
-                )}
-                <BranchColumn
-                  branch={branch}
-                  number={bi + 1}
-                  coverage={coverage}
-                  inGraph={inGraph}
-                />
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-function BranchColumn({
-  branch,
-  number,
-  coverage,
-  inGraph,
-}: {
-  branch: HappyPathBranch
-  number: number
-  coverage: Record<string, number>
-  inGraph: Set<string>
-}) {
-  const label = branch.label || `Branch ${number}`
-  return (
-    <div className="col" style={{ flex: 1, minWidth: 0, gap: 0, padding: '10px 12px 12px' }}>
-      <span
-        className="t-caption2 fg-secondary"
-        style={{ fontWeight: 600, textAlign: 'center', paddingBottom: 6 }}
-      >
-        {label}
-      </span>
-      {branch.steps.length === 0 ? (
-        <span
-          className="t-caption2 fg-tertiary"
-          style={{ textAlign: 'center', padding: 12 }}
-        >
-          No steps
-        </span>
-      ) : (
-        branch.steps.map((step, i) => (
-          <div key={`${step}-${i}`}>
-            <StepVizCard
-              name={step}
-              inGraph={inGraph.has(step)}
-              coverage={coverage[step]}
-            />
-            {i < branch.steps.length - 1 && <Chevron />}
-          </div>
-        ))
-      )}
+      <NodeListViz nodes={path.nodes} coverage={coverage} inGraph={inGraph} />
     </div>
   )
 }
@@ -609,174 +661,31 @@ function HappyPathEditor({
   path,
   available,
   inGraph,
-  onRenameBranch,
+  onRename,
 }: {
   path: HappyPath
   available: string[]
-  coverage: Record<string, number>
   inGraph: Set<string>
-  onRenameBranch: (branchId: string, label: string) => void
+  onRename: (splitId: string, field: 'label' | 'rejoinLabel', value: string) => void
 }) {
   const store = useStore()
+  const setNodes = (nodes: HappyPathNode[]) =>
+    store.updateHappyPath(path.id, (p) => ({ ...p, nodes }))
 
   return (
     <div className="scroll-view" style={{ gap: 14 }}>
-      <div className="col" style={{ gap: 8 }}>
-        <span className="sub-title">Trunk</span>
-        {path.steps.map((step, i) => (
-          <EditStepRow
-            key={`${step}-${i}`}
-            name={step}
-            inGraph={inGraph.has(step)}
-            canMoveUp={i > 0}
-            canMoveDown={i < path.steps.length - 1}
-            onMove={(delta) =>
-              store.updateHappyPath(path.id, (p) => {
-                const steps = [...p.steps]
-                const target = i + delta
-                if (target < 0 || target >= steps.length) return p
-                ;[steps[i], steps[target]] = [steps[target], steps[i]]
-                return { ...p, steps }
-              })
-            }
-            onRemove={() =>
-              store.updateHappyPath(path.id, (p) => ({
-                ...p,
-                steps: p.steps.filter((_, idx) => idx !== i),
-              }))
-            }
-          />
-        ))}
-        {available.length > 0 && (
-          <AddStepMenu
-            label="＋"
-            steps={available}
-            onPick={(step) =>
-              store.updateHappyPath(path.id, (p) =>
-                p.steps.includes(step) ? p : { ...p, steps: [...p.steps, step] },
-              )
-            }
-          />
-        )}
-      </div>
-
-      <Divider />
-
-      <div className="col" style={{ gap: 10 }}>
-        <div className="row">
-          <span className="sub-title spacer">Branches</span>
-          <button
-            className="btn small"
-            onClick={() =>
-              store.updateHappyPath(path.id, (p) => ({
-                ...p,
-                branches: [
-                  ...p.branches,
-                  {
-                    id: crypto.randomUUID().toUpperCase(),
-                    label: `Branch ${p.branches.length + 1}`,
-                    steps: [],
-                  },
-                ],
-              }))
-            }
-          >
-            ＋ Branch
-          </button>
-        </div>
-
-        {path.branches.length === 0 && (
-          <span className="t-caption2 fg-tertiary">
-            Optional. Each branch continues the trunk; every journey is scored against
-            the branch it matches best.
-          </span>
-        )}
-
-        {path.branches.map((branch, bIndex) => (
-          <div
-            key={branch.id}
-            className="col"
-            style={{ gap: 6, padding: 10, borderRadius: 8, background: 'var(--bg-fill)' }}
-          >
-            <div className="row">
-              <span className="t-caption spacer" style={{ fontWeight: 600 }}>
-                {branch.label || `Branch ${bIndex + 1}`}
-              </span>
-              <button
-                className="icon-btn"
-                style={{ width: 20, height: 20, fontSize: 11 }}
-                title="Rename branch"
-                onClick={() => onRenameBranch(branch.id, branch.label)}
-              >
-                ✎
-              </button>
-              <button
-                className="icon-btn"
-                style={{ width: 20, height: 20, fontSize: 11, color: 'var(--red)' }}
-                title="Delete branch"
-                onClick={() =>
-                  store.updateHappyPath(path.id, (p) => ({
-                    ...p,
-                    branches: p.branches.filter((b) => b.id !== branch.id),
-                  }))
-                }
-              >
-                🗑
-              </button>
-            </div>
-
-            {branch.steps.map((step, i) => (
-              <EditStepRow
-                key={`${step}-${i}`}
-                name={step}
-                inGraph={inGraph.has(step)}
-                canMoveUp={i > 0}
-                canMoveDown={i < branch.steps.length - 1}
-                onMove={(delta) =>
-                  store.updateHappyPath(path.id, (p) => ({
-                    ...p,
-                    branches: p.branches.map((b) => {
-                      if (b.id !== branch.id) return b
-                      const steps = [...b.steps]
-                      const target = i + delta
-                      if (target < 0 || target >= steps.length) return b
-                      ;[steps[i], steps[target]] = [steps[target], steps[i]]
-                      return { ...b, steps }
-                    }),
-                  }))
-                }
-                onRemove={() =>
-                  store.updateHappyPath(path.id, (p) => ({
-                    ...p,
-                    branches: p.branches.map((b) =>
-                      b.id === branch.id
-                        ? { ...b, steps: b.steps.filter((_, idx) => idx !== i) }
-                        : b,
-                    ),
-                  }))
-                }
-              />
-            ))}
-
-            {available.length > 0 && (
-              <AddStepMenu
-                label="＋"
-                steps={available}
-                onPick={(step) =>
-                  store.updateHappyPath(path.id, (p) => ({
-                    ...p,
-                    branches: p.branches.map((b) =>
-                      b.id === branch.id ? { ...b, steps: [...b.steps, step] } : b,
-                    ),
-                  }))
-                }
-              />
-            )}
-          </div>
-        ))}
-      </div>
-
-      <Divider />
+      <NodeListEditor
+        nodes={path.nodes}
+        onChange={setNodes}
+        available={available}
+        inGraph={inGraph}
+        onRename={onRename}
+      />
+      <span className="t-caption2 fg-tertiary">
+        Add a ⑂ Split for alternatives that rejoin — steps after a split are the shared
+        continuation, and a split can be added inside a branch. Each journey is scored
+        against the route it matches best.
+      </span>
       <button
         className="btn small"
         style={{ alignSelf: 'flex-start' }}
@@ -784,6 +693,220 @@ function HappyPathEditor({
       >
         ↻ Recompute conformance
       </button>
+    </div>
+  )
+}
+
+/** Controlled recursive editor for a node list: step rows and split cards (each
+ *  containing nested NodeListEditors), plus ＋ Step / ⑂ Split controls. */
+function NodeListEditor({
+  nodes,
+  onChange,
+  available,
+  inGraph,
+  onRename,
+}: {
+  nodes: HappyPathNode[]
+  onChange: (nodes: HappyPathNode[]) => void
+  available: string[]
+  inGraph: Set<string>
+  onRename: (splitId: string, field: 'label' | 'rejoinLabel', value: string) => void
+}) {
+  const move = (i: number, delta: number) => {
+    const t = i + delta
+    if (t < 0 || t >= nodes.length) return
+    const next = [...nodes]
+    ;[next[i], next[t]] = [next[t], next[i]]
+    onChange(next)
+  }
+  const removeAt = (i: number) => onChange(nodes.filter((_, idx) => idx !== i))
+
+  return (
+    <div className="col" style={{ gap: 6 }}>
+      {nodes.map((node, i) =>
+        isSplit(node) ? (
+          <SplitEditor
+            key={node.id}
+            node={node}
+            onChange={(n) => onChange(nodes.map((x, idx) => (idx === i ? n : x)))}
+            onRemove={() => removeAt(i)}
+            canMoveUp={i > 0}
+            canMoveDown={i < nodes.length - 1}
+            onMove={(d) => move(i, d)}
+            hasContinuation={i < nodes.length - 1}
+            available={available}
+            inGraph={inGraph}
+            onRename={onRename}
+          />
+        ) : (
+          <EditStepRow
+            key={node.id}
+            name={node.step}
+            inGraph={inGraph.has(node.step)}
+            canMoveUp={i > 0}
+            canMoveDown={i < nodes.length - 1}
+            onMove={(d) => move(i, d)}
+            onRemove={() => removeAt(i)}
+          />
+        ),
+      )}
+      <div className="row" style={{ gap: 6 }}>
+        {available.length > 0 && (
+          <AddStepMenu
+            label="＋"
+            steps={available}
+            onPick={(step) => onChange([...nodes, stepNode(step)])}
+          />
+        )}
+        <button
+          className="btn small"
+          title="Add a split — alternatives that rejoin and continue"
+          onClick={() => onChange([...nodes, splitNode()])}
+        >
+          ⑂ Split
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function SplitEditor({
+  node,
+  onChange,
+  onRemove,
+  canMoveUp,
+  canMoveDown,
+  onMove,
+  hasContinuation,
+  available,
+  inGraph,
+  onRename,
+}: {
+  node: HappyPathNode
+  onChange: (n: HappyPathNode) => void
+  onRemove: () => void
+  canMoveUp: boolean
+  canMoveDown: boolean
+  onMove: (delta: number) => void
+  hasContinuation: boolean
+  available: string[]
+  inGraph: Set<string>
+  onRename: (splitId: string, field: 'label' | 'rejoinLabel', value: string) => void
+}) {
+  const setBranch = (bi: number, branchNodes: HappyPathNode[]) =>
+    onChange({ ...node, branches: node.branches.map((b, idx) => (idx === bi ? branchNodes : b)) })
+
+  return (
+    <div
+      className="col"
+      style={{
+        gap: 8,
+        padding: 8,
+        borderRadius: 8,
+        background: 'var(--bg-fill)',
+        border: '1px solid var(--separator-soft)',
+      }}
+    >
+      <div className="row" style={{ gap: 4, alignItems: 'center' }}>
+        <span aria-hidden>⑂</span>
+        <span className="t-caption spacer" style={{ fontWeight: 600 }}>
+          {node.label || 'Split'}
+        </span>
+        <button
+          className="icon-btn"
+          style={{ width: 20, height: 20, fontSize: 11 }}
+          title="Rename split"
+          onClick={() => onRename(node.id, 'label', node.label)}
+        >
+          ✎
+        </button>
+        <button
+          className="icon-btn"
+          style={{ width: 20, height: 20, fontSize: 10 }}
+          disabled={!canMoveUp}
+          title="Move up"
+          onClick={() => onMove(-1)}
+        >
+          ▲
+        </button>
+        <button
+          className="icon-btn"
+          style={{ width: 20, height: 20, fontSize: 10 }}
+          disabled={!canMoveDown}
+          title="Move down"
+          onClick={() => onMove(1)}
+        >
+          ▼
+        </button>
+        <button
+          className="icon-btn"
+          style={{ width: 20, height: 20, fontSize: 11, color: 'var(--red)' }}
+          title="Delete split"
+          onClick={onRemove}
+        >
+          🗑
+        </button>
+      </div>
+
+      <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
+        {node.branches.map((branch, bi) => (
+          <div
+            key={bi}
+            className="col"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              gap: 6,
+              padding: 8,
+              borderRadius: 6,
+              background: 'var(--bg-secondary-grouped)',
+            }}
+          >
+            <div className="row" style={{ alignItems: 'center' }}>
+              <span className="t-caption2 fg-secondary spacer" style={{ fontWeight: 600 }}>
+                Branch {bi + 1}
+              </span>
+              {node.branches.length > 2 && (
+                <button
+                  className="icon-btn"
+                  style={{ width: 18, height: 18, fontSize: 10, color: 'var(--red)' }}
+                  title="Delete branch"
+                  onClick={() =>
+                    onChange({ ...node, branches: node.branches.filter((_, idx) => idx !== bi) })
+                  }
+                >
+                  🗑
+                </button>
+              )}
+            </div>
+            <NodeListEditor
+              nodes={branch}
+              onChange={(n) => setBranch(bi, n)}
+              available={available}
+              inGraph={inGraph}
+              onRename={onRename}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+        <button
+          className="btn small"
+          onClick={() => onChange({ ...node, branches: [...node.branches, []] })}
+        >
+          ＋ Branch
+        </button>
+        {hasContinuation && (
+          <button
+            className="btn small"
+            title="Name the point where these branches rejoin"
+            onClick={() => onRename(node.id, 'rejoinLabel', node.rejoinLabel || '')}
+          >
+            ✎ Rejoin: {node.rejoinLabel || 'rejoin'}
+          </button>
+        )}
+      </div>
     </div>
   )
 }

@@ -558,6 +558,38 @@ def test_editing_connection_disconnects_live_sessions(backend, monkeypatch):
     assert calls == [conn.id]
 
 
+def test_sampling_guard_requires_power_role(backend):
+    """Journey sampling is restricted to power users and admins; a regular user (or
+    no signed-in identity) is refused at the backend, not just hidden in the UI."""
+    import importlib
+
+    import app.api.features as features
+    import app.db.manager as manager
+    from fastapi import HTTPException
+
+    _, store, _ = backend
+    importlib.reload(features)  # bind to the fixture's reloaded manager + security store
+
+    store.create_user("reg", "pw", is_admin=False)
+    store.create_user("power_u", "pw", is_admin=False)
+    store.set_power("power_u", True)
+    store.create_user("adm", "pw", is_admin=True)
+
+    def guard(username):
+        tok = manager.set_current_user(username)
+        try:
+            features._require_power()
+        finally:
+            manager.reset_current_user(tok)
+
+    for blocked in ("reg", None):  # regular user and sign-in-disabled both refused
+        with pytest.raises(HTTPException) as ei:
+            guard(blocked)
+        assert ei.value.status_code == 403
+    guard("power_u")  # power user — no raise
+    guard("adm")  # admin — no raise
+
+
 def test_registry_lowercases_username(backend):
     """A username arriving in varying case maps to ONE manager/Exasol session."""
     import app.db.manager as manager

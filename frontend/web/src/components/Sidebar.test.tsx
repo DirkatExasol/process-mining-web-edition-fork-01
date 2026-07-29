@@ -40,15 +40,26 @@ describe('Sidebar Configuration', () => {
 })
 
 describe('Sidebar Metrics section', () => {
-  it('shows the Metrics and Sampling sections in chart modes', () => {
-    useStore.setState({ activeChartMode: 'A-Chart' })
+  it('shows the Metrics and Sampling sections for a power user in chart modes', () => {
+    useStore.setState({ activeChartMode: 'A-Chart', authIsPower: true, authIsAdmin: false })
     render(<Sidebar onCollapse={() => {}} />)
     expect(screen.getByText('Metrics')).toBeInTheDocument()
     expect(screen.getByText('Sampling')).toBeInTheDocument()
   })
 
+  it('hides Sampling from a regular (non-power, non-admin) user', () => {
+    useStore.setState({ activeChartMode: 'A-Chart', authIsPower: false, authIsAdmin: false })
+    render(<Sidebar onCollapse={() => {}} />)
+    expect(screen.getByText('Metrics')).toBeInTheDocument() // still visible to everyone
+    expect(screen.queryByText('Sampling')).toBeNull() // power/admin only
+  })
+
   it('hides Metrics (fixed to Avg Time) and Sampling in Individual Journey mode', () => {
-    useStore.setState({ activeChartMode: 'Individual Journey' })
+    useStore.setState({
+      activeChartMode: 'Individual Journey',
+      authIsPower: true,
+      authIsAdmin: false,
+    })
     render(<Sidebar onCollapse={() => {}} />)
     expect(screen.queryByText('Metrics')).toBeNull()
     expect(screen.queryByText('Sampling')).toBeNull()

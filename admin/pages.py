@@ -274,17 +274,21 @@ def login_page(error: str = "", inactivity: bool = False, bg_css: str = "") -> s
    base input/button styles in _STYLE. */
 :root {{
   --l-material: rgba(255,255,255,.82);
-  /* Layered elevation so the panel floats above any background — colour or
-     photo — with a faint hairline ring keeping its edge legible over imagery. */
-  --l-shadow: 0 0 0 0.5px rgba(0,0,0,.07), 0 4px 12px rgba(0,0,0,.18),
-    0 30px 60px rgba(0,0,0,.34), 0 64px 120px rgba(0,0,0,.42);
+  /* Layered elevation so the panel floats above any background — colour or photo —
+     with a faint hairline ring keeping its edge legible over imagery. The far,
+     ultra-diffuse layers give it real virtual distance (higher = larger, softer,
+     more offset shadow). Kept in sync with the app's .splash. */
+  --l-shadow: 0 0 0 0.5px rgba(0,0,0,.08), 0 6px 18px rgba(0,0,0,.2),
+    0 28px 56px rgba(0,0,0,.3), 0 60px 120px rgba(0,0,0,.4),
+    0 110px 200px rgba(0,0,0,.46);
   --l-primary: #000; --l-secondary: rgba(60,60,67,.6);
   --l-fill: rgba(120,120,128,.12); --l-grouped: #f2f2f7;
 }}
 :root[data-theme='dark'] {{
   --l-material: rgba(38,38,40,.86);
-  --l-shadow: 0 0 0 0.5px rgba(255,255,255,.1), 0 4px 12px rgba(0,0,0,.6),
-    0 30px 64px rgba(0,0,0,.72), 0 68px 130px rgba(0,0,0,.82);
+  --l-shadow: 0 0 0 0.5px rgba(255,255,255,.1), 0 6px 18px rgba(0,0,0,.62),
+    0 28px 60px rgba(0,0,0,.74), 0 64px 130px rgba(0,0,0,.82),
+    0 120px 210px rgba(0,0,0,.86);
   --l-primary: #fff; --l-secondary: rgba(235,235,245,.6);
   --l-fill: rgba(120,120,128,.24); --l-grouped: #000;
 }}
@@ -460,6 +464,19 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       <button class="btn small" onclick="saveAdminIdleTimeout()">Save</button>
       <span class="subtle" id="adminIdleTimeoutHint"></span>
     </div>
+  </div>
+  <div class="card">
+    <h2>Timezone</h2>
+    <p class="muted" style="margin-top:0">The timezone used for all admin timestamps &mdash; the log
+      viewer and exported logs, backup times and the backup schedule (e.g. &ldquo;daily at 02:00&rdquo;
+      fires at 02:00 here). Leave as <em>Server local</em> to follow the server's own clock. The main app
+      shows each user their own browser's local time.</p>
+    <div class="row" style="gap:8px; flex-wrap:wrap; align-items:flex-end">
+      <div class="field"><label>Display timezone</label>
+        <select id="displayTz" onchange="previewTz()" style="min-width:260px"></select></div>
+      <button class="btn primary" onclick="saveDisplayTimezone()">Save</button>
+    </div>
+    <div class="muted" id="tzPreview" style="font-size:13px; margin-top:8px"></div>
   </div>
   </div><!-- /tab-appcontrol -->
 
@@ -786,18 +803,67 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
 
   <div class="tabpanel" id="tab-backup">
   <div class="card">
-    <h2>Export</h2>
-    <p class="muted" style="font-size:13px; margin:0 0 12px">Exports connections, filter presets,
-      happy paths, target norms, node layouts, LLM prompt templates and app preferences as a single
-      JSON file (byte-compatible with the app's backup format).</p>
-    <div class="col" style="gap:8px; max-width:520px">
-      <label class="row" style="gap:8px; font-size:14px"><input type="checkbox" id="bkUsername" checked style="width:auto"> Include database usernames</label>
-      <label class="row" style="gap:8px; font-size:14px"><input type="checkbox" id="bkPasswords" style="width:auto" onchange="updateBackupWarn()"> Include database passwords</label>
-      <label class="row" style="gap:8px; font-size:14px"><input type="checkbox" id="bkLlmKey" style="width:auto" onchange="updateBackupWarn()"> Include LLM API keys</label>
-      <div id="bkSecretWarn" class="banner warn" style="display:none">⚠ Secrets will be written in plain text unless you set an encryption password below.</div>
-      <div class="field"><label>Encryption password (optional, AES-256-GCM)</label>
-        <input type="password" id="bkExportPw" autocomplete="new-password" oninput="updateBackupWarn()" style="max-width:320px"></div>
-      <button class="btn primary" style="align-self:flex-start" onclick="exportBackup()">⬇ Export backup</button>
+    <h2>Backup</h2>
+    <p class="muted" style="font-size:13px; margin:0 0 12px">A backup captures everything except the
+      event data itself &mdash; connections, filter presets, happy paths, target norms, node layouts,
+      LLM prompt templates and app preferences &mdash; as a single JSON file (byte-compatible with the
+      app's backup format). Download one now, or have the server write encrypted backups automatically
+      on a schedule. The options and password below apply to both.</p>
+    <div class="col" style="gap:12px; max-width:560px">
+      <div class="col" style="gap:6px">
+        <label class="row" style="gap:8px; font-size:14px"><input type="checkbox" id="schedInclUser" checked style="width:auto"> Include database usernames</label>
+        <label class="row" style="gap:8px; font-size:14px"><input type="checkbox" id="schedInclPw" checked style="width:auto" onchange="updateBackupWarn()"> Include database passwords</label>
+        <label class="row" style="gap:8px; font-size:14px"><input type="checkbox" id="schedInclLlm" checked style="width:auto" onchange="updateBackupWarn()"> Include LLM API keys</label>
+      </div>
+      <div id="bkSecretWarn" class="banner warn" style="display:none">⚠ Secrets will be written in plain text unless you set an encryption password.</div>
+      <div class="field"><label>Encryption password (AES-256-GCM)</label>
+        <input type="password" id="schedPw" autocomplete="new-password" oninput="updateBackupWarn()" style="max-width:320px">
+        <span class="subtle" id="schedPwHint" style="font-size:12px"></span></div>
+      <div class="banner warn" style="font-size:13px">For automatic backups the password is stored <strong>encrypted</strong> on the server so they can run unattended. Keep it safe &mdash; a backup can only be restored with it.</div>
+
+      <div class="row" style="gap:8px">
+        <button class="btn primary" onclick="downloadBackup()">⬇ Download backup</button>
+        <button class="btn" onclick="runBackupNow()">Run backup on server now</button>
+      </div>
+
+      <hr style="border:none; border-top:1px solid var(--border-soft); margin:6px 0">
+      <div style="font-weight:600">Automatic backups</div>
+      <p class="muted" style="font-size:13px; margin:0">Written on a schedule while the admin server is
+        running, saved under <code>data/backups/</code>; older files are pruned beyond the retention count.</p>
+      <label class="row" style="gap:8px; font-size:14px"><input type="checkbox" id="schedEnabled" style="width:auto"> Enable automatic backups</label>
+
+      <div class="field"><label>Frequency</label>
+        <select id="schedFreq" onchange="onSchedFreqChange()" style="max-width:220px">
+          <option value="hourly">Every hour</option>
+          <option value="daily">Every day</option>
+          <option value="weekly">Every week</option>
+          <option value="monthly">Every month</option>
+          <option value="custom">Custom (cron)</option>
+        </select></div>
+
+      <div class="row" style="gap:12px; flex-wrap:wrap">
+        <div class="field" id="schedHourWrap"><label>Hour</label>
+          <select id="schedHour" onchange="updateCron()"></select></div>
+        <div class="field" id="schedMinuteWrap"><label>Minute</label>
+          <select id="schedMinute" onchange="updateCron()"></select></div>
+        <div class="field" id="schedDowWrap" style="display:none"><label>Weekday</label>
+          <select id="schedDow" onchange="updateCron()"></select></div>
+        <div class="field" id="schedDomWrap" style="display:none"><label>Day of month</label>
+          <select id="schedDom" onchange="updateCron()"></select></div>
+      </div>
+
+      <div class="field" id="schedCustomWrap" style="display:none"><label>Cron expression (minute hour day-of-month month weekday)</label>
+        <input type="text" id="schedCron" oninput="onCustomCron()" placeholder="0 2 * * *" spellcheck="false" style="max-width:280px; font-family:monospace"></div>
+
+      <div class="muted" style="font-size:13px">Runs: <code id="schedCronOut">0 2 * * *</code> &mdash; <span id="schedSummary"></span></div>
+
+      <div class="field"><label>Keep newest backups</label>
+        <input type="number" id="schedRetention" min="1" value="30" style="max-width:110px"></div>
+
+      <div class="row" style="gap:8px">
+        <button class="btn primary" onclick="saveSchedule()">Save schedule</button>
+      </div>
+      <div class="muted" id="schedStatus" style="font-size:13px"></div>
     </div>
   </div>
   <div class="card">
@@ -915,7 +981,40 @@ async function api(path, opts) {
   return body;
 }
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const fmtDate = (s) => { if (!s) return '—'; const d = new Date(s); return isNaN(d) ? '—' : d.toLocaleString(); };
+let DISPLAY_TZ = ''; // '' = browser local; else an IANA zone from the admin setting
+const fmtDate = (s) => {
+  if (!s) return '—';
+  const d = new Date(s);
+  if (isNaN(d)) return '—';
+  try { return d.toLocaleString(undefined, DISPLAY_TZ ? { timeZone: DISPLAY_TZ } : {}); }
+  catch (e) { return d.toLocaleString(); }
+};
+
+function _populateTzSelect() {
+  const sel = $('displayTz');
+  if (!sel || sel.options.length) return;
+  let zones = [];
+  try { zones = Intl.supportedValuesOf('timeZone'); } catch (e) { zones = []; }
+  const add = (v, label) => { const o = document.createElement('option'); o.value = v; o.textContent = label || v; sel.appendChild(o); };
+  add('', 'Server local (default)');
+  add('UTC', 'UTC');
+  for (const z of zones) if (z !== 'UTC') add(z);
+}
+
+function previewTz() {
+  const tz = $('displayTz').value;
+  try {
+    const now = new Date().toLocaleString(undefined, tz ? { timeZone: tz } : {});
+    $('tzPreview').textContent = 'Current time: ' + now + (tz ? '' : ' (server / browser local)');
+  } catch (e) { $('tzPreview').textContent = ''; }
+}
+
+async function saveDisplayTimezone() {
+  try {
+    await api('/api/access/timezone', { method: 'POST', body: JSON.stringify({ timezone: $('displayTz').value }) });
+    toast('Timezone updated'); await loadSession();
+  } catch (e) { toast(e.message, true); }
+}
 
 let BUILTIN_ADMIN = '';
 async function loadSession() {
@@ -943,6 +1042,10 @@ async function loadSession() {
   $('maxFailedLoginsHint').textContent = maxFail > 0
     ? 'Accounts (incl. the Administrator) are disabled after ' + maxFail + ' failed sign-ins.'
     : 'Disabled — accounts are never locked on failed sign-ins.';
+  DISPLAY_TZ = s.displayTimezone || '';
+  _populateTzSelect();
+  $('displayTz').value = DISPLAY_TZ;
+  previewTz();
   renderLicense(s.license);
 }
 function renderLicense(lic) {
@@ -1244,6 +1347,7 @@ function selectTab(name) {
   if (name === 'ldap') loadLdap().catch(e => toast(e.message, true));
   if (name === 'logging') loadLogs().catch(e => toast(e.message, true));
   if (name === 'customize') loadCustomize().catch(e => toast(e.message, true));
+  if (name === 'backup') loadSchedule().catch(e => toast(e.message, true));
 }
 
 // ── Customize (login page background) ───────────────────────────────────────
@@ -1503,25 +1607,29 @@ const BACKUP_RESTORE_OPTS = [
   ['filterPresets', 'Filter presets'],
 ];
 
+let _bkHasPassword = false; // whether an automatic-backup password is stored
+
 function updateBackupWarn() {
-  const wantSecrets = $('bkPasswords').checked || $('bkLlmKey').checked;
-  $('bkSecretWarn').style.display = wantSecrets && !$('bkExportPw').value ? 'block' : 'none';
+  const wantSecrets = $('schedInclPw').checked || $('schedInclLlm').checked;
+  const noPassword = !$('schedPw').value && !_bkHasPassword;
+  $('bkSecretWarn').style.display = (wantSecrets && noPassword) ? 'block' : 'none';
 }
 
-async function exportBackup() {
+async function downloadBackup() {
   try {
     const resp = await fetch('/api/backup/export', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        includeUsername: $('bkUsername').checked,
-        includePasswords: $('bkPasswords').checked,
-        includeLlmApiKey: $('bkLlmKey').checked,
-        password: $('bkExportPw').value,
+        includeUsername: $('schedInclUser').checked,
+        includePasswords: $('schedInclPw').checked,
+        includeLlmApiKey: $('schedInclLlm').checked,
+        password: $('schedPw').value,   // blank → reuse the stored backup password
+        useStoredPassword: true,
       }),
     });
     if (resp.status === 401) { location.href = '/login'; return; }
-    if (!resp.ok) { toast('Export failed', true); return; }
+    if (!resp.ok) { toast('Download failed', true); return; }
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1529,7 +1637,7 @@ async function exportBackup() {
     a.download = 'ProcessMining-Backup-' + new Date().toISOString().slice(0, 10) + '.json';
     a.click();
     URL.revokeObjectURL(url);
-    toast('Backup exported');
+    toast('Backup downloaded');
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1606,6 +1714,147 @@ async function restoreBackup() {
       body: JSON.stringify({ content: _bkContent, password: $('bkRestorePw').value, options: opts }),
     });
     toast('Backup restored');
+  } catch (e) { toast(e.message, true); }
+}
+
+// ── Scheduled backups ──────────────────────────────────────────────────────
+const WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+function _fillSelect(id, from, to, labelFn) {
+  const sel = $(id);
+  if (sel.options.length) return; // populate once
+  for (let i = from; i <= to; i++) {
+    const o = document.createElement('option');
+    o.value = String(i);
+    o.textContent = labelFn ? labelFn(i) : (i < 10 ? '0' + i : String(i));
+    sel.appendChild(o);
+  }
+}
+
+function _initSchedSelects() {
+  _fillSelect('schedHour', 0, 23);
+  _fillSelect('schedMinute', 0, 59);
+  _fillSelect('schedDow', 0, 6, (i) => WEEKDAYS[i]);
+  _fillSelect('schedDom', 1, 28, (i) => String(i)); // 1..28: valid in every month
+}
+
+function onSchedFreqChange() {
+  const f = $('schedFreq').value;
+  $('schedMinuteWrap').style.display = (f === 'custom') ? 'none' : 'block';
+  $('schedHourWrap').style.display = (f === 'hourly' || f === 'custom') ? 'none' : 'block';
+  $('schedDowWrap').style.display = (f === 'weekly') ? 'block' : 'none';
+  $('schedDomWrap').style.display = (f === 'monthly') ? 'block' : 'none';
+  $('schedCustomWrap').style.display = (f === 'custom') ? 'block' : 'none';
+  if (f === 'custom') onCustomCron(); else updateCron();
+}
+
+function buildCron() {
+  const f = $('schedFreq').value;
+  const m = $('schedMinute').value, h = $('schedHour').value;
+  const dow = $('schedDow').value, dom = $('schedDom').value;
+  if (f === 'hourly')  return m + ' * * * *';
+  if (f === 'daily')   return m + ' ' + h + ' * * *';
+  if (f === 'weekly')  return m + ' ' + h + ' * * ' + dow;
+  if (f === 'monthly') return m + ' ' + h + ' ' + dom + ' * *';
+  return $('schedCron').value.trim();
+}
+
+function pad2(n) { n = Number(n); return (n < 10 ? '0' : '') + n; }
+
+function describeSched() {
+  const f = $('schedFreq').value;
+  const m = $('schedMinute').value, h = $('schedHour').value;
+  if (f === 'hourly')  return 'Every hour at :' + pad2(m);
+  if (f === 'daily')   return 'Every day at ' + pad2(h) + ':' + pad2(m);
+  if (f === 'weekly')  return 'Every ' + WEEKDAYS[Number($('schedDow').value)] + ' at ' + pad2(h) + ':' + pad2(m);
+  if (f === 'monthly') return 'On day ' + $('schedDom').value + ' of each month at ' + pad2(h) + ':' + pad2(m);
+  return 'Custom schedule';
+}
+
+function updateCron() {
+  $('schedCronOut').textContent = buildCron() || '(empty)';
+  $('schedSummary').textContent = describeSched();
+}
+
+function onCustomCron() {
+  $('schedCronOut').textContent = $('schedCron').value.trim() || '(empty)';
+  $('schedSummary').textContent = 'Custom schedule';
+}
+
+function _applyCronToWizard(cron) {
+  const parts = (cron || '').trim().split(/\s+/);
+  const isNum = (s) => /^\d+$/.test(s);
+  if (parts.length === 5) {
+    const [m, h, dom, mon, dow] = parts;
+    if (mon === '*' && isNum(m)) {
+      if (h === '*' && dom === '*' && dow === '*') { $('schedFreq').value='hourly'; $('schedMinute').value=m; onSchedFreqChange(); return; }
+      if (isNum(h) && dom === '*' && dow === '*') { $('schedFreq').value='daily'; $('schedMinute').value=m; $('schedHour').value=h; onSchedFreqChange(); return; }
+      if (isNum(h) && dom === '*' && isNum(dow) && Number(dow) <= 6) { $('schedFreq').value='weekly'; $('schedMinute').value=m; $('schedHour').value=h; $('schedDow').value=dow; onSchedFreqChange(); return; }
+      if (isNum(h) && isNum(dom) && Number(dom) >= 1 && Number(dom) <= 28 && dow === '*') { $('schedFreq').value='monthly'; $('schedMinute').value=m; $('schedHour').value=h; $('schedDom').value=dom; onSchedFreqChange(); return; }
+    }
+  }
+  $('schedFreq').value = 'custom';
+  $('schedCron').value = cron || '';
+  onSchedFreqChange();
+}
+
+function _renderSchedStatus(s) {
+  const el = $('schedStatus');
+  if (!s) { el.textContent = 'No backup has run yet.'; return; }
+  const when = s.at ? fmtDate(s.at) : '';
+  if (s.ok) {
+    el.textContent = 'Last backup: ' + when + ' — ' + (s.file || '') +
+      (s.bytes ? ' (' + Math.round(s.bytes / 1024) + ' KB)' : '') +
+      (s.trigger === 'manual' ? ' · manual' : '');
+  } else {
+    el.innerHTML = '<span style="color:#d9534f">Last attempt failed: ' + esc(s.error || '') + ' — ' + when + '</span>';
+  }
+}
+
+async function loadSchedule() {
+  _initSchedSelects();
+  const s = await api('/api/backup/schedule');
+  $('schedEnabled').checked = !!s.enabled;
+  $('schedRetention').value = s.retention || 30;
+  $('schedInclUser').checked = s.includeUsername !== false;
+  $('schedInclPw').checked = s.includePasswords !== false;
+  $('schedInclLlm').checked = s.includeLlmKey !== false;
+  $('schedPw').value = '';
+  _bkHasPassword = !!s.hasPassword;
+  $('schedPwHint').textContent = s.hasPassword
+    ? '(set — leave blank to keep it; also reused for downloads)'
+    : '(none set — required for automatic backups)';
+  updateBackupWarn();
+  _applyCronToWizard(s.cron || '0 2 * * *');
+  _renderSchedStatus(s.status);
+}
+
+async function saveSchedule() {
+  const body = {
+    enabled: $('schedEnabled').checked,
+    cron: buildCron(),
+    retention: Math.max(1, parseInt($('schedRetention').value, 10) || 30),
+    includeUsername: $('schedInclUser').checked,
+    includePasswords: $('schedInclPw').checked,
+    includeLlmKey: $('schedInclLlm').checked,
+  };
+  const pw = $('schedPw').value;
+  if (pw) body.password = pw; // omit to keep the stored password
+  try {
+    await api('/api/backup/schedule', { method: 'POST', body: JSON.stringify(body) });
+    toast('Backup schedule saved');
+    await loadSchedule();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function runBackupNow() {
+  try {
+    const s = await api('/api/backup/run-now', {
+      method: 'POST',
+      body: JSON.stringify({ password: $('schedPw').value }), // typed → else stored
+    });
+    toast('Backup written on server: ' + (s.file || 'ok'));
+    _renderSchedStatus(s);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1764,7 +2013,7 @@ function renderMatStatus(c) {
   const m = c && c.materialization;
   if (!m) { $('c_matStatus').textContent = 'Not built yet — the live query is used until you rebuild.'; return; }
   if (m.ok) {
-    $('c_matStatus').innerHTML = `Last built: ${esc(m.built_at || '—')} · ${Number(m.rows || 0).toLocaleString()} pairs.`;
+    $('c_matStatus').innerHTML = `Last built: ${esc(fmtDate(m.built_at))} · ${Number(m.rows || 0).toLocaleString()} pairs.`;
   } else {
     $('c_matStatus').innerHTML = `<span style="color:var(--red)">Last rebuild failed: ${esc(m.error || 'unknown error')}</span>`;
   }
@@ -1964,6 +2213,7 @@ const ADMIN_HELP = [
     <h2>Admin Interface</h2>
     <p>This administration interface runs on its own port (8090 by default) and is where all security and access is configured. It has its own sign-in and admits administrators only.</p>
     <p>On first run it seeds a local administrator (Administrator / Administrator) and prompts you to change the password. Local admin accounts always work as a break-glass route.</p>
+    <p><strong>Timezone.</strong> App Control has a display-timezone setting that governs every server-side timestamp &mdash; the log viewer and exported logs, backup times and the backup schedule (so &ldquo;daily at 02:00&rdquo; fires at 02:00 in the chosen zone). Timestamps rendered client-side in this panel follow it too. Leave it &ldquo;Server local&rdquo; to use the server's own clock. The main app always shows each user their own browser's local time.</p>
     <div class="note">Tabs: App Control, TLS / SSL, Users, Database Connections, Directory (LDAP), Logging, Backup and Customize.</div>` },
   { id: 'tls', icon: '🔒', title: 'TLS / SSL', html: `
     <h2>TLS / SSL</h2>
@@ -1996,7 +2246,8 @@ const ADMIN_HELP = [
   { id: 'backup', icon: '💾', title: 'Backup & Restore', html: `
     <h2>Backup &amp; Restore</h2>
     <p>Export everything except the event data itself &mdash; connections, filter presets, node layouts, norms, happy paths, LLM prompts and app preferences &mdash; as one JSON file, and restore it again. Tick the boxes to include usernames, connection passwords and LLM API keys, and optionally protect the file with an AES-256-GCM password. Restore inspects the file and shows a summary before you pick which categories to apply.</p>
-    <div class="note warn">Including secrets without an encryption password writes them in plain text &mdash; always set a password when the backup contains secrets.</div>` },
+    <p><strong>Automatic backups</strong> run an encrypted backup on a schedule while this server is up. Enable them, build the schedule like a crontab (a frequency + time, or a custom five-field cron expression, with a live preview), set the encryption password (stored encrypted so it can run unattended), and choose how many files to keep. Files are written under <code>data/backups/</code>; use &ldquo;Run backup now&rdquo; to test.</p>
+    <div class="note warn">Including secrets without an encryption password writes them in plain text &mdash; always set a password when the backup contains secrets. The automatic-backup password is stored (encrypted) on the server; keep a copy safe, as backups can only be restored with it.</div>` },
   { id: 'customize', icon: '🎨', title: 'Customize', html: `
     <h2>Customize</h2>
     <p>Set the login-page background for both sign-in pages (the app and this admin interface): keep the default theme colour, choose a solid colour, or upload a background image (PNG, JPEG, GIF, WebP or SVG, up to ~3 MB). A live preview shows the result before you save, and the choice applies to new sign-ins immediately.</p>

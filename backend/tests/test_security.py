@@ -428,6 +428,49 @@ def test_security_store_enables_busy_timeout(security):
     assert security.store._conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
 
 
+def test_backup_schedule_roundtrip_and_password_secret(security):
+    store = security.store
+    d = store.backup_schedule()  # secure defaults
+    assert d["enabled"] is False and d["hasPassword"] is False
+    assert d["cron"] == "0 2 * * *" and d["retention"] == 30
+
+    store.set_backup_schedule({
+        "enabled": True, "cron": "0 3 * * 1", "retention": 7,
+        "includePasswords": False, "password": "s3cret-backup",
+    })
+    d = store.backup_schedule()
+    assert d["enabled"] and d["cron"] == "0 3 * * 1" and d["retention"] == 7
+    assert d["includePasswords"] is False and d["hasPassword"] is True
+    # The password is never in the public dict and is stored encrypted at rest.
+    assert "password" not in d and "s3cret-backup" not in str(d)
+    assert store.backup_schedule_password() == "s3cret-backup"
+    assert store._get_config("backup_sched_password_enc") != "s3cret-backup"
+
+    # Omitting the password keeps it; an empty string clears it.
+    store.set_backup_schedule({"enabled": False})
+    assert store.backup_schedule()["hasPassword"] is True
+    assert store.backup_schedule()["enabled"] is False
+    store.set_backup_schedule({"password": ""})
+    assert store.backup_schedule()["hasPassword"] is False
+    assert store.backup_schedule_password() == ""
+
+
+def test_backup_schedule_status_roundtrip(security):
+    store = security.store
+    assert store.backup_schedule()["status"] is None
+    store.set_backup_schedule_status({"at": "2026-07-28T02:00:00", "ok": True, "file": "x.json"})
+    assert store.backup_schedule()["status"]["file"] == "x.json"
+
+
+def test_display_timezone_roundtrip(security):
+    store = security.store
+    assert store.display_timezone == ""  # default: server-local
+    store.set_display_timezone("Europe/Berlin")
+    assert store.display_timezone == "Europe/Berlin"
+    store.set_display_timezone("")  # back to server-local
+    assert store.display_timezone == ""
+
+
 def test_authenticate_app_rejects_when_ldap_denies(security, monkeypatch):
     store = security.store
     _enable_stub_ldap(store, monkeypatch, None)  # directory rejects

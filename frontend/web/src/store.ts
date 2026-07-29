@@ -30,6 +30,7 @@ import {
   type FilterSpec,
   type HappyPath,
   type JourneyPath,
+  type LegacyHappyPath,
   type ManagedConnection,
   type ProcessGraph,
   type ProcessNote,
@@ -44,6 +45,7 @@ import {
   type TransitionsMode,
 } from './types'
 import { addDays, fromISODate, toISODate } from './graph/format'
+import { migrateHappyPath } from './graph/happyPath'
 
 export type ABSide = 'a' | 'b'
 
@@ -1062,7 +1064,10 @@ export const useStore = create<Store>((set, get) => {
             DEFAULT_LLM_PROMPT,
           ),
         })
-        const happyPaths = readJSON<HappyPath[]>(projectKeys.happyPaths(projectId), [])
+        const happyPaths = readJSON<LegacyHappyPath[]>(
+          projectKeys.happyPaths(projectId),
+          [],
+        ).map(migrateHappyPath)
         set({
           happyPaths,
           selectedHappyPathId: happyPaths[0]?.id ?? null,
@@ -1793,8 +1798,7 @@ export const useStore = create<Store>((set, get) => {
       const path: HappyPath = {
         id: uuid(),
         name: name || `Happy Path ${s.happyPaths.length + 1}`,
-        steps: [],
-        branches: [],
+        nodes: [],
       }
       set({ happyPaths: [...s.happyPaths, path], selectedHappyPathId: path.id })
       saveHappyPaths()

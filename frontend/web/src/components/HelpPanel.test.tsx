@@ -67,6 +67,27 @@ describe('HelpPanel TOC grouping', () => {
   })
 })
 
+describe('HelpPanel Users & Permissions matrix', () => {
+  it('renders the capability matrix as a table (visible to non-admins)', () => {
+    useStore.setState({ authIsAdmin: false })
+    render(<HelpPanel onClose={() => {}} />)
+    // A general (non-admin) chapter — a regular user can reach it in the TOC.
+    fireEvent.click(screen.getByRole('button', { name: /Users & Permissions/ }))
+    const content = document.querySelector('.help-content') as HTMLElement
+    const table = content.querySelector('table.help-table') as HTMLTableElement
+    expect(table).not.toBeNull()
+    expect(within(content).getByText('Capability')).toBeInTheDocument()
+    // The sampling row marks Regular unavailable, Power/Admin available.
+    const rows = [...table.querySelectorAll('tbody tr')]
+    const samplingRow = rows.find((r) => /sampling/i.test(r.textContent || ''))
+    expect(samplingRow).toBeDefined()
+    const cells = samplingRow!.querySelectorAll('td')
+    expect(cells[1].textContent).toBe('—') // Regular
+    expect(cells[2].textContent).toBe('✓') // Power
+    expect(cells[3].textContent).toBe('✓') // Admin
+  })
+})
+
 describe('HelpPanel Administration group (admin-only)', () => {
   it('hides the Administration group and its chapters from non-admins', () => {
     useStore.setState({ authIsAdmin: false })

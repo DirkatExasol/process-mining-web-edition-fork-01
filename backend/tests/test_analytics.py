@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.models import HappyPath, HappyPathBranch, JourneyPath, ProcessGraph
+from app.models import HappyPath, HappyPathNode, JourneyPath, ProcessGraph
 from app.services import analytics
 
 from .conftest import edge, step
@@ -65,14 +65,18 @@ def test_path_diverse_sample_prioritises_common_paths():
 # ── Happy-path conformance ────────────────────────────────────────────────────
 
 
+def _steps(*names):
+    return [HappyPathNode(step=n) for n in names]
+
+
 def test_conformance_full_match_scores_one():
-    path = HappyPath(name="Ideal", steps=["A", "B", "C"])
+    path = HappyPath(name="Ideal", nodes=_steps("A", "B", "C"))
     variants = [JourneyPath(path="A -> B -> C", journeyCount=10, stepCount=3, totalScore=0)]
     assert analytics.happy_path_conformance(path, variants) == pytest.approx(1.0)
 
 
 def test_conformance_is_journey_count_weighted():
-    path = HappyPath(name="Ideal", steps=["A", "B", "C"])  # edges A->B, B->C
+    path = HappyPath(name="Ideal", nodes=_steps("A", "B", "C"))  # edges A->B, B->C
     variants = [
         JourneyPath(path="A -> B -> C", journeyCount=8, stepCount=3, totalScore=0),  # coverage 1.0
         JourneyPath(path="A -> D -> C", journeyCount=2, stepCount=3, totalScore=0),  # coverage 0.0
@@ -81,23 +85,43 @@ def test_conformance_is_journey_count_weighted():
     assert analytics.happy_path_conformance(path, variants) == pytest.approx(0.8)
 
 
-def test_conformance_scores_against_best_matching_branch():
-    path = HappyPath(
-        name="Ideal",
-        steps=["A", "B"],
-        branches=[
-            HappyPathBranch(label="left", steps=["C"]),   # full path A->B->C
-            HappyPathBranch(label="right", steps=["D"]),  # full path A->B->D
-        ],
-    )
+def test_conformance_scores_against_best_matching_route():
+    # A -> split{ (C) | (D) } (terminal split == legacy branches). Best route wins.
+    path = HappyPath(name="Ideal", nodes=[
+        HappyPathNode(step="A"), HappyPathNode(step="B"),
+        HappyPathNode(branches=[_steps("C"), _steps("D")]),
+    ])
     variants = [JourneyPath(path="A -> B -> D", journeyCount=5, stepCount=3, totalScore=0)]
-    # Matches the "right" branch fully → 1.0
     assert analytics.happy_path_conformance(path, variants) == pytest.approx(1.0)
 
 
+def test_conformance_handles_nested_split_and_rejoin():
+    # A -> split{ (B -> split{(C)|(X)}) | (D) } -> E  (rejoin then continue to E).
+    path = HappyPath(name="Ideal", nodes=[
+        HappyPathNode(step="A"),
+        HappyPathNode(branches=[
+            [HappyPathNode(step="B"),
+             HappyPathNode(branches=[_steps("C"), _steps("X")])],
+            _steps("D"),
+        ]),
+        HappyPathNode(step="E"),
+    ])
+    routes = {" -> ".join(r) for r in analytics.happy_path_routes(path.nodes)}
+    assert routes == {"A -> B -> C -> E", "A -> B -> X -> E", "A -> D -> E"}
+    # A journey taking the rejoining "D" alternative matches that route fully.
+    v = [JourneyPath(path="A -> D -> E", journeyCount=3, stepCount=3, totalScore=0)]
+    assert analytics.happy_path_conformance(path, v) == pytest.approx(1.0)
+
+
+def test_routes_are_capped():
+    nodes = [HappyPathNode(branches=[_steps(f"s{i}a"), _steps(f"s{i}b")]) for i in range(20)]
+    assert len(analytics.happy_path_routes(nodes)) <= analytics._MAX_ROUTES
+
+
 def test_conformance_none_for_too_short_path_or_no_variants():
-    assert analytics.happy_path_conformance(HappyPath(name="x", steps=["A"]), []) is None
-    assert analytics.happy_path_conformance(HappyPath(name="x", steps=["A", "B"]), []) is None
+    v = [JourneyPath(path="A -> B", journeyCount=1, stepCount=2, totalScore=0)]
+    assert analytics.happy_path_conformance(HappyPath(name="x", nodes=_steps("A")), v) is None
+    assert analytics.happy_path_conformance(HappyPath(name="x", nodes=_steps("A", "B")), []) is None
 
 
 # ── Process-goodness coverage penalty ────────────────────────────────────────

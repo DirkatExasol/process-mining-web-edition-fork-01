@@ -158,11 +158,29 @@ def test_dashboard_escapes_single_quote_and_avoids_inline_onclick_injection(dash
 
 
 def test_dashboard_has_backup_tab(dashboard):
-    # Backup/restore moved from the app's left panel to its own admin tab.
+    # Backup/restore moved from the app's left panel to its own admin tab; the manual
+    # download and the automatic-backup scheduler share one combined "Backup" card.
     assert 'data-tab="backup"' in dashboard and 'id="tab-backup"' in dashboard
-    assert "function exportBackup" in dashboard and "function restoreBackup" in dashboard
+    assert "function downloadBackup" in dashboard and "function restoreBackup" in dashboard
     assert 'id="bkFile"' in dashboard  # restore file picker
     assert "/api/backup/export" in dashboard and "/api/backup/inspect" in dashboard
+
+
+def test_dashboard_has_timezone_control(dashboard):
+    # App Control carries the display-timezone selector, populated from the browser's
+    # IANA list, and fmtDate honours the chosen zone.
+    assert "<h2>Timezone</h2>" in dashboard and 'id="displayTz"' in dashboard
+    assert "function saveDisplayTimezone" in dashboard and "supportedValuesOf" in dashboard
+    assert "/api/access/timezone" in dashboard and "DISPLAY_TZ" in dashboard
+
+
+def test_dashboard_backup_card_is_unified(dashboard):
+    # One password/include-flags set drives both download and automatic backups; the
+    # separate "Export" card is gone.
+    assert "function downloadBackup" in dashboard and "function saveSchedule" in dashboard
+    assert "function runBackupNow" in dashboard and 'id="schedFreq"' in dashboard
+    assert 'id="schedPw"' in dashboard and "/api/backup/schedule" in dashboard
+    assert 'id="bkExportPw"' not in dashboard  # the old Export card's own password is gone
 
 
 def test_login_page_shows_inactivity_notice(pages):

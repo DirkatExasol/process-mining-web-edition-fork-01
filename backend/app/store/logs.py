@@ -20,7 +20,7 @@ import re
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 
 try:  # optional — enables a ReDoS-safe per-match timeout for the log search
     import regex as _regex
@@ -346,8 +346,19 @@ def _sql_regexp(pattern: str, value: str) -> bool:
         return literal
 
 
+# The zone used to render stored (UTC-epoch) log timestamps for the viewer and the
+# exported .log. None = the server's own local zone (the historical behaviour); the
+# admin server sets this from its display-timezone setting via set_display_timezone.
+_display_tz: tzinfo | None = None
+
+
+def set_display_timezone(tz: tzinfo | None) -> None:
+    global _display_tz
+    _display_tz = tz
+
+
 def _row_to_dict(r: sqlite3.Row) -> dict:
-    dt = datetime.fromtimestamp(r["ts"], tz=timezone.utc).astimezone()
+    dt = datetime.fromtimestamp(r["ts"], tz=timezone.utc).astimezone(_display_tz)
     return {
         "date": dt.strftime("%Y-%m-%d"),
         "time": dt.strftime("%H:%M:%S"),
@@ -360,7 +371,7 @@ def _row_to_dict(r: sqlite3.Row) -> dict:
 
 
 def format_line(r: sqlite3.Row) -> str:
-    dt = datetime.fromtimestamp(r["ts"], tz=timezone.utc).astimezone()
+    dt = datetime.fromtimestamp(r["ts"], tz=timezone.utc).astimezone(_display_tz)
     return " -- ".join(
         [
             dt.strftime("%Y-%m-%d"),

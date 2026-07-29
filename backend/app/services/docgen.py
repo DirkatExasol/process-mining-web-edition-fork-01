@@ -16,7 +16,7 @@ from ..models import (
     ProcessGraph,
     TransitionMetric,
 )
-from .analytics import happy_path_conformance
+from .analytics import happy_path_conformance, happy_path_routes
 
 
 def _fmt_duration(secs: float) -> str:
@@ -188,7 +188,9 @@ def happy_path_section(
             "to measure how closely real journeys follow your intended design.\n"
         )
 
-    qualified = [p for p in happy_paths if len(p.steps) >= 2]
+    qualified = [
+        p for p in happy_paths if any(len(r) >= 2 for r in happy_path_routes(p.nodes))
+    ]
     if not qualified:
         return ""
 
@@ -204,15 +206,13 @@ def happy_path_section(
             rating = "⚠️  Moderate (0.30–0.69)"
         else:
             rating = "❌  Low (< 0.30)"
-        branches = [b for b in path.branches if b.steps]
-        branch_str = (
-            ", ".join(b.label or "Branch" for b in branches) if branches else "—"
-        )
-        rows += f"| {path.name} | {branch_str} | {score_str} | {rating} |\n"
+        routes = [r for r in happy_path_routes(path.nodes) if len(r) >= 2]
+        routes_str = "1 (linear)" if len(routes) <= 1 else f"{len(routes)} routes"
+        rows += f"| {path.name} | {routes_str} | {score_str} | {rating} |\n"
 
     table = (
-        "| Happy Path | Branches | Conformance | Rating |\n"
-        "|------------|----------|-------------|--------|\n" + rows
+        "| Happy Path | Routes | Conformance | Rating |\n"
+        "|------------|--------|-------------|--------|\n" + rows
     )
 
     return (
@@ -220,7 +220,8 @@ def happy_path_section(
         "The Conformance Score is a journey-count-weighted average of edge coverage: "
         "**1.00** = every journey follows the ideal path perfectly; "
         "**0.00** = no journey shares a single transition with the ideal sequence. "
-        "For branching paths each journey is scored against the branch it matches best.\n\n"
+        "A path may split into alternatives that rejoin and continue (splits can nest); "
+        "each journey is scored against the route it matches best.\n\n"
         f"{table}\n"
         "| Rating thresholds | Meaning |\n"
         "|-------------------|---------|\n"

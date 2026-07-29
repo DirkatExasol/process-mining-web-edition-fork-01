@@ -160,6 +160,28 @@ def test_store_enables_busy_timeout(logs):
     assert logs._conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
 
 
+def test_log_rows_render_in_the_display_timezone():
+    """Stored UTC-epoch timestamps render in the configured display timezone (the
+    admin timezone setting) for both the viewer dict and the exported .log line."""
+    import app.store.logs as logs_mod
+    from datetime import datetime, timezone
+
+    from app import timeutil
+
+    ts = datetime(2026, 7, 29, 0, 30, tzinfo=timezone.utc).timestamp()  # 00:30 UTC
+    row = {"ts": ts, "severity": "INFO", "client_ip": "1.2.3.4",
+           "username": "u", "operation": "op", "message": "hi"}
+    try:
+        logs_mod.set_display_timezone(timeutil.resolve_zone("Europe/Berlin"))
+        d = logs_mod._row_to_dict(row)
+        assert d["date"] == "2026-07-29" and d["time"] == "02:30:00"  # CEST = UTC+2
+        assert "2026-07-29 -- 02:30:00" in logs_mod.format_line(row)
+        logs_mod.set_display_timezone(timeutil.resolve_zone("America/New_York"))
+        assert logs_mod._row_to_dict(row)["date"] == "2026-07-28"  # 20:30 prev day
+    finally:
+        logs_mod.set_display_timezone(None)
+
+
 def test_rotation_prunes_to_newest_archives(logs):
     import app.store.logs as logs_mod
 

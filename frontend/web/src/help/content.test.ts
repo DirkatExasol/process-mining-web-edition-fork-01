@@ -35,4 +35,20 @@ describe('help content integrity', () => {
       for (const s of t.sections) expect(s.heading).toBeTruthy()
     }
   })
+
+  it('has a general (non-admin) Users & Permissions topic with a capability matrix', () => {
+    const roles = HELP_TOPICS.find((t) => t.id === 'roles')
+    expect(roles).toBeDefined()
+    expect(ADMIN_TOPIC_IDS).not.toContain('roles') // visible to every signed-in user
+    const tbl = roles!.sections.flatMap((s) => s.body).find((b) => b.kind === 'table')
+    expect(tbl).toBeDefined()
+    if (tbl && tbl.kind === 'table') {
+      expect(tbl.headers).toEqual(['Capability', 'Regular', 'Power', 'Admin'])
+      const sampling = tbl.rows.find((r) => /sampling/i.test(r[0]))
+      expect(sampling).toBeDefined()
+      expect(sampling!.slice(1)).toEqual(['—', '✓', '✓']) // regular blocked, power/admin ok
+      // Every row has one label + one cell per role column.
+      for (const r of tbl.rows) expect(r.length).toBe(tbl.headers.length)
+    }
+  })
 })

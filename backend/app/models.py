@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Swift's Int.max / Int.min, used as "no bound" sentinels in filters.
 INT_MAX = 9223372036854775807
@@ -238,17 +238,47 @@ class FilterGroup(Base):
     maxScore: int = INT_MAX
 
 
-class HappyPathBranch(Base):
+class HappyPathNode(Base):
+    """One node in a Happy Path's series-parallel sequence. A node is a single
+    STEP when `branches` is empty (and `step` is set), or a SPLIT when `branches`
+    is non-empty — each inner list is one alternative sub-path (itself a node list,
+    hence nesting). Steps that follow a split node in the same list are the shared
+    "after-rejoin" continuation."""
+
     id: str = Field(default_factory=new_id)
-    label: str = ""
-    steps: list[str] = Field(default_factory=list)
+    step: str = ""
+    label: str = ""  # optional name for the split (the fork)
+    rejoinLabel: str = ""  # optional name for the point where its branches rejoin
+    branches: list[list["HappyPathNode"]] = Field(default_factory=list)
 
 
 class HappyPath(Base):
     id: str = Field(default_factory=new_id)
     name: str
-    steps: list[str] = Field(default_factory=list)
-    branches: list[HappyPathBranch] = Field(default_factory=list)
+    nodes: list[HappyPathNode] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy(cls, data: Any) -> Any:
+        """Accept the legacy flat shape ({steps, branches}) and fold it into
+        `nodes`: the trunk becomes step nodes, and any non-empty branches become a
+        single trailing split. Enumerates to exactly the old trunk+branch routes, so
+        conformance scores are unchanged. New payloads (with `nodes`) pass through."""
+        if isinstance(data, dict) and "nodes" not in data and (
+            "steps" in data or "branches" in data
+        ):
+            nodes: list[dict] = [{"step": s} for s in (data.get("steps") or [])]
+            live = [b for b in (data.get("branches") or []) if (b or {}).get("steps")]
+            if live:
+                nodes.append(
+                    {"branches": [[{"step": s} for s in b["steps"]] for b in live]}
+                )
+            data = {k: v for k, v in data.items() if k not in ("steps", "branches")}
+            data["nodes"] = nodes
+        return data
+
+
+HappyPathNode.model_rebuild()  # resolve the recursive forward reference
 
 
 class FilterSnapshot(Base):

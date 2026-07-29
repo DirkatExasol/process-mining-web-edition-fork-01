@@ -71,20 +71,35 @@ def _edge_set(steps: list[str]) -> set[str]:
     return {f"{a} -> {b}" for a, b in zip(steps, steps[1:])}
 
 
+# A cap on enumerated routes so pathological nesting (many splits) can't explode.
+_MAX_ROUTES = 2000
+
+
+def happy_path_routes(nodes: list) -> list[list[str]]:
+    """Every start-to-end step sequence through a series-parallel node list — the
+    cartesian product of the alternatives at each (possibly nested) split. A step
+    node appends its step; a split node (non-empty `branches`) multiplies the routes
+    so far by all routes through each of its branches, and the sequence then
+    continues (the shared "after-rejoin" steps)."""
+    routes: list[list[str]] = [[]]
+    for node in nodes:
+        if node.branches:  # split → converge, then continue
+            subs = [r for branch in node.branches for r in (happy_path_routes(branch) or [[]])]
+            routes = [a + b for a in routes for b in subs][:_MAX_ROUTES]
+        elif node.step:  # single step
+            routes = [r + [node.step] for r in routes]
+    return routes
+
+
 def happy_path_conformance(
     path: HappyPath, variants: list[JourneyPath]
 ) -> float | None:
-    """Journey-count-weighted edge coverage; branching paths score each journey
-    against the branch it matches best."""
-    if len(path.steps) < 2 or not variants:
+    """Journey-count-weighted edge coverage; each journey is scored against the
+    route (through the path's splits) it matches best."""
+    if not variants:
         return None
 
-    non_empty = [b for b in path.branches if b.steps]
-    complete_paths = (
-        [path.steps]
-        if not non_empty
-        else [p for b in non_empty if len(p := path.steps + b.steps) >= 2]
-    )
+    complete_paths = [r for r in happy_path_routes(path.nodes) if len(r) >= 2]
     if not complete_paths:
         return None
 

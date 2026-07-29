@@ -52,6 +52,9 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
     { conn: ManagedConnection | null } | null
   >(null)
   const canManageConnections = store.authIsPower || store.authIsAdmin
+  // Journey sampling (creating/deleting representative subsets, choosing A/B
+  // sources) is a power/admin capability, matching the advanced analysis views.
+  const canSample = store.authIsPower || store.authIsAdmin
   // Individual Journey always renders with a fixed metric (Avg Time), so its
   // metric picker is hidden.
   const isIndividualJourney = store.activeChartMode === 'Individual Journey'
@@ -154,7 +157,7 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
         )}
         <Divider />
 
-        {!isIndividualJourney && (
+        {!isIndividualJourney && canSample && (
           <>
             <SectionHeader
               title="Sampling"
