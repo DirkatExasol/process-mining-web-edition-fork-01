@@ -193,6 +193,10 @@ tr:last-child td { border-bottom: 0; }
 .user-card .perm input { width: auto; }
 .user-empty { padding: 14px; color: var(--muted); }
 .user-search { width: 100%; margin-bottom: 10px; }
+/* Master row directly above the list — its checkboxes toggle the Passkey / 2FA
+   columns for every user, and sit over the per-user toggles in each card. */
+.user-allrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 6px 12px; }
 .seg { display: inline-flex; background: var(--fill); border-radius: 8px; padding: 3px; gap: 3px; }
 .seg button { border: none; background: none; color: var(--text); padding: 6px 14px; border-radius: 6px; font-size: 13px; }
 .seg button.sel { background: rgba(10,132,255,.22); color: var(--accent); font-weight: 600;
@@ -672,18 +676,6 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       </label>
       <span class="subtle" id="requireLoginHint"></span>
     </div>
-    <div class="banner info" style="display:flex; align-items:center; gap:12px">
-      <label class="row" style="font-size:13px; cursor:pointer">
-        <input type="checkbox" id="passkeyAll" style="width:auto" onchange="togglePasskeyAll()"> Allow passkeys for all users
-      </label>
-      <span class="subtle">Passkeys are an alternative to the password (which always still works). Toggle per user in the list below, or all at once here.</span>
-    </div>
-    <div class="banner info" style="display:flex; align-items:center; gap:12px">
-      <label class="row" style="font-size:13px; cursor:pointer">
-        <input type="checkbox" id="mfaAll" style="width:auto" onchange="toggleMfaAll()"> Allow two-factor (TOTP) for all users
-      </label>
-      <span class="subtle">Two-factor adds a one-time code on top of the password (which always still works). Toggle per user in the list below, or all at once here.</span>
-    </div>
     <div class="banner info" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">
       <label class="row" style="font-size:13px; gap:8px">
         Auto sign-out after
@@ -704,6 +696,17 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       <div class="seg" id="userFilter"></div>
       <input type="text" id="userSearch" class="user-search" style="flex:1; min-width:180px; width:auto"
         placeholder="Search users by name…" oninput="renderUsers()">
+    </div>
+    <!-- Master toggles: enable/disable the two per-user columns for everyone at once,
+         aligned above the Passkey / 2FA checkboxes in the list below. -->
+    <div class="user-allrow">
+      <span class="subtle" style="font-size:12px">Passkey and two-factor are optional alternatives/additions to the password (which always works).</span>
+      <span class="spacer" style="flex:1"></span>
+      <span class="subtle" style="font-size:12px">All users:</span>
+      <label class="perm" title="Allow every user to enrol and sign in with a passkey">
+        <input type="checkbox" id="passkeyAll" onchange="togglePasskeyAll()"> Passkey</label>
+      <label class="perm" title="Allow every user to set up two-factor (TOTP)">
+        <input type="checkbox" id="mfaAll" onchange="toggleMfaAll()"> 2FA</label>
     </div>
     <div id="userTable"></div>
     <details style="margin-top:12px"><summary>Add a user</summary>
