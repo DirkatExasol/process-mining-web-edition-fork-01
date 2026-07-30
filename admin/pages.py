@@ -101,6 +101,10 @@ a { color: var(--accent); }
 button { font: inherit; cursor: pointer; }
 h1 { font-size: 20px; margin: 0; }
 h2 { font-size: 15px; margin: 0 0 12px; }
+/* Subsection label within a card (e.g. the Administrator card's Password/Passkeys). */
+.card h3 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); margin: 22px 0 8px; border-top: 1px solid var(--border-soft); padding-top: 16px; }
+.card h3:first-of-type { border-top: none; padding-top: 0; }
 .wrap { max-width: 980px; margin: 0 auto; padding: 24px 20px 60px; }
 .topbar { display: flex; align-items: center; gap: 12px; padding: 14px 20px; background: var(--panel);
   border-bottom: 1px solid var(--border-soft); position: sticky; top: 0; z-index: 10; }
@@ -530,7 +534,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
   </div>
   <span class="muted">Signed in as <strong id="who">{html.escape(username)}</strong></span>
   <button class="btn small" onclick="openHelp()" title="Administration help">❔ Help</button>
-  <button class="btn small" onclick="changeOwnPassword()">Change password</button>
+  <button class="btn small" onclick="goToPasswordChange()">Change password</button>
   <form method="post" action="/logout" style="display:inline"><button class="btn small">Log out</button></form>
 </div>
 <div class="help-ov" id="helpOv" hidden onclick="if(event.target===this)closeHelp()">
@@ -614,11 +618,24 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <div class="muted" id="tzPreview" style="font-size:13px; margin-top:8px"></div>
   </div>
   <div class="card">
-    <h2>Passkeys</h2>
-    <p class="muted" style="margin-top:0">Sign in to this admin interface (and the main app) with
-      Touch&nbsp;ID, Windows&nbsp;Hello, or a security key instead of your password. Your password
-      always remains a fallback. Passkeys must be enabled for your account (Users tab) before you can
-      add one; the same passkey works on both the app and this admin panel.</p>
+    <h2>Administrator</h2>
+    <p class="muted" style="margin-top:0">Manage your own admin account — password, passkeys and
+      two-factor. These protect both this admin interface and the main app.</p>
+
+    <h3>Password</h3>
+    <div class="row" style="gap:8px; flex-wrap:wrap; align-items:flex-end">
+      <div class="field"><label>New password</label>
+        <input type="password" id="ownPw1" autocomplete="new-password" style="min-width:200px"></div>
+      <div class="field"><label>Confirm</label>
+        <input type="password" id="ownPw2" autocomplete="new-password" style="min-width:200px"></div>
+      <button class="btn primary" onclick="changeOwnPassword()">Change password</button>
+    </div>
+    <div id="ownPwResult" class="col" style="margin-top:8px"></div>
+
+    <h3>Passkeys</h3>
+    <p class="muted" style="margin-top:0">Sign in with Touch&nbsp;ID, Windows&nbsp;Hello, or a security
+      key instead of your password (which always remains a fallback). Passkeys must be enabled for your
+      account (Users tab) before you can add one; the same passkey works on both the app and this panel.</p>
     <div id="pkAdminNote" class="banner info" style="margin-top:4px">Checking passkeys…</div>
     <div id="pkAdminList" class="col" style="gap:6px; margin-top:10px"></div>
     <div class="row" id="pkAdminAdd" style="gap:8px; flex-wrap:wrap; align-items:flex-end; margin-top:12px; display:none">
@@ -627,9 +644,8 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       <button class="btn primary" onclick="addAdminPasskey()">Add a passkey</button>
     </div>
     <div id="pkAdminResult" class="col" style="margin-top:8px"></div>
-  </div>
-  <div class="card">
-    <h2>Two-factor authentication</h2>
+
+    <h3>Two-factor authentication</h3>
     <p class="muted" style="margin-top:0">Add a one-time code from an authenticator app (Google
       Authenticator, 1Password, Authy&hellip;) on top of your password when signing in to this admin
       interface and the main app. Your password still signs you in &mdash; the code is an extra step.
@@ -1563,9 +1579,21 @@ async function delUser(u) {
   catch (e) { toast(e.message, true); }
 }
 async function changeOwnPassword() {
-  const pw = prompt('Enter a new password for your account:'); if (!pw) return;
-  try { await api('/api/self/password', { method: 'POST', body: JSON.stringify({ password: pw }) });
-    toast('Password changed'); await loadSession(); } catch (e) { toast(e.message, true); }
+  const p1 = $('ownPw1').value, p2 = $('ownPw2').value, out = $('ownPwResult');
+  out.textContent = '';
+  if (!p1) { out.style.color = 'var(--red)'; out.textContent = 'Enter a new password.'; return; }
+  if (p1 !== p2) { out.style.color = 'var(--red)'; out.textContent = 'The passwords don’t match.'; return; }
+  try {
+    await api('/api/self/password', { method: 'POST', body: JSON.stringify({ password: p1 }) });
+    $('ownPw1').value = $('ownPw2').value = '';
+    toast('Password changed'); await loadSession();
+  } catch (e) { out.style.color = 'var(--red)'; out.textContent = e.message; }
+}
+// The topbar shortcut jumps to the Administrator section and focuses the field.
+function goToPasswordChange() {
+  selectTab('appcontrol');
+  const el = $('ownPw1');
+  if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────

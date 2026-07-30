@@ -150,6 +150,18 @@ def test_passkey_ui_guards_against_ip_hosts(dashboard, pages):
     assert "domainOk" in login and "location.hostname" in login
 
 
+def test_dashboard_groups_self_account_under_administrator(dashboard):
+    # Password change, passkeys and two-factor live together in one "Administrator"
+    # card in App Control; the topbar shortcut jumps to it.
+    assert "<h2>Administrator</h2>" in dashboard
+    assert "<h3>Password</h3>" in dashboard
+    assert "<h3>Passkeys</h3>" in dashboard
+    assert "<h3>Two-factor authentication</h3>" in dashboard
+    assert 'id="ownPw1"' in dashboard and 'id="ownPw2"' in dashboard
+    assert "function goToPasswordChange" in dashboard
+    assert 'onclick="goToPasswordChange()"' in dashboard  # topbar button
+
+
 def test_dashboard_has_two_factor_card_and_master_toggle(dashboard):
     assert "Two-factor authentication" in dashboard
     assert "function loadAdminMfa" in dashboard
