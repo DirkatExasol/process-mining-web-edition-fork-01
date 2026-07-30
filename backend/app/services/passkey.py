@@ -47,6 +47,15 @@ def resolve_rp(host: str, origin: str) -> tuple[str, list[str]]:
 # ── Registration (enrol a device) ────────────────────────────────────────────
 
 
+def _user_handle(username: str) -> bytes:
+    """A STABLE per-account WebAuthn user handle (user.id), derived from the
+    username. py_webauthn otherwise invents a random handle on every begin, so the
+    same account would look like a different user each time — which confuses
+    platform authenticators (iCloud Keychain, Windows Hello) and can leave orphan
+    passkeys. A hash keeps it stable without exposing the raw username."""
+    return hashlib.sha256(("pmw-user:" + (username or "").strip().lower()).encode("utf-8")).digest()
+
+
 def registration_options(
     *, rp_id: str, username: str, display_name: str, existing_ids: list[str]
 ) -> tuple[str, bytes]:
@@ -54,6 +63,7 @@ def registration_options(
     opts = generate_registration_options(
         rp_id=rp_id,
         rp_name=config.PASSKEY_RP_NAME,
+        user_id=_user_handle(username),
         user_name=username,
         user_display_name=display_name or username,
         exclude_credentials=[

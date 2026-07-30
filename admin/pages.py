@@ -2490,9 +2490,14 @@ async function addAdminPasskey() {
   } catch (e) {
     if (e && (e.name === 'NotAllowedError' || e.name === 'AbortError')) return;  // user cancelled
     out.style.color = 'var(--red)';
-    out.textContent = (e && e.name === 'SecurityError')
-      ? 'Passkeys need a hostname, not an IP address — reach this panel by its name over HTTPS.'
-      : (e.message || 'Could not add the passkey.');
+    if (e && e.name === 'InvalidStateError') {
+      out.textContent = 'A passkey for this account already exists on this device. If it isn’t '
+        + 'listed above, remove it in your device’s passkey settings and try again.';
+    } else if (e && e.name === 'SecurityError') {
+      out.textContent = 'Passkeys need a hostname, not an IP address — reach this panel by its name over HTTPS.';
+    } else {
+      out.textContent = e.message || 'Could not add the passkey.';
+    }
   }
 }
 

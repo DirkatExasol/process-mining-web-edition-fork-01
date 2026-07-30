@@ -2,7 +2,13 @@
  *  hostname or localhost, never a bare IP address, so the UI can gate on this. */
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { passkeyDomainValid, passkeysUsable, passkeyErrorMessage, PASSKEY_DOMAIN_HINT } from './passkey'
+import {
+  passkeyDomainValid,
+  passkeysUsable,
+  passkeyErrorMessage,
+  PASSKEY_ALREADY_HINT,
+  PASSKEY_DOMAIN_HINT,
+} from './passkey'
 
 function setHost(hostname: string) {
   Object.defineProperty(window, 'location', {
@@ -51,6 +57,11 @@ describe('passkeyErrorMessage', () => {
   it('maps a SecurityError to the hostname hint', () => {
     const e = new DOMException('The effective domain is not a valid domain.', 'SecurityError')
     expect(passkeyErrorMessage(e)).toBe(PASSKEY_DOMAIN_HINT)
+  })
+
+  it('maps an InvalidStateError to the already-registered hint', () => {
+    const e = new DOMException('The object is in an invalid state.', 'InvalidStateError')
+    expect(passkeyErrorMessage(e)).toBe(PASSKEY_ALREADY_HINT)
   })
 
   it('passes through other error messages', () => {

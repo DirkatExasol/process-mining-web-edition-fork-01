@@ -47,10 +47,18 @@ export const PASSKEY_DOMAIN_HINT =
   'Passkeys need a hostname, not an IP address. Reach the server by its name over ' +
   'HTTPS — e.g. its “.local” name — instead of its IP, then try again.'
 
+export const PASSKEY_ALREADY_HINT =
+  'A passkey for this account already exists on this device. If it isn’t shown in ' +
+  'the list here, remove it from your device’s passkey settings (iOS: Settings → ' +
+  'Passwords) and try again.'
+
 /** Map a WebAuthn failure to a friendlier message where we can recognise it. */
 export function passkeyErrorMessage(e: unknown): string {
-  if (e instanceof DOMException && (e.name === 'SecurityError' || !passkeyDomainValid())) {
-    return PASSKEY_DOMAIN_HINT
+  if (e instanceof DOMException) {
+    // The device already holds a passkey for this account (or one listed in
+    // excludeCredentials) — iOS/Safari reports this as InvalidStateError.
+    if (e.name === 'InvalidStateError') return PASSKEY_ALREADY_HINT
+    if (e.name === 'SecurityError' || !passkeyDomainValid()) return PASSKEY_DOMAIN_HINT
   }
   return e instanceof Error ? e.message : String(e)
 }
