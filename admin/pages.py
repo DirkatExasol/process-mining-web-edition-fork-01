@@ -101,10 +101,11 @@ a { color: var(--accent); }
 button { font: inherit; cursor: pointer; }
 h1 { font-size: 20px; margin: 0; }
 h2 { font-size: 15px; margin: 0 0 12px; }
-/* Subsection label within a card (e.g. the Administrator card's Password/Passkeys). */
-.card h3 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
-  color: var(--muted); margin: 22px 0 8px; border-top: 1px solid var(--border-soft); padding-top: 16px; }
-.card h3:first-of-type { border-top: none; padding-top: 0; }
+/* Subsection label (e.g. the Profile overlay's Password / Passkeys / Two-factor). */
+.card h3, .prof-ov-body h3 { font-size: 12px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--muted); margin: 22px 0 8px;
+  border-top: 1px solid var(--border-soft); padding-top: 16px; }
+.card h3:first-of-type, .prof-ov-body h3:first-of-type { border-top: none; padding-top: 0; }
 .wrap { max-width: 980px; margin: 0 auto; padding: 24px 20px 60px; }
 .topbar { display: flex; align-items: center; gap: 12px; padding: 14px 20px; background: var(--panel);
   border-bottom: 1px solid var(--border-soft); position: sticky; top: 0; z-index: 10; }
@@ -247,6 +248,17 @@ details summary { cursor: pointer; font-size: 13px; color: var(--accent); paddin
 .help-ov-content .note { padding: 8px 12px; border-radius: 8px; margin: 10px 0 0;
   background: rgba(10,132,255,.1); border: 1px solid rgba(10,132,255,.28); }
 .help-ov-content .warn { background: rgba(255,159,10,.12); border-color: rgba(255,159,10,.32); }
+/* Profile overlay — the admin's own account (password / passkeys / two-factor). */
+.prof-ov { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+  background: rgba(0,0,0,.4); padding: 24px; }
+.prof-ov[hidden] { display: none; }
+.prof-ov-panel { width: min(620px, 100%); max-height: 90vh; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--border-soft); border-radius: var(--radius);
+  box-shadow: var(--shadow); overflow: hidden; }
+.prof-ov-bar { display: flex; align-items: center; gap: 10px; padding: 11px 14px;
+  background: rgba(120,120,128,.08); font-weight: 600; }
+.prof-ov-bar .spacer { flex: 1; }
+.prof-ov-body { flex: 1; overflow-y: auto; padding: 16px 22px 22px; }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border-soft); margin: 8px 0 4px; }
 .tabs button { background: none; border: none; color: var(--muted); padding: 10px 16px; font-size: 14px;
   border-bottom: 2px solid transparent; margin-bottom: -1px; }
@@ -534,7 +546,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
   </div>
   <span class="muted">Signed in as <strong id="who">{html.escape(username)}</strong></span>
   <button class="btn small" onclick="openHelp()" title="Administration help">❔ Help</button>
-  <button class="btn small" onclick="goToPasswordChange()">Change password</button>
+  <button class="btn small" onclick="openProfile()" title="Your account: password, passkeys, two-factor">👤 Profile</button>
   <form method="post" action="/logout" style="display:inline"><button class="btn small">Log out</button></form>
 </div>
 <div class="help-ov" id="helpOv" hidden onclick="if(event.target===this)closeHelp()">
@@ -544,6 +556,68 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <div class="help-ov-body">
       <nav class="help-ov-nav" id="helpNav"></nav>
       <div class="help-ov-content" id="helpContent"></div>
+    </div>
+  </div>
+</div>
+<div class="prof-ov" id="profOv" hidden onclick="if(event.target===this)closeProfile()">
+  <div class="prof-ov-panel" role="dialog" aria-label="Your profile">
+    <div class="prof-ov-bar"><span aria-hidden>👤</span><span class="spacer">Profile</span>
+      <button class="btn small" onclick="closeProfile()" aria-label="Close profile">✕</button></div>
+    <div class="prof-ov-body">
+      <p class="muted" style="margin-top:0">Your own admin account — password, passkeys and two-factor.
+        These protect both this admin interface and the main app.</p>
+
+      <h3>Password</h3>
+      <div class="row" style="gap:8px; flex-wrap:wrap; align-items:flex-end">
+        <div class="field"><label>New password</label>
+          <input type="password" id="ownPw1" autocomplete="new-password" style="min-width:180px"></div>
+        <div class="field"><label>Confirm</label>
+          <input type="password" id="ownPw2" autocomplete="new-password" style="min-width:180px"></div>
+        <button class="btn primary" onclick="changeOwnPassword()">Change password</button>
+      </div>
+      <div id="ownPwResult" class="col" style="margin-top:8px"></div>
+
+      <h3>Passkeys</h3>
+      <p class="muted" style="margin-top:0">Sign in with Touch&nbsp;ID, Windows&nbsp;Hello, or a security
+        key instead of your password (which always remains a fallback). Passkeys must be enabled for your
+        account (Users tab) before you can add one; the same passkey works on both the app and this panel.</p>
+      <div id="pkAdminNote" class="banner info" style="margin-top:4px">Checking passkeys…</div>
+      <div id="pkAdminList" class="col" style="gap:6px; margin-top:10px"></div>
+      <div class="row" id="pkAdminAdd" style="gap:8px; flex-wrap:wrap; align-items:flex-end; margin-top:12px; display:none">
+        <div class="field"><label>Passkey name</label>
+          <input type="text" id="pkAdminName" placeholder="e.g. MacBook Touch ID" style="min-width:220px"></div>
+        <button class="btn primary" onclick="addAdminPasskey()">Add a passkey</button>
+      </div>
+      <div id="pkAdminResult" class="col" style="margin-top:8px"></div>
+
+      <h3>Two-factor authentication</h3>
+      <p class="muted" style="margin-top:0">Add a one-time code from an authenticator app (Google
+        Authenticator, 1Password, Authy&hellip;) on top of your password when signing in to this admin
+        interface and the main app. Your password still signs you in &mdash; the code is an extra step.
+        Two-factor must be enabled for your account (Users tab) before you can set it up.</p>
+      <div id="mfaAdminNote" class="banner info" style="margin-top:4px">Checking two-factor&hellip;</div>
+      <div id="mfaAdminSetup" style="display:none; margin-top:12px">
+        <div class="row" style="gap:16px; flex-wrap:wrap; align-items:flex-start">
+          <div id="mfaQr" style="width:180px; height:180px; background:#fff; padding:8px; border-radius:8px"></div>
+          <div class="col" style="gap:8px; min-width:200px; flex:1">
+            <span class="muted" style="font-size:13px">Scan the QR with your authenticator app, then enter the 6-digit code it shows.</span>
+            <span class="subtle" style="word-break:break-all">Can&rsquo;t scan? Key: <strong id="mfaSecret"></strong></span>
+            <div class="row" style="gap:8px; align-items:flex-end">
+              <div class="field"><label>6-digit code</label>
+                <input type="text" id="mfaCode" inputmode="numeric" autocomplete="one-time-code" style="width:140px"></div>
+              <button class="btn primary" onclick="confirmAdminMfa()">Confirm</button>
+              <button class="btn" onclick="cancelAdminMfa()">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="mfaRecovery" style="display:none; margin-top:12px"></div>
+      <div class="row" id="mfaAdminActions" style="gap:8px; flex-wrap:wrap; margin-top:12px; display:none">
+        <button class="btn primary" id="mfaSetupBtn" onclick="beginAdminMfa()">Set up authenticator</button>
+        <button class="btn" id="mfaRegenBtn" onclick="regenAdminMfa()" style="display:none">Regenerate recovery codes</button>
+        <button class="btn" id="mfaOffBtn" onclick="disableAdminMfa()" style="display:none">Turn off</button>
+      </div>
+      <div id="mfaAdminResult" class="col" style="margin-top:8px"></div>
     </div>
   </div>
 </div>
@@ -616,63 +690,6 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       <button class="btn primary" onclick="saveDisplayTimezone()">Save</button>
     </div>
     <div class="muted" id="tzPreview" style="font-size:13px; margin-top:8px"></div>
-  </div>
-  <div class="card">
-    <h2>Administrator</h2>
-    <p class="muted" style="margin-top:0">Manage your own admin account — password, passkeys and
-      two-factor. These protect both this admin interface and the main app.</p>
-
-    <h3>Password</h3>
-    <div class="row" style="gap:8px; flex-wrap:wrap; align-items:flex-end">
-      <div class="field"><label>New password</label>
-        <input type="password" id="ownPw1" autocomplete="new-password" style="min-width:200px"></div>
-      <div class="field"><label>Confirm</label>
-        <input type="password" id="ownPw2" autocomplete="new-password" style="min-width:200px"></div>
-      <button class="btn primary" onclick="changeOwnPassword()">Change password</button>
-    </div>
-    <div id="ownPwResult" class="col" style="margin-top:8px"></div>
-
-    <h3>Passkeys</h3>
-    <p class="muted" style="margin-top:0">Sign in with Touch&nbsp;ID, Windows&nbsp;Hello, or a security
-      key instead of your password (which always remains a fallback). Passkeys must be enabled for your
-      account (Users tab) before you can add one; the same passkey works on both the app and this panel.</p>
-    <div id="pkAdminNote" class="banner info" style="margin-top:4px">Checking passkeys…</div>
-    <div id="pkAdminList" class="col" style="gap:6px; margin-top:10px"></div>
-    <div class="row" id="pkAdminAdd" style="gap:8px; flex-wrap:wrap; align-items:flex-end; margin-top:12px; display:none">
-      <div class="field"><label>Passkey name</label>
-        <input type="text" id="pkAdminName" placeholder="e.g. MacBook Touch ID" style="min-width:240px"></div>
-      <button class="btn primary" onclick="addAdminPasskey()">Add a passkey</button>
-    </div>
-    <div id="pkAdminResult" class="col" style="margin-top:8px"></div>
-
-    <h3>Two-factor authentication</h3>
-    <p class="muted" style="margin-top:0">Add a one-time code from an authenticator app (Google
-      Authenticator, 1Password, Authy&hellip;) on top of your password when signing in to this admin
-      interface and the main app. Your password still signs you in &mdash; the code is an extra step.
-      Two-factor must be enabled for your account (Users tab) before you can set it up.</p>
-    <div id="mfaAdminNote" class="banner info" style="margin-top:4px">Checking two-factor&hellip;</div>
-    <div id="mfaAdminSetup" style="display:none; margin-top:12px">
-      <div class="row" style="gap:16px; flex-wrap:wrap; align-items:flex-start">
-        <div id="mfaQr" style="width:180px; height:180px; background:#fff; padding:8px; border-radius:8px"></div>
-        <div class="col" style="gap:8px; min-width:220px; flex:1">
-          <span class="muted" style="font-size:13px">Scan the QR with your authenticator app, then enter the 6-digit code it shows.</span>
-          <span class="subtle" style="word-break:break-all">Can&rsquo;t scan? Key: <strong id="mfaSecret"></strong></span>
-          <div class="row" style="gap:8px; align-items:flex-end">
-            <div class="field"><label>6-digit code</label>
-              <input type="text" id="mfaCode" inputmode="numeric" autocomplete="one-time-code" style="width:140px"></div>
-            <button class="btn primary" onclick="confirmAdminMfa()">Confirm</button>
-            <button class="btn" onclick="cancelAdminMfa()">Cancel</button>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div id="mfaRecovery" style="display:none; margin-top:12px"></div>
-    <div class="row" id="mfaAdminActions" style="gap:8px; flex-wrap:wrap; margin-top:12px; display:none">
-      <button class="btn primary" id="mfaSetupBtn" onclick="beginAdminMfa()">Set up authenticator</button>
-      <button class="btn" id="mfaRegenBtn" onclick="regenAdminMfa()" style="display:none">Regenerate recovery codes</button>
-      <button class="btn" id="mfaOffBtn" onclick="disableAdminMfa()" style="display:none">Turn off</button>
-    </div>
-    <div id="mfaAdminResult" class="col" style="margin-top:8px"></div>
   </div>
   </div><!-- /tab-appcontrol -->
 
@@ -1233,7 +1250,7 @@ async function loadSession() {
   BUILTIN_ADMIN = s.builtinAdmin || '';
   $('who').textContent = s.username;
   $('defaultWarn').innerHTML = s.defaultPasswordActive
-    ? '<div class="banner warn">⚠️ The <strong>Administrator</strong> account is still using its default password. Change it now with “Change password”.</div>'
+    ? '<div class="banner warn">⚠️ The <strong>Administrator</strong> account is still using its default password. Change it now in <strong>👤 Profile</strong> (top right).</div>'
     : '';
   $('requireLogin').checked = !!s.requireLogin;
   $('requireLoginHint').textContent = s.requireLogin
@@ -1589,12 +1606,14 @@ async function changeOwnPassword() {
     toast('Password changed'); await loadSession();
   } catch (e) { out.style.color = 'var(--red)'; out.textContent = e.message; }
 }
-// The topbar shortcut jumps to the Administrator section and focuses the field.
-function goToPasswordChange() {
-  selectTab('appcontrol');
-  const el = $('ownPw1');
-  if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }
+// Profile overlay — the admin's own account (password / passkeys / two-factor).
+function openProfile() {
+  $('profOv').hidden = false;
+  loadAdminPasskeys().catch(() => {});
+  loadAdminMfa().catch(() => {});
+  const el = $('ownPw1'); if (el) el.focus();
 }
+function closeProfile() { $('profOv').hidden = true; }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────
 function selectTab(name) {
@@ -2669,7 +2688,8 @@ async function disableAdminMfa() {
   } catch (e) { toast(e.message, true); }
 }
 
-loadSession().then(loadTls).then(loadUsers).then(loadAdminPasskeys).then(loadAdminMfa).catch(() => {});
+// Passkeys + two-factor status load lazily when the Profile overlay is opened.
+loadSession().then(loadTls).then(loadUsers).catch(() => {});
 
 // ── Administration help overlay ─────────────────────────────────────────────
 // Mirrors the "Administration" group in the main app's Help, so the same guidance
@@ -2747,4 +2767,5 @@ function renderHelp() {
 function openHelp() { renderHelp(); $('helpOv').hidden = false; }
 function closeHelp() { $('helpOv').hidden = true; }
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('helpOv').hidden) closeHelp(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('profOv').hidden) closeProfile(); });
 """
