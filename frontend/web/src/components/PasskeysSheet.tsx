@@ -7,7 +7,10 @@ import {
   deletePasskey,
   enrollPasskey,
   listPasskeys,
+  passkeyDomainValid,
+  passkeyErrorMessage,
   passkeysSupported,
+  PASSKEY_DOMAIN_HINT,
   type PasskeyInfo,
 } from '../passkey'
 import { Sheet, Spinner } from './ui'
@@ -17,6 +20,7 @@ export function PasskeysSheet({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const domainOk = passkeyDomainValid()
 
   const reload = async () => {
     try {
@@ -45,7 +49,7 @@ export function PasskeysSheet({ onClose }: { onClose: () => void }) {
       if (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError')) {
         // stay silent
       } else {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(passkeyErrorMessage(e))
       }
     } finally {
       setBusy(false)
@@ -77,6 +81,21 @@ export function PasskeysSheet({ onClose }: { onClose: () => void }) {
         {!passkeysSupported() && (
           <div className="t-footnote fg-secondary">
             This browser does not support passkeys.
+          </div>
+        )}
+
+        {passkeysSupported() && !domainOk && (
+          <div
+            className="t-footnote"
+            style={{
+              padding: '8px 10px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'rgba(255,159,10,0.12)',
+              border: '1px solid rgba(255,159,10,0.32)',
+              color: 'var(--orange)',
+            }}
+          >
+            {PASSKEY_DOMAIN_HINT}
           </div>
         )}
 
@@ -138,7 +157,7 @@ export function PasskeysSheet({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {passkeysSupported() && (
+        {passkeysSupported() && domainOk && (
           <div className="row" style={{ gap: 8 }}>
             <input
               className="text-input"

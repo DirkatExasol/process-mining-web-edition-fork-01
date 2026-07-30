@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { loginBackground, type LoginAppearance } from '../loginAppearance'
-import { passkeysSupported } from '../passkey'
+import { passkeysUsable } from '../passkey'
 import { useStore } from '../store'
 import { Logo } from './Logo'
 import { Spinner } from './ui'
@@ -275,7 +275,7 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
               >
                 {busy && <Spinner />} Sign in
               </button>
-              {passkeysSupported() && (
+              {passkeysUsable() && (
                 <button
                   className="btn"
                   type="button"

@@ -410,6 +410,12 @@ body {{ display: grid; place-items: center; min-height: 100vh; background: {body
   var err = document.getElementById('pkerr');
   if (!u || !pk) return;  // absent on the 2FA code step
   if (!window.PublicKeyCredential || !navigator.credentials) return;
+  // WebAuthn rejects bare IP addresses / single-label hosts as the RP ID — hide
+  // the button when reached by IP so it isn't offered where it can't work.
+  var h = location.hostname;
+  var domainOk = h === 'localhost'
+    || (!/^\\d{{1,3}}(\\.\\d{{1,3}}){{3}}$/.test(h) && h.indexOf(':') < 0 && h.charAt(0) !== '[' && h.indexOf('.') >= 0);
+  if (!domainOk) return;
   pk.style.display = 'inline-flex';
   function sync() {{ pk.disabled = !u.value.trim(); }}
   u.addEventListener('input', function () {{ sync(); err.style.display = 'none'; }}); sync();
@@ -2400,11 +2406,25 @@ function pkB2b(b) { var a = new Uint8Array(b), s = '';
   for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]);
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 
+function pkDomainValid() {
+  // WebAuthn rejects bare IP addresses and single-label hosts as the RP ID.
+  var h = location.hostname;
+  if (h === 'localhost') return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return false;
+  if (h.indexOf(':') >= 0 || h.charAt(0) === '[') return false;
+  return h.indexOf('.') >= 0;
+}
 async function loadAdminPasskeys() {
   const note = $('pkAdminNote'), list = $('pkAdminList'), add = $('pkAdminAdd');
   if (!window.PublicKeyCredential || !navigator.credentials) {
     note.className = 'banner warn';
     note.textContent = 'This browser does not support passkeys.';
+    add.style.display = 'none'; list.innerHTML = ''; return;
+  }
+  if (!pkDomainValid()) {
+    note.className = 'banner warn';
+    note.textContent = 'Passkeys need a hostname, not an IP address. Reach this panel by its '
+      + 'name over HTTPS — e.g. its “.local” name — instead of its IP to add or use one.';
     add.style.display = 'none'; list.innerHTML = ''; return;
   }
   try {
@@ -2469,7 +2489,10 @@ async function addAdminPasskey() {
     await loadAdminPasskeys();
   } catch (e) {
     if (e && (e.name === 'NotAllowedError' || e.name === 'AbortError')) return;  // user cancelled
-    out.style.color = 'var(--red)'; out.textContent = e.message || 'Could not add the passkey.';
+    out.style.color = 'var(--red)';
+    out.textContent = (e && e.name === 'SecurityError')
+      ? 'Passkeys need a hostname, not an IP address — reach this panel by its name over HTTPS.'
+      : (e.message || 'Could not add the passkey.');
   }
 }
 
@@ -2598,7 +2621,8 @@ const ADMIN_HELP = [
     <p><strong>Failed sign-in lockout</strong> disables an account after N wrong passwords (0 = off); unlock it in the Users tab, or restart with PMW_RESET_LOCKOUTS=1. <strong>Power</strong> users manage their own connections and get the advanced-analysis views (Conformance Check, Happy Path, Simulation).</p>
     <p><strong>Passkeys (WebAuthn).</strong> The <em>Passkey</em> column lets each user sign in with Touch&nbsp;ID / Windows&nbsp;Hello / a security key as an alternative to their password (which always stays as a fallback); the header checkbox toggles it for everyone. Local and directory users alike can be allowed. A passkey registered on this host works for both the app and this admin panel. Admins enrol their own device in <strong>App Control &rarr; Passkeys</strong>; app users do so from the main app. Turning the permission off blocks passkey sign-in immediately.</p>
     <p><strong>Two-factor (TOTP).</strong> The <em>2FA</em> column (with an all-users master checkbox) lets each user add a one-time authenticator-app code as a second step after their password &mdash; optional and additive, so it never locks anyone out. After the password an enrolled user enters the current 6-digit code or a one-time recovery code; a passkey sign-in skips it. Users set up their own from <strong>🔒 Two-factor</strong> in the app; admins from <strong>App Control &rarr; Two-factor</strong>. Turning 2FA off requires the current code (so a hijacked session can&rsquo;t strip it). The secret is stored encrypted and recovery codes only as hashes &mdash; if a user is locked out of their authenticator, untick 2FA for them so they can sign in with their password and re-enrol.</p>
-    <div class="note warn">Passkeys need a secure context (HTTPS, or localhost). Off localhost, run with TLS Optional/Required. For split app/admin sub-domains set PMW_PASSKEY_RP_ID to the shared parent domain and list origins in PMW_PASSKEY_ORIGINS.</div>` },
+    <div class="note warn">Passkeys need a secure context (HTTPS, or localhost). Off localhost, run with TLS Optional/Required. For split app/admin sub-domains set PMW_PASSKEY_RP_ID to the shared parent domain and list origins in PMW_PASSKEY_ORIGINS.</div>
+    <div class="note warn">Passkeys also need a real hostname &mdash; WebAuthn rejects bare IP addresses. Reaching the app/admin by IP (e.g. a tablet on the LAN) blocks enrolment with &ldquo;the effective domain is not a valid domain&rdquo;; use the host&rsquo;s name (its &ldquo;.local&rdquo; name or a DNS entry) and a matching certificate. The passkey controls are hidden when an IP is detected.</div>` },
   { id: 'connections', icon: '🗄️', title: 'Database Connections', html: `
     <h2>Database Connections</h2>
     <p>Define each connection (Exasol host, port, user, password, schema, TLS, and an optional OpenAI-compatible LLM server) and assign it to users; each user sees only the connections assigned to them. Use Test connection to verify the database and LLM before saving; a blank password/key keeps the stored value.</p>

@@ -24,6 +24,37 @@ export function passkeysSupported(): boolean {
   return typeof window !== 'undefined' && !!window.PublicKeyCredential && !!navigator.credentials
 }
 
+/** WebAuthn binds a passkey to a domain (the Relying-Party ID) and only accepts a
+ *  real domain name or `localhost` — it rejects bare IP addresses and single-label
+ *  hosts. Returns false when the page's host can't be used, so the UI can explain
+ *  up front instead of surfacing the browser's raw "effective domain … is not a
+ *  valid domain" error (e.g. when reaching the app by IP from another device). */
+export function passkeyDomainValid(): boolean {
+  if (typeof window === 'undefined') return false
+  const host = window.location.hostname
+  if (host === 'localhost') return true
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false // IPv4
+  if (host.includes(':') || host.startsWith('[')) return false // IPv6
+  return host.includes('.') // a registrable domain (has at least one dot)
+}
+
+/** True when passkeys can actually be used on this page (browser + host both OK). */
+export function passkeysUsable(): boolean {
+  return passkeysSupported() && passkeyDomainValid()
+}
+
+export const PASSKEY_DOMAIN_HINT =
+  'Passkeys need a hostname, not an IP address. Reach the server by its name over ' +
+  'HTTPS — e.g. its “.local” name — instead of its IP, then try again.'
+
+/** Map a WebAuthn failure to a friendlier message where we can recognise it. */
+export function passkeyErrorMessage(e: unknown): string {
+  if (e instanceof DOMException && (e.name === 'SecurityError' || !passkeyDomainValid())) {
+    return PASSKEY_DOMAIN_HINT
+  }
+  return e instanceof Error ? e.message : String(e)
+}
+
 function b64urlToBuf(s: string): ArrayBuffer {
   const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4))
   const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + pad)

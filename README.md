@@ -194,7 +194,13 @@ id derived from an install secret) for unknown or ineligible usernames as for re
 so probing the endpoint never reveals which accounts exist or have a passkey. Only
 genuine WebAuthn verification at the finish step tells them apart.
 WebAuthn requires a **secure context** (HTTPS, or `localhost` for local testing), so
-off-localhost run TLS *Optional*/*Required*. For split app/admin sub-domains, set
+off-localhost run TLS *Optional*/*Required*. It also requires a **real hostname** — the
+standard forbids a bare **IP address** (or single-label host) as the domain a passkey is
+bound to, so reaching the app by IP (e.g. a tablet connecting to a Mac on the LAN) fails
+with *"the effective domain … is not a valid domain."* Use a name the client can resolve —
+the host's `.local` Bonjour name, or a LAN/DNS entry — and issue the TLS certificate for
+that name; the UI hides the passkey controls (with a hint) when it detects an IP, and
+password sign-in works regardless. For split app/admin sub-domains, set
 `PMW_PASSKEY_RP_ID` to the shared parent domain and list allowed origins in
 `PMW_PASSKEY_ORIGINS` (both optional; single-host deployments need neither).
 

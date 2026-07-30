@@ -140,6 +140,16 @@ def test_login_page_has_mfa_code_step(pages):
     assert 'name="password"' in normal and "/login/mfa" not in normal
 
 
+def test_passkey_ui_guards_against_ip_hosts(dashboard, pages):
+    # WebAuthn rejects bare IP addresses; the admin UI hides the passkey controls
+    # (login button + App Control card) when reached by IP, rather than surfacing
+    # the raw browser error.
+    assert "function pkDomainValid" in dashboard
+    assert "not an IP address" in dashboard  # the App Control card's hint
+    login = pages.login_page()
+    assert "domainOk" in login and "location.hostname" in login
+
+
 def test_dashboard_has_two_factor_card_and_master_toggle(dashboard):
     assert "Two-factor authentication" in dashboard
     assert "function loadAdminMfa" in dashboard
