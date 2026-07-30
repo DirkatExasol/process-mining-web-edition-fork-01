@@ -259,7 +259,8 @@ details summary { cursor: pointer; font-size: 13px; color: var(--accent); paddin
 
 
 def login_page(error: str = "", inactivity: bool = False, bg_css: str = "",
-               mfa_step: bool = False) -> str:
+               mfa_step: bool = False, mfa_setup: bool = False, mfa_qr: str = "",
+               recovery_codes: "list[str] | None" = None) -> str:
     """The admin sign-in screen — a faithful port of the main app's login panel
     (`LoginView.tsx`, the master): identical layout, field sizing and behaviour
     (submit stays disabled until a username is entered). The ONLY difference is
@@ -282,8 +283,45 @@ def login_page(error: str = "", inactivity: bool = False, bg_css: str = "",
         if inactivity and not error
         else ""
     )
-    caption = "Enter your authentication code" if mfa_step else "Sign in to continue"
-    if mfa_step:
+    caption = (
+        "Two-factor is on" if recovery_codes is not None
+        else "Set up two-factor to continue" if mfa_setup
+        else "Enter your authentication code" if mfa_step
+        else "Sign in to continue"
+    )
+    if recovery_codes is not None:
+        # Shown once, right after mandatory enrolment — the session cookie is already
+        # set on this response, so "Continue" (a GET to /) lands signed in.
+        grid = "".join(f"<span>{html.escape(c)}</span>" for c in recovery_codes)
+        form_block = (
+            '  <div class="login-notice"><strong>Save your recovery codes.</strong> '
+            'Each works once if you lose your authenticator; they won&rsquo;t be shown again.</div>\n'
+            '  <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; width:100%; '
+            'font-family:monospace; font-size:13px; padding:10px 12px; border-radius:6px; '
+            'background:var(--l-fill)">' + grid + '</div>\n'
+            '  <a class="btn-prominent" href="/" style="text-align:center; text-decoration:none">'
+            'Continue to the admin panel</a>'
+        )
+    elif mfa_setup:
+        # Two-factor is required for this admin but not configured — force enrolment
+        # before a session is issued. Server-rendered QR + a plain form POST to
+        # /login/mfa-setup. mfa_qr is our own generated SVG, safe to inject.
+        form_block = (
+            '  <div class="t-caption2" style="text-align:center; margin-bottom:6px">'
+            'Two-factor is required for your account. Scan this with an authenticator app '
+            '(Google Authenticator, 1Password…), then enter the 6-digit code.</div>\n'
+            '  <div style="align-self:center; width:168px; height:168px; background:#fff; '
+            'padding:8px; border-radius:8px">' + mfa_qr + '</div>\n'
+            '  <form class="login-form" method="post" action="/login/mfa-setup">\n'
+            '    <div class="field"><label class="field-label" for="code">6-digit code</label>\n'
+            '      <input class="text-input" id="code" name="code" inputmode="numeric" '
+            'autocomplete="one-time-code" autocapitalize="none" autocorrect="off" autofocus '
+            'placeholder="123456"></div>\n'
+            '    <div class="btn-row"><button class="btn-prominent" type="submit">'
+            'Confirm &amp; sign in</button></div>\n'
+            '  </form>'
+        )
+    elif mfa_step:
         # Second step: the password already verified, ask for the TOTP (or recovery)
         # code. A plain form POST to /login/mfa — no JS, no passkey button.
         form_block = """  <form class="login-form" method="post" action="/login/mfa">
@@ -2625,7 +2663,7 @@ const ADMIN_HELP = [
     <p>Create local users, enable/disable access, grant or revoke the admin role, and reset passwords. Only enabled users can sign in. The <strong>Require sign-in</strong> toggle turns the login gate on or off (on by default) &mdash; with it off there is no user identity, so per-user settings and filter presets share one profile.</p>
     <p><strong>Failed sign-in lockout</strong> disables an account after N wrong passwords (0 = off); unlock it in the Users tab, or restart with PMW_RESET_LOCKOUTS=1. <strong>Power</strong> users manage their own connections and get the advanced-analysis views (Conformance Check, Happy Path, Simulation).</p>
     <p><strong>Passkeys (WebAuthn).</strong> The <em>Passkey</em> column lets each user sign in with Touch&nbsp;ID / Windows&nbsp;Hello / a security key as an alternative to their password (which always stays as a fallback); the header checkbox toggles it for everyone. Local and directory users alike can be allowed. A passkey registered on this host works for both the app and this admin panel. Admins enrol their own device in <strong>App Control &rarr; Passkeys</strong>; app users do so from the main app. Turning the permission off blocks passkey sign-in immediately.</p>
-    <p><strong>Two-factor (TOTP).</strong> The <em>2FA</em> column (with an all-users master checkbox) lets each user add a one-time authenticator-app code as a second step after their password &mdash; optional and additive, so it never locks anyone out. After the password an enrolled user enters the current 6-digit code or a one-time recovery code; a passkey sign-in skips it. Users set up their own from <strong>🔒 Two-factor</strong> in the app; admins from <strong>App Control &rarr; Two-factor</strong>. Turning 2FA off requires the current code (so a hijacked session can&rsquo;t strip it). The secret is stored encrypted and recovery codes only as hashes &mdash; if a user is locked out of their authenticator, untick 2FA for them so they can sign in with their password and re-enrol.</p>
+    <p><strong>Two-factor (TOTP).</strong> The <em>2FA</em> column (with an all-users master checkbox) requires a one-time authenticator-app code after the password. Enabling it makes 2FA <strong>mandatory</strong> for that user: if they haven&rsquo;t configured it, their next sign-in (app or this admin panel) stops after the password and forces them to set up an authenticator before they get in &mdash; they can&rsquo;t bypass it by not enrolling. Afterwards each sign-in asks for the current code (or a recovery code); a passkey sign-in skips it. Users set up from <strong>🔒 Two-factor</strong> in the app; admins from <strong>App Control &rarr; Two-factor</strong> or at the forced login step. Turning 2FA off requires the current code (so a hijacked session can&rsquo;t strip it). The secret is stored encrypted and recovery codes only as hashes &mdash; if a user loses their authenticator, untick 2FA for them so they can sign in with their password and re-enrol.</p>
     <div class="note warn">Passkeys need a secure context (HTTPS, or localhost). Off localhost, run with TLS Optional/Required. For split app/admin sub-domains set PMW_PASSKEY_RP_ID to the shared parent domain and list origins in PMW_PASSKEY_ORIGINS.</div>
     <div class="note warn">Passkeys also need a real hostname &mdash; WebAuthn rejects bare IP addresses. Reaching the app/admin by IP (e.g. a tablet on the LAN) blocks enrolment with &ldquo;the effective domain is not a valid domain&rdquo;; use the host&rsquo;s name (its &ldquo;.local&rdquo; name or a DNS entry) and a matching certificate. The passkey controls are hidden when an IP is detected.</div>` },
   { id: 'connections', icon: '🗄️', title: 'Database Connections', html: `

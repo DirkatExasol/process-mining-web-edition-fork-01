@@ -62,8 +62,10 @@ export function App() {
     )
   }
 
-  // Sign-in gate: shown when the admin requires login and there is no session.
-  if (store.requireLogin && !store.authUser) {
+  // Sign-in gate: shown when the admin requires login and there is no session —
+  // and kept up through the forced-2FA-enrolment recovery-codes step even once the
+  // session has been issued, so those codes are shown before entering the app.
+  if ((store.requireLogin && !store.authUser) || store.mfaSetupPending) {
     return (
       <>
         <ThemeSync />

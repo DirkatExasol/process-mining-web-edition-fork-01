@@ -136,6 +136,8 @@ export interface AppState {
   authMfaEnabled: boolean
   /** Username awaiting a TOTP code after a correct password (two-step sign-in). */
   mfaPending: string | null
+  /** Username who must ENROL 2FA before signing in (it's required but not set up). */
+  mfaSetupPending: string | null
   requireLogin: boolean
   idleTimeoutMins: number
   /** Set when the last sign-out was due to inactivity, so the login screen can say so. */
@@ -279,6 +281,12 @@ export interface AppActions {
   login: (username: string, password: string) => Promise<string | null>
   /** Step 2 of a two-factor sign-in — submit the TOTP or recovery code. */
   verifyMfa: (code: string) => Promise<string | null>
+  /** Begin mandatory 2FA enrolment at sign-in — returns the secret + QR. */
+  enrollMfaBegin: () => Promise<{ secret: string; otpauthUri: string; qrSvg: string }>
+  /** Confirm enrolment with a code — signs the user in; returns recovery codes. */
+  enrollMfaFinish: (code: string) => Promise<string[]>
+  /** Dismiss the recovery-codes step and enter the app after enrolment. */
+  finishMfaSetup: () => void
   cancelMfa: () => void
   loginWithPasskey: (username: string) => Promise<string | null>
   logout: (opts?: { inactivity?: boolean }) => Promise<void>
@@ -437,6 +445,7 @@ const INITIAL_STATE: AppState = {
   authMfaAllowed: false,
   authMfaEnabled: false,
   mfaPending: null,
+  mfaSetupPending: null,
   requireLogin: true,
   idleTimeoutMins: 0,
   signedOutForInactivity: false,
@@ -909,10 +918,20 @@ export const useStore = create<Store>((set, get) => {
         const result = await api.login(username, password)
         if ('mfaRequired' in result) {
           // Password ok, but a second factor is needed — LoginView shows the code step.
-          set({ mfaPending: result.username, signedOutForInactivity: false })
+          set({ mfaPending: result.username, mfaSetupPending: null, signedOutForInactivity: false })
           return null
         }
-        set({ ...hydrateAuth(result), mfaPending: null, signedOutForInactivity: false })
+        if ('mfaSetupRequired' in result) {
+          // 2FA is required but not configured — LoginView forces enrolment; no session.
+          set({ mfaSetupPending: result.username, mfaPending: null, signedOutForInactivity: false })
+          return null
+        }
+        set({
+          ...hydrateAuth(result),
+          mfaPending: null,
+          mfaSetupPending: null,
+          signedOutForInactivity: false,
+        })
         void get().refreshManageable()
         return null
       } catch (error) {
@@ -931,7 +950,23 @@ export const useStore = create<Store>((set, get) => {
       }
     },
 
-    cancelMfa: () => set({ mfaPending: null }),
+    enrollMfaBegin: async () => {
+      // Throws (ApiError) on failure — LoginView surfaces the message.
+      return api.mfaEnrollBegin()
+    },
+
+    enrollMfaFinish: async (code) => {
+      const result = await api.mfaEnrollFinish(code)
+      // The server has issued the session; hydrate auth but keep `mfaSetupPending`
+      // set so LoginView stays up to show the recovery codes once.
+      set({ ...hydrateAuth(result), mfaPending: null, signedOutForInactivity: false })
+      void get().refreshManageable()
+      return result.recoveryCodes
+    },
+
+    finishMfaSetup: () => set({ mfaSetupPending: null }),
+
+    cancelMfa: () => set({ mfaPending: null, mfaSetupPending: null }),
 
     loginWithPasskey: async (username) => {
       try {
@@ -967,6 +1002,7 @@ export const useStore = create<Store>((set, get) => {
         authMfaAllowed: false,
         authMfaEnabled: false,
         mfaPending: null,
+        mfaSetupPending: null,
         manageableConnections: [],
         assignableUsers: [],
         signedOutForInactivity: opts?.inactivity ?? false,

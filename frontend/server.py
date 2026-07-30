@@ -233,6 +233,14 @@ async def auth_login(request: Request) -> Response:
         _set_pending_cookie(response, request, mfa.make_pending_cookie(
             username=user.username, aud="app"))
         return response
+    # Enabling 2FA for a user makes it MANDATORY: if it's allowed but not yet set up,
+    # they can't sign in with the password alone — force enrolment first. No session
+    # is issued until they've configured and confirmed the second factor.
+    if store.mfa_setup_required(user.username):
+        response = JSONResponse({"mfaSetupRequired": True, "username": user.username})
+        _set_pending_cookie(response, request, mfa.make_pending_cookie(
+            username=user.username, aud="app"))
+        return response
     _login_throttle.clear(ip)
     logx.usage(
         f"user {user.username} signed in ({user.auth_source})",
@@ -493,6 +501,72 @@ async def mfa_verify(request: Request) -> Response:
                request=request, username=user.username, operation="login")
     response = _app_login_response(user, request)
     response.delete_cookie(mfa.PENDING_COOKIE, path="/")
+    return response
+
+
+# ── Mandatory enrolment when 2FA is required but not yet set up ───────────────
+# These run PRE-session: the pending cookie proves the password step, so the user
+# can configure their second factor before any session exists. A session is issued
+# only by enroll/finish, after a code confirms the authenticator is set up.
+
+
+def _pending_setup_user(request: Request):
+    """The user named by a valid pending cookie who still owes a 2FA setup."""
+    username = mfa.read_pending_cookie(
+        request.cookies.get(mfa.PENDING_COOKIE) or "", aud="app")
+    user = store.get_user(username) if username else None
+    if user is None or not user.is_enabled or not store.mfa_setup_required(user.username):
+        return None
+    return user
+
+
+@app.post("/auth/mfa/enroll/begin")
+async def mfa_enroll_begin(request: Request) -> Response:
+    user = _pending_setup_user(request)
+    if user is None:
+        return JSONResponse({"detail": "Your sign-in session expired. Start again."}, status_code=401)
+    secret = mfa.new_secret()
+    uri = mfa.provisioning_uri(secret=secret, username=user.username)
+    response = JSONResponse({"secret": secret, "otpauthUri": uri, "qrSvg": mfa.qr_svg(uri)})
+    _set_mfa_setup_cookie(response, request, mfa.make_setup_cookie(
+        username=user.username, secret=secret, aud="app"))
+    return response
+
+
+@app.post("/auth/mfa/enroll/finish")
+async def mfa_enroll_finish(request: Request) -> Response:
+    ip = _login_throttle.client_ip(request)
+    if _login_throttle.retry_after(ip) > 0:
+        return JSONResponse(
+            {"detail": "Too many attempts. Try again shortly."}, status_code=429)
+    user = _pending_setup_user(request)
+    if user is None:
+        return JSONResponse({"detail": "Your sign-in session expired. Start again."}, status_code=401)
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        data = {}
+    secret = mfa.read_setup_cookie(
+        request.cookies.get(mfa.SETUP_COOKIE) or "", username=user.username, aud="app")
+    if secret is None:
+        return JSONResponse({"detail": "Setup expired. Start again."}, status_code=400)
+    if not mfa.verify_code(secret, str(data.get("code") or "")):
+        _login_throttle.record_failure(ip)
+        return JSONResponse({"detail": "That code didn't match. Try again."}, status_code=400)
+    store.set_totp_secret(user.username, secret)
+    codes = mfa.generate_recovery_codes()
+    store.set_recovery_codes(user.username, codes)
+    _login_throttle.clear(ip)
+    logx.usage(f"user {user.username} set up two-factor at sign-in and signed in",
+               request=request, username=user.username, operation="login")
+    # Enrolment complete → issue the session, and return the recovery codes once.
+    user = store.get_user(user.username) or user  # refresh so mfaEnabled reflects True
+    body = _user_payload(user)
+    body["recoveryCodes"] = codes
+    response = JSONResponse(body)
+    _set_session_cookie(response, request, user.username)
+    response.delete_cookie(mfa.PENDING_COOKIE, path="/")
+    response.delete_cookie(mfa.SETUP_COOKIE, path="/")
     return response
 
 

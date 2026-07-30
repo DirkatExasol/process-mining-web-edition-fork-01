@@ -96,15 +96,22 @@ export const api = {
       mfaAllowed: boolean
       mfaEnabled: boolean
     }>('/auth/session'),
-  // A password login either signs the user in or asks for a second factor.
+  // A password login either signs the user in, asks for a second factor, or —
+  // when 2FA is required but not yet set up — asks the user to enrol it first.
   login: (username: string, password: string) =>
-    post<AuthUser | { mfaRequired: true; username: string }>('/auth/login', {
-      username,
-      password,
-    }),
+    post<
+      | AuthUser
+      | { mfaRequired: true; username: string }
+      | { mfaSetupRequired: true; username: string }
+    >('/auth/login', { username, password }),
   // Step 2: submit the TOTP (or recovery) code after a password login that
   // returned mfaRequired.
   verifyMfa: (code: string) => post<AuthUser>('/auth/mfa/verify', { code }),
+  // Mandatory enrolment when 2FA is required but not configured (pre-session).
+  mfaEnrollBegin: () =>
+    post<{ secret: string; otpauthUri: string; qrSvg: string }>('/auth/mfa/enroll/begin'),
+  mfaEnrollFinish: (code: string) =>
+    post<AuthUser & { recoveryCodes: string[] }>('/auth/mfa/enroll/finish', { code }),
   logout: () => post<{ ok: boolean }>('/auth/logout'),
   // Directory (LDAP) availability for the login panel; configured=false ⇒ show nothing.
   directoryStatus: () =>

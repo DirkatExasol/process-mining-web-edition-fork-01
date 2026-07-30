@@ -640,6 +640,23 @@ def login_post(request: Request, username: str = Form(...), password: str = Form
             max_age=mfa.PENDING_TTL_SECS, path="/",
         )
         return response
+    # Two-factor is required for this admin but not yet configured — force enrolment
+    # before any session is issued. Generate a secret, render the QR, and hold it in
+    # the setup cookie (+ the password-ok pending cookie) for /login/mfa-setup.
+    if store.mfa_setup_required(user.username):
+        secret = mfa.new_secret()
+        uri = mfa.provisioning_uri(secret=secret, username=user.username)
+        response = HTMLResponse(pages.login_page(
+            mfa_setup=True, mfa_qr=mfa.qr_svg(uri), bg_css=_login_bg_css()))
+        secure = request.url.scheme == "https"
+        response.set_cookie(
+            mfa.PENDING_COOKIE, mfa.make_pending_cookie(username=user.username, aud="admin"),
+            httponly=True, samesite="lax", secure=secure, max_age=mfa.PENDING_TTL_SECS, path="/")
+        response.set_cookie(
+            mfa.SETUP_COOKIE,
+            mfa.make_setup_cookie(username=user.username, secret=secret, aud="admin"),
+            httponly=True, samesite="lax", secure=secure, max_age=mfa.SETUP_TTL_SECS, path="/")
+        return response
     _login_ip_failures.pop(ip, None)  # clear the throttle on a successful sign-in
     logx.usage(
         f"admin {user.username} signed in to the admin interface",
@@ -699,6 +716,60 @@ def login_mfa(request: Request, code: str = Form("")):
     response = RedirectResponse("/", status_code=303)
     response.delete_cookie(mfa.PENDING_COOKIE, path="/")
     _set_cookie(response, request, user.username)
+    return response
+
+
+@app.post("/login/mfa-setup", response_class=HTMLResponse)
+def login_mfa_setup(request: Request, code: str = Form("")):
+    """Mandatory-enrolment step: confirm a code against the setup cookie's secret,
+    store it + recovery codes, then issue the admin session and show the codes once."""
+    ip = _client_ip(request)
+    secure = request.url.scheme == "https"
+    if _login_retry_after(ip) > 0:
+        return HTMLResponse(
+            pages.login_page("Too many failed attempts. Try again shortly.",
+                             bg_css=_login_bg_css()),
+            status_code=429)
+    username = mfa.read_pending_cookie(request.cookies.get(mfa.PENDING_COOKIE) or "", aud="admin")
+    user = store.get_user(username) if username else None
+    secret = mfa.read_setup_cookie(
+        request.cookies.get(mfa.SETUP_COOKIE) or "", username=username or "", aud="admin")
+    if (user is None or not user.is_admin or not user.is_enabled
+            or not store.mfa_setup_required(user.username) or secret is None):
+        r = HTMLResponse(
+            pages.login_page("Your sign-in session expired. Please start again.",
+                             bg_css=_login_bg_css()),
+            status_code=401)
+        r.delete_cookie(mfa.PENDING_COOKIE, path="/")
+        r.delete_cookie(mfa.SETUP_COOKIE, path="/")
+        return r
+    if not mfa.verify_code(secret, code):
+        _record_login_failure_ip(ip)
+        # Re-render the same QR (secret preserved in the setup cookie); keep cookies.
+        uri = mfa.provisioning_uri(secret=secret, username=user.username)
+        r = HTMLResponse(
+            pages.login_page("That code didn't match. Try again.", mfa_setup=True,
+                             mfa_qr=mfa.qr_svg(uri), bg_css=_login_bg_css()),
+            status_code=401)
+        r.set_cookie(
+            mfa.PENDING_COOKIE, mfa.make_pending_cookie(username=user.username, aud="admin"),
+            httponly=True, samesite="lax", secure=secure, max_age=mfa.PENDING_TTL_SECS, path="/")
+        r.set_cookie(
+            mfa.SETUP_COOKIE, mfa.make_setup_cookie(username=user.username, secret=secret, aud="admin"),
+            httponly=True, samesite="lax", secure=secure, max_age=mfa.SETUP_TTL_SECS, path="/")
+        return r
+    # Enrolment confirmed → persist the secret + recovery codes, sign in, show codes once.
+    store.set_totp_secret(user.username, secret)
+    codes = mfa.generate_recovery_codes()
+    store.set_recovery_codes(user.username, codes)
+    _login_ip_failures.pop(ip, None)
+    store.reset_login_failures(user.username)
+    logx.usage(f"admin {user.username} set up two-factor at sign-in and signed in",
+               request=request, username=user.username, operation="login")
+    response = HTMLResponse(pages.login_page(recovery_codes=codes, bg_css=_login_bg_css()))
+    response.delete_cookie(mfa.PENDING_COOKIE, path="/")
+    response.delete_cookie(mfa.SETUP_COOKIE, path="/")
+    _set_cookie(response, request, user.username)  # session issued; "Continue" → /
     return response
 
 

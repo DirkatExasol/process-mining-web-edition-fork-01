@@ -1137,6 +1137,13 @@ class SecurityStore:
         user = self.get_user(username)
         return bool(user and user.mfa_allowed and user.mfa_enabled)
 
+    def mfa_setup_required(self, username: str) -> bool:
+        """Allowed to use two-factor but not yet enrolled — enabling 2FA for a user
+        makes it MANDATORY, so they must set it up before a session is issued rather
+        than sign in with the password alone."""
+        user = self.get_user(username)
+        return bool(user and user.mfa_allowed and not user.mfa_enabled)
+
     def clear_mfa(self, username: str) -> None:
         """Turn two-factor off for the user: drop the secret and recovery codes."""
         with self._lock:

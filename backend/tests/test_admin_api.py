@@ -1567,3 +1567,45 @@ def test_admin_mfa_disable_is_ip_throttled(admin):
         assert client.post("/api/mfa/disable", json={"code": "000000"}).status_code == 401
     assert client.post("/api/mfa/disable", json={"code": "000000"}).status_code == 429
     assert store.get_user("Administrator").mfa_enabled is True  # never stripped
+
+
+def test_admin_login_forces_2fa_setup_when_required(admin):
+    # An admin allowed 2FA but not enrolled must configure it before a session —
+    # the password alone yields the enrolment step, not the dashboard.
+    import app.services.mfa as mfa
+    server, store = admin
+    store.create_user("padmin", "pw", is_admin=True)
+    store.set_mfa_allowed("padmin", True)  # allowed, not enrolled
+    client = TestClient(server.app)
+
+    r = client.post("/login", data={"username": "padmin", "password": "pw"},
+                    follow_redirects=False)
+    assert r.status_code == 200 and "Set up two-factor" in r.text
+    assert server.COOKIE not in client.cookies  # no admin session yet
+    assert mfa.PENDING_COOKIE in client.cookies and mfa.SETUP_COOKIE in client.cookies
+
+
+def test_admin_login_mfa_setup_completes_and_signs_in(admin):
+    import pyotp
+    import app.services.mfa as mfa
+    server, store = admin
+    store.create_user("padmin", "pw", is_admin=True)
+    store.set_mfa_allowed("padmin", True)
+    client = TestClient(server.app)
+    client.post("/login", data={"username": "padmin", "password": "pw"}, follow_redirects=False)
+
+    # The secret rides in the setup cookie; derive the code from it.
+    secret = mfa.read_setup_cookie(
+        client.cookies.get(mfa.SETUP_COOKIE), username="padmin", aud="admin")
+    assert secret
+
+    # Wrong code: stays on the setup step, no session, not enrolled.
+    bad = client.post("/login/mfa-setup", data={"code": "000000"}, follow_redirects=False)
+    assert bad.status_code == 401 and server.COOKIE not in client.cookies
+    assert store.get_user("padmin").mfa_enabled is False
+
+    ok = client.post("/login/mfa-setup", data={"code": pyotp.TOTP(secret).now()},
+                     follow_redirects=False)
+    assert ok.status_code == 200 and "Save your recovery codes" in ok.text
+    assert server.COOKIE in client.cookies              # session issued
+    assert store.get_user("padmin").mfa_enabled is True  # enrolled

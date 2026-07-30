@@ -205,9 +205,13 @@ password sign-in works regardless. For split app/admin sub-domains, set
 `PMW_PASSKEY_ORIGINS` (both optional; single-host deployments need neither).
 
 **Two-factor authentication (TOTP).** Both surfaces also support an authenticator-app
-**second factor** (Google Authenticator, 1Password, Authy…) after the password — again
-*optional* and *admin-gated*: the **2FA** column in the admin *Users* tab (with an
-all-users master checkbox) grants who may enrol. An allowed user sets it up from
+**second factor** (Google Authenticator, 1Password, Authy…) after the password —
+*admin-gated* via the **2FA** column in the admin *Users* tab (with an all-users master
+checkbox). Enabling it makes 2FA **mandatory** for that user: if they haven't configured
+it, their next sign-in stops after the password and **forces enrolment** (QR + confirm +
+recovery codes) before any session is issued — on both the app and the admin panel — so
+it can't be bypassed by simply never enrolling. Turning the column back off removes the
+requirement. An allowed user sets it up from
 **🔒 Two-factor** in the app (or **App Control → Two-factor** for admins) by scanning a
 QR and confirming one code; they're then issued one-time **recovery codes** (shown once)
 for a lost device. At sign-in, after the password an enrolled user is asked for the

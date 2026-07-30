@@ -12,6 +12,8 @@ vi.mock('../api', () => ({
     loginAppearance: vi.fn(),
     login: vi.fn(),
     verifyMfa: vi.fn(),
+    mfaEnrollBegin: vi.fn(),
+    mfaEnrollFinish: vi.fn(),
     session: vi.fn(),
     logout: vi.fn(),
     listConnections: vi.fn(),
@@ -245,5 +247,55 @@ describe('LoginView two-factor step', () => {
     fireEvent.click(screen.getByText('Back'))
     // Back to the username/password form.
     await screen.findByLabelText('Password')
+  })
+})
+
+describe('LoginView forced 2FA enrolment', () => {
+  const enrollBegin = api.mfaEnrollBegin as unknown as ReturnType<typeof vi.fn>
+  const enrollFinish = api.mfaEnrollFinish as unknown as ReturnType<typeof vi.fn>
+
+  it('forces enrolment, then shows recovery codes and signs in', async () => {
+    directoryStatus.mockResolvedValue({ configured: false, available: false })
+    login.mockResolvedValue({ mfaSetupRequired: true, username: 'alice' })
+    enrollBegin.mockResolvedValue({
+      secret: 'JBSWY3DPEHPK3PXP',
+      otpauthUri: 'otpauth://totp/x',
+      qrSvg: '<svg data-testid="qr"></svg>',
+    })
+    enrollFinish.mockResolvedValue({
+      username: 'alice',
+      isAdmin: false,
+      isPower: false,
+      displayName: null,
+      authSource: null,
+      passkeyAllowed: false,
+      mfaAllowed: true,
+      mfaEnabled: true,
+      recoveryCodes: ['aaaa-bbbb', 'cccc-dddd'],
+    })
+    const onSignedIn = vi.fn()
+    render(<LoginView onSignedIn={onSignedIn} />)
+
+    // Password step → the server says 2FA must be set up first.
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'alice' } })
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw' } })
+    fireEvent.click(screen.getByRole('button', { name: /Sign in/ }))
+
+    // The QR + code field appear; not signed in yet.
+    const codeField = await screen.findByLabelText('6-digit code')
+    await waitFor(() => expect(enrollBegin).toHaveBeenCalled())
+    expect(screen.getByText(/JBSWY3DPEHPK3PXP/)).toBeTruthy()
+    expect(onSignedIn).not.toHaveBeenCalled()
+
+    // Confirm the code → recovery codes shown, still on the login screen.
+    fireEvent.change(codeField, { target: { value: '123456' } })
+    fireEvent.click(screen.getByRole('button', { name: /Confirm/ }))
+    await screen.findByText(/save your recovery codes/i)
+    expect(screen.getByText('aaaa-bbbb')).toBeTruthy()
+    expect(onSignedIn).not.toHaveBeenCalled() // not until "Continue"
+
+    // Continue → enter the app.
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }))
+    await waitFor(() => expect(onSignedIn).toHaveBeenCalled())
   })
 })

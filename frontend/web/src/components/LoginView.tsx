@@ -78,8 +78,9 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
     if (message) {
       setError(message)
       setPassword('')
-    } else if (useStore.getState().mfaPending) {
-      // Password ok — the two-factor code step renders next; don't sign in yet.
+    } else if (useStore.getState().mfaPending || useStore.getState().mfaSetupPending) {
+      // Password ok — a second factor is needed (code step) or must be set up first
+      // (mandatory enrolment). Either way, don't sign in yet; that step renders next.
     } else {
       onSignedIn()
     }
@@ -116,6 +117,72 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
     setError(null)
   }
 
+  // Mandatory 2FA enrolment (2FA required for this account but not yet configured).
+  const [setupData, setSetupData] = useState<{
+    secret: string
+    otpauthUri: string
+    qrSvg: string
+  } | null>(null)
+  const [setupCode, setSetupCode] = useState('')
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
+
+  useEffect(() => {
+    if (!store.mfaSetupPending || setupData || recoveryCodes) return
+    let cancelled = false
+    store
+      .enrollMfaBegin()
+      .then((d) => !cancelled && setSetupData(d))
+      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store.mfaSetupPending])
+
+  const confirmSetup = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!setupCode.trim() || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const codes = await store.enrollMfaFinish(setupCode.trim())
+      setRecoveryCodes(codes)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setSetupCode('')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const continueAfterSetup = () => {
+    store.finishMfaSetup()
+    onSignedIn()
+  }
+  const cancelSetup = () => {
+    store.cancelMfa()
+    setSetupData(null)
+    setSetupCode('')
+    setRecoveryCodes(null)
+    setPassword('')
+    setError(null)
+  }
+
+  const onFormSubmit = store.mfaSetupPending
+    ? recoveryCodes
+      ? (e: React.FormEvent) => {
+          e.preventDefault()
+          continueAfterSetup()
+        }
+      : confirmSetup
+    : store.mfaPending
+      ? verifyMfa
+      : submit
+  const caption = store.mfaSetupPending
+    ? 'Set up two-factor to continue'
+    : store.mfaPending
+      ? 'Enter your authentication code'
+      : 'Sign in to continue'
+
   return (
     <div
       className="scrim"
@@ -124,16 +191,14 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
       <form
         className={`splash${appearance?.type === 'image' ? ' over-image' : ''}`}
         style={{ gap: 16, cursor: 'default' }}
-        onSubmit={store.mfaPending ? verifyMfa : submit}
+        onSubmit={onFormSubmit}
       >
         <div className="brand-logo" style={{ width: 64, height: 64 }}>
           <Logo />
         </div>
         <div className="col" style={{ gap: 2, alignItems: 'center' }}>
           <span className="t-title3">Process Mining Demonstrator</span>
-          <span className="t-caption fg-secondary">
-            {store.mfaPending ? 'Enter your authentication code' : 'Sign in to continue'}
-          </span>
+          <span className="t-caption fg-secondary">{caption}</span>
         </div>
 
         {demoSeconds !== null && (
@@ -192,7 +257,120 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
           </div>
         )}
 
-        {store.mfaPending ? (
+        {store.mfaSetupPending ? (
+          <>
+            {recoveryCodes ? (
+              // Enrolled — show the one-time recovery codes, then enter the app.
+              <div className="col" style={{ gap: 10, width: '100%' }}>
+                <span className="t-caption" style={{ fontWeight: 600, textAlign: 'center' }}>
+                  Two-factor is on — save your recovery codes
+                </span>
+                <span className="t-caption2 fg-secondary" style={{ textAlign: 'center' }}>
+                  Each works once if you lose your authenticator. They won’t be shown again.
+                </span>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: 6,
+                    padding: '10px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--bg-fill)',
+                    fontFamily: 'var(--font-mono, monospace)',
+                    fontSize: 13,
+                  }}
+                >
+                  {recoveryCodes.map((c) => (
+                    <span key={c}>{c}</span>
+                  ))}
+                </div>
+                <div className="row" style={{ gap: 8, width: '100%' }}>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => void navigator.clipboard?.writeText(recoveryCodes.join('\n'))}
+                    style={{ padding: '10px 12px', fontSize: 15, whiteSpace: 'nowrap' }}
+                  >
+                    Copy codes
+                  </button>
+                  <button
+                    className="btn prominent"
+                    type="submit"
+                    style={{ flex: 1, padding: '10px', fontSize: 15 }}
+                  >
+                    Continue
+                  </button>
+                </div>
+              </div>
+            ) : setupData ? (
+              // Show the QR + confirm a code to complete mandatory enrolment.
+              <>
+                <span className="t-caption fg-secondary" style={{ textAlign: 'center' }}>
+                  Two-factor is required for your account. Scan this with an authenticator
+                  app (Google Authenticator, 1Password…), then enter the 6-digit code.
+                </span>
+                <div
+                  style={{
+                    alignSelf: 'center',
+                    width: 168,
+                    height: 168,
+                    background: '#fff',
+                    padding: 8,
+                    borderRadius: 8,
+                  }}
+                  // The QR SVG is generated by our own server from the enrolment URI.
+                  dangerouslySetInnerHTML={{ __html: setupData.qrSvg }}
+                />
+                <span
+                  className="t-caption2 fg-tertiary"
+                  style={{ textAlign: 'center', wordBreak: 'break-all' }}
+                >
+                  Can’t scan? Key: <strong>{setupData.secret}</strong>
+                </span>
+                <div className="field" style={{ width: '100%' }}>
+                  <label className="field-label" htmlFor="login-setup-code">
+                    6-digit code
+                  </label>
+                  <input
+                    id="login-setup-code"
+                    className="text-input"
+                    value={setupCode}
+                    autoFocus
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    placeholder="123456"
+                    onChange={(e) => setSetupCode(e.target.value)}
+                  />
+                </div>
+                <div className="row" style={{ gap: 8, width: '100%' }}>
+                  <button
+                    className="btn prominent"
+                    type="submit"
+                    disabled={busy || !setupCode.trim()}
+                    style={{ flex: 1, padding: '10px', fontSize: 15 }}
+                  >
+                    {busy && <Spinner />} Confirm &amp; sign in
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    disabled={busy}
+                    onClick={cancelSetup}
+                    style={{ padding: '10px 12px', fontSize: 15, whiteSpace: 'nowrap' }}
+                  >
+                    Back
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="row" style={{ gap: 8, justifyContent: 'center' }}>
+                <Spinner /> <span className="t-caption fg-secondary">Preparing…</span>
+              </div>
+            )}
+          </>
+        ) : store.mfaPending ? (
           <>
             <div className="field" style={{ width: '100%' }}>
               <label className="field-label" htmlFor="login-code">
@@ -291,7 +469,7 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
           </>
         )}
 
-        {!store.mfaPending && directory?.configured && (
+        {!store.mfaPending && !store.mfaSetupPending && directory?.configured && (
           <div
             className="row"
             style={{ gap: 6, alignItems: 'center', alignSelf: 'center' }}

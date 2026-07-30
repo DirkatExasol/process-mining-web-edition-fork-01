@@ -627,3 +627,72 @@ def test_mfa_disable_is_ip_throttled(gui):
     assert client.post(
         "/auth/mfa/disable", json={"code": pyotp.TOTP(secret).now()}).status_code == 429
     assert store.get_user("alice").mfa_enabled is True
+
+
+# ── Mandatory 2FA enrolment (enabled but not configured) ─────────────────────
+
+
+def test_login_forces_2fa_setup_when_required(gui):
+    # 2FA allowed for the user but never configured → the password alone must NOT
+    # sign them in; they're told to set it up, and no session is issued.
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    store.set_mfa_allowed("alice", True)  # allowed, but no secret enrolled
+    client = TestClient(server.app)
+
+    r = client.post("/auth/login", json={"username": "alice", "password": "pw"})
+    assert r.status_code == 200
+    assert r.json() == {"mfaSetupRequired": True, "username": "alice"}
+    assert server.SESSION_COOKIE not in client.cookies
+    assert client.get("/api/projects").status_code == 401  # still gated
+
+
+def test_mfa_enroll_flow_signs_in_and_enables_2fa(gui):
+    import pyotp
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    store.set_mfa_allowed("alice", True)
+    client = TestClient(server.app)
+    client.post("/auth/login", json={"username": "alice", "password": "pw"})
+
+    begin = client.post("/auth/mfa/enroll/begin")
+    assert begin.status_code == 200
+    secret = begin.json()["secret"]
+    assert begin.json()["otpauthUri"].startswith("otpauth://") and begin.json()["qrSvg"]
+
+    # A wrong code doesn't enrol or sign in.
+    assert client.post("/auth/mfa/enroll/finish", json={"code": "000000"}).status_code == 400
+    assert store.get_user("alice").mfa_enabled is False
+    assert server.SESSION_COOKIE not in client.cookies
+
+    fin = client.post("/auth/mfa/enroll/finish", json={"code": pyotp.TOTP(secret).now()})
+    assert fin.status_code == 200
+    body = fin.json()
+    assert body["username"] == "alice" and body["mfaEnabled"] is True
+    assert len(body["recoveryCodes"]) == 10
+    assert server.SESSION_COOKIE in client.cookies
+    assert store.get_user("alice").mfa_enabled is True
+    assert client.get("/api/projects").status_code == 200  # now signed in
+
+
+def test_mfa_enroll_endpoints_require_the_pending_cookie(gui):
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    store.set_mfa_allowed("alice", True)
+    client = TestClient(server.app)  # never did the password step
+    assert client.post("/auth/mfa/enroll/begin").status_code == 401
+    assert client.post("/auth/mfa/enroll/finish", json={"code": "000000"}).status_code == 401
+
+
+def test_mfa_enroll_denied_once_already_enrolled(gui):
+    # An already-enrolled user goes through the code step, not the setup step.
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    store.set_mfa_allowed("alice", True)
+    import app.services.mfa as mfa
+    store.set_totp_secret("alice", mfa.new_secret())
+    client = TestClient(server.app)
+    r = client.post("/auth/login", json={"username": "alice", "password": "pw"})
+    assert r.json() == {"mfaRequired": True, "username": "alice"}  # not setup-required
+    # The enroll endpoints refuse when setup isn't required.
+    assert client.post("/auth/mfa/enroll/begin").status_code == 401
