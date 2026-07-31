@@ -655,3 +655,28 @@ def test_load_meta_values_multi_rejects_unknown_columns():
     out = asyncio.run(r.load_meta_values_multi("proj", ["META_1; DROP", "META_2"]))
     assert "META_1; DROP" not in out
     assert set(out) == {"META_2"}
+
+
+# ── Duration buckets: single JOURNEYS scan (was a self-join scanning twice) ───
+
+
+def test_duration_buckets_scans_journeys_once_via_window_functions():
+    from app.models import FilterSpec as _FS
+    # rows shaped (bin_idx, cnt, min_dur, max_dur)
+    rows = [[0, 3, 0.0, 100.0], [1, 5, 0.0, 100.0], [9, 2, 0.0, 100.0]]
+    r, mgr = _cap_repo(rows)
+    buckets = asyncio.run(r.load_duration_buckets("proj", _FS(), bin_count=10))
+    sql = mgr.executed[0]
+    # JOURNEYS is aggregated once; the global min/max come from window aggregates.
+    assert sql.count("FROM JOURNEYS") == 1
+    assert "MIN(dur) OVER ()" in sql and "MAX(dur) OVER ()" in sql
+    assert "GROUP BY EVENT_ID" in sql
+    # Same output shape: one labelled bucket per returned bin.
+    assert [b.count for b in buckets] == [3, 5, 2]
+    assert all("–" in b.label for b in buckets)
+
+
+def test_duration_buckets_empty_returns_no_buckets():
+    from app.models import FilterSpec as _FS
+    r, mgr = _cap_repo([])
+    assert asyncio.run(r.load_duration_buckets("proj", _FS())) == []

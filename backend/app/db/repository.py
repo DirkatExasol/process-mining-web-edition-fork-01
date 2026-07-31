@@ -757,31 +757,30 @@ class ProcessRepository:
         filters = self._all_filters(project_id, f, date_only=True)
         safe = esc(project_id)
         n = bin_count
+        # Per-journey durations are computed ONCE; the global min/max come from
+        # window aggregates over that same result (MIN/MAX OVER ()), so JOURNEYS is
+        # scanned a single time — the previous self-join aggregated it twice.
         sql = f"""
             SELECT bin_idx, COUNT(*) AS cnt, MIN(min_dur) AS min_dur, MIN(max_dur) AS max_dur
             FROM (
                 SELECT
                     CASE
-                        WHEN r.max_dur = r.min_dur THEN 0
-                        ELSE LEAST(FLOOR((d.dur - r.min_dur) / (r.max_dur - r.min_dur) * {n}), {n - 1})
+                        WHEN mx = mn THEN 0
+                        ELSE LEAST(FLOOR((dur - mn) / (mx - mn) * {n}), {n - 1})
                     END AS bin_idx,
-                    r.min_dur,
-                    r.max_dur
+                    mn AS min_dur,
+                    mx AS max_dur
                 FROM (
-                    SELECT EVENT_ID, SECONDS_BETWEEN(MAX(EVENT_TIME), MIN(EVENT_TIME)) AS dur
-                    FROM JOURNEYS
-                    WHERE PROJECT_ID = '{safe}'{filters}
-                    GROUP BY EVENT_ID
-                ) d,
-                (
-                    SELECT MIN(dur) AS min_dur, MAX(dur) AS max_dur
+                    SELECT dur,
+                           MIN(dur) OVER () AS mn,
+                           MAX(dur) OVER () AS mx
                     FROM (
-                        SELECT EVENT_ID, SECONDS_BETWEEN(MAX(EVENT_TIME), MIN(EVENT_TIME)) AS dur
+                        SELECT SECONDS_BETWEEN(MAX(EVENT_TIME), MIN(EVENT_TIME)) AS dur
                         FROM JOURNEYS
                         WHERE PROJECT_ID = '{safe}'{filters}
                         GROUP BY EVENT_ID
-                    ) d2
-                ) r
+                    ) d
+                ) w
             ) binned
             GROUP BY bin_idx
             ORDER BY bin_idx
