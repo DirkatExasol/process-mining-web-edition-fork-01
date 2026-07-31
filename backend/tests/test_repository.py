@@ -193,6 +193,13 @@ class _CapturingManager:
     def __init__(self, rows=()):
         self.executed: list[str] = []
         self._rows = list(rows)
+        self._steps_cache: dict = {}  # mirrors DatabaseManager for the STEPS cache
+
+    def invalidate_steps(self, project_id=None):
+        if project_id is None:
+            self._steps_cache.clear()
+        else:
+            self._steps_cache.pop(project_id, None)
 
     async def execute(self, sql, *a, **k):
         self.executed.append(sql)
@@ -550,3 +557,48 @@ def test_friendly_error_hides_raw_driver_text_without_detail():
     # Categorised guidance survives without echoing the raw text.
     auth = friendly_error(RuntimeError("authentication failed for secret-user"), detail=False)
     assert "Authentication failed" in auth and "secret-user" not in auth
+
+
+# ── STEPS cache (perf: one round trip per session, not per map reload) ────────
+
+_STEP_ROW = ["A", "descA", "blue", "white", 5, "stadium", False, None]
+
+
+def _step_selects(mgr):
+    return [s for s in mgr.executed if "FROM STEPS" in s and "SELECT STEP" in s]
+
+
+def test_load_steps_is_cached_after_first_read():
+    r, mgr = _cap_repo([_STEP_ROW])
+    first = asyncio.run(r.load_steps("proj"))
+    second = asyncio.run(r.load_steps("proj"))
+    assert set(first) == set(second) == {"A"}
+    assert len(_step_selects(mgr)) == 1  # second call served from cache
+
+
+def test_load_steps_returns_a_copy_so_callers_cannot_poison_the_cache():
+    r, mgr = _cap_repo([_STEP_ROW])
+    d = asyncio.run(r.load_steps("proj"))
+    d.clear()  # mutate the returned dict
+    again = asyncio.run(r.load_steps("proj"))
+    assert set(again) == {"A"}                 # cache intact
+    assert len(_step_selects(mgr)) == 1         # still no re-read
+
+
+def test_update_step_invalidates_the_cache():
+    r, mgr = _cap_repo([_STEP_ROW])
+    asyncio.run(r.load_steps("proj"))
+    asyncio.run(r.update_step(
+        "proj", "A", bg_color="red", fg_color="white", score=1,
+        shape="stadium", belongs_to=None, description=None))
+    asyncio.run(r.load_steps("proj"))
+    assert len(_step_selects(mgr)) == 2         # re-read after the update
+
+
+def test_steps_cache_is_keyed_per_project():
+    r, mgr = _cap_repo([_STEP_ROW])
+    asyncio.run(r.load_steps("proj-1"))
+    asyncio.run(r.load_steps("proj-2"))         # different project → its own read
+    assert len(_step_selects(mgr)) == 2
+    asyncio.run(r.load_steps("proj-1"))         # cached
+    assert len(_step_selects(mgr)) == 2

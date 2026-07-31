@@ -312,6 +312,12 @@ class ProcessRepository:
         return projects
 
     async def load_steps(self, project_id: str) -> dict[str, StepInfo]:
+        # STEPS is tiny and near-static but read on every map reload / journey view;
+        # serve it from the per-user manager cache to save a serialised DB round trip.
+        # The cache is invalidated by update_step and cleared on (dis)connect.
+        cached = self.db._steps_cache.get(project_id)
+        if cached is not None:
+            return dict(cached)  # shallow copy so callers can't mutate the cache
         result = await self.db.execute(
             f"""
             SELECT STEP, DESCRIPTION, BG_COLOR, FG_COLOR, SCORE, SHAPE, END_OF_PROCESS, BELONGS_TO
@@ -335,7 +341,8 @@ class ProcessRepository:
                 endOfProcess=as_bool(row[6]),
                 belongsTo=row[7] if len(row) > 7 and isinstance(row[7], str) else None,
             )
-        return steps
+        self.db._steps_cache[project_id] = steps
+        return dict(steps)
 
     async def update_step(
         self,
@@ -371,6 +378,9 @@ class ProcessRepository:
             AND STEP = '{esc(step)}'
             """
         )
+        # A step's colour/score/shape just changed — drop the cache so the next
+        # load_steps re-reads (the update-step endpoint reloads immediately after).
+        self.db.invalidate_steps(project_id)
 
     async def load_meta_titles(self, project_id: str) -> tuple[str | None, str | None, str | None]:
         result = await self.db.execute(

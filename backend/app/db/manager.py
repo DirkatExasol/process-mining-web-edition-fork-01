@@ -79,6 +79,19 @@ class DatabaseManager:
         # Whether the active connection opts into reading transitions from the
         # pre-materialised TRANSITIONS_RAW table (ProcessRepository reads this).
         self.use_materialized_transitions = False
+        # Per-user cache of the (tiny, near-static) STEPS table, keyed by project id.
+        # STEPS is read on every map reload / journey view; it only changes via
+        # update_step (which invalidates it) and per connection (cleared on connect/
+        # disconnect below). Lives here — not on ProcessRepository — because the repo
+        # is recreated per request while this manager persists for the user's session.
+        self._steps_cache: dict[str, Any] = {}
+
+    def invalidate_steps(self, project_id: str | None = None) -> None:
+        """Drop the cached STEPS for one project, or all of them (None)."""
+        if project_id is None:
+            self._steps_cache.clear()
+        else:
+            self._steps_cache.pop(project_id, None)
 
     # ── persisted definitions ────────────────────────────────────────────────
 
@@ -326,6 +339,9 @@ class DatabaseManager:
                 self._active_db_server = None
                 self._active_llm_server = None
                 self.use_materialized_transitions = False
+                # A different connection may have different STEPS for the same
+                # project id — never carry the cache across connections.
+                self._steps_cache.clear()
             if conn is not None:
                 conn.close()
 

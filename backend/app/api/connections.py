@@ -290,7 +290,7 @@ async def generate_demo_content(body: DemoContentBody, request: Request) -> dict
     _require_power(request)
     from ..db.demo_data import generate_demo_content as _generate
 
-    return await _generate(
+    result = await _generate(
         dataset=body.dataset,
         host=body.host,
         port=body.port,
@@ -303,6 +303,10 @@ async def generate_demo_content(body: DemoContentBody, request: Request) -> dict
         fingerprint=body.fingerprint,
         min_rsa_bits=body.minRSAKeySizeBits,
     )
+    # Demo generation writes STEPS on a throwaway connection; if the caller's active
+    # connection already cached that project's steps, drop it so a reload re-reads.
+    current_db().invalidate_steps()
+    return result
 
 
 # ── connect / disconnect / status ────────────────────────────────────────────
