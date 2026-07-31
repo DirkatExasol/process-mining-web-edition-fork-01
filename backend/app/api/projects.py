@@ -113,21 +113,27 @@ async def bootstrap(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    min_date, max_date = await r.load_date_bounds(project_id)
+    # All four filter-slider ranges (date / step-count / journey-time / score) in
+    # one scan instead of four separate round trips (they serialise on the single
+    # per-user connection).
+    b = await r.load_project_bounds(project_id)
+    min_date, max_date = b.date_min, b.date_max
     initial_to = max_date
     initial_from = (max_date - timedelta(days=30)) if max_date else None
-
-    step_min, step_max = await r.load_step_count_bounds(project_id)
-    time_min, time_max = await r.load_journey_time_bounds(project_id)
-    score_min, score_max = await r.load_score_bounds(project_id)
+    step_min, step_max = b.step_min, b.step_max
+    time_min, time_max = b.time_min, b.time_max
+    score_min, score_max = b.score_min, b.score_max
 
     all_steps = await r.load_all_step_names(project_id)
     all_step_infos = await r.load_steps(project_id)
 
     t1, t2, t3 = await r.load_meta_titles(project_id)
-    meta1 = await r.load_meta_values(project_id, "META_1") if t1 else []
-    meta2 = await r.load_meta_values(project_id, "META_2") if t2 else []
-    meta3 = await r.load_meta_values(project_id, "META_3") if t3 else []
+    # DISTINCT values for the configured META columns in one round trip, not up to 3.
+    wanted = [c for c, t in (("META_1", t1), ("META_2", t2), ("META_3", t3)) if t]
+    meta_vals = await r.load_meta_values_multi(project_id, wanted)
+    meta1 = meta_vals.get("META_1", [])
+    meta2 = meta_vals.get("META_2", [])
+    meta3 = meta_vals.get("META_3", [])
 
     await r.ensure_sample_set_column()
     sample_counts = await r.load_sample_journey_counts(project_id)

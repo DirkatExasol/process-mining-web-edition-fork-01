@@ -602,3 +602,56 @@ def test_steps_cache_is_keyed_per_project():
     assert len(_step_selects(mgr)) == 2
     asyncio.run(r.load_steps("proj-1"))         # cached
     assert len(_step_selects(mgr)) == 2
+
+
+# ── Merged bootstrap queries (perf: fewer serialised round trips) ─────────────
+
+
+def test_load_project_bounds_is_a_single_scan_with_all_four_ranges():
+    # One query returns date + step-count + journey-time + score ranges.
+    rows = [["2024-01-01 00:00:00", "2024-02-01 00:00:00", 2, 9, 30, 600, -4, 20]]
+    r, mgr = _cap_repo(rows)
+    b = asyncio.run(r.load_project_bounds("proj"))
+    assert len(mgr.executed) == 1                       # ONE round trip
+    sql = mgr.executed[0]
+    assert "LEFT JOIN STEPS s" in sql and "GROUP BY j.EVENT_ID" in sql
+    assert "SECONDS_BETWEEN" in sql and "SUM(COALESCE(s.SCORE, 0))" in sql
+    assert (b.date_min, b.date_max) == (datetime(2024, 1, 1), datetime(2024, 2, 1))
+    assert (b.step_min, b.step_max) == (2, 9)
+    assert (b.time_min, b.time_max) == (30, 600)
+    assert (b.score_min, b.score_max) == (-4, 20)
+
+
+def test_load_project_bounds_empty_project_uses_the_same_defaults():
+    # An empty project → one row of NULLs → the same defaults as the split methods.
+    r, mgr = _cap_repo([[None] * 8])
+    b = asyncio.run(r.load_project_bounds("proj"))
+    assert b.date_min is None and b.date_max is None
+    assert (b.step_min, b.step_max) == (1, 1)
+    assert (b.time_min, b.time_max) == (0, 0)
+    assert (b.score_min, b.score_max) == (0, 0)
+
+
+def test_load_meta_values_multi_one_round_trip_grouped_by_column():
+    rows = [["META_1", "a"], ["META_1", "b"], ["META_3", "z"]]
+    r, mgr = _cap_repo(rows)
+    out = asyncio.run(r.load_meta_values_multi("proj", ["META_1", "META_3"]))
+    assert len(mgr.executed) == 1                       # ONE round trip
+    sql = mgr.executed[0]
+    assert sql.count("UNION ALL") == 1                  # two branches, one union
+    assert "META_2" not in sql                          # only requested columns
+    assert out == {"META_1": ["a", "b"], "META_3": ["z"]}
+
+
+def test_load_meta_values_multi_no_columns_makes_no_query():
+    r, mgr = _cap_repo()
+    out = asyncio.run(r.load_meta_values_multi("proj", []))
+    assert out == {} and mgr.executed == []             # nothing configured → no SQL
+
+
+def test_load_meta_values_multi_rejects_unknown_columns():
+    r, mgr = _cap_repo()
+    # An unsupported column name is dropped (never interpolated into SQL).
+    out = asyncio.run(r.load_meta_values_multi("proj", ["META_1; DROP", "META_2"]))
+    assert "META_1; DROP" not in out
+    assert set(out) == {"META_2"}

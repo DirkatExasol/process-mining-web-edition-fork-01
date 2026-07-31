@@ -11,7 +11,7 @@ import json
 import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Iterable
+from typing import Any, Iterable, NamedTuple
 
 from .. import log_events as logx
 from ..config import QUERY_TIMEOUT_SECS
@@ -45,6 +45,18 @@ _DATE_FORMATS = ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d")
 # result set (the query timeout bounds runtime, not the rows materialised/serialised).
 _MAX_PATH_ROWS = 10_000  # variant / route path listings
 _MAX_SUGGESTIONS = 100  # event-ID autocomplete
+
+
+class ProjectBounds(NamedTuple):
+    """Whole-project filter-slider ranges, all computed in one scan."""
+    date_min: datetime | None
+    date_max: datetime | None
+    step_min: int
+    step_max: int
+    time_min: int
+    time_max: int
+    score_min: int
+    score_max: int
 
 
 def _clamp(value: int, low: int, high: int) -> int:
@@ -487,6 +499,69 @@ class ProcessRepository:
             return (0, 0)
         row = result.rows[0]
         return (as_int(row[0]), as_int(row[1]))
+
+    async def load_project_bounds(self, project_id: str) -> "ProjectBounds":
+        """All four whole-project filter-slider ranges — date, step-count, journey-
+        time and score — in ONE scan instead of four separate queries. Values and
+        empty-project defaults match the individual load_*_bounds methods above.
+
+        Relies on the same assumption load_score_bounds already does: STEPS holds one
+        row per (PROJECT_ID, STEP), so the LEFT JOIN never multiplies journey rows —
+        COUNT(*) and MIN/MAX(EVENT_TIME) per journey stay identical to the un-joined
+        queries, and SUM(score) is the journey score."""
+        frag = self.active_sample_set.sql_fragment("j")
+        result = await self.db.execute(
+            f"""
+            SELECT MIN(min_time), MAX(max_time),
+                   MIN(cnt),      MAX(cnt),
+                   MIN(dur),      MAX(dur),
+                   MIN(jscore),   MAX(jscore)
+            FROM (
+                SELECT j.EVENT_ID,
+                       MIN(j.EVENT_TIME) AS min_time,
+                       MAX(j.EVENT_TIME) AS max_time,
+                       COUNT(*)          AS cnt,
+                       SECONDS_BETWEEN(MAX(j.EVENT_TIME), MIN(j.EVENT_TIME)) AS dur,
+                       SUM(COALESCE(s.SCORE, 0)) AS jscore
+                FROM JOURNEYS j
+                LEFT JOIN STEPS s ON j.STEP = s.STEP AND j.PROJECT_ID = s.PROJECT_ID
+                WHERE j.PROJECT_ID = '{esc(project_id)}'
+                AND {frag}
+                GROUP BY j.EVENT_ID
+            ) AS jb
+            """
+        )
+        row = result.rows[0] if result.rows else [None] * 8
+        return ProjectBounds(
+            date_min=parse_date(row[0]), date_max=parse_date(row[1]),
+            step_min=as_int(row[2], 1), step_max=as_int(row[3], 1),
+            time_min=max(0, as_int(row[4])), time_max=max(0, as_int(row[5])),
+            score_min=as_int(row[6]), score_max=as_int(row[7]),
+        )
+
+    async def load_meta_values_multi(
+        self, project_id: str, columns: list[str]
+    ) -> dict[str, list[str]]:
+        """DISTINCT values for several META columns in ONE round trip (UNION ALL,
+        tagged by column). Each list is sorted, matching load_meta_values."""
+        cols = [c for c in columns if c in {"META_1", "META_2", "META_3"}]
+        out: dict[str, list[str]] = {c: [] for c in cols}
+        if not cols:
+            return out
+        safe = esc(project_id)
+        frag = self.active_sample_set.sql_fragment()
+        parts = [
+            f"SELECT '{c}' AS col, {c} AS val FROM JOURNEYS "
+            f"WHERE PROJECT_ID = '{safe}' AND {frag} AND {c} IS NOT NULL GROUP BY {c}"
+            for c in cols
+        ]
+        sql = " UNION ALL ".join(parts) + " ORDER BY col, val"
+        result = await self.db.execute(sql)
+        for row in result.rows:
+            col, val = row[0], row[1]
+            if isinstance(col, str) and col in out and isinstance(val, str):
+                out[col].append(val)
+        return out
 
     async def find_nearest_day_with_data(
         self, day: datetime, project_id: str
