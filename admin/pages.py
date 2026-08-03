@@ -75,6 +75,7 @@ _THEME_BOOT = (
 )
 
 _STYLE = """
+#lbg_preview.drag-over { outline: 2px dashed var(--accent, #0a84ff); outline-offset: -6px; }
 :root {
   /* Light is the default; the dark palette (below) mirrors the previous look and is
      applied via data-theme, matching the main app's theme mechanism. */
@@ -1136,14 +1137,17 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       </div>
       <label class="row" style="font-size:14px; cursor:pointer"><input type="radio" name="loginBg" value="image" id="lbg_image" style="width:auto" onchange="onLoginBgType()"> Background image</label>
       <div class="col" id="lbg_imageRow" style="gap:8px; padding-left:26px; display:none">
-        <input type="file" id="lbg_imageFile" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" onchange="pickLoginImage()">
-        <p class="subtle" style="margin:0">PNG, JPEG, GIF, WebP or SVG, up to ~3&nbsp;MB. The image is scaled to cover the page.</p>
+        <!-- No accept filter: a stray MIME token (svg+xml/webp) makes Safari's
+             picker disable the confirm button for every file. We validate + re-encode
+             the chosen file ourselves, and the server whitelists the final format. -->
+        <input type="file" id="lbg_imageFile" onchange="pickLoginImage()">
+        <p class="subtle" style="margin:0">PNG, JPEG, GIF, WebP or SVG — or just <strong>drag an image onto the preview below</strong>. Large photos are automatically scaled down; the image is then stretched to cover the page.</p>
       </div>
     </div>
 
     <div style="margin-top:16px">
       <div class="subtle" style="margin-bottom:6px">Preview</div>
-      <div id="lbg_preview" style="width:100%; max-width:520px; height:150px; border-radius:10px; border:1px solid var(--border-soft); background:var(--bg); display:grid; place-items:center">
+      <div id="lbg_preview" title="Drag an image here to use it as the background" ondragover="dragOverLoginImage(event)" ondragleave="dragLeaveLoginImage(event)" ondrop="dropLoginImage(event)" style="width:100%; max-width:520px; height:150px; border-radius:10px; border:1px solid var(--border-soft); background:var(--bg); display:grid; place-items:center">
         <div style="padding:10px 16px; border-radius:10px; background:rgba(255,255,255,.82); color:#000; font-size:13px; box-shadow:0 6px 20px rgba(0,0,0,.18)">Sign in</div>
       </div>
     </div>
@@ -1655,14 +1659,61 @@ function syncLoginColor(from) {
   updateLoginPreview();
 }
 
-function pickLoginImage() {
-  const f = $('lbg_imageFile').files[0];
+function pickLoginImage() { processLoginImageFile($('lbg_imageFile').files[0]); }
+
+// Accept a file from either the file picker or a drag-and-drop onto the preview.
+function processLoginImageFile(f) {
   if (!f) return;
-  if (f.size > 3 * 1024 * 1024) { toast('Image is too large (max ~3 MB)', true); $('lbg_imageFile').value = ''; return; }
-  const r = new FileReader();
-  r.onload = () => { _loginImage = r.result; updateLoginPreview(); };
-  r.onerror = () => toast('Could not read the image', true);
-  r.readAsDataURL(f);
+  if (f.size > 30 * 1024 * 1024) { toast('Image file is too large (max 30 MB)', true); $('lbg_imageFile').value = ''; return; }
+  const setImg = (uri) => { _loginImage = uri; document.getElementById('lbg_image').checked = true; updateLoginPreview(); toast('Image ready — click Save to store it'); };
+  // SVG is vector (and may be animated) — keep it as-is. Every raster format is
+  // drawn to a canvas, scaled down to a sensible size and re-encoded, so any photo
+  // — however large the original file — ends up well within the stored-image cap.
+  if (f.type === 'image/svg+xml' || /\.svg$/i.test(f.name || '')) {
+    const r = new FileReader();
+    r.onload = () => setImg(r.result);
+    r.onerror = () => toast('Could not read the image', true);
+    r.readAsDataURL(f);
+    return;
+  }
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    const MAX = 2560;  // long-edge cap — ample for a full-screen backdrop
+    const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    // Prefer WebP (smaller, keeps transparency); fall back to JPEG if unsupported.
+    let uri = canvas.toDataURL('image/webp', 0.85);
+    if (uri.indexOf('data:image/webp') !== 0) uri = canvas.toDataURL('image/jpeg', 0.85);
+    if (uri.length > 4000000) uri = canvas.toDataURL('image/jpeg', 0.7);  // last resort
+    setImg(uri);
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); toast('Could not read the image', true); };
+  img.src = url;
+}
+
+// Drag-and-drop onto the preview box — a reliable path that never touches the OS
+// file-picker's confirm button. Drop an image from Finder straight onto the preview.
+function dropLoginImage(e) {
+  e.preventDefault();
+  const box = document.getElementById('lbg_preview');
+  if (box) box.classList.remove('drag-over');
+  const f = (e.dataTransfer && e.dataTransfer.files || [])[0];
+  processLoginImageFile(f);
+}
+function dragOverLoginImage(e) {
+  e.preventDefault();
+  const box = document.getElementById('lbg_preview');
+  if (box) box.classList.add('drag-over');
+}
+function dragLeaveLoginImage(e) {
+  const box = document.getElementById('lbg_preview');
+  if (box) box.classList.remove('drag-over');
 }
 
 function updateLoginPreview() {
@@ -2740,7 +2791,7 @@ const ADMIN_HELP = [
     <div class="note warn">Including secrets without an encryption password writes them in plain text &mdash; always set a password when the backup contains secrets. The automatic-backup password is stored (encrypted) on the server; keep a copy safe, as backups can only be restored with it.</div>` },
   { id: 'customize', icon: '🎨', title: 'Customize', html: `
     <h2>Customize</h2>
-    <p>Set the login-page background for both sign-in pages (the app and this admin interface): keep the default theme colour, choose a solid colour, or upload a background image (PNG, JPEG, GIF, WebP or SVG, up to ~3 MB). A live preview shows the result before you save, and the choice applies to new sign-ins immediately.</p>
+    <p>Set the login-page background for both sign-in pages (the app and this admin interface): keep the default theme colour, choose a solid colour, or upload a background image (PNG, JPEG, GIF, WebP or SVG). Large photos are scaled down in the browser before upload, so even a multi-megapixel picture works; an SVG is kept as-is so it can stay animated. A live preview shows the result before you save, and the choice applies to new sign-ins immediately.</p>
     <p>Over a background image the login panel turns semi-transparent so the image shows through while the text and fields stay legible.</p>` },
   { id: 'license', icon: '🔑', title: 'License & Demo Mode', html: `
     <h2>License &amp; Demo Mode</h2>

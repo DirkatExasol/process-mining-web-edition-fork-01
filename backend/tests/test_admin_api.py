@@ -1128,6 +1128,32 @@ def test_customize_login_rejects_bad_color(admin):
     assert resp.status_code == 400
 
 
+def test_customize_login_accepts_a_3mb_image(admin):
+    # base64 inflates a 3 MB source image (the UI's file-size limit) to ~4.19 MB of
+    # characters; the server cap must clear that, or images the UI accepts fail to
+    # save (regression: the cap was 4.0 MB, rejecting anything over a ~2.86 MB file).
+    import base64
+    server, store = admin
+    client = _login(server)
+    # data URI whose length matches a 3 MB (3 * 1024 * 1024 B) source image.
+    body = b"\x89" * (3 * 1024 * 1024)
+    uri = "data:image/png;base64," + base64.b64encode(body).decode()
+    assert len(uri) > 4_000_000  # would have failed the old cap
+    resp = client.post("/api/customize/login", json={"type": "image", "image": uri})
+    assert resp.status_code == 200
+    assert store.login_appearance()["type"] == "image"
+
+
+def test_customize_login_rejects_an_oversized_image(admin):
+    import base64
+    server, _ = admin
+    client = _login(server)
+    body = b"\x89" * (4 * 1024 * 1024)  # ~5.6 MB of base64 → over the cap
+    uri = "data:image/png;base64," + base64.b64encode(body).decode()
+    resp = client.post("/api/customize/login", json={"type": "image", "image": uri})
+    assert resp.status_code == 400 and "too large" in resp.json()["detail"].lower()
+
+
 def test_login_page_uses_custom_background(admin):
     server, _ = admin
     client = _login(server)

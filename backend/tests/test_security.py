@@ -784,9 +784,9 @@ def test_login_appearance_rejects_bad_input(security):
         store.set_login_appearance(type="image", image="not-a-data-uri")
     with pytest.raises(ValueError):
         store.set_login_appearance(type="image", image="data:text/html;base64,AAAA")
-    with pytest.raises(ValueError):  # oversized
+    with pytest.raises(ValueError):  # oversized (over the ~4.4 MB data-URI cap)
         store.set_login_appearance(
-            type="image", image="data:image/png;base64," + "A" * 4_000_001
+            type="image", image="data:image/png;base64," + "A" * 4_400_001
         )
     # An image type with nothing ever uploaded is rejected too.
     with pytest.raises(ValueError):

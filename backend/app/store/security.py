@@ -74,8 +74,10 @@ _DATA_IMAGE_RE = re.compile(
     r"^data:image/(png|jpe?g|gif|webp|svg\+xml);base64,[A-Za-z0-9+/]+={0,2}$"
 )
 # Cap the stored data URI so a background image can't bloat the settings DB or a
-# backup export. ~4 MB of base64 ≈ a 3 MB source image — plenty for a backdrop.
-_MAX_LOGIN_IMAGE_CHARS = 4_000_000
+# backup export. base64 inflates the source by ~4/3, so a 3 MB source image (the
+# admin UI's file-size limit) becomes ~4.19 MB of characters; keep this above that
+# with headroom, otherwise images the UI accepts fail to save on the server.
+_MAX_LOGIN_IMAGE_CHARS = 4_400_000
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
