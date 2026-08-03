@@ -33,6 +33,31 @@ interface NormEditor {
   text: string
 }
 
+/** For the Count metric a norm is an edge's share of its source node's outgoing
+ *  flow, so the outgoing edges should total 100%. Summarise how much is already
+ *  assigned to the *other* outgoing edges and how much is left for this one. */
+export function outgoingNormSummary(
+  norms: Record<string, number>,
+  fromStep: string,
+  toStep: string,
+  typedText: string,
+): { assignedOthers: number; otherCount: number; remaining: number; total: number; over: boolean } {
+  const selfId = `${fromStep}->${toStep}`
+  let assignedOthers = 0
+  let otherCount = 0
+  for (const [k, v] of Object.entries(norms)) {
+    if (k.startsWith(`${fromStep}->`) && k !== selfId && typeof v === 'number') {
+      assignedOthers += v
+      otherCount += 1
+    }
+  }
+  const typed = Number(typedText.trim())
+  const current = typedText.trim() === '' || Number.isNaN(typed) ? 0 : typed
+  const total = assignedOthers + current
+  const remaining = Math.round((100 - assignedOthers) * 10) / 10
+  return { assignedOthers, otherCount, remaining, total, over: total > 100.05 }
+}
+
 export function ConformanceView() {
   const store = useStore()
   const [editMode, setEditMode] = useState(false)
@@ -255,6 +280,53 @@ export function ConformanceView() {
                       setEditor(null)
                     }}
                   />
+                  {/* Count norms are a share of the node's outgoing flow, so the
+                      outgoing edges should total 100% — show how much is left. */}
+                  {metric === 'Count' &&
+                    (() => {
+                      const from = editor.transition.fromStep
+                      const { assignedOthers, otherCount, remaining, total, over } =
+                        outgoingNormSummary(
+                          norms,
+                          from,
+                          editor.transition.toStep,
+                          editor.text,
+                        )
+                      const pct = (x: number) =>
+                        `${(Math.round(x * 10) / 10).toString()}%`
+                      return (
+                        <div
+                          className="t-caption2"
+                          style={{
+                            padding: '6px 8px',
+                            borderRadius: 6,
+                            border: `1px solid ${over ? 'var(--red)' : 'var(--separator)'}`,
+                            background: 'var(--bg-fill)',
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          {otherCount > 0 && (
+                            <div className="fg-tertiary">
+                              {pct(assignedOthers)} on {otherCount} other edge
+                              {otherCount === 1 ? '' : 's'} from “{from}”
+                            </div>
+                          )}
+                          <div>
+                            <strong
+                              style={{ color: over ? 'var(--red)' : 'var(--accent)' }}
+                            >
+                              {pct(Math.max(0, remaining))} remaining
+                            </strong>{' '}
+                            <span className="fg-tertiary">to reach 100%</span>
+                          </div>
+                          {over && (
+                            <div style={{ color: 'var(--red)' }}>
+                              Total would be {pct(total)} — over 100%
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
                   <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
                     <button
                       className="btn small destructive"

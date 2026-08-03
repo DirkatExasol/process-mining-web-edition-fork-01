@@ -1124,6 +1124,7 @@ const conformance: HelpTopic = {
       heading: 'Setting and reading norms',
       body: [
         p('Click “Edit norms”, then click an edge and type its target. In view mode each edge turns green or red depending on whether the actual value meets the norm; the “Norm is a minimum” toggle flips the comparison so the actual must be ≥ the norm instead of ≤.'),
+        tip('For the Count metric the editor shows a live “remaining %” as you type — how much is already assigned to the source node’s other outgoing edges and how much is left to reach 100 % — and warns in red if your value would push the node’s outgoing norms over 100 %.'),
         p('“Show gaps” opens the full gap-analysis table — from, to, actual, norm, delta and status — sorted with violations first. The gap analysis is also appended to the AI Documentation report.'),
         tip('Norms round-trip through Backup & Restore, so a target model built once can be shared or moved between installations.'),
       ],
