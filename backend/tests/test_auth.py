@@ -33,6 +33,12 @@ def gui(tmp_path, monkeypatch):
 
     importlib.reload(security_mod)
 
+    # The auth flow now lives in the shared surface factory; reload it (after the
+    # security/crypto/config reloads) so it binds to THIS test's store instance.
+    import app.web_surface as web_surface
+
+    importlib.reload(web_surface)
+
     # Load frontend/server.py as a module (it lives outside the app package).
     frontend_dir = Path(config.PROJECT_ROOT) / "frontend"
     sys.path.insert(0, str(frontend_dir))
@@ -51,7 +57,8 @@ def gui(tmp_path, monkeypatch):
         async def request(self, *args, **kwargs):
             return _StubResponse()
 
-    monkeypatch.setattr(server, "_get_client", lambda: _StubClient())
+    # The surface reaches the backend through this hook — stub the whole backend.
+    server.app.state.get_backend_client = lambda: _StubClient()
 
     return server, security_mod.store
 
@@ -59,16 +66,17 @@ def gui(tmp_path, monkeypatch):
 def test_backend_proxy_pins_the_internal_ca(gui, monkeypatch, tmp_path):
     """The GUI→backend hop is HTTPS and verified against the pinned internal CA;
     it falls back to system trust only when the pinned CA file is absent."""
-    server, _ = gui
-    assert server.BACKEND_URL.startswith("https://")  # encrypted hop
+    import app.web_surface as web_surface
+
+    assert web_surface.BACKEND_URL.startswith("https://")  # encrypted hop
 
     ca = tmp_path / "internal.crt"
     ca.write_text("x", encoding="utf-8")
-    monkeypatch.setattr(server, "BACKEND_CA_PATH", str(ca))
-    assert server._backend_verify() == str(ca)  # pinned
+    monkeypatch.setattr(web_surface, "BACKEND_CA_PATH", str(ca))
+    assert web_surface._backend_verify() == str(ca)  # pinned
 
-    monkeypatch.setattr(server, "BACKEND_CA_PATH", str(tmp_path / "missing.crt"))
-    assert server._backend_verify() is True  # system trust fallback
+    monkeypatch.setattr(web_surface, "BACKEND_CA_PATH", str(tmp_path / "missing.crt"))
+    assert web_surface._backend_verify() is True  # system trust fallback
 
 
 def test_health_is_open_even_when_login_required(gui):
@@ -96,6 +104,7 @@ def test_session_reports_unauthenticated_and_require_login(gui):
         "username": None,
         "isAdmin": False,
         "isPower": False,
+        "isDeveloper": False,
         "displayName": None,
         "authSource": None,
         "requireLogin": True,
@@ -234,9 +243,11 @@ def test_app_rejects_admin_audience_cookie(gui):
     app, even though both are signed with the same key and name a valid user."""
     import json as _json
 
+    import app.store.crypto as crypto
+
     server, store = gui
     epoch = store.session_epoch("Administrator")
-    forged = server.sign_session(
+    forged = crypto.sign_session(
         _json.dumps({"u": "Administrator", "e": epoch, "a": "admin"}).encode("utf-8")
     )
     client = TestClient(server.app)
@@ -546,7 +557,7 @@ def test_app_login_is_ip_throttled(gui):
     # told to wait (429), even for the exempt Administrator.
     server, _ = gui
     client = TestClient(server.app)
-    for _ in range(server._login_throttle.max_fails):
+    for _ in range(server.app.state.login_throttle.max_fails):
         r = client.post("/auth/login",
                         json={"username": "Administrator", "password": "nope"})
         assert r.status_code == 401
@@ -561,13 +572,13 @@ def test_app_login_is_ip_throttled(gui):
 def test_app_login_throttle_clears_on_success(gui):
     server, _ = gui
     client = TestClient(server.app)
-    for _ in range(server._login_throttle.max_fails - 1):  # stay below the threshold
+    for _ in range(server.app.state.login_throttle.max_fails - 1):  # stay below the threshold
         client.post("/auth/login", json={"username": "Administrator", "password": "nope"})
     ok = client.post(
         "/auth/login", json={"username": "Administrator", "password": "Administrator"})
     assert ok.status_code == 200  # (Administrator has no MFA here)
     # A fresh burst of failures is allowed — the counter was cleared on success.
-    for _ in range(server._login_throttle.max_fails - 1):
+    for _ in range(server.app.state.login_throttle.max_fails - 1):
         assert client.post(
             "/auth/login", json={"username": "Administrator", "password": "nope"}
         ).status_code == 401
@@ -620,7 +631,7 @@ def test_mfa_disable_is_ip_throttled(gui):
     client.post("/auth/login", json={"username": "alice", "password": "pw"})
     client.post("/auth/mfa/verify", json={"code": pyotp.TOTP(secret).now()})  # clears throttle
 
-    for _ in range(server._login_throttle.max_fails):
+    for _ in range(server.app.state.login_throttle.max_fails):
         assert client.post("/auth/mfa/disable", json={"code": "000000"}).status_code == 401
     # Now throttled — even a correct code is refused, so 2FA stays on.
     assert client.post("/auth/mfa/disable", json={"code": "000000"}).status_code == 429

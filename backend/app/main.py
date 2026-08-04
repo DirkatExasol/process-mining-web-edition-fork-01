@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse
 
 from . import licensing
 from . import log_events as logx
-from .api import connections, features, projects
+from .api import connections, features, integration, projects
 from .config import LICENSE_GRACE_SECS, LICENSE_POLL_SECS, REQUIRE_PROXY_AUTH
 from .db.manager import db, registry, reset_current_user, set_current_user
 from .store.crypto import proxy_auth_secret
@@ -179,6 +179,7 @@ logx.install_request_logging(app, lambda r: r.headers.get("x-pmw-user", ""))
 app.include_router(connections.router)
 app.include_router(projects.router)
 app.include_router(features.router)
+app.include_router(integration.router)
 
 
 @app.get("/api/health")

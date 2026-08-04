@@ -155,6 +155,7 @@ tr:last-child td { border-bottom: 0; }
 .pill.active { background: rgba(50,215,75,.18); color: var(--green); }
 .pill.ldap { background: rgba(191,90,242,.18); color: #bf5af2; font-weight: 600; letter-spacing: .3px; }
 .pill.power { background: rgba(48,209,196,.18); color: #30d1c4; font-weight: 600; letter-spacing: .3px; }
+.pill.dev { background: rgba(255,159,10,.18); color: var(--orange); font-weight: 600; letter-spacing: .3px; }
 .pill.log-info { background: rgba(10,132,255,.16); color: var(--accent); }
 .pill.log-usage { background: rgba(50,215,75,.16); color: var(--green); }
 .pill.log-warn { background: rgba(255,159,10,.16); color: var(--orange); }
@@ -634,6 +635,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <button data-tab="logging" onclick="selectTab('logging')">Logging</button>
     <button data-tab="backup" onclick="selectTab('backup')">Backup</button>
     <button data-tab="customize" onclick="selectTab('customize')">Customize</button>
+    <button data-tab="integration" onclick="selectTab('integration')">Integration</button>
   </div>
 
   <div class="tabpanel sel" id="tab-appcontrol">
@@ -646,7 +648,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     </div>
     <div class="banner info" style="margin-top:14px">
       TLS mode and certificate changes (in the <strong>TLS / SSL</strong> tab) take effect on restart.
-      This restarts <strong>both the app and the admin interface</strong> (they share the certificate),
+      This restarts <strong>the app, the integration console and the admin interface</strong> (they share the certificate),
       so this page may briefly drop — and if you changed the mode, the admin moves between
       HTTP <code>:8090</code> and HTTPS <code>:8453</code>; reconnect there if it stops responding.
     </div>
@@ -1158,6 +1160,28 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     </div>
   </div>
   </div><!-- /tab-customize -->
+
+  <div class="tabpanel" id="tab-integration">
+  <div class="card">
+    <h2>Integration console</h2>
+    <p class="muted" style="margin-top:0">
+      A separate surface for configuring data sources, reachable only by
+      <strong>power users</strong>, <strong>developers</strong> and <strong>admins</strong>.
+      Grant the Developer role per user in the <strong>Users</strong> tab.
+    </p>
+    <label class="row" style="font-size:14px; cursor:pointer; gap:8px; align-items:center">
+      <input type="checkbox" id="int_enabled" style="width:auto" onchange="toggleIntegrationEnabled()">
+      Enable the integration console
+    </label>
+    <div id="int_status" class="col" style="margin-top:12px; gap:6px"></div>
+    <p class="subtle" style="margin-top:10px">
+      The console follows the same TLS mode &amp; certificate as the app and this admin
+      interface (change them in the <strong>TLS / SSL</strong> tab). Enabling/disabling and
+      TLS changes take effect after <strong>↻ Restart app server</strong> in the
+      <strong>App Control</strong> tab.
+    </p>
+  </div>
+  </div><!-- /tab-integration -->
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -1470,21 +1494,33 @@ async function loadUsers() {
   USERS = await api('/api/users');
   renderUsers();
 }
-// The role cell. An administrator always carries a second base role (power, or
-// plain user) — those two important roles share one badge whose colour floats
-// between them. A non-admin shows a single pill (power supersedes user).
+// The role cell. Every role the account holds is shown as one segment of a single
+// badge: the base level (admin, else power, else user) followed by any add-on roles
+// (a power admin shows admin·power; a developer adds ·dev). Two or more segments
+// share one combo pill whose colour floats across all of them; a lone base role is a
+// plain single pill.
+function roleTitle(u) {
+  const r = [];
+  if (u.isAdmin) r.push('administrator');
+  if (u.isPower) r.push('power user (manages own connections)');
+  if (u.isDeveloper) r.push('developer (integration console)');
+  return r.length ? 'Roles: ' + r.join(', ') : 'Regular user';
+}
 function roleBadge(u) {
-  const BLUE = 'var(--accent)', TEAL = '#30d1c4', GREY = '#8e8e93';
-  const POWER_TITLE = 'May create and manage their own database connections from the app';
-  if (u.isAdmin) {
-    const second = u.isPower ? 'power' : 'user';
-    const c2 = u.isPower ? TEAL : GREY;
-    const title = u.isPower ? 'Administrator, and a power user' : 'Administrator';
-    return `<span class="pill combo" style="--c1:${BLUE}; --c2:${c2}" title="${title}">` +
-      `admin<span class="sep">·</span>${second}</span>`;
-  }
-  if (u.isPower) return `<span class="pill power" title="${POWER_TITLE}">power</span>`;
-  return '<span class="pill neutral">user</span>';
+  const BLUE = 'var(--accent)', TEAL = '#30d1c4', ORANGE = 'var(--orange)', GREY = '#8e8e93';
+  const parts = [];
+  // Base level: admins always carry a second base role (power or plain user).
+  if (u.isAdmin) { parts.push({ t: 'admin', c: BLUE }); parts.push(u.isPower ? { t: 'power', c: TEAL } : { t: 'user', c: GREY }); }
+  else if (u.isPower) parts.push({ t: 'power', c: TEAL });
+  else parts.push({ t: 'user', c: GREY });
+  if (u.isDeveloper) parts.push({ t: 'dev', c: ORANGE });  // add-on role
+  const title = roleTitle(u);
+  if (parts.length === 1)
+    return `<span class="pill ${parts[0].t === 'power' ? 'power' : 'neutral'}" title="${title}">${parts[0].t}</span>`;
+  // Floating gradient across each role colour (and back to the first).
+  const grad = 'linear-gradient(90deg, ' + parts.map(p => p.c).join(', ') + ', ' + parts[0].c + ')';
+  const inner = parts.map(p => p.t).join('<span class="sep">·</span>');
+  return `<span class="pill combo" style="background-image:${grad}" title="${title}">${inner}</span>`;
 }
 function setUserFilter(f) { USER_FILTER = f; renderUsers(); }
 function renderUsers() {
@@ -1545,6 +1581,7 @@ function renderUsers() {
         : `<button class="btn small" data-user="${du}" onclick="toggleEnabled(this.dataset.user,${!u.isEnabled})">${u.isEnabled ? 'Disable' : (u.loginLocked ? 'Unlock' : 'Enable')}</button> `) +
       (isBuiltin ? '' : `<button class="btn small" data-user="${du}" onclick="toggleAdmin(this.dataset.user,${!u.isAdmin})">${u.isAdmin ? 'Remove admin' : 'Make admin'}</button> `) +
       (isBuiltin ? '' : `<button class="btn small" data-user="${du}" onclick="togglePower(this.dataset.user,${!u.isPower})">${u.isPower ? 'Remove power' : 'Make power'}</button> `) +
+      (isBuiltin ? '' : `<button class="btn small" data-user="${du}" onclick="toggleDeveloper(this.dataset.user,${!u.isDeveloper})">${u.isDeveloper ? 'Remove developer' : 'Make developer'}</button> `) +
       (isLdap ? '' : `<button class="btn small" data-user="${du}" onclick="resetPw(this.dataset.user)">Reset password</button> `) +
       (isBuiltin ? '<span class="subtle" title="The built-in administrator cannot be disabled, demoted or deleted.">built-in admin</span>' : `<button class="btn small danger" data-user="${du}" onclick="delUser(this.dataset.user)">Delete</button>`) +
       '</div></div>';
@@ -1571,6 +1608,10 @@ async function togglePower(u, isPower) {
 }
 async function togglePasskey(u, allowed) {
   try { await api('/api/users/' + encodeURIComponent(u) + '/passkey-allowed', { method: 'POST', body: JSON.stringify({ allowed }) });
+    toast('Updated'); await loadUsers(); } catch (e) { toast(e.message, true); await loadUsers(); }
+}
+async function toggleDeveloper(u, isDeveloper) {
+  try { await api('/api/users/' + encodeURIComponent(u) + '/developer', { method: 'POST', body: JSON.stringify({ isDeveloper }) });
     toast('Updated'); await loadUsers(); } catch (e) { toast(e.message, true); await loadUsers(); }
 }
 async function togglePasskeyAll() {
@@ -1630,6 +1671,31 @@ function selectTab(name) {
   if (name === 'logging') loadLogs().catch(e => toast(e.message, true));
   if (name === 'customize') loadCustomize().catch(e => toast(e.message, true));
   if (name === 'backup') loadSchedule().catch(e => toast(e.message, true));
+  if (name === 'integration') loadIntegration().catch(e => toast(e.message, true));
+}
+
+// ── Integration console ─────────────────────────────────────────────────────
+async function loadIntegration() {
+  const s = await api('/api/integration');
+  $('int_enabled').checked = !!s.enabled;
+  const host = location.hostname || '127.0.0.1';
+  const running = s.running
+    ? '<span class="pill neutral">launcher running</span>'
+    : '<span class="pill off">launcher not detected</span>';
+  $('int_status').innerHTML =
+    '<div class="row" style="gap:8px; align-items:center">' + running + '</div>' +
+    '<div class="subtle">HTTP: <code>http://' + esc(host) + ':' + s.httpPort + '</code></div>' +
+    '<div class="subtle">HTTPS: <code>https://' + esc(host) + ':' + s.httpsPort +
+      '</code> <span class="muted">(when TLS is optional or required)</span></div>';
+}
+async function toggleIntegrationEnabled() {
+  const enabled = $('int_enabled').checked;
+  try {
+    await api('/api/integration/enabled', { method: 'POST', body: JSON.stringify({ enabled }) });
+    toast(enabled ? 'Integration console enabled — restart to apply'
+                  : 'Integration console disabled — restart to apply');
+    await loadIntegration();
+  } catch (e) { toast(e.message, true); $('int_enabled').checked = !enabled; }
 }
 
 // ── Customize (login page background) ───────────────────────────────────────
@@ -2761,6 +2827,7 @@ const ADMIN_HELP = [
     <h2>Users &amp; Sign-in</h2>
     <p>Create local users, enable/disable access, grant or revoke the admin role, and reset passwords. Only enabled users can sign in. The <strong>Require sign-in</strong> toggle turns the login gate on or off (on by default) &mdash; with it off there is no user identity, so per-user settings and filter presets share one profile.</p>
     <p><strong>Failed sign-in lockout</strong> disables an account after N wrong passwords (0 = off); unlock it in the Users tab, or restart with PMW_RESET_LOCKOUTS=1. <strong>Power</strong> users manage their own connections and get the advanced-analysis views (Conformance Check, Happy Path, Simulation).</p>
+    <p><strong>Developer.</strong> The <em>Developer</em> column grants the <span class="pill dev">dev</span> role, which admits the user to the <strong>Integration console</strong> (the data-source configuration surface — see the <strong>Integration</strong> tab). Power users and admins may enter it too. It is an additional access grant, independent of the power/admin level.</p>
     <p><strong>Passkeys (WebAuthn).</strong> The <em>Passkey</em> column lets each user sign in with Touch&nbsp;ID / Windows&nbsp;Hello / a security key as an alternative to their password (which always stays as a fallback); the header checkbox toggles it for everyone. Local and directory users alike can be allowed. A passkey registered on this host works for both the app and this admin panel. Admins enrol their own device in <strong>App Control &rarr; Passkeys</strong>; app users do so from the main app. Turning the permission off blocks passkey sign-in immediately.</p>
     <p><strong>Two-factor (TOTP).</strong> The <em>2FA</em> column (with an all-users master checkbox) requires a one-time authenticator-app code after the password. Enabling it makes 2FA <strong>mandatory</strong> for that user: if they haven&rsquo;t configured it, their next sign-in (app or this admin panel) stops after the password and forces them to set up an authenticator before they get in &mdash; they can&rsquo;t bypass it by not enrolling. Afterwards each sign-in asks for the current code (or a recovery code); a passkey sign-in skips it. Users set up from <strong>🔒 Two-factor</strong> in the app; admins from <strong>App Control &rarr; Two-factor</strong> or at the forced login step. Turning 2FA off requires the current code (so a hijacked session can&rsquo;t strip it). The secret is stored encrypted and recovery codes only as hashes &mdash; if a user loses their authenticator, untick 2FA for them so they can sign in with their password and re-enrol.</p>
     <div class="note warn">Passkeys need a secure context (HTTPS, or localhost). Off localhost, run with TLS Optional/Required. For split app/admin sub-domains set PMW_PASSKEY_RP_ID to the shared parent domain and list origins in PMW_PASSKEY_ORIGINS.</div>

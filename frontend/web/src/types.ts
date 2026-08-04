@@ -511,3 +511,55 @@ export const KPI_META: Record<string, { label: string; icon: string }> = {
   processSimilarity: { label: 'Process Similarity', icon: '⇄' },
   activeSample: { label: 'Active Sample', icon: '▤' },
 }
+
+// ── Integration abstraction layer ─────────────────────────────────────────────
+
+export interface ExtractorInfo {
+  id: string
+  name: string
+  version: string
+  description: string
+}
+
+export interface IntegrationStatus {
+  state: 'idle' | 'running' | 'completed' | 'failed'
+  extractorId: string | null
+  extractorName: string | null
+  connectionId: string | null
+  schema: string | null
+  recordsPushed: number
+  tablesTouched: string[]
+  startedAt: string | null
+  finishedAt: string | null
+  lastError: string | null
+  messages: string[]
+  registeredExtractors: number
+  activeConnectionId: string | null
+  activeSchema: string | null
+  connected: boolean
+}
+
+export type ExtractionRole = 'timestamp' | 'id' | 'step' | 'meta'
+
+export interface ExtractionField {
+  id?: string
+  name: string
+  role: ExtractionRole
+  regex: string
+  format?: string
+}
+
+export interface SourceType {
+  id: string
+  owner: string
+  name: string
+  sample: string
+  fields: ExtractionField[]
+  createdAt: string
+}
+
+export interface SourceTypeInput {
+  name: string
+  sample: string
+  fields: ExtractionField[]
+}

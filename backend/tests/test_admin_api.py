@@ -459,6 +459,46 @@ def test_power_endpoint_requires_admin(admin):
     assert client.post("/api/users/pat/power", json={"isPower": True}).status_code == 401
 
 
+def test_developer_endpoint_toggles_role(admin):
+    server, store = admin
+    client = _login(server)
+    store.create_user("dev", "pw", is_admin=False)
+
+    r = client.post("/api/users/dev/developer", json={"isDeveloper": True})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert store.get_user("dev").is_developer is True
+    listed = {u["username"]: u for u in client.get("/api/users").json()}
+    assert listed["dev"]["isDeveloper"] is True
+
+    assert client.post("/api/users/dev/developer", json={"isDeveloper": False}).status_code == 200
+    assert store.get_user("dev").is_developer is False
+
+
+def test_developer_endpoint_requires_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    assert client.post("/api/users/dev/developer", json={"isDeveloper": True}).status_code == 401
+
+
+def test_integration_endpoints_toggle_and_require_admin(admin):
+    server, store = admin
+    # Unauthenticated → gated.
+    anon = TestClient(server.app)
+    assert anon.get("/api/integration").status_code == 401
+    assert anon.post("/api/integration/enabled", json={"enabled": False}).status_code == 401
+
+    client = _login(server)
+    status = client.get("/api/integration").json()
+    assert status["enabled"] is True and status["httpPort"] and status["httpsPort"]
+
+    r = client.post("/api/integration/enabled", json={"enabled": False})
+    assert r.status_code == 200 and r.json()["enabled"] is False
+    assert store.integration_enabled is False
+    assert client.get("/api/integration").json()["enabled"] is False
+    client.post("/api/integration/enabled", json={"enabled": True})
+    assert store.integration_enabled is True
+
+
 def test_provision_schema_requires_admin(admin):
     server, _ = admin
     client = TestClient(server.app)

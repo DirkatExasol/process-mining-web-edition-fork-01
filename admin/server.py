@@ -39,6 +39,9 @@ from app.config import (  # noqa: E402
     FRONTEND_HTTPS_PORT,
     FRONTEND_PORT,
     GUI_PID_PATH,
+    INTEGRATION_HTTPS_PORT,
+    INTEGRATION_PID_PATH,
+    INTEGRATION_PORT,
 )
 from app import licensing  # noqa: E402
 from app import log_events as logx  # noqa: E402
@@ -1332,6 +1335,24 @@ def api_set_power(username: str, body: PowerBody, user: User = Depends(require_a
     return {"ok": True}
 
 
+class DeveloperBody(BaseModel):
+    isDeveloper: bool
+
+
+@app.post("/api/users/{username}/developer")
+def api_set_developer(username: str, body: DeveloperBody, user: User = Depends(require_admin)):
+    try:
+        store.set_developer(username, body.isDeveloper)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logx.usage(
+        f"admin {user.username} {'granted' if body.isDeveloper else 'revoked'} "
+        f"the Developer role for {username!r}",
+        username=user.username, operation="config",
+    )
+    return {"ok": True}
+
+
 class PasskeyAllowedBody(BaseModel):
     allowed: bool
 
@@ -1601,6 +1622,15 @@ def api_restart(user: User = Depends(require_admin)):
         operation="restart",
     )
     gui_pid = _signal_launcher(GUI_PID_PATH)
+    # The integration console follows the same TLS plan; rebind it too (best-effort —
+    # it may not be running). Signal it before our own admin launcher.
+    integration_pid: int | None = None
+    if INTEGRATION_PID_PATH.exists():
+        try:
+            integration_pid = int(INTEGRATION_PID_PATH.read_text().strip())
+            os.kill(integration_pid, signal.SIGHUP)
+        except (ValueError, OSError):
+            integration_pid = None
     # Restart the admin launcher too, best-effort: signalling our own launcher tears
     # down this very listener, so don't fail the request if the response races it.
     admin_pid: int | None = None
@@ -1610,7 +1640,39 @@ def api_restart(user: User = Depends(require_admin)):
             os.kill(admin_pid, signal.SIGHUP)
         except (ValueError, OSError):
             admin_pid = None
-    return {"ok": True, "pid": gui_pid, "adminPid": admin_pid}
+    return {"ok": True, "pid": gui_pid, "integrationPid": integration_pid, "adminPid": admin_pid}
+
+
+# ── API: integration / data-source console ────────────────────────────────────
+
+
+class IntegrationEnabledBody(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/integration")
+def api_integration_status(user: User = Depends(require_admin)):
+    """State of the integration console surface: whether it's enabled, its ports and
+    whether its launcher is currently running (best-effort, from the PID file)."""
+    return {
+        "enabled": store.integration_enabled,
+        "httpPort": INTEGRATION_PORT,
+        "httpsPort": INTEGRATION_HTTPS_PORT,
+        "running": INTEGRATION_PID_PATH.exists(),
+    }
+
+
+@app.post("/api/integration/enabled")
+def api_set_integration_enabled(
+    body: IntegrationEnabledBody, user: User = Depends(require_admin)
+):
+    store.set_integration_enabled(body.enabled)
+    logx.usage(
+        f"admin {user.username} {'enabled' if body.enabled else 'disabled'} "
+        f"the integration console",
+        username=user.username, operation="config",
+    )
+    return {"ok": True, "enabled": store.integration_enabled}
 
 
 # ── API: connections (admin-defined, assigned to users) ───────────────────────

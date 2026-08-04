@@ -1,3 +1,4 @@
+import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -21,5 +22,14 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: false,
     chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      // Two entry points sharing one dist/ (and chunked vendor code): the main app
+      // (index.html) and the integration console (integration.html). Each Python
+      // surface serves its own HTML shell.
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        integration: fileURLToPath(new URL('./integration.html', import.meta.url)),
+      },
+    },
   },
 })

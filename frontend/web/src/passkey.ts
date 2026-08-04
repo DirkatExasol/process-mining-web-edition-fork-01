@@ -6,6 +6,7 @@ export interface PasskeyUser {
   username: string
   isAdmin: boolean
   isPower: boolean
+  isDeveloper: boolean
   displayName: string | null
   authSource: string | null
   passkeyAllowed: boolean

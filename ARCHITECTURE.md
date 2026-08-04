@@ -12,17 +12,28 @@ Source of truth for behaviour:
    KPI strip, same chart modes, same interactions (drag nodes, collapse groups,
    pan/zoom, valve-synced A/B panels, sticky notes on nodes/edges).
 3. Flow charts rendered with **ReactFlow** (`@xyflow/react`, MIT / non-Pro only).
-4. Python implementation, split into two processes:
+4. Python implementation, split into four processes:
    - **Compute Backend** (FastAPI, port **8000**) — Exasol access, analytics,
      simulation, sampling, LLM proxy, settings persistence.
-   - **GUI Server** (FastAPI, port **8080**) — serves the React SPA and proxies
-     `/api/*` to the compute backend.
+   - **GUI Server** (FastAPI, port **8080**/**8443**) — serves the React SPA and
+     proxies `/api/*` to the compute backend.
+   - **Admin Interface** (FastAPI, port **8090**/**8453**) — users, certificates,
+     TLS mode, database connections.
+   - **Integration Console** (FastAPI, port **8100**/**8463** = admin + 10) — a
+     data-source configuration surface for power users, developers and admins.
+
+The GUI and integration surfaces are built from one shared factory
+(`backend/app/web_surface.py`): same static-SPA serving, sign-in flow (password,
+TOTP, WebAuthn passkey, mandatory-2FA enrolment) and `/api` proxy, differing only in
+their session audience/cookie and a per-surface role predicate.
 
 ## Process split
 
 ```
-Browser ──► GUI Server (:8080)  ──proxy /api──►  Compute Backend (:8000) ──► Exasol
-              static SPA                              pyexasol / openai
+Browser ────► GUI Server (:8080/:8443)  ──proxy /api──►  Compute Backend (:8000) ──► Exasol
+                static SPA                                    pyexasol / openai
+Admin ──────► Admin Interface (:8090/:8453)  ──► security store
+Developer ──► Integration Console (:8100/:8463)  ──► data-source configuration (role-gated)
 ```
 
 Rationale: the browser only ever talks to the GUI server, so the compute backend

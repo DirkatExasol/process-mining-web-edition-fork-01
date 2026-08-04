@@ -41,6 +41,7 @@ INTERNAL_KEY_PATH = CERTS_DIR / "internal.key"
 # can signal a restart (SIGHUP → rebind listeners with the current TLS plan).
 GUI_PID_PATH = DATA_DIR / "gui.pid"
 ADMIN_PID_PATH = DATA_DIR / "admin.pid"
+INTEGRATION_PID_PATH = DATA_DIR / "integration.pid"
 
 BACKEND_HOST = os.environ.get("PMW_BACKEND_HOST", "127.0.0.1")
 BACKEND_PORT = int(os.environ.get("PMW_BACKEND_PORT", "8000"))
@@ -56,6 +57,16 @@ ADMIN_PORT = int(os.environ.get("PMW_ADMIN_PORT", "8090"))
 # HTTPS listener port for the admin interface — it follows the same TLS mode and
 # active certificate as the main app (used when TLS is optional or required).
 ADMIN_HTTPS_PORT = int(os.environ.get("PMW_ADMIN_HTTPS_PORT", "8453"))
+
+# The integration / data-source configuration surface runs on its own port — by
+# convention the admin port + 10 (HTTP 8100 / HTTPS 8463 with the defaults). It
+# follows the same shared TLS plan as the app + admin, and only power users,
+# developers and admins may sign in.
+INTEGRATION_HOST = os.environ.get("PMW_INTEGRATION_HOST", ADMIN_HOST)
+INTEGRATION_PORT = int(os.environ.get("PMW_INTEGRATION_PORT", str(ADMIN_PORT + 10)))
+INTEGRATION_HTTPS_PORT = int(
+    os.environ.get("PMW_INTEGRATION_HTTPS_PORT", str(ADMIN_HTTPS_PORT + 10))
+)
 
 # Admin session lifetime.
 ADMIN_SESSION_TTL_SECS = int(os.environ.get("PMW_ADMIN_SESSION_TTL", str(8 * 3600)))

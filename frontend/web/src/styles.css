@@ -2499,3 +2499,14 @@ textarea.text-input {
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover { background-color: rgba(120, 120, 128, 0.55); }
+
+/* ── Integration console (data-source configuration surface) ───────────────── */
+.integration-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  place-items: start center;
+  padding: 24px;
+}

@@ -13,7 +13,12 @@ import type {
   ProcessNote,
   Project,
   ProjectBootstrap,
+  ExtractionField,
+  ExtractorInfo,
+  IntegrationStatus,
   SampleSet,
+  SourceType,
+  SourceTypeInput,
   SamplingMethod,
   SimulationConfig,
   SimulationResult,
@@ -28,6 +33,7 @@ export interface AuthUser {
   username: string
   isAdmin: boolean
   isPower: boolean
+  isDeveloper: boolean
   displayName: string | null
   authSource: string | null
   passkeyAllowed: boolean
@@ -88,6 +94,7 @@ export const api = {
       username: string | null
       isAdmin: boolean
       isPower: boolean
+      isDeveloper: boolean
       displayName: string | null
       authSource: string | null
       requireLogin: boolean
@@ -162,6 +169,21 @@ export const api = {
     }>('/api/connections/generate-demo', body),
   disconnect: () => post<ConnectionStatus>('/api/disconnect'),
   connectionStatus: () => get<ConnectionStatus>('/api/connection/status'),
+
+  // ── integration abstraction layer ────────────────────────────────────────
+  integrationStatus: () => get<IntegrationStatus>('/api/integration/status'),
+  integrationExtractors: () => get<ExtractorInfo[]>('/api/integration/extractors'),
+  listSourceTypes: () => get<SourceType[]>('/api/integration/source-types'),
+  createSourceType: (body: SourceTypeInput) =>
+    post<SourceType>('/api/integration/source-types', body),
+  updateSourceType: (id: string, body: SourceTypeInput) =>
+    put<SourceType>(`/api/integration/source-types/${enc(id)}`, body),
+  deleteSourceType: (id: string) =>
+    del<{ ok: boolean }>(`/api/integration/source-types/${enc(id)}`),
+  parseDetect: (sample: string) =>
+    post<{ fields: ExtractionField[] }>('/api/integration/parse/detect', { sample }),
+  parseSegment: (sample: string, start: number, end: number) =>
+    post<{ regex: string; value: string }>('/api/integration/parse/segment', { sample, start, end }),
 
   // ── project data ─────────────────────────────────────────────────────────
   listProjects: () => get<Project[]>('/api/projects'),

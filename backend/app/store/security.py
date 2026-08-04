@@ -146,6 +146,15 @@ CREATE TABLE IF NOT EXISTS connection_assignments (
     username      TEXT NOT NULL,
     PRIMARY KEY (connection_id, username)
 );
+-- Integration console: a user's source-type definitions — a name plus an extraction
+-- spec (an example log + the timestamp/step/id/meta regexes) stored as JSON in config.
+CREATE TABLE IF NOT EXISTS source_types (
+    id          TEXT PRIMARY KEY,
+    owner       TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    config      TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS ldap_config (
     id                INTEGER PRIMARY KEY CHECK (id = 1),
     enabled           INTEGER NOT NULL DEFAULT 0,
@@ -181,6 +190,7 @@ class User:
     email: str = ""
     display_name: str = ""
     is_power: bool = False  # may create/manage their own DB connections from the app
+    is_developer: bool = False  # may enter the integration/data-source console (admin-gated)
     passkey_allowed: bool = False  # may enrol + sign in with a passkey (admin-gated)
     mfa_allowed: bool = False  # may enrol TOTP two-factor auth (admin-gated)
     mfa_enabled: bool = False  # has a confirmed TOTP secret (derived, not a column)
@@ -201,6 +211,7 @@ class User:
             "email": self.email,
             "displayName": self.display_name,
             "isPower": self.is_power,
+            "isDeveloper": self.is_developer,
             "passkeyAllowed": self.passkey_allowed,
             "mfaAllowed": self.mfa_allowed,
             "mfaEnabled": self.mfa_enabled,
@@ -229,6 +240,39 @@ class Certificate:
             "notAfter": self.not_after,
             "sans": self.sans,
             "isSelfSigned": self.is_self_signed,
+            "createdAt": self.created_at,
+        }
+
+
+@dataclass
+class SourceType:
+    """A user's source-type definition for the integration console: a name plus an
+    extraction spec (an example log line + the timestamp/step/id/meta regexes), stored
+    as JSON in `config`."""
+
+    id: str
+    owner: str
+    name: str
+    config: str
+    created_at: str
+
+    def public(self) -> dict:
+        # `config` holds the extraction spec as JSON: {sample, fields:[{name,role,regex,…}]}.
+        spec: dict = {}
+        if self.config:
+            try:
+                parsed = json.loads(self.config)
+                if isinstance(parsed, dict):
+                    spec = parsed
+            except (json.JSONDecodeError, TypeError):
+                spec = {}
+        fields = spec.get("fields")
+        return {
+            "id": self.id,
+            "owner": self.owner,
+            "name": self.name,
+            "sample": spec.get("sample", ""),
+            "fields": fields if isinstance(fields, list) else [],
             "createdAt": self.created_at,
         }
 
@@ -340,6 +384,8 @@ class SecurityStore:
             ("email", "email TEXT NOT NULL DEFAULT ''"),
             ("display_name", "display_name TEXT NOT NULL DEFAULT ''"),
             ("is_power", "is_power INTEGER NOT NULL DEFAULT 0"),
+            # Admin-gated permission to enter the integration / data-source console.
+            ("is_developer", "is_developer INTEGER NOT NULL DEFAULT 0"),
             # Admin-gated permission to enrol and sign in with a passkey (WebAuthn).
             ("passkey_allowed", "passkey_allowed INTEGER NOT NULL DEFAULT 0"),
             # Admin-gated permission to enrol TOTP two-factor auth; the encrypted
@@ -375,6 +421,20 @@ class SecurityStore:
             self._conn.execute(
                 "ALTER TABLE ldap_config ADD COLUMN admin_login_enabled INTEGER NOT NULL DEFAULT 0"
             )
+        # The former "connectors" table was renamed to "source_types" (a source type is
+        # a name + extraction spec; the old source/source_type columns are dropped).
+        # Carry over any existing definitions, then remove the old table.
+        table_names = {
+            r["name"] for r in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "connectors" in table_names:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO source_types (id, owner, name, config, created_at) "
+                "SELECT id, owner, name, config, created_at FROM connectors"
+            )
+            self._conn.execute("DROP TABLE connectors")
 
     # ── bootstrap ─────────────────────────────────────────────────────────────
 
@@ -411,6 +471,18 @@ class SecurityStore:
     def set_require_login(self, required: bool) -> None:
         with self._lock:
             self._set_config("require_login", "1" if required else "0")
+            self._conn.commit()
+
+    @property
+    def integration_enabled(self) -> bool:
+        """Whether the integration / data-source console surface is served. On by
+        default; the admin can disable it (the surface then shows a disabled page)."""
+        with self._lock:
+            return self._get_config("integration_enabled") != "0"
+
+    def set_integration_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._set_config("integration_enabled", "1" if enabled else "0")
             self._conn.commit()
 
     @property
@@ -963,6 +1035,7 @@ class SecurityStore:
             email=(row["email"] if "email" in keys else "") or "",
             display_name=(row["display_name"] if "display_name" in keys else "") or "",
             is_power=bool(row["is_power"]) if "is_power" in keys else False,
+            is_developer=bool(row["is_developer"]) if "is_developer" in keys else False,
             passkey_allowed=bool(row["passkey_allowed"]) if "passkey_allowed" in keys else False,
             mfa_allowed=bool(row["mfa_allowed"]) if "mfa_allowed" in keys else False,
             mfa_enabled=bool(row["totp_secret_enc"]) if "totp_secret_enc" in keys else False,
@@ -1065,6 +1138,17 @@ class SecurityStore:
             self._conn.execute(
                 "UPDATE users SET is_power = ? WHERE LOWER(username) = LOWER(?)",
                 (int(is_power), username),
+            )
+            self._conn.commit()
+
+    def set_developer(self, username: str, is_developer: bool) -> None:
+        """Grant/revoke the 'developer' role — may enter the integration console."""
+        if self.get_user(username) is None:
+            raise ValueError("No such user.")
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET is_developer = ? WHERE LOWER(username) = LOWER(?)",
+                (int(is_developer), username),
             )
             self._conn.commit()
 
@@ -1741,6 +1825,70 @@ class SecurityStore:
                 (self._rebuild_token_key(conn_id), f"matview:{conn_id}"),
             )
             self._conn.commit()
+
+    # ── integration source types (per-user extraction definitions) ────────────
+
+    @staticmethod
+    def _row_to_source_type(row: sqlite3.Row) -> SourceType:
+        return SourceType(
+            id=row["id"], owner=row["owner"], name=row["name"],
+            config=row["config"], created_at=row["created_at"],
+        )
+
+    def list_source_types(self, owner: str | None) -> list[SourceType]:
+        """The source types owned by `owner` (case-insensitive), newest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM source_types WHERE LOWER(owner) = LOWER(?) "
+                "ORDER BY created_at DESC, LOWER(name)",
+                (owner or "",),
+            ).fetchall()
+            return [self._row_to_source_type(r) for r in rows]
+
+    def add_source_type(self, owner: str, *, name: str, config: str = "") -> SourceType:
+        source_type = SourceType(
+            id=uuid.uuid4().hex, owner=owner or "", name=name.strip() or "(unnamed)",
+            config=config, created_at=_now(),
+        )
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO source_types (id, owner, name, config, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (source_type.id, source_type.owner, source_type.name,
+                 source_type.config, source_type.created_at),
+            )
+            self._conn.commit()
+        return source_type
+
+    def delete_source_type(self, source_type_id: str, owner: str | None) -> bool:
+        """Delete a source type, but only if it belongs to `owner`. Returns True if a
+        row was removed."""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM source_types WHERE id = ? AND LOWER(owner) = LOWER(?)",
+                (source_type_id, owner or ""),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def update_source_type(
+        self, source_type_id: str, owner: str | None, *, name: str, config: str = ""
+    ) -> SourceType | None:
+        """Update an owner's source type (name / extraction spec). Returns the updated
+        source type, or None if it doesn't exist / isn't owned by `owner`."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE source_types SET name = ?, config = ? "
+                "WHERE id = ? AND LOWER(owner) = LOWER(?)",
+                (name.strip() or "(unnamed)", config, source_type_id, owner or ""),
+            )
+            self._conn.commit()
+            if cur.rowcount == 0:
+                return None
+            row = self._conn.execute(
+                "SELECT * FROM source_types WHERE id = ?", (source_type_id,)
+            ).fetchone()
+            return self._row_to_source_type(row) if row else None
 
     # ── effective TLS plan (read by the GUI launcher) ─────────────────────────
 

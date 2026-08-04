@@ -16,12 +16,12 @@ import type {
 import { formatSecs } from '../graph/format'
 import { useSetting } from '../settings'
 import { DEFAULT_LLM_PROMPT, useStore } from '../store'
+import { AuthFooter } from './AuthFooter'
 import { ConnectionEditor } from './ConnectionEditor'
 import { Logo } from './Logo'
-import { PasskeysSheet } from './PasskeysSheet'
 import { SamplingSection } from './SamplingSection'
-import { TwoFactorSheet } from './TwoFactorSheet'
 import { StepEditor } from './StepEditor'
+import { ThemeBar } from './ThemeBar'
 import {
   AutocompleteField,
   Chevron,
@@ -48,9 +48,6 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
   const [openSection, setOpenSection] = useState<SectionId | null>('connections')
   const [showPromptEditor, setShowPromptEditor] = useState(false)
   const [showSavePreset, setShowSavePreset] = useState(false)
-  const [showPasskeys, setShowPasskeys] = useState(false)
-  const [showTwoFactor, setShowTwoFactor] = useState(false)
-  const [theme, setTheme] = useSetting<string>('app.theme')
   // Power/admin only: the connection being created (null) or edited.
   const [connEditor, setConnEditor] = useState<
     { conn: ManagedConnection | null } | null
@@ -183,91 +180,10 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
         )}
       </div>
 
-      {store.authUser && (
-        <>
-          <Divider />
-          <div className="theme-bar" style={{ gap: 8 }}>
-            <span aria-hidden>👤</span>
-            {store.authDisplayName ? (
-              // Directory (LDAP/AD) accounts: real name on top, username below.
-              <div className="col" style={{ gap: 0, minWidth: 0, lineHeight: 1.2 }}>
-                <span
-                  className="t-caption fg-secondary truncate"
-                  title={store.authDisplayName}
-                >
-                  {store.authDisplayName}
-                </span>
-                <span className="t-caption2 fg-tertiary truncate" title={store.authUser}>
-                  ({store.authUser})
-                </span>
-              </div>
-            ) : (
-              <span className="t-caption fg-secondary truncate" title={store.authUser}>
-                {store.authUser}
-              </span>
-            )}
-            <span className="spacer" />
-            {store.authMfaAllowed && (
-              <button
-                className="btn small"
-                title="Manage two-factor authentication"
-                onClick={() => setShowTwoFactor(true)}
-              >
-                🔒 Two-factor
-              </button>
-            )}
-            {store.authPasskeyAllowed && (
-              <button
-                className="btn small"
-                title="Manage passkeys for this account"
-                onClick={() => setShowPasskeys(true)}
-              >
-                🔑 Passkeys
-              </button>
-            )}
-            <button
-              className="btn small"
-              title="Sign out"
-              onClick={() => void store.logout()}
-            >
-              ⏻ Sign out
-            </button>
-          </div>
-        </>
-      )}
-
-      {showPasskeys && <PasskeysSheet onClose={() => setShowPasskeys(false)} />}
-      {showTwoFactor && <TwoFactorSheet onClose={() => setShowTwoFactor(false)} />}
+      <AuthFooter />
 
       <Divider />
-      <div className="theme-bar">
-        <span aria-hidden>🎨</span>
-        <span className="t-caption fg-secondary">Theme</span>
-        <span className="spacer" />
-        {[
-          { value: 'system', icon: '◐', label: 'System' },
-          { value: 'light', icon: '☀', label: 'Light' },
-          { value: 'dark', icon: '☾', label: 'Dark' },
-        ].map((option) => (
-          <button
-            key={option.value}
-            className={`theme-btn${theme === option.value ? ' active' : ''}`}
-            title={option.label}
-            aria-label={option.label}
-            onClick={() => setTheme(option.value)}
-          >
-            {option.icon}
-          </button>
-        ))}
-        <button
-          className="theme-btn"
-          title="Hide sidebar"
-          aria-label="Hide sidebar"
-          onClick={onCollapse}
-        >
-          ⇤
-        </button>
-      </div>
+      <ThemeBar onCollapse={onCollapse} />
 
       {connEditor && (
         <ConnectionEditor

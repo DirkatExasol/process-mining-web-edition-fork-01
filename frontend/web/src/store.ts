@@ -131,6 +131,7 @@ export interface AppState {
   authDisplayName: string | null
   authIsAdmin: boolean
   authIsPower: boolean
+  authIsDeveloper: boolean
   authPasskeyAllowed: boolean
   authMfaAllowed: boolean
   authMfaEnabled: boolean
@@ -429,6 +430,7 @@ function hydrateAuth(u: AuthUser) {
     authDisplayName: u.displayName || null,
     authIsAdmin: u.isAdmin,
     authIsPower: u.isPower,
+    authIsDeveloper: u.isDeveloper,
     authPasskeyAllowed: u.passkeyAllowed,
     authMfaAllowed: u.mfaAllowed,
     authMfaEnabled: u.mfaEnabled,
@@ -441,6 +443,7 @@ const INITIAL_STATE: AppState = {
   authDisplayName: null,
   authIsAdmin: false,
   authIsPower: false,
+  authIsDeveloper: false,
   authPasskeyAllowed: false,
   authMfaAllowed: false,
   authMfaEnabled: false,
@@ -807,6 +810,7 @@ export const useStore = create<Store>((set, get) => {
         authDisplayName: s.authDisplayName,
         authIsAdmin: s.authIsAdmin,
         authIsPower: s.authIsPower,
+        authIsDeveloper: s.authIsDeveloper,
         requireLogin: s.requireLogin,
         idleTimeoutMins: s.idleTimeoutMins,
         connections: s.connections,
@@ -900,6 +904,7 @@ export const useStore = create<Store>((set, get) => {
           authDisplayName: s.authenticated ? s.displayName : null,
           authIsAdmin: s.isAdmin,
           authIsPower: s.isPower,
+          authIsDeveloper: s.isDeveloper,
           authPasskeyAllowed: s.authenticated ? s.passkeyAllowed : false,
           authMfaAllowed: s.authenticated ? s.mfaAllowed : false,
           authMfaEnabled: s.authenticated ? s.mfaEnabled : false,
@@ -998,6 +1003,7 @@ export const useStore = create<Store>((set, get) => {
         authDisplayName: null,
         authIsAdmin: false,
         authIsPower: false,
+        authIsDeveloper: false,
         authPasskeyAllowed: false,
         authMfaAllowed: false,
         authMfaEnabled: false,

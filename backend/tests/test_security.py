@@ -560,6 +560,28 @@ def test_set_power_toggles_role_and_is_public(security):
         store.set_power("nobody", True)
 
 
+def test_set_developer_toggles_role_and_is_public(security):
+    store = security.store
+    store.create_user("dev", "pw", is_admin=False)
+    assert store.get_user("dev").is_developer is False
+    store.set_developer("dev", True)
+    d = store.get_user("dev")
+    assert d.is_developer is True and d.public()["isDeveloper"] is True
+    store.set_developer("DEV", False)  # case-insensitive
+    assert store.get_user("dev").is_developer is False
+    with pytest.raises(ValueError):
+        store.set_developer("nobody", True)
+
+
+def test_integration_enabled_defaults_on_and_toggles(security):
+    store = security.store
+    assert store.integration_enabled is True  # on by default
+    store.set_integration_enabled(False)
+    assert store.integration_enabled is False
+    store.set_integration_enabled(True)
+    assert store.integration_enabled is True
+
+
 def test_connections_owned_by_filters_on_owner(security):
     store = security.store
     store.create_user("pat", "pw", is_admin=False)
@@ -1064,3 +1086,46 @@ def test_deleting_user_cascades_to_recovery_codes(security):
     store.set_recovery_codes("alice", ["aaaa1111-bbbb2222"])
     store.delete_user("alice")
     assert store.recovery_codes_remaining("alice") == 0
+
+
+# ── Integration source types (per-user extraction definitions) ────────────────
+
+
+def test_source_types_are_per_owner_and_crud_roundtrips(security):
+    store = security.store
+    a = store.add_source_type("alice", name="My CSV")
+    store.add_source_type("alice", name="API pull")
+    store.add_source_type("bob", name="Bob's")
+
+    mine = store.list_source_types("alice")
+    assert {s.name for s in mine} == {"My CSV", "API pull"}
+    assert len(store.list_source_types("bob")) == 1
+
+    # Deleting is owner-scoped: bob cannot delete alice's source type.
+    assert store.delete_source_type(a.id, "bob") is False
+    assert store.delete_source_type(a.id, "alice") is True
+    assert len(store.list_source_types("alice")) == 1
+
+
+def test_source_type_public_shape(security):
+    store = security.store
+    s = store.add_source_type("alice", name="X")
+    pub = s.public()
+    assert pub["name"] == "X" and pub["fields"] == [] and pub["sample"] == ""
+    assert "id" in pub and "createdAt" in pub
+
+
+def test_source_type_stores_and_returns_extraction_spec(security):
+    import json as _json
+    store = security.store
+    cfg = _json.dumps({"sample": "2026-08-03 id=5",
+                       "fields": [{"name": "timestamp", "role": "timestamp", "regex": "(\\d{4})"}]})
+    s = store.add_source_type("alice", name="L", config=cfg)
+    pub = store.list_source_types("alice")[0].public()
+    assert pub["sample"] == "2026-08-03 id=5"
+    assert pub["fields"][0]["role"] == "timestamp"
+
+    updated = store.update_source_type(s.id, "alice", name="L2", config=cfg)
+    assert updated is not None and updated.public()["name"] == "L2"
+    # Wrong owner can't update.
+    assert store.update_source_type(s.id, "bob", name="X", config="") is None

@@ -15,20 +15,26 @@ Analytical workloads are usually fed by transactional systems — orders, invoic
 
 ## Architecture
 
-Three independent Python processes:
+Four independent Python processes:
 
 | Process | Port | Responsibility |
 |---|---|---|
 | **Compute Backend** (`backend/`) | 8000 | Exasol access, analytics, simulation, sampling, LLM proxy, settings store |
 | **GUI Server** (`frontend/`) | 8080 / 8443 | Serves the React SPA and proxies `/api/*`; binds HTTP and/or HTTPS per the TLS mode |
-| **Admin Interface** (`admin/`) | 8090 | TLS/certificate management, the user allow-list, and per-user database connections |
+| **Admin Interface** (`admin/`) | 8090 / 8453 | TLS/certificate management, the user allow-list, and per-user database connections |
+| **Integration Console** (`integration/`) | 8100 / 8463 | Data-source configuration; power users, developers and admins only |
 
 ```
 Browser ──► GUI Server (:8080 / :8443) ──proxy /api──► Compute Backend (:8000) ──► Exasol
               React + ReactFlow SPA                        pyexasol / openai
 
-Admin ────► Admin Interface (:8090) ──► security store (users, certificates, TLS mode, connections)
+Admin ────► Admin Interface (:8090 / :8453) ──► security store (users, certificates, TLS mode, connections)
+
+Developer ► Integration Console (:8100 / :8463) ──► data-source configuration (same sign-in, role-gated)
 ```
+
+The GUI, admin and integration surfaces share one sign-in stack (password, TOTP
+two-factor, WebAuthn passkey) and the same TLS mode + active certificate.
 
 The browser only ever talks to the GUI server, so the compute backend can run on a
 separate host close to the database.
@@ -61,11 +67,12 @@ python3.13 -m venv .venv
 ## Running
 
 ```bash
-./run.sh            # compute backend :8000 + GUI server :8080/:8443 + admin :8090
+./run.sh            # backend :8000 + GUI :8080/:8443 + admin :8090 + integration :8100
 ```
 
-Then open the app at <http://127.0.0.1:8080> and the admin interface at
-<http://127.0.0.1:8090>. For frontend development with hot reload:
+Then open the app at <http://127.0.0.1:8080>, the admin interface at
+<http://127.0.0.1:8090>, and (for power users / developers) the integration console
+at <http://127.0.0.1:8100>. For frontend development with hot reload:
 
 ```bash
 ./run.sh --dev      # backend :8000 + admin :8090 + Vite dev server :5173
@@ -273,6 +280,17 @@ connection). The role is enforced server-side: the power/sampling endpoints reje
 non-power users, and any attempt to touch a connection the caller does not own. The
 in-app Help has a **Users & Permissions** chapter with the full capability matrix.
 
+**Developer role & the Integration console.** A user can be granted the **Developer**
+role (the *Developer* checkbox in the admin *Users* tab). It grants access to the
+**Integration console** — a fourth surface for configuring data sources, served on a
+separate port (the admin port + 10 → HTTP `8100` / HTTPS `8463` by default). Only
+**power users, developers and admins** may sign in; everyone else is refused with a
+clear message. The console reuses the same sign-in stack (password, TOTP, passkey,
+mandatory-2FA enrolment) and follows the same TLS mode + certificate as the app and
+admin (change them in *TLS / SSL*; a restart applies to all three surfaces at once).
+Admins can turn the whole console off from **Admin → Integration**. The data-source
+configuration features themselves are being built on this scaffold.
+
 **Database Connections.** Administrators define each connection here — the Exasol
 host/port/user/password/schema, an optional OpenAI-compatible LLM server, and TLS
 options — and **assign it to one or more users** (power users do the same from the
@@ -378,6 +396,120 @@ software [`LICENSE`](LICENSE).
 
 Environment overrides: `PMW_ADMIN_PORT` (8090), `PMW_FRONTEND_HTTPS_PORT` (8443),
 `PMW_DEFAULT_ADMIN_USER`, `PMW_DEFAULT_ADMIN_PASSWORD`, `PMW_ADMIN_SESSION_TTL`.
+
+## Integration abstraction layer (extractor API)
+
+The Integration console is fronted by an **abstraction layer** (`backend/app/integration/`)
+into which you **plug in extractors**. An extractor reads some source (a file, an API,
+another database) and the layer **pushes the extracted records into the schema of the
+user's selected connection**. Extractors never touch the database directly — they are
+handed an `IngestSession` bound to the target schema, and the layer owns the connection,
+batches the writes, tallies rows for the live **status**, and escapes everything.
+
+```
+   ┌───────────┐   push records   ┌─────────────────────┐   DDL/DML   ┌──────────────┐
+   │ Extractor │ ───────────────► │ Abstraction layer   │ ──────────► │ Target schema│
+   │ (plug-in) │  IngestSession   │ (session + status)  │  (backend)  │ (connection) │
+   └───────────┘                  └─────────────────────┘             └──────────────┘
+```
+
+### The contract (`app/integration/contract.py`)
+
+An extractor implements the `Extractor` protocol and pushes through the `IngestSession`
+it is given. **This is the stable API** — it is all an extractor needs:
+
+```python
+class Extractor(Protocol):
+    info: ExtractorInfo                      # id (slug), name, version, description
+    def run(self, session: IngestSession) -> ExtractResult: ...
+
+class IngestSession(Protocol):
+    schema: str                              # target schema (from the connection) — read-only
+
+    # Declare (and create if absent) a target table. Idempotent; call before push().
+    #   columns: {name: ColumnType};  keys: business-key column names (informational)
+    def define_table(self, table, columns, *, keys=()) -> None: ...
+
+    # Append rows to a defined table; returns the count written. Each row is a
+    # {column: value} mapping — missing columns become NULL, unknown columns raise.
+    # Rows stream in batches, so you can pass a generator over a huge source.
+    def push(self, table, rows) -> int: ...
+
+    # Emit a progress line that shows up in the layer status.
+    def log(self, message) -> None: ...
+```
+
+`ColumnType` is the portable type set the layer maps to concrete database types —
+`STRING`, `INT`, `DECIMAL`, `TIMESTAMP`, `BOOL` — so extractors stay database-agnostic.
+
+### Writing and registering an extractor
+
+```python
+from app.integration import (
+    ColumnType, ExtractResult, ExtractorInfo, IngestSession, layer,
+)
+
+class CsvFolderExtractor:
+    info = ExtractorInfo(id="csv-folder", name="CSV folder", version="1.0",
+                         description="Loads *.csv files from a folder into staging.")
+
+    def run(self, session: IngestSession) -> ExtractResult:
+        session.define_table("EVENTS", {
+            "CASE_ID":   ColumnType.STRING,
+            "ACTIVITY":  ColumnType.STRING,
+            "TIMESTAMP": ColumnType.TIMESTAMP,
+        })
+        session.log(f"loading into {session.schema}.EVENTS")
+        rows = 0
+        for chunk in read_csv_chunks(...):          # your source, streamed
+            rows += session.push("EVENTS", chunk)    # a list of {col: value} dicts
+        return ExtractResult(records=rows, tables=("EVENTS",), detail="import complete")
+
+# Plug it in (e.g. at startup):
+layer.register(CsvFolderExtractor())
+```
+
+The layer runs `extractor.run()` off the event loop, so blocking I/O in `run` is fine.
+Raising from `run` marks the run **failed** and records the error in the status; returning
+an `ExtractResult` marks it **completed**.
+
+### Where the records land — ingest backends (`app/integration/backends.py`)
+
+The session delegates writes to an `IngestBackend`:
+
+- **`InMemoryIngestBackend`** — keeps tables in memory; the default for local dev and
+  the tested reference target (no database needed).
+- **`SqlIngestBackend`** — generates schema-qualified DDL/DML (`CREATE TABLE IF NOT
+  EXISTS …`, batched `INSERT`) and runs it through a caller-supplied `run_sql` bound to
+  the user's Exasol connection. **Safety:** table/column/schema names are validated
+  against a strict identifier grammar (never escaped-and-hoped), and values are rendered
+  as defensively-escaped literals (`'` doubled, `NULL`/`TRUE`/`FALSE`/typed timestamps),
+  so a malformed source value can't corrupt a statement.
+
+### Status (`GET /api/integration/status`)
+
+The layer tracks a **per-user status** the console polls:
+
+```jsonc
+{
+  "state": "idle",            // idle | running | completed | failed
+  "extractorId": null, "extractorName": null,
+  "connectionId": null, "schema": null,   // set for the active/last run
+  "recordsPushed": 0, "tablesTouched": [],
+  "startedAt": null, "finishedAt": null, "lastError": null, "messages": [],
+  "registeredExtractors": 0,              // how many extractors are plugged in
+  "activeConnectionId": null, "activeSchema": null, "connected": false // current target
+}
+```
+
+`GET /api/integration/extractors` lists the registered extractors (`id`, `name`,
+`version`, `description`).
+
+> **Status of this layer:** the contract, the ingest backends, the registry and the
+> per-user run status are in place and tested (`backend/tests/test_integration_layer.py`).
+> The **first concrete extractor** and the **management UI** (enable/select/trigger a run
+> from the console) are the next stage — the layer already exposes `AbstractionLayer.run(...)`
+> for them to call.
 
 ## Database schema
 

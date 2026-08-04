@@ -81,6 +81,13 @@ else
   echo "→ GUI server (HTTP ${PMW_FRONTEND_PORT:-8080} / HTTPS ${PMW_FRONTEND_HTTPS_PORT:-8443}, per TLS mode)"
   "$VENV/python" frontend/launch.py &
   pids+=($!)
+
+  # The integration / data-source console — a fourth surface on the admin port + 10,
+  # for power users, developers and admins. Follows the same TLS plan; disable it in
+  # the admin panel's Integration tab.
+  echo "→ integration console (HTTP ${PMW_INTEGRATION_PORT:-8100} / HTTPS ${PMW_INTEGRATION_HTTPS_PORT:-8463}, per TLS mode)"
+  "$VENV/python" integration/launch.py &
+  pids+=($!)
 fi
 
 wait
