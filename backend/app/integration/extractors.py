@@ -97,10 +97,22 @@ class FileExtractor:
 
     info = file_extractor_info()
 
-    def __init__(self, *, path: str, encoding: str, fields: list[dict], project_id: str) -> None:
+    def __init__(
+        self,
+        *,
+        path: str,
+        encoding: str,
+        fields: list[dict],
+        project_id: str,
+        lines: list[str] | None = None,
+    ) -> None:
         self._path = path
         self._encoding = encoding or "utf-8"
         self._project_id = project_id
+        # Incremental (watchdog) mode: when ``lines`` is given, those exact lines are
+        # extracted instead of reading the whole file — the caller has already read only
+        # the newly-appended lines from the file's checkpoint offset.
+        self._lines = lines
         # Compile the regexes once, split by role. Only the first field of each single
         # role is used; up to three meta fields map to META_1..3.
         self._ts = self._compiled(fields, "timestamp")
@@ -139,16 +151,26 @@ class FileExtractor:
         session.define_table("JOURNEYS", _JOURNEYS_COLUMNS, keys=["PROJECT_ID", "EVENT_ID", "STEP"])
         session.define_table("PROJECTS", _PROJECTS_COLUMNS, keys=["PROJECT_ID"])
         session.define_table("STEPS", _STEPS_COLUMNS, keys=["PROJECT_ID", "STEP"])
-        session.log(f"reading {self._path} → {session.schema}.JOURNEYS (project {self._project_id})")
 
-        total = count_lines(self._path, self._encoding)  # denominator for the progress bar
+        # Whole-file read, or just the newly-appended lines the watchdog handed us.
+        if self._lines is not None:
+            source = self._lines
+            total = len(self._lines)
+            session.log(
+                f"watchdog: {total} new line(s) from {self._path} → "
+                f"{session.schema}.JOURNEYS (project {self._project_id})"
+            )
+        else:
+            source = iter_lines(self._path, self._encoding)
+            total = count_lines(self._path, self._encoding)
+            session.log(f"reading {self._path} → {session.schema}.JOURNEYS (project {self._project_id})")
         session.progress(0, total)
 
         batch: list[dict] = []
         written = 0
         skipped = 0
         processed = 0
-        for line in iter_lines(self._path, self._encoding):
+        for line in source:
             processed += 1
             row = self._row(line)
             if row is None:

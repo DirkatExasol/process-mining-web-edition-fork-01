@@ -165,6 +165,19 @@ CREATE TABLE IF NOT EXISTS sources (
     config      TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL
 );
+-- Integration console: the watchdog's read checkpoint per source file, so an
+-- incremental import only picks up newly-appended lines. `byte_offset` is how far the
+-- file has been consumed; `size`/`signature` detect truncation or rotation (a shrunk
+-- file or a changed head resets the offset). `records` is the running total imported.
+CREATE TABLE IF NOT EXISTS source_checkpoints (
+    source_id   TEXT PRIMARY KEY,
+    byte_offset INTEGER NOT NULL DEFAULT 0,
+    size        INTEGER NOT NULL DEFAULT 0,
+    signature   TEXT NOT NULL DEFAULT '',
+    records     INTEGER NOT NULL DEFAULT 0,
+    updated_at  TEXT NOT NULL DEFAULT '',
+    last_error  TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS ldap_config (
     id                INTEGER PRIMARY KEY CHECK (id = 1),
     enabled           INTEGER NOT NULL DEFAULT 0,
@@ -1973,6 +1986,10 @@ class SecurityStore:
                 "DELETE FROM sources WHERE id = ? AND LOWER(owner) = LOWER(?)",
                 (source_id, owner or ""),
             )
+            if cur.rowcount > 0:
+                self._conn.execute(
+                    "DELETE FROM source_checkpoints WHERE source_id = ?", (source_id,)
+                )
             self._conn.commit()
             return cur.rowcount > 0
 
@@ -1995,6 +2012,64 @@ class SecurityStore:
                 "SELECT * FROM sources WHERE id = ?", (source_id,)
             ).fetchone()
             return self._row_to_source(row) if row else None
+
+    def list_all_sources(self) -> list[Source]:
+        """Every source across all owners — used by the background watchdog."""
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM sources").fetchall()
+            return [self._row_to_source(r) for r in rows]
+
+    # ── watchdog read checkpoints (per source file) ───────────────────────────
+
+    def get_source_checkpoint(self, source_id: str) -> dict | None:
+        """The watchdog's read checkpoint for a source, or None if it has never run."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM source_checkpoints WHERE source_id = ?", (source_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "byteOffset": row["byte_offset"],
+            "size": row["size"],
+            "signature": row["signature"],
+            "records": row["records"],
+            "updatedAt": row["updated_at"],
+            "lastError": row["last_error"] or None,
+        }
+
+    def set_source_checkpoint(
+        self,
+        source_id: str,
+        *,
+        byte_offset: int,
+        size: int,
+        signature: str,
+        records: int,
+        last_error: str = "",
+    ) -> None:
+        """Persist the watchdog's read position for a source (upsert)."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO source_checkpoints "
+                "(source_id, byte_offset, size, signature, records, updated_at, last_error) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(source_id) DO UPDATE SET "
+                "byte_offset = excluded.byte_offset, size = excluded.size, "
+                "signature = excluded.signature, records = excluded.records, "
+                "updated_at = excluded.updated_at, last_error = excluded.last_error",
+                (source_id, int(byte_offset), int(size), signature, int(records),
+                 _now(), last_error or ""),
+            )
+            self._conn.commit()
+
+    def delete_source_checkpoint(self, source_id: str) -> None:
+        """Forget a source's read position (a fresh import re-reads from the start)."""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM source_checkpoints WHERE source_id = ?", (source_id,)
+            )
+            self._conn.commit()
 
     # ── effective TLS plan (read by the GUI launcher) ─────────────────────────
 

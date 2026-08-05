@@ -31,6 +31,36 @@ def test_reads_a_file_inside_the_sandbox(files):
     assert list(files_mod.iter_lines("app.log")) == ["l1", "l2", "l3", "l4", "l5", "l6"]
 
 
+def test_read_new_lines_is_incremental_and_handles_partial_and_rotation(files):
+    files_mod, config = files
+    f = config.INTEGRATION_FILES_DIR / "grow.log"
+    f.write_text("a\nb\n")
+
+    # First read: both complete lines, offset stops at the last newline.
+    r1 = files_mod.read_new_lines("grow.log", "utf-8", 0)
+    assert r1["lines"] == ["a", "b"]
+    assert r1["new_offset"] == 4 and r1["rotated"] is False
+
+    # Append a complete line + a partial (no trailing newline): only the complete one
+    # is returned, the partial waits and the offset stops before it.
+    with f.open("a") as fh:
+        fh.write("c\npartial")
+    r2 = files_mod.read_new_lines("grow.log", "utf-8", r1["new_offset"])
+    assert r2["lines"] == ["c"]
+    assert r2["new_offset"] == 6  # "a\nb\nc\n"
+
+    # Finish the partial line: it's now picked up from the same offset.
+    with f.open("a") as fh:
+        fh.write("-done\n")
+    r3 = files_mod.read_new_lines("grow.log", "utf-8", r2["new_offset"])
+    assert r3["lines"] == ["partial-done"]
+
+    # Truncation/rotation: the file shrank below the offset → re-read from the start.
+    f.write_text("fresh\n")
+    r4 = files_mod.read_new_lines("grow.log", "utf-8", r3["new_offset"])
+    assert r4["rotated"] is True and r4["lines"] == ["fresh"]
+
+
 def test_rejects_paths_outside_the_sandbox(files):
     files_mod, _ = files
     for bad in ["../../etc/passwd", "/etc/passwd", "../secret", "sub/../../escape"]:

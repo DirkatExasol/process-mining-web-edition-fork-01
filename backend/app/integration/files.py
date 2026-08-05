@@ -111,6 +111,62 @@ def count_lines(path: str, encoding: str = "utf-8") -> int:
     return n
 
 
+_SIG_BYTES = 64  # a small, fixed prefix — stable as the file grows by appends
+
+
+def _signature(fh) -> str:
+    """Fingerprint the file's first ``_SIG_BYTES`` bytes, so the watchdog notices when the
+    file is *replaced* by different content (rotation). Uses a small FIXED prefix that
+    doesn't change as the file grows by appends; returns "" for a file too short to
+    fingerprint (rotation is then detected only by the size shrinking)."""
+    import hashlib
+
+    fh.seek(0)
+    head = fh.read(_SIG_BYTES)
+    return hashlib.md5(head).hexdigest() if len(head) >= _SIG_BYTES else ""
+
+
+def read_new_lines(path: str, encoding: str, offset: int) -> dict:
+    """Read the file's newly-appended, *complete* lines since byte ``offset``.
+
+    Returns ``{lines, new_offset, size, signature, rotated}``:
+    * only whole lines (up to the last newline) are returned — a partial trailing line
+      is left for the next poll, and ``new_offset`` stops at that boundary;
+    * ``rotated`` is True when the file shrank below ``offset`` (truncated/rotated), in
+      which case reading restarts from 0;
+    * blank lines are skipped and each line is length-capped, matching ``iter_lines``.
+    """
+    real = resolve_source_file(path)
+    enc = encoding or "utf-8"
+    with real.open("rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        size = fh.tell()
+        signature = _signature(fh)
+        start = int(offset or 0)
+        rotated = start > size  # the file shrank ⇒ it was truncated or rotated
+        if rotated:
+            start = 0
+        if start >= size:
+            return {"lines": [], "new_offset": start, "size": size,
+                    "signature": signature, "rotated": rotated}
+        fh.seek(start)
+        data = fh.read(size - start)
+
+    last_nl = data.rfind(b"\n")
+    if last_nl == -1:  # no complete new line yet — wait for the rest
+        return {"lines": [], "new_offset": start, "size": size,
+                "signature": signature, "rotated": rotated}
+    consumed = data[: last_nl + 1]
+    new_offset = start + len(consumed)
+    lines = [
+        ln.rstrip("\r")[:_MAX_LINE_CHARS]
+        for ln in consumed.decode(enc, errors="replace").split("\n")
+        if ln.strip()
+    ]
+    return {"lines": lines, "new_offset": new_offset, "size": size,
+            "signature": signature, "rotated": rotated}
+
+
 def seed_demo_files() -> None:
     """Copy the bundled example log(s) into the sandbox dir on first use, so the demo
     works out of the box. Never overwrites an existing file. Best-effort."""

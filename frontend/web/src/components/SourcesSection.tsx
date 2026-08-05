@@ -89,7 +89,12 @@ export function SourcesSection({ open, onToggle }: { open: boolean; onToggle: ()
               >
                 <span aria-hidden style={{ fontSize: 16 }}>{kind?.icon ?? '🗂️'}</span>
                 <div className="card-body">
-                  <span className="card-title">{s.name}</span>
+                  <span className="card-title">
+                    {s.name}
+                    {(s.config?.watchdog as { enabled?: boolean } | undefined)?.enabled && (
+                      <span title="Watchdog on — auto-imports new lines" style={{ marginLeft: 6 }}>👁</span>
+                    )}
+                  </span>
                   <span className="card-sub fg-tertiary">
                     {kind?.label ?? s.kind}
                     {kind ? ` · ${kind.summary(s.config)}` : ''}

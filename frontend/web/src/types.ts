@@ -606,3 +606,22 @@ export interface SourceInput {
   kind: string
   config: Record<string, unknown>
 }
+
+/** Optional watchdog on a File source: auto-import newly-appended lines when the file
+ *  grows, into a stored connection + project (stored in the source's config.watchdog). */
+export interface WatchdogConfig {
+  enabled: boolean
+  connectionId: string
+  projectId: string
+  intervalSecs: number
+}
+
+/** The watchdog's read checkpoint for a source file. */
+export interface SourceCheckpoint {
+  byteOffset: number
+  size: number
+  signature: string
+  records: number
+  updatedAt: string | null
+  lastError: string | null
+}

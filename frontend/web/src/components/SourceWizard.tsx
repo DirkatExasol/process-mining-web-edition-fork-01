@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { SOURCE_KINDS, sourceKind, type SourceKindDef } from '../integration/sourceKinds'
-import type { Source, SourceType } from '../types'
+import type { AssignedConnection, Source, SourceCheckpoint, SourceType, WatchdogConfig } from '../types'
 import { Sheet } from './ui'
 
 const LAST_STEP = 3
@@ -35,7 +35,27 @@ export function SourceWizard({
   const [preview, setPreview] = useState<{ lines: string[]; truncated: boolean } | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
 
+  // Optional watchdog (File sources): auto-import new lines into a stored destination.
+  const wd0 = (existing?.config?.watchdog ?? {}) as Partial<WatchdogConfig>
+  const [wdEnabled, setWdEnabled] = useState(!!wd0.enabled)
+  const [wdConnection, setWdConnection] = useState(wd0.connectionId ?? '')
+  const [wdProject, setWdProject] = useState(wd0.projectId ?? '')
+  const [wdInterval, setWdInterval] = useState(Number(wd0.intervalSecs) || 30)
+  const [connections, setConnections] = useState<AssignedConnection[]>([])
+  const [checkpoint, setCheckpoint] = useState<SourceCheckpoint | null>(null)
+
   const kind = sourceKind(kindId)
+
+  useEffect(() => {
+    void api.listConnections().then(setConnections).catch(() => setConnections([]))
+  }, [])
+
+  // Show the watchdog's read checkpoint (records imported, last run, any error).
+  const loadCheckpoint = () => {
+    if (!existing) return
+    void api.sourceCheckpoint(existing.id).then(setCheckpoint).catch(() => setCheckpoint(null))
+  }
+  useEffect(loadCheckpoint, [existing])
 
   // The picker of source types (for a 'sourceType' field).
   useEffect(() => {
@@ -96,13 +116,26 @@ export function SourceWizard({
       setStep(2)
       return
     }
+    if (kindId === 'file' && wdEnabled && (!wdConnection || !wdProject.trim())) {
+      setError('The watchdog needs a destination connection and a project id.')
+      setStep(2)
+      return
+    }
     setBusy(true)
     setError(null)
     // Only keep the current kind's declared fields (trimmed, non-empty).
-    const cleaned: Record<string, string> = {}
+    const cleaned: Record<string, unknown> = {}
     for (const f of kind?.fields ?? []) {
       const v = config[f.key]?.trim()
       if (v) cleaned[f.key] = v
+    }
+    if (kindId === 'file' && wdEnabled) {
+      cleaned.watchdog = {
+        enabled: true,
+        connectionId: wdConnection,
+        projectId: wdProject.trim(),
+        intervalSecs: Math.max(5, wdInterval),
+      } satisfies WatchdogConfig
     }
     const body = { name: name.trim(), kind: kindId, config: cleaned }
     try {
@@ -113,6 +146,12 @@ export function SourceWizard({
       setError(e instanceof Error ? e.message : String(e))
       setBusy(false)
     }
+  }
+
+  const resetCheckpoint = async () => {
+    if (!existing) return
+    await api.resetSourceCheckpoint(existing.id).catch(() => {})
+    loadCheckpoint()
   }
 
   const footer = (
@@ -284,6 +323,95 @@ export function SourceWizard({
                     <span className="fg-tertiary">No lines.</span>
                   )}
                 </div>
+              )}
+            </div>
+          )}
+
+          {kindId === 'file' && (
+            <div
+              className="col"
+              style={{
+                gap: 8, padding: 10, borderRadius: 10,
+                border: '1px solid var(--border-soft, var(--border))', background: 'var(--fill)',
+              }}
+            >
+              <label className="row" style={{ gap: 8, alignItems: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={wdEnabled}
+                  onChange={(e) => setWdEnabled(e.target.checked)}
+                  style={{ width: 'auto' }}
+                />
+                <span className="t-caption" style={{ fontWeight: 600 }}>
+                  👁 Watchdog — auto-import new lines when the file grows
+                </span>
+              </label>
+              <span className="t-caption2 fg-tertiary">
+                A background job watches this file and imports only the newly-appended
+                lines into the destination below. A checkpoint is kept per file, so nothing
+                is imported twice — even across restarts.
+              </span>
+
+              {wdEnabled && (
+                <>
+                  <Field label="Destination connection *">
+                    <select
+                      className="text-input"
+                      value={wdConnection}
+                      onChange={(e) => setWdConnection(e.target.value)}
+                    >
+                      <option value="">— pick a connection —</option>
+                      {connections.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                    <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                      <Field label="Project id *">
+                        <input
+                          className="text-input"
+                          value={wdProject}
+                          onChange={(e) => setWdProject(e.target.value)}
+                          placeholder="e.g. LIVE-LOG"
+                        />
+                      </Field>
+                    </div>
+                    <div style={{ width: 130 }}>
+                      <Field label="Every (seconds)">
+                        <input
+                          className="text-input"
+                          type="number"
+                          min={5}
+                          value={wdInterval}
+                          onChange={(e) => setWdInterval(Math.max(5, Number(e.target.value) || 30))}
+                        />
+                      </Field>
+                    </div>
+                  </div>
+                  {connections.length === 0 && (
+                    <span className="t-caption2 fg-tertiary">
+                      No connections are assigned to you — ask an administrator, or create
+                      one in the main app.
+                    </span>
+                  )}
+                  {existing && checkpoint && (
+                    <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span className="t-caption2 fg-secondary" style={{ flex: 1, minWidth: 0 }}>
+                        {checkpoint.lastError ? (
+                          <span className="fg-red">⚠ {checkpoint.lastError}</span>
+                        ) : checkpoint.updatedAt ? (
+                          `✓ ${checkpoint.records.toLocaleString()} records imported · last checked ${new Date(checkpoint.updatedAt).toLocaleString()}`
+                        ) : (
+                          'Not run yet — the watchdog will pick it up shortly.'
+                        )}
+                      </span>
+                      <button className="btn small" onClick={() => void resetCheckpoint()}>
+                        ↺ Reset checkpoint
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}

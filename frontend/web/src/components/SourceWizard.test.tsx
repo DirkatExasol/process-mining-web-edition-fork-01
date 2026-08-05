@@ -6,6 +6,10 @@ vi.mock('../api', () => ({
     createSource: vi.fn(async () => ({})),
     updateSource: vi.fn(async () => ({})),
     listSourceTypes: vi.fn(async () => []),
+    listConnections: vi.fn(async () => []),
+    sourceCheckpoint: vi.fn(async () => ({
+      byteOffset: 0, size: 0, signature: '', records: 0, updatedAt: null, lastError: null,
+    })),
     previewSource: vi.fn(async () => ({ lines: ['line one', 'line two'], truncated: true })),
   },
 }))

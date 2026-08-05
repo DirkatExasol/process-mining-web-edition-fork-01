@@ -569,9 +569,25 @@ the lowercase-hex convention used by every bundled dataset (see *Event-ID format
 The source-type wizard's *Example JOURNEYS record* still shows the **original** captured
 id (labelled *stored as MD5*) so you can verify the extraction against the source line.
 
-> **Status:** the contract, ingest backends, registry, per-user status **and the File
-> extractor** are in place and tested (`backend/tests/test_integration_{layer,extractor,files}.py`).
-> Next: scheduling / incremental re-runs and non-file source kinds.
+**Watchdog — incremental auto-import.** A File source can enable an optional **watchdog**
+(configured in the same source wizard: a destination connection, a project id and a poll
+interval). A background loop in the compute backend then watches the file and, whenever it
+**grows**, imports only the **newly-appended** lines — never the whole file again. A
+**checkpoint per source file** (`source_checkpoints` table: byte offset + a small head
+signature + running record count) is persisted, so nothing is re-imported across polls or
+restarts. Truncation or rotation (the file shrinks, or its head changes) resets the offset
+to re-read from the start. Because it runs headless, the watchdog writes into the
+**stored** connection saved with the source (not a live session); its runs surface in the
+console's live pipeline just like a manual run. Endpoints: `GET
+/api/integration/sources/{id}/checkpoint` and `POST …/checkpoint/reset` (force a fresh
+re-read). Config: `PMW_INTEGRATION_WATCHDOG=0` disables it globally;
+`PMW_INTEGRATION_WATCHDOG_TICK` sets the base loop tick (each source also has its own
+interval).
+
+> **Status:** the contract, ingest backends, registry, per-user status, the File
+> extractor **and the file watchdog** are in place and tested
+> (`backend/tests/test_integration_{layer,extractor,files,watchdog}.py`).
+> Next: non-file source kinds.
 
 ## Database schema
 

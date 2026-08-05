@@ -108,6 +108,22 @@ def test_run_reports_progress_totals(env):
     assert st["recordsDone"] == 3
 
 
+def test_incremental_lines_mode_only_extracts_the_given_lines(env):
+    """The watchdog hands the extractor just the newly-appended lines (not the whole
+    file); only those become JOURNEYS rows."""
+    config, extractors_mod, AbstractionLayer, InMemoryIngestBackend = env
+    # The file on disk has more, but we only pass ONE new line.
+    (config.INTEGRATION_FILES_DIR / "access.log").write_text("\n".join([LINE_A, LINE_B]) + "\n")
+    mem = InMemoryIngestBackend()
+    ext = extractors_mod.FileExtractor(
+        path="access.log", encoding="utf-8", fields=FIELDS, project_id="P", lines=[LINE_B],
+    )
+    result = asyncio.run(AbstractionLayer().run(user="dev", extractor=ext, backend=mem, schema="S"))
+    rows = mem.tables["S"]["JOURNEYS"]["rows"]
+    assert result.records == 1 and len(rows) == 1
+    assert rows[0]["EVENT_ID"] == _md5("44189320") and rows[0]["STEP"] == "basket"
+
+
 def test_run_records_origin_for_the_pipeline_canvas(env):
     config, extractors_mod, AbstractionLayer, InMemoryIngestBackend = env
     (config.INTEGRATION_FILES_DIR / "access.log").write_text(LINE_A + "\n")

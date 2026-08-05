@@ -80,6 +80,16 @@ INTEGRATION_ALLOW_ANY_PATH = os.environ.get(
     "PMW_INTEGRATION_ALLOW_ANY_PATH", ""
 ).strip().lower() in ("1", "true", "yes", "on")
 
+# File-source watchdog: a background loop that auto-imports newly-appended lines of a
+# File source when its file grows. PMW_INTEGRATION_WATCHDOG=0 disables it globally; the
+# base tick is how often the loop wakes (each source also has its own poll interval).
+INTEGRATION_WATCHDOG_ENABLED = os.environ.get(
+    "PMW_INTEGRATION_WATCHDOG", "1"
+).strip().lower() in ("1", "true", "yes", "on")
+INTEGRATION_WATCHDOG_TICK_SECS = max(
+    5, int(os.environ.get("PMW_INTEGRATION_WATCHDOG_TICK", "10"))
+)
+
 # Admin session lifetime.
 ADMIN_SESSION_TTL_SECS = int(os.environ.get("PMW_ADMIN_SESSION_TTL", str(8 * 3600)))
 

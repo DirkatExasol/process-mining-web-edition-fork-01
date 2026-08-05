@@ -177,9 +177,16 @@ def create_source(body: SourceBody, request: Request) -> dict:
 def update_source(source_id: str, body: SourceBody, request: Request) -> dict:
     user = _request_user(request)
     config = _source_config(body)
+    # If the file path changed, the old read checkpoint no longer applies — forget it so
+    # the watchdog re-reads the new file from the start.
+    old = _source_owned(source_id, user)
+    old_path = str((old.public()["config"].get("path") if old else "") or "")
     updated = security_store.update_source(source_id, user, name=body.name, kind=body.kind, config=config)
     if updated is None:
         raise HTTPException(status_code=404, detail="Source not found.")
+    new_path = str(body.config.get("path") or "")
+    if new_path != old_path:
+        security_store.delete_source_checkpoint(source_id)
     return updated.public()
 
 
@@ -214,6 +221,30 @@ def _source_owned(source_id: str, user: str | None):
         if s.id == source_id:
             return s
     return None
+
+
+@router.get("/sources/{source_id}/checkpoint")
+def source_checkpoint(source_id: str, request: Request) -> dict:
+    """The watchdog's read checkpoint for a File source (byte offset, imported records,
+    last error, when it last ran) — or nulls if it has never imported."""
+    user = _request_user(request)
+    if _source_owned(source_id, user) is None:
+        raise HTTPException(status_code=404, detail="Source not found.")
+    cp = security_store.get_source_checkpoint(source_id)
+    return cp or {
+        "byteOffset": 0, "size": 0, "signature": "", "records": 0,
+        "updatedAt": None, "lastError": None,
+    }
+
+
+@router.post("/sources/{source_id}/checkpoint/reset")
+def reset_source_checkpoint(source_id: str, request: Request) -> dict:
+    """Forget the read checkpoint so the next watchdog poll re-imports from the start."""
+    user = _request_user(request)
+    if _source_owned(source_id, user) is None:
+        raise HTTPException(status_code=404, detail="Source not found.")
+    security_store.delete_source_checkpoint(source_id)
+    return {"ok": True}
 
 
 @router.post("/sources/{source_id}/run")

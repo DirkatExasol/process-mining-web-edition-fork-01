@@ -1407,6 +1407,15 @@ const integrationSources: HelpTopic = {
         p('It also creates anything missing: the PROJECTS row, a STEPS definition for every distinct step (a shape, a colour and a zero score), and the META business-name titles — existing rows are never overwritten.'),
       ],
     },
+    {
+      heading: 'Watchdog — auto-import new lines',
+      body: [
+        p('A File source can run a watchdog (turn it on in the source wizard, under the file path). It picks a destination connection, a project id and a poll interval. A background job then watches the file and, whenever it grows, imports only the newly-appended lines — never the whole file again — so a continuously-written log streams into the database on its own.'),
+        p('A checkpoint is kept per source file (how far it has been read, plus the imported record count), so nothing is imported twice — even across server restarts. If the file is truncated or replaced (rotated), the watchdog notices and re-reads it from the start.'),
+        tip('The wizard shows the checkpoint status (records imported, last check, any error) and a Reset checkpoint button to force a full re-read. A source with the watchdog on is marked with a 👁 in the Sources list, and its imports appear in the live pipeline like any other run.'),
+        warn('Because the watchdog runs headless (no signed-in session), it writes into the connection you store with it — not your current active connection. It uses that connection’s saved credentials, so pick one you own and that points at the right schema.'),
+      ],
+    },
   ],
 }
 

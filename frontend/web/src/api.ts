@@ -20,6 +20,7 @@ import type {
   IntegrationStatus,
   SampleSet,
   Source,
+  SourceCheckpoint,
   SourceInput,
   SourceType,
   SourceTypeInput,
@@ -206,6 +207,10 @@ export const api = {
     post<{ lines: string[]; truncated: boolean }>('/api/integration/sources/preview', { path, limit }),
   runSource: (id: string, projectId: string) =>
     post<{ records: number; detail: string }>(`/api/integration/sources/${enc(id)}/run`, { projectId }),
+  sourceCheckpoint: (id: string) =>
+    get<SourceCheckpoint>(`/api/integration/sources/${enc(id)}/checkpoint`),
+  resetSourceCheckpoint: (id: string) =>
+    post<{ ok: boolean }>(`/api/integration/sources/${enc(id)}/checkpoint/reset`),
 
   // ── project data ─────────────────────────────────────────────────────────
   listProjects: () => get<Project[]>('/api/projects'),

@@ -110,8 +110,13 @@ async def lifespan(app: FastAPI):
 
     seed_demo_files()
     watchdog = asyncio.create_task(_license_watchdog())
+    # File-source watchdog: auto-import newly-appended lines of watched File sources.
+    from .integration.watchdog import watchdog_loop
+
+    file_watchdog = asyncio.create_task(watchdog_loop())
     yield
     watchdog.cancel()
+    file_watchdog.cancel()
     # Release every per-user Exasol connection (and the legacy one) on shutdown.
     await registry.disconnect_all()
     await db.disconnect()
