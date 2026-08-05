@@ -71,7 +71,7 @@ def test_run_pushes_records_and_reports_completed_status():
     layer.register(_Extractor(_push_two))
     mem = InMemoryIngestBackend()
 
-    result = _run(layer.run(user="alice", extractor_id="demo-source", backend=mem,
+    result = _run(layer.run(user="alice", extractor="demo-source", backend=mem,
                             schema="PMW_STAGE", connection_id="c1"))
     assert result.records == 2
 
@@ -97,7 +97,7 @@ def test_run_failure_is_captured_in_status():
 
     layer.register(_Extractor(boom))
     with pytest.raises(RuntimeError):
-        _run(layer.run(user="bob", extractor_id="demo-source",
+        _run(layer.run(user="bob", extractor="demo-source",
                        backend=InMemoryIngestBackend(), schema="S"))
     st = layer.status_for("bob").public()
     assert st["state"] == LayerState.FAILED.value
@@ -112,7 +112,7 @@ def test_status_is_per_user_and_starts_idle():
 def test_run_unknown_extractor_raises():
     layer = AbstractionLayer()
     with pytest.raises(IngestError):
-        _run(layer.run(user="x", extractor_id="nope",
+        _run(layer.run(user="x", extractor="nope",
                        backend=InMemoryIngestBackend(), schema="S"))
 
 
@@ -123,7 +123,7 @@ def test_push_before_define_table_raises():
     layer = AbstractionLayer()
     layer.register(_Extractor(lambda s: s.push("T", [{"ID": 1}])))
     with pytest.raises(IngestError):
-        _run(layer.run(user="x", extractor_id="demo-source",
+        _run(layer.run(user="x", extractor="demo-source",
                        backend=InMemoryIngestBackend(), schema="S"))
 
 
@@ -136,7 +136,7 @@ def test_push_unknown_column_raises():
 
     layer.register(_Extractor(extra))
     with pytest.raises(IngestError):
-        _run(layer.run(user="x", extractor_id="demo-source",
+        _run(layer.run(user="x", extractor="demo-source",
                        backend=InMemoryIngestBackend(), schema="S"))
 
 
@@ -150,7 +150,7 @@ def test_missing_column_becomes_null():
         return ExtractResult()
 
     layer.register(_Extractor(partial))
-    _run(layer.run(user="x", extractor_id="demo-source", backend=mem, schema="S"))
+    _run(layer.run(user="x", extractor="demo-source", backend=mem, schema="S"))
     assert mem.tables["S"]["T"]["rows"] == [{"ID": 1, "NAME": None}]
 
 
@@ -219,3 +219,22 @@ def test_extractors_endpoint_returns_a_list():
     from app.api import integration as integ_api
 
     assert isinstance(integ_api.integration_extractors(), list)
+
+
+def test_sql_backend_existing_keys_reads_and_stringifies():
+    calls: list[str] = []
+    def run(sql):
+        calls.append(sql)
+        return [["P1", "login"], ["P1", "view"]] if sql.startswith("SELECT") else []
+    b = SqlIngestBackend(run_sql=run)
+    keys = b.existing_keys("MINING", "STEPS", ["PROJECT_ID", "STEP"])
+    assert keys == {("P1", "login"), ("P1", "view")}
+    assert calls[0] == 'SELECT "PROJECT_ID", "STEP" FROM "MINING"."STEPS"'
+
+
+def test_inmemory_existing_keys():
+    b = InMemoryIngestBackend()
+    b.create_table("S", "STEPS", {"PROJECT_ID": ColumnType.STRING, "STEP": ColumnType.STRING}, [])
+    b.insert("S", "STEPS", ["PROJECT_ID", "STEP"], [["P", "a"], ["P", "b"]])
+    assert b.existing_keys("S", "STEPS", ["PROJECT_ID", "STEP"]) == {("P", "a"), ("P", "b")}
+    assert b.existing_keys("S", "MISSING", ["X"]) == set()

@@ -28,9 +28,18 @@ class LayerStatus:
     state: LayerState = LayerState.IDLE
     extractor_id: str | None = None
     extractor_name: str | None = None
+    # Origin of the run, for the console's pipeline canvas (the source it read from and
+    # the source type used to parse it). Set by whoever triggers the run — a manual run,
+    # a watchdog, or an API push — so the canvas stays live regardless of the trigger.
+    source_name: str | None = None
+    source_type_name: str | None = None
     connection_id: str | None = None
+    connection_name: str | None = None
     schema: str | None = None
     records_pushed: int = 0
+    # Progress for a progress bar: items processed so far, and the total (0 = unknown).
+    records_done: int = 0
+    records_total: int = 0
     tables_touched: list[str] = field(default_factory=list)
     started_at: str | None = None
     finished_at: str | None = None
@@ -51,9 +60,14 @@ class LayerStatus:
             "state": self.state.value,
             "extractorId": self.extractor_id,
             "extractorName": self.extractor_name,
+            "sourceName": self.source_name,
+            "sourceTypeName": self.source_type_name,
             "connectionId": self.connection_id,
+            "connectionName": self.connection_name,
             "schema": self.schema,
             "recordsPushed": self.records_pushed,
+            "recordsDone": self.records_done,
+            "recordsTotal": self.records_total,
             "tablesTouched": list(self.tables_touched),
             "startedAt": self.started_at,
             "finishedAt": self.finished_at,

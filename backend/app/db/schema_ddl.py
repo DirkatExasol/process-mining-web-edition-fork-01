@@ -308,3 +308,174 @@ async def provision_process_mining_schema(
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": friendly_error(exc), "created": created}
     return {"ok": True, "error": None, "created": created}
+
+
+def _server_for(schema: str, *, host, port, username, use_tls, cert_mode, fingerprint, min_rsa_bits):
+    """A throwaway DatabaseServer for a one-off admin query. Connects WITHOUT opening a
+    schema (we OPEN SCHEMA explicitly), so it works even before provisioning."""
+    from ..models import DatabaseServer
+
+    return DatabaseServer(
+        id="admin-query",
+        host=host,
+        port=port,
+        username=username,
+        useTLS=use_tls,
+        certModeRaw=cert_mode,
+        fingerprint=fingerprint,
+        minRSAKeySizeBits=min_rsa_bits,
+        **{"schema": ""},
+    )
+
+
+async def list_projects_with_counts(
+    *,
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    schema: str,
+    use_tls: bool = False,
+    cert_mode: str = "verify",
+    fingerprint: str = "",
+    min_rsa_bits: int = 2048,
+) -> dict:
+    """List the projects stored in ``schema`` with, for each, the number of journeys
+    (distinct EVENT_ID) and events (rows) in its ORIGINAL data.
+
+    Returns ``{"ok", "error", "projects": [{"projectId", "title", "journeys",
+    "events"}]}``. Projects present in either PROJECTS or JOURNEYS are included, so a
+    project shows even if one of the tables is missing a row for it.
+    """
+    import asyncio
+
+    from .manager import DatabaseManager, friendly_error
+
+    schema = (schema or "").strip()
+    if not schema:
+        return {"ok": False, "error": "A schema name is required.", "projects": []}
+
+    server = _server_for(
+        schema, host=host, port=port, username=username, use_tls=use_tls,
+        cert_mode=cert_mode, fingerprint=fingerprint, min_rsa_bits=min_rsa_bits,
+    )
+    mgr = DatabaseManager.__new__(DatabaseManager)  # no store side effects
+    ident = _quote_ident(schema)
+
+    def _run() -> list[dict]:
+        conn = mgr._open(server, password)
+        try:
+            conn.execute(f"OPEN SCHEMA {ident}")
+            titles: dict[str, str] = {}
+            try:
+                for row in conn.execute("SELECT PROJECT_ID, TITLE FROM PROJECTS").fetchall():
+                    titles[str(row[0])] = row[1] or ""
+            except Exception:  # noqa: BLE001 — PROJECTS may not exist yet
+                pass
+            aggs: dict[str, tuple[int, int]] = {}
+            try:
+                for row in conn.execute(
+                    "SELECT PROJECT_ID, COUNT(*), COUNT(DISTINCT EVENT_ID) "
+                    "FROM JOURNEYS WHERE SAMPLE_SET = 'ORIGINAL' GROUP BY PROJECT_ID"
+                ).fetchall():
+                    aggs[str(row[0])] = (int(row[1] or 0), int(row[2] or 0))
+            except Exception:  # noqa: BLE001 — JOURNEYS may not exist yet
+                pass
+            out: list[dict] = []
+            for pid in sorted(set(titles) | set(aggs)):
+                events, journeys = aggs.get(pid, (0, 0))
+                out.append({
+                    "projectId": pid,
+                    "title": titles.get(pid) or pid,
+                    "journeys": journeys,
+                    "events": events,
+                })
+            return out
+        finally:
+            conn.close()
+
+    try:
+        projects = await asyncio.to_thread(_run)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": friendly_error(exc), "projects": []}
+    return {"ok": True, "error": None, "projects": projects}
+
+
+# Every table that carries a PROJECT_ID, children before PROJECTS. TRANSITIONS_RAW is
+# optional (built on demand); NOTES is created lazily — both may be absent.
+_PROJECT_SCOPED_TABLES = [
+    "JOURNEYS", "STEPS", "METAS", "NOTES", MATERIALIZED_TRANSITIONS_TABLE, "PROJECTS",
+]
+
+
+async def delete_project(
+    *,
+    project_id: str,
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    schema: str,
+    use_tls: bool = False,
+    cert_mode: str = "verify",
+    fingerprint: str = "",
+    min_rsa_bits: int = 2048,
+) -> dict:
+    """Delete a project everywhere in ``schema``: remove its rows from every
+    project-scoped table (PROJECTS, JOURNEYS, STEPS, METAS, NOTES, TRANSITIONS_RAW).
+
+    Returns ``{"ok", "error", "events", "journeys", "tables": [cleared]}`` — the
+    event/journey counts are what the project held before deletion. Tables that don't
+    exist are skipped, not treated as an error.
+    """
+    import asyncio
+
+    from .manager import DatabaseManager, friendly_error
+
+    schema = (schema or "").strip()
+    project_id = (project_id or "").strip()
+    if not schema:
+        return {"ok": False, "error": "A schema name is required."}
+    if not project_id:
+        return {"ok": False, "error": "A project id is required."}
+
+    server = _server_for(
+        schema, host=host, port=port, username=username, use_tls=use_tls,
+        cert_mode=cert_mode, fingerprint=fingerprint, min_rsa_bits=min_rsa_bits,
+    )
+    mgr = DatabaseManager.__new__(DatabaseManager)
+    ident = _quote_ident(schema)
+    # Escaped string literal for the WHERE clause (the only user-supplied value).
+    lit = "'" + project_id.replace("'", "''") + "'"
+
+    def _run() -> dict:
+        conn = mgr._open(server, password)
+        try:
+            conn.execute(f"OPEN SCHEMA {ident}")
+            events = journeys = 0
+            try:
+                row = conn.execute(
+                    f"SELECT COUNT(*), COUNT(DISTINCT EVENT_ID) FROM JOURNEYS "
+                    f"WHERE PROJECT_ID = {lit} AND SAMPLE_SET = 'ORIGINAL'"
+                ).fetchall()
+                if row:
+                    events, journeys = int(row[0][0] or 0), int(row[0][1] or 0)
+            except Exception:  # noqa: BLE001 — JOURNEYS may not exist
+                pass
+            cleared: list[str] = []
+            for table in _PROJECT_SCOPED_TABLES:
+                try:
+                    conn.execute(f"DELETE FROM {table} WHERE PROJECT_ID = {lit}")
+                    cleared.append(table)
+                except Exception:  # noqa: BLE001 — table absent (NOTES / TRANSITIONS_RAW)
+                    continue
+            conn.commit()
+            return {"events": events, "journeys": journeys, "tables": cleared}
+        finally:
+            conn.close()
+
+    try:
+        result = await asyncio.to_thread(_run)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": friendly_error(exc)}
+    return {"ok": True, "error": None, **result}

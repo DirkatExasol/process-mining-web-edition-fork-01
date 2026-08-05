@@ -494,8 +494,10 @@ The layer tracks a **per-user status** the console polls:
 {
   "state": "idle",            // idle | running | completed | failed
   "extractorId": null, "extractorName": null,
-  "connectionId": null, "schema": null,   // set for the active/last run
-  "recordsPushed": 0, "tablesTouched": [],
+  "sourceName": null, "sourceTypeName": null,      // run origin (for the canvas)
+  "connectionId": null, "connectionName": null, "schema": null,   // active/last run
+  "recordsPushed": 0, "recordsDone": 0, "recordsTotal": 0,   // pushed + progress bar
+  "tablesTouched": [],
   "startedAt": null, "finishedAt": null, "lastError": null, "messages": [],
   "registeredExtractors": 0,              // how many extractors are plugged in
   "activeConnectionId": null, "activeSchema": null, "connected": false // current target
@@ -505,11 +507,57 @@ The layer tracks a **per-user status** the console polls:
 `GET /api/integration/extractors` lists the registered extractors (`id`, `name`,
 `version`, `description`).
 
-> **Status of this layer:** the contract, the ingest backends, the registry and the
-> per-user run status are in place and tested (`backend/tests/test_integration_layer.py`).
-> The **first concrete extractor** and the **management UI** (enable/select/trigger a run
-> from the console) are the next stage — the layer already exposes `AbstractionLayer.run(...)`
-> for them to call.
+**Live pipeline canvas + history.** The console's main pane renders each import as a graph
+— **Source type → Source → Abstraction layer → Connection (destination)** — driven
+entirely by this status. The abstraction-layer node shows the run state and a live
+progress bar (`recordsDone`/`recordsTotal`), and the edges animate while a run is in
+flight. Because it reads the status rather than the run trigger, it lights up for **any**
+import: a manual run, or a future watchdog / API-push (any caller that passes
+`source_name` / `source_type_name` / `connection_name` to `AbstractionLayer.run` labels
+the canvas the same way).
+
+The console keeps an **ingestion history** and folds it into **one** accumulating
+flowchart: nodes are **reused** across runs, so every distinct source type, source and
+destination is a single node and the abstraction layer is the one hub in the middle. As
+imports happen the same graph grows — edges connect whatever combinations have run, the
+**Source and Destination nodes show their total imported rows**, and the currently-running
+path lights up. The history is per-user, persisted in the browser's `localStorage`, so it
+survives reloads and backend restarts (which reset the in-memory status to idle), and is
+kept until the user clicks **↺ Clear** (capped at the newest 50 runs).
+
+### Sources, source types & the File extractor
+
+The console lets a user build the pieces of an extraction:
+
+- A **source type** is a name + an extraction spec (a pasted example log + the
+  timestamp/step/id/meta regexes), built in the source-type wizard.
+- A **source** is a data origin with a generic `kind` + config. The only kind so far is
+  **File**: a *path* (previewed in the wizard — the first N lines), an *encoding*, and the
+  *source type* to parse it with.
+- **File access is sandboxed.** By default a File source may only read from
+  `PMW_INTEGRATION_FILES_DIR` (default `data/integration_files`, a mounted volume; the
+  bundled `examples/*.log` are seeded there on first run). Path traversal and symlink
+  escapes are rejected. Set `PMW_INTEGRATION_ALLOW_ANY_PATH=1` to instead allow any
+  absolute path the server can read (developer-trusted deployments only — it enables
+  reading arbitrary server files).
+
+**Running a File source** (`POST /api/integration/sources/{id}/run {projectId}`) builds a
+`FileExtractor` and calls `AbstractionLayer.run`: it reads the file line by line, applies
+the source type's regexes, normalises the timestamp to a real `TIMESTAMP`, and pushes a
+`JOURNEYS` row per event (`PROJECT_ID`=the project id, `EVENT_ID`/`STEP`/`EVENT_TIME` +
+`META_1..3`, `SAMPLE_SET='ORIGINAL'`) into the **active connection's schema** via the
+`SqlIngestBackend`. Progress and the result appear in the status panel. Lines that don't
+yield a case id, step and time are skipped and counted.
+
+The captured case id is **MD5-hashed** before it is written, so the raw id (which may be a
+login or user id) never lands in the clear — `EVENT_ID = md5(raw).hexdigest()`, matching
+the lowercase-hex convention used by every bundled dataset (see *Event-ID format* above).
+The source-type wizard's *Example JOURNEYS record* still shows the **original** captured
+id (labelled *stored as MD5*) so you can verify the extraction against the source line.
+
+> **Status:** the contract, ingest backends, registry, per-user status **and the File
+> extractor** are in place and tested (`backend/tests/test_integration_{layer,extractor,files}.py`).
+> Next: scheduling / incremental re-runs and non-file source kinds.
 
 ## Database schema
 

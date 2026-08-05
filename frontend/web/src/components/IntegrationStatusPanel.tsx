@@ -1,12 +1,9 @@
-/** Live status of the integration abstraction layer: current run state, the target
- *  schema an extraction would land in, how many extractors are plugged in, and the
- *  most recent run's progress. Polls `/api/integration/status` (+ the extractor
- *  list). Extractor selection / triggering a run is a later stage. */
+/** Live status details of the integration abstraction layer: current run state, the
+ *  target schema an extraction would land in, how many extractors are plugged in, and
+ *  the most recent run's progress + log. Presentational — the polled status is passed
+ *  in by the console (see IntegrationConsole), which also drives the pipeline canvas. */
 
-import { useEffect, useState } from 'react'
-import { api } from '../api'
-import { useStore } from '../store'
-import type { ExtractorInfo, IntegrationStatus } from '../types'
+import type { IntegrationStatus } from '../types'
 
 const STATE_STYLE: Record<string, { label: string; color: string }> = {
   idle: { label: 'Idle', color: 'var(--secondary)' },
@@ -15,39 +12,17 @@ const STATE_STYLE: Record<string, { label: string; color: string }> = {
   failed: { label: 'Failed', color: 'var(--red)' },
 }
 
-export function IntegrationStatusPanel() {
-  const store = useStore()
-  const [status, setStatus] = useState<IntegrationStatus | null>(null)
-  const [extractors, setExtractors] = useState<ExtractorInfo[]>([])
-  const [error, setError] = useState<string | null>(null)
-
-  // Poll while mounted; also re-poll immediately when the active connection changes
-  // (the target schema follows it).
-  useEffect(() => {
-    let alive = true
-    const tick = async () => {
-      try {
-        const [s, e] = await Promise.all([api.integrationStatus(), api.integrationExtractors()])
-        if (!alive) return
-        setStatus(s)
-        setExtractors(e)
-        setError(null)
-      } catch (err) {
-        if (alive) setError(err instanceof Error ? err.message : String(err))
-      }
-    }
-    void tick()
-    const id = window.setInterval(tick, 4000)
-    return () => {
-      alive = false
-      window.clearInterval(id)
-    }
-  }, [store.connection.isConnected, store.connection.activeProfileId])
-
+export function IntegrationStatusPanel({
+  status,
+  error,
+}: {
+  status: IntegrationStatus | null
+  error: string | null
+}) {
   const state = status ? STATE_STYLE[status.state] ?? STATE_STYLE.idle : STATE_STYLE.idle
 
   return (
-    <div className="col" style={{ gap: 16, width: '100%', maxWidth: 640 }}>
+    <div className="col" style={{ gap: 16, width: '100%' }}>
       <div className="card" style={{ display: 'block' }}>
         <div className="row" style={{ alignItems: 'center', gap: 10, marginBottom: 12 }}>
           <h1 style={{ margin: 0, fontSize: 20 }}>Abstraction layer</h1>
@@ -105,26 +80,6 @@ export function IntegrationStatusPanel() {
               <span key={i} className="t-caption2 fg-secondary" style={{ fontFamily: 'monospace' }}>
                 {m}
               </span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="card" style={{ display: 'block' }}>
-        <h2 style={{ marginTop: 0, fontSize: 15 }}>Extractors</h2>
-        {extractors.length === 0 ? (
-          <p className="fg-secondary" style={{ margin: 0 }}>
-            No extractors are plugged in yet. The first extractor and the controls to run
-            one are coming next — this panel already reflects the layer’s live status.
-          </p>
-        ) : (
-          <div className="col" style={{ gap: 8 }}>
-            {extractors.map((e) => (
-              <div key={e.id} className="row" style={{ gap: 8, alignItems: 'baseline' }}>
-                <strong>{e.name}</strong>
-                <span className="t-caption2 fg-tertiary">v{e.version}</span>
-                <span className="t-caption fg-secondary">{e.description}</span>
-              </div>
             ))}
           </div>
         )}

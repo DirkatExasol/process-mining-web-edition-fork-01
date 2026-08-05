@@ -1,0 +1,54 @@
+/** The integration console's main pane: the abstraction-layer status on top, then ONE
+ *  live pipeline flowchart that accumulates the ingestion behaviour over time — nodes are
+ *  reused across runs, and the Source / Destination nodes carry the total imported rows.
+ *  The run history (persisted per user) feeds the flowchart and is kept until the user
+ *  clears it. A single poll (useIntegrationStatus) drives the status card and the graph. */
+
+import { useState } from 'react'
+import { useIntegrationStatus } from '../integration/useIntegrationStatus'
+import { useRunHistory } from '../integration/runHistory'
+import { ConfirmDialog } from './ConfirmDialog'
+import { IntegrationPipeline } from './IntegrationPipeline'
+import { IntegrationStatusPanel } from './IntegrationStatusPanel'
+
+export function IntegrationConsole() {
+  const { status, error } = useIntegrationStatus()
+  const { runs, clear, atCap } = useRunHistory(status)
+  const [confirmClear, setConfirmClear] = useState(false)
+
+  return (
+    <div className="integration-console">
+      <IntegrationStatusPanel status={status} error={error} />
+
+      <div className="ihist-head">
+        <h2 style={{ margin: 0, fontSize: 15 }}>Ingestion pipeline</h2>
+        <span className="t-caption2 fg-tertiary">
+          {runs.length === 0
+            ? 'no imports yet'
+            : `${runs.length}${atCap ? '+' : ''} run${runs.length === 1 ? '' : 's'} · behaviour over time`}
+        </span>
+        <span className="spacer" />
+        {runs.length > 0 && (
+          <button className="btn small" onClick={() => setConfirmClear(true)} title="Clear the ingestion history">
+            ↺ Clear
+          </button>
+        )}
+      </div>
+
+      <IntegrationPipeline runs={runs} live={status} />
+
+      {confirmClear && (
+        <ConfirmDialog
+          title="Clear ingestion history"
+          message={`Reset the pipeline flowchart, removing all ${runs.length} recorded run${runs.length === 1 ? '' : 's'}? This only clears the console view — nothing already imported is affected.`}
+          confirmLabel="Clear history"
+          onConfirm={() => {
+            clear()
+            setConfirmClear(false)
+          }}
+          onCancel={() => setConfirmClear(false)}
+        />
+      )}
+    </div>
+  )
+}

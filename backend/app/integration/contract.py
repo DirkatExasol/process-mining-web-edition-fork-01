@@ -104,6 +104,19 @@ class IngestSession(Protocol):
         kept, older ones dropped)."""
         ...
 
+    def progress(self, done: int, total: int | None = None) -> None:
+        """Report progress for the status/progress bar: ``done`` items processed so
+        far, and (once known) the ``total`` to process. Cheap to call frequently."""
+        ...
+
+    def existing_keys(
+        self, table: str, key_columns: Sequence[str]
+    ) -> set[tuple[str, ...]]:
+        """The set of existing key tuples (each value stringified) already in ``table``
+        — for create-if-missing of metadata rows (e.g. a project, or step definitions).
+        Reads all keys, so use it for small metadata tables, not fact tables."""
+        ...
+
 
 @runtime_checkable
 class Extractor(Protocol):

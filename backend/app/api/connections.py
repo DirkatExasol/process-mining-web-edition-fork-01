@@ -69,9 +69,13 @@ def _request_user_obj(request: Request):
     return security_store.get_user(username) if username else None
 
 
-def _require_power(request: Request):
+def _require_manager(request: Request):
+    """A user allowed to manage connections from the app: an admin, a power user, or a
+    developer. Ownership is still enforced per-connection by can_manage_connection."""
     user = _request_user_obj(request)
-    if user is None or not user.is_enabled or not (user.is_admin or user.is_power):
+    if user is None or not user.is_enabled or not (
+        user.is_admin or user.is_power or user.is_developer
+    ):
         raise HTTPException(
             status_code=403, detail="You are not allowed to manage connections."
         )
@@ -146,7 +150,7 @@ def _managed_payload(body: ManagedConnectionBody) -> dict:
 @router.get("/connections/manageable")
 def list_manageable_connections(request: Request) -> list[dict]:
     """Connections the signed-in power user (or admin) may create / edit / assign."""
-    user = _require_power(request)
+    user = _require_manager(request)
     conns = (
         security_store.list_connections()
         if user.is_admin
@@ -158,13 +162,13 @@ def list_manageable_connections(request: Request) -> list[dict]:
 @router.get("/assignable-users")
 def list_assignable_users(request: Request) -> list[str]:
     """Enabled usernames a power user can assign a connection to."""
-    _require_power(request)
+    _require_manager(request)
     return [u.username for u in security_store.list_users() if u.is_enabled]
 
 
 @router.post("/connections")
 async def upsert_managed_connection(body: ManagedConnectionBody, request: Request) -> dict:
-    user = _require_power(request)
+    user = _require_manager(request)
     data = _managed_payload(body)
     if body.id:
         if not security_store.can_manage_connection(body.id, user.username):
@@ -187,7 +191,7 @@ async def upsert_managed_connection(body: ManagedConnectionBody, request: Reques
 
 @router.delete("/connections/{conn_id}")
 async def delete_managed_connection(conn_id: str, request: Request) -> dict:
-    user = _require_power(request)
+    user = _require_manager(request)
     if not security_store.can_manage_connection(conn_id, user.username):
         raise HTTPException(status_code=403, detail="You cannot delete this connection.")
     # Drop every user whose live session is this connection before removing it.
@@ -196,11 +200,65 @@ async def delete_managed_connection(conn_id: str, request: Request) -> dict:
     return {"ok": True}
 
 
+class ProjectDeleteBody(BaseModel):
+    projectId: str = Field(min_length=1, max_length=100)
+
+
+def _managed_connection_secrets(conn_id: str, request: Request):
+    """Return the manageable connection (with secrets) for a project op, or raise —
+    the caller must be a manager AND own/administer this specific connection."""
+    user = _require_manager(request)
+    if not security_store.can_manage_connection(conn_id, user.username):
+        raise HTTPException(status_code=403, detail="You cannot manage this connection.")
+    conn = security_store.get_connection(conn_id, with_secrets=True)
+    if conn is None:
+        raise HTTPException(status_code=404, detail="Connection not found.")
+    return user, conn
+
+
+@router.get("/connections/{conn_id}/projects")
+async def list_connection_projects(conn_id: str, request: Request) -> dict:
+    """Projects stored in a manageable connection's schema, with journey/event counts."""
+    _, conn = _managed_connection_secrets(conn_id, request)
+    from ..db.schema_ddl import list_projects_with_counts
+
+    return await list_projects_with_counts(
+        host=conn.host, port=conn.port, username=conn.username, password=conn.password,
+        schema=conn.schema, use_tls=conn.use_tls, cert_mode=conn.cert_mode,
+        fingerprint=conn.fingerprint, min_rsa_bits=conn.min_rsa_bits,
+    )
+
+
+@router.post("/connections/{conn_id}/projects/delete")
+async def delete_connection_project(
+    conn_id: str, body: ProjectDeleteBody, request: Request
+) -> dict:
+    """Delete a project from a manageable connection's schema, clearing its rows from
+    every project-scoped table (PROJECTS, JOURNEYS, STEPS, METAS, NOTES, TRANSITIONS_RAW)."""
+    user, conn = _managed_connection_secrets(conn_id, request)
+    from ..db.schema_ddl import delete_project
+
+    result = await delete_project(
+        project_id=body.projectId, host=conn.host, port=conn.port, username=conn.username,
+        password=conn.password, schema=conn.schema, use_tls=conn.use_tls,
+        cert_mode=conn.cert_mode, fingerprint=conn.fingerprint, min_rsa_bits=conn.min_rsa_bits,
+    )
+    logx.warn(
+        f"{user.username} deleted project {body.projectId!r} from connection "
+        f"{conn.name!r} ({conn_id}) — "
+        + ("ok" if result.get("ok") else f"failed: {result.get('error')}"),
+        username=user.username, operation="connection",
+    )
+    # If the caller's own active connection cached that project's steps, drop them.
+    current_db().invalidate_steps()
+    return result
+
+
 @router.post("/connections/{conn_id}/assignments")
 async def set_managed_assignments(
     conn_id: str, body: ManagedAssignmentsBody, request: Request
 ) -> dict:
-    user = _require_power(request)
+    user = _require_manager(request)
     if not security_store.can_manage_connection(conn_id, user.username):
         raise HTTPException(status_code=403, detail="You cannot re-assign this connection.")
     try:
@@ -217,7 +275,7 @@ async def set_managed_assignments(
 async def test_managed_connection(
     body: ManagedConnectionTestBody, request: Request
 ) -> dict:
-    _require_power(request)
+    _require_manager(request)
     from ..db.manager import test_db_connection
 
     db_error = await test_db_connection(
@@ -256,7 +314,7 @@ async def provision_managed_schema(body: ManagedConnectionTestBody, request: Req
     Requires elevated database privileges (CREATE SCHEMA / CREATE TABLE) that only a
     database administrator can grant — the app cannot. Returns {ok, error, created}.
     """
-    _require_power(request)
+    _require_manager(request)
     from ..db.schema_ddl import provision_process_mining_schema
 
     return await provision_process_mining_schema(
@@ -287,7 +345,7 @@ async def generate_demo_content(body: DemoContentBody, request: Request) -> dict
     only a database administrator can grant — the app cannot. Returns
     {ok, error, journeys, project, dataset, message}.
     """
-    _require_power(request)
+    _require_manager(request)
     from ..db.demo_data import generate_demo_content as _generate
 
     result = await _generate(

@@ -155,6 +155,16 @@ CREATE TABLE IF NOT EXISTS source_types (
     config      TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL
 );
+-- Integration console: a user's data sources — a name, a kind ("file", and future
+-- kinds like a database or an API) and kind-specific settings stored as JSON in config.
+CREATE TABLE IF NOT EXISTS sources (
+    id          TEXT PRIMARY KEY,
+    owner       TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'file',
+    config      TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS ldap_config (
     id                INTEGER PRIMARY KEY CHECK (id = 1),
     enabled           INTEGER NOT NULL DEFAULT 0,
@@ -273,6 +283,38 @@ class SourceType:
             "name": self.name,
             "sample": spec.get("sample", ""),
             "fields": fields if isinstance(fields, list) else [],
+            "createdAt": self.created_at,
+        }
+
+
+@dataclass
+class Source:
+    """A user's data source for the integration console: a name, a kind ("file" for
+    now) and kind-specific settings (JSON in `config`) — deliberately generic so new
+    source kinds slot in without a schema change."""
+
+    id: str
+    owner: str
+    name: str
+    kind: str
+    config: str
+    created_at: str
+
+    def public(self) -> dict:
+        cfg: dict = {}
+        if self.config:
+            try:
+                parsed = json.loads(self.config)
+                if isinstance(parsed, dict):
+                    cfg = parsed
+            except (json.JSONDecodeError, TypeError):
+                cfg = {}
+        return {
+            "id": self.id,
+            "owner": self.owner,
+            "name": self.name,
+            "kind": self.kind,
+            "config": cfg,
             "createdAt": self.created_at,
         }
 
@@ -1709,7 +1751,7 @@ class SecurityStore:
 
     def can_manage_connection(self, conn_id: str, username: str | None) -> bool:
         """True if `username` may edit/delete/re-assign the connection: an admin,
-        or the power user who owns it."""
+        or the power user / developer who owns it."""
         user = self.get_user(username) if username else None
         if user is None or not user.is_enabled:
             return False
@@ -1717,7 +1759,7 @@ class SecurityStore:
             return True
         conn = self.get_connection(conn_id)
         return (
-            user.is_power
+            (user.is_power or user.is_developer)
             and conn is not None
             and conn.owner.strip().lower() == user.username.lower()
         )
@@ -1889,6 +1931,70 @@ class SecurityStore:
                 "SELECT * FROM source_types WHERE id = ?", (source_type_id,)
             ).fetchone()
             return self._row_to_source_type(row) if row else None
+
+    # ── integration data sources (per-user, generic kind + config) ────────────
+
+    @staticmethod
+    def _row_to_source(row: sqlite3.Row) -> Source:
+        return Source(
+            id=row["id"], owner=row["owner"], name=row["name"], kind=row["kind"],
+            config=row["config"], created_at=row["created_at"],
+        )
+
+    def list_sources(self, owner: str | None) -> list[Source]:
+        """The data sources owned by `owner` (case-insensitive), newest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM sources WHERE LOWER(owner) = LOWER(?) "
+                "ORDER BY created_at DESC, LOWER(name)",
+                (owner or "",),
+            ).fetchall()
+            return [self._row_to_source(r) for r in rows]
+
+    def add_source(self, owner: str, *, name: str, kind: str, config: str = "") -> Source:
+        source = Source(
+            id=uuid.uuid4().hex, owner=owner or "", name=name.strip() or "(unnamed)",
+            kind=kind.strip() or "file", config=config, created_at=_now(),
+        )
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO sources (id, owner, name, kind, config, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (source.id, source.owner, source.name, source.kind, source.config,
+                 source.created_at),
+            )
+            self._conn.commit()
+        return source
+
+    def delete_source(self, source_id: str, owner: str | None) -> bool:
+        """Delete a source, but only if it belongs to `owner`. Returns True if removed."""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM sources WHERE id = ? AND LOWER(owner) = LOWER(?)",
+                (source_id, owner or ""),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def update_source(
+        self, source_id: str, owner: str | None, *, name: str, kind: str, config: str = ""
+    ) -> Source | None:
+        """Update an owner's source (name / kind / settings). Returns the updated source,
+        or None if it doesn't exist / isn't owned by `owner`."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE sources SET name = ?, kind = ?, config = ? "
+                "WHERE id = ? AND LOWER(owner) = LOWER(?)",
+                (name.strip() or "(unnamed)", kind.strip() or "file", config,
+                 source_id, owner or ""),
+            )
+            self._conn.commit()
+            if cur.rowcount == 0:
+                return None
+            row = self._conn.execute(
+                "SELECT * FROM sources WHERE id = ?", (source_id,)
+            ).fetchone()
+            return self._row_to_source(row) if row else None
 
     # ── effective TLS plan (read by the GUI launcher) ─────────────────────────
 

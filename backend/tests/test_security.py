@@ -1129,3 +1129,26 @@ def test_source_type_stores_and_returns_extraction_spec(security):
     assert updated is not None and updated.public()["name"] == "L2"
     # Wrong owner can't update.
     assert store.update_source_type(s.id, "bob", name="X", config="") is None
+
+
+# ── Integration data sources (generic kind + config) ──────────────────────────
+
+
+def test_sources_crud_and_owner_isolation(security):
+    import json as _json
+    store = security.store
+    a = store.add_source("alice", name="Access log", kind="file",
+                         config=_json.dumps({"path": "/var/log/access.log"}))
+    store.add_source("bob", name="Bob's", kind="file", config="{}")
+    mine = store.list_sources("alice")
+    assert [s.name for s in mine] == ["Access log"]
+    assert mine[0].public()["kind"] == "file"
+    assert mine[0].public()["config"]["path"] == "/var/log/access.log"
+    assert len(store.list_sources("bob")) == 1
+    # Owner-scoped delete + update.
+    assert store.delete_source(a.id, "bob") is False
+    updated = store.update_source(a.id, "alice", name="Renamed", kind="file",
+                                  config=_json.dumps({"path": "/tmp/x"}))
+    assert updated is not None and updated.public()["name"] == "Renamed"
+    assert store.update_source(a.id, "bob", name="X", kind="file", config="") is None
+    assert store.delete_source(a.id, "alice") is True

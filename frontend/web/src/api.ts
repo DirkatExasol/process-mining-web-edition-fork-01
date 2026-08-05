@@ -2,6 +2,8 @@
 
 import type {
   AssignedConnection,
+  ConnectionProjectsResult,
+  ConnectionProjectDeleteResult,
   ConnectionStatus,
   ManagedConnection,
   DocumentationResponse,
@@ -17,6 +19,8 @@ import type {
   ExtractorInfo,
   IntegrationStatus,
   SampleSet,
+  Source,
+  SourceInput,
   SourceType,
   SourceTypeInput,
   SamplingMethod,
@@ -167,6 +171,13 @@ export const api = {
       project?: string
       message?: string
     }>('/api/connections/generate-demo', body),
+  // Projects stored in a manageable connection's schema (journey/event counts + delete).
+  listConnectionProjects: (id: string) =>
+    get<ConnectionProjectsResult>(`/api/connections/${enc(id)}/projects`),
+  deleteConnectionProject: (id: string, projectId: string) =>
+    post<ConnectionProjectDeleteResult>(`/api/connections/${enc(id)}/projects/delete`, {
+      projectId,
+    }),
   disconnect: () => post<ConnectionStatus>('/api/disconnect'),
   connectionStatus: () => get<ConnectionStatus>('/api/connection/status'),
 
@@ -184,6 +195,17 @@ export const api = {
     post<{ fields: ExtractionField[] }>('/api/integration/parse/detect', { sample }),
   parseSegment: (sample: string, start: number, end: number) =>
     post<{ regex: string; value: string }>('/api/integration/parse/segment', { sample, start, end }),
+  parseTimestamp: (value: string) =>
+    post<{ format: string; normalized: string }>('/api/integration/parse/timestamp', { value }),
+  listSources: () => get<Source[]>('/api/integration/sources'),
+  createSource: (body: SourceInput) => post<Source>('/api/integration/sources', body),
+  updateSource: (id: string, body: SourceInput) =>
+    put<Source>(`/api/integration/sources/${enc(id)}`, body),
+  deleteSource: (id: string) => del<{ ok: boolean }>(`/api/integration/sources/${enc(id)}`),
+  previewSource: (path: string, limit: number) =>
+    post<{ lines: string[]; truncated: boolean }>('/api/integration/sources/preview', { path, limit }),
+  runSource: (id: string, projectId: string) =>
+    post<{ records: number; detail: string }>(`/api/integration/sources/${enc(id)}/run`, { projectId }),
 
   // ── project data ─────────────────────────────────────────────────────────
   listProjects: () => get<Project[]>('/api/projects'),

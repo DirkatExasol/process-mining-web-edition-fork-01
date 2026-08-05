@@ -2,14 +2,18 @@
  *  header, the user's data-source connection badges, and the shared identity /
  *  authentication footer pinned at the bottom. */
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useStore } from '../store'
 import type { AssignedConnection } from '../types'
 import { AuthFooter } from './AuthFooter'
 import { Logo } from './Logo'
+import { SectionHeader } from './SectionHeader'
+import { SourcesSection } from './SourcesSection'
 import { SourceTypesSection } from './SourceTypesSection'
 import { ThemeBar } from './ThemeBar'
 import { Divider } from './ui'
+
+type SectionId = 'connections' | 'sources' | 'sourceTypes'
 
 function IntegrationBrand() {
   return (
@@ -106,22 +110,29 @@ function ConnectionBadges() {
 
 export function IntegrationSidebar() {
   const store = useStore()
+  // Accordion: at most one of the three sections is expanded at a time.
+  const [openSection, setOpenSection] = useState<SectionId | null>('connections')
+  const toggle = (id: SectionId) => setOpenSection((cur) => (cur === id ? null : id))
+
   return (
     <aside className="sidebar">
       <div className="sidebar-scroll">
         <IntegrationBrand />
         <Divider />
-        <div className="section-header">
-          <span className="section-title" style={{ padding: '0 4px' }}>
-            Connections
-          </span>
-          {store.connections.length > 0 && (
-            <span className="section-count">({store.connections.length})</span>
-          )}
-        </div>
-        <ConnectionBadges />
+        <SectionHeader
+          title="Connections"
+          count={store.connections.length}
+          open={openSection === 'connections'}
+          onToggle={() => toggle('connections')}
+        />
+        {openSection === 'connections' && <ConnectionBadges />}
         <Divider />
-        <SourceTypesSection />
+        <SourcesSection open={openSection === 'sources'} onToggle={() => toggle('sources')} />
+        <Divider />
+        <SourceTypesSection
+          open={openSection === 'sourceTypes'}
+          onToggle={() => toggle('sourceTypes')}
+        />
       </div>
       <AuthFooter />
       <Divider />

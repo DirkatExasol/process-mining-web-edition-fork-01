@@ -68,6 +68,18 @@ INTEGRATION_HTTPS_PORT = int(
     os.environ.get("PMW_INTEGRATION_HTTPS_PORT", str(ADMIN_HTTPS_PORT + 10))
 )
 
+# File sources for the integration console read from this sandbox directory by default —
+# nothing outside it can be opened (path traversal / symlink escapes are rejected). Set
+# PMW_INTEGRATION_ALLOW_ANY_PATH=1 to instead allow any absolute path the server can read
+# (developer-trusted deployments only — it enables reading arbitrary server files).
+INTEGRATION_FILES_DIR = Path(
+    os.environ.get("PMW_INTEGRATION_FILES_DIR", str(DATA_DIR / "integration_files"))
+)
+INTEGRATION_FILES_DIR.mkdir(parents=True, exist_ok=True)
+INTEGRATION_ALLOW_ANY_PATH = os.environ.get(
+    "PMW_INTEGRATION_ALLOW_ANY_PATH", ""
+).strip().lower() in ("1", "true", "yes", "on")
+
 # Admin session lifetime.
 ADMIN_SESSION_TTL_SECS = int(os.environ.get("PMW_ADMIN_SESSION_TTL", str(8 * 3600)))
 

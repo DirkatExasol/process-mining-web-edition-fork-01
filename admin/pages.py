@@ -267,6 +267,16 @@ details summary { cursor: pointer; font-size: 13px; color: var(--accent); paddin
 .tabs button.sel { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
 .tabpanel { display: none; }
 .tabpanel.sel { display: block; }
+/* Inner tabs inside the connection editor (Database / LLM / Projects). */
+.ctabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border-soft); margin: 2px 0 14px; }
+.ctabs button { background: none; border: none; color: var(--muted); padding: 8px 14px; font-size: 13px;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; }
+.ctabs button.sel { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.ctabs button:disabled { opacity: .45; cursor: not-allowed; }
+.ctabpanel { display: none; }
+/* min-height keeps the editor a stable height across tabs, so switching to a shorter
+   panel (LLM/Projects) doesn't collapse the page and bounce the scroll position. */
+.ctabpanel.sel { display: block; min-height: 320px; }
 .assign-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; }
 .assign-grid label { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 5px 8px;
   border-radius: 6px; background: var(--fill); }
@@ -812,6 +822,13 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
 
     <div class="editor" id="connEditor" style="display:none">
       <input type="hidden" id="c_id">
+      <div class="ctabs">
+        <button data-ctab="db" class="sel" onclick="selectConnTab('db')">Database</button>
+        <button data-ctab="llm" onclick="selectConnTab('llm')">LLM</button>
+        <button data-ctab="projects" id="c_projectsTabBtn" onclick="selectConnTab('projects')">Projects</button>
+      </div>
+
+      <div class="ctabpanel sel" id="ctab-db">
       <div class="grid2">
         <div class="col">
           <h2 style="font-size:13px">Database</h2>
@@ -840,24 +857,10 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
           </div>
         </div>
         <div class="col">
-          <h2 style="font-size:13px">LLM (optional)</h2>
-          <div class="field"><label>Server URL</label><input type="text" id="c_llmUrl" placeholder="https://api.openai.com/v1"></div>
-          <div class="field"><label>Model</label><input type="text" id="c_llmModel" placeholder="gpt-4o"></div>
-          <div class="field"><label>API key <span class="subtle" id="c_llmKeyHint"></span></label>
-            <input type="password" id="c_llmKey" placeholder="••••••••" autocomplete="new-password"></div>
-
-          <h2 style="font-size:13px; margin-top:18px">Assign to users</h2>
+          <h2 style="font-size:13px">Assign to users</h2>
           <div class="assign-grid" id="c_assign"></div>
         </div>
       </div>
-      <div class="row" style="margin-top:16px; align-items:center">
-        <button class="btn primary" onclick="saveConnection()">Save</button>
-        <button class="btn" onclick="testConnection()">Test connection</button>
-        <button class="btn" onclick="cancelConnection()">Cancel</button>
-        <span class="spacer"></span>
-        <button class="btn danger" id="c_deleteBtn" onclick="deleteConnection()" style="display:none">Delete</button>
-      </div>
-      <div id="c_testResult" class="col" style="margin-top:10px"></div>
       <div class="banner info" style="margin-top:14px">
         <div class="row" style="align-items:center; gap:10px">
           <button class="btn" onclick="provisionSchema()">Create schema &amp; tables</button>
@@ -919,6 +922,35 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
           </div>
         </details>
       </div>
+      </div><!-- /ctab-db -->
+
+      <div class="ctabpanel" id="ctab-llm">
+        <h2 style="font-size:13px">LLM (optional)</h2>
+        <div class="field"><label>Server URL</label><input type="text" id="c_llmUrl" placeholder="https://api.openai.com/v1"></div>
+        <div class="field"><label>Model</label><input type="text" id="c_llmModel" placeholder="gpt-4o"></div>
+        <div class="field"><label>API key <span class="subtle" id="c_llmKeyHint"></span></label>
+          <input type="password" id="c_llmKey" placeholder="••••••••" autocomplete="new-password"></div>
+      </div>
+
+      <div class="ctabpanel" id="ctab-projects">
+        <div class="row" style="align-items:center; gap:10px; margin-bottom:8px">
+          <h2 style="font-size:13px; margin:0">Projects in this schema</h2>
+          <span class="spacer"></span>
+          <button class="btn small" onclick="loadProjects()">↻ Refresh</button>
+        </div>
+        <p class="subtle" style="margin:0 0 12px">Projects stored in <code id="c_projSchema"></code>, with their journey and event counts.
+          Deleting a project clears its rows from every table (PROJECTS, JOURNEYS, STEPS, METAS, NOTES, TRANSITIONS_RAW). This cannot be undone.</p>
+        <div id="c_projectsList"><span class="muted">Save the connection first to list its projects.</span></div>
+      </div>
+
+      <div class="row" style="margin-top:16px; align-items:center">
+        <button class="btn primary" onclick="saveConnection()">Save</button>
+        <button class="btn" onclick="testConnection()">Test connection</button>
+        <button class="btn" onclick="cancelConnection()">Cancel</button>
+        <span class="spacer"></span>
+        <button class="btn danger" id="c_deleteBtn" onclick="deleteConnection()" style="display:none">Delete</button>
+      </div>
+      <div id="c_testResult" class="col" style="margin-top:10px"></div>
     </div>
   </div>
   </div><!-- /tab-connections -->
@@ -2401,6 +2433,14 @@ function fillEditor(c) {
   $('c_testResult').innerHTML = '';
   $('c_provisionResult').textContent = '';
   $('c_deleteBtn').style.display = c.id ? 'inline-flex' : 'none';
+  // Reset the inner tabs to Database; Projects needs a saved connection to query.
+  const projBtn = $('c_projectsTabBtn');
+  projBtn.disabled = !c.id;
+  projBtn.title = c.id ? '' : 'Save the connection first to list its projects';
+  $('c_projectsList').innerHTML = c.id
+    ? '<span class="muted">Open the Projects tab to load them.</span>'
+    : '<span class="muted">Save the connection first to list its projects.</span>';
+  selectConnTab('db');
   $('connEditor').style.display = 'block';
   $('connEditor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -2422,6 +2462,59 @@ function editConnection(id) {
   if (c) fillEditor(c);
 }
 function cancelConnection() { $('connEditor').style.display = 'none'; }
+
+// Inner tabs of the connection editor (Database / LLM / Projects).
+function selectConnTab(name) {
+  for (const b of document.querySelectorAll('.ctabs button'))
+    b.classList.toggle('sel', b.dataset.ctab === name);
+  for (const p of document.querySelectorAll('#connEditor .ctabpanel'))
+    p.classList.toggle('sel', p.id === 'ctab-' + name);
+  if (name === 'projects') loadProjects().catch(e => toast(e.message, true));
+  // Switching to a shorter panel (LLM/Projects) shrinks the page; without this the
+  // browser clamps the scroll upward and the connection list jumps back into view.
+  // Keep the editor pinned to the top so the user stays on it. (No-op while the
+  // editor is still hidden — e.g. the selectConnTab('db') fillEditor does at open.)
+  const ed = document.getElementById('connEditor');
+  if (ed && ed.style.display !== 'none')
+    ed.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function loadProjects() {
+  const id = $('c_id').value;
+  const box = $('c_projectsList');
+  $('c_projSchema').textContent = $('c_schema').value || '(no schema)';
+  if (!id) { box.innerHTML = '<span class="muted">Save the connection first to list its projects.</span>'; return; }
+  box.innerHTML = '<span class="muted">Loading projects…</span>';
+  let res;
+  try { res = await api('/api/connections/' + encodeURIComponent(id) + '/projects'); }
+  catch (e) { box.innerHTML = '<span style="color:var(--red)">' + esc(e.message) + '</span>'; return; }
+  if (!res.ok) { box.innerHTML = '<span style="color:var(--red)">' + esc(res.error || 'Could not read projects.') + '</span>'; return; }
+  const ps = res.projects || [];
+  if (!ps.length) { box.innerHTML = '<span class="muted">No projects found in this schema.</span>'; return; }
+  let h = '<table><thead><tr><th>Project</th><th style="text-align:right">Journeys</th><th style="text-align:right">Events</th><th></th></tr></thead><tbody>';
+  for (const p of ps) {
+    const sub = p.title !== p.projectId ? '<br><span class="subtle">' + esc(p.projectId) + '</span>' : '';
+    h += `<tr><td><strong>${esc(p.title)}</strong>${sub}</td>` +
+      `<td style="text-align:right">${Number(p.journeys || 0).toLocaleString()}</td>` +
+      `<td style="text-align:right">${Number(p.events || 0).toLocaleString()}</td>` +
+      `<td style="text-align:right"><button class="btn small danger" data-pid="${esc(p.projectId)}" onclick="deleteProject(this.dataset.pid)">Delete</button></td></tr>`;
+  }
+  box.innerHTML = h + '</tbody></table>';
+}
+
+async function deleteProject(pid) {
+  const id = $('c_id').value;
+  if (!id) return;
+  if (!confirm('Delete project "' + pid + '"?\n\nThis clears its rows from PROJECTS, JOURNEYS, STEPS, METAS, NOTES and TRANSITIONS_RAW in this schema. This cannot be undone.')) return;
+  try {
+    const res = await api('/api/connections/' + encodeURIComponent(id) + '/projects/delete',
+      { method: 'POST', body: JSON.stringify({ projectId: pid }) });
+    if (res && res.ok === false) { toast(res.error || 'Delete failed', true); return; }
+    const n = res && res.events != null ? ' (' + Number(res.events).toLocaleString() + ' events)' : '';
+    toast('Project deleted' + n);
+    await loadProjects();
+  } catch (e) { toast(e.message, true); }
+}
 
 function editorBody() {
   const body = {

@@ -5,10 +5,11 @@
  *  source type for future automatic extraction. Edits an existing one when `existing` is
  *  set. Styling follows the app's Sheet / text-input / sheet-tabs conventions. */
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import {
   buildHighlights,
+  matchAll,
   ROLE_COLOR,
   ROLE_LABEL,
   selectionOffsetsWithin,
@@ -39,7 +40,6 @@ export function SourceTypeWizard({
   const [step, setStep] = useState(1)
   const [name, setName] = useState(existing?.name ?? '')
   const [sample, setSample] = useState(existing?.sample ?? '')
-  const [mode, setMode] = useState<'auto' | 'manual'>('auto')
   const [fields, setFields] = useState<ExtractionField[]>(
     (existing?.fields ?? []).map((f) => ({ ...f, id: f.id ?? newFieldId() })),
   )
@@ -51,19 +51,6 @@ export function SourceTypeWizard({
   const setField = (id: string, patch: Partial<ExtractionField>) =>
     setFields((fs) => fs.map((f) => (f.id === id ? { ...f, ...patch } : f)))
   const removeField = (id: string) => setFields((fs) => fs.filter((f) => f.id !== id))
-
-  const autoDetect = async () => {
-    setBusy(true)
-    setError(null)
-    try {
-      const { fields: detected } = await api.parseDetect(sample)
-      setFields(detected.map((f) => ({ ...f, id: newFieldId() })))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
 
   const useSelection = async () => {
     const el = previewRef.current
@@ -90,11 +77,6 @@ export function SourceTypeWizard({
       { id: newFieldId(), name: defaultName(activeRole, fs), role: activeRole, regex: '' },
     ])
 
-  const goToMapping = async () => {
-    setStep(2)
-    if (mode === 'auto' && fields.length === 0 && sample.trim()) await autoDetect()
-  }
-
   const save = async () => {
     if (!name.trim()) {
       setError('A name is required.')
@@ -106,11 +88,12 @@ export function SourceTypeWizard({
     const body = {
       name: name.trim(),
       sample,
-      fields: fields.map(({ name, role, regex, format }) => ({
+      fields: fields.map(({ name, role, regex, format, title }) => ({
         name: name.trim() || role,
         role,
         regex,
         format,
+        title,
       })),
     }
     try {
@@ -126,6 +109,22 @@ export function SourceTypeWizard({
   const highlights = useMemo(() => buildHighlights(sample, fields), [sample, fields])
   const roleFields = fields.filter((f) => f.role === activeRole)
   const countByRole = (r: FieldRole) => fields.filter((f) => f.role === r).length
+
+  // Normalised EVENT_TIME for the example JOURNEYS record (backend-parsed).
+  const tsField = fields.find((f) => f.role === 'timestamp')
+  const tsValue = tsField ? matchAll(sample, tsField.regex)?.[0]?.value ?? '' : ''
+  const [normalizedTs, setNormalizedTs] = useState('')
+  useEffect(() => {
+    if (!tsValue) {
+      setNormalizedTs('')
+      return
+    }
+    let alive = true
+    void api.parseTimestamp(tsValue).then((i) => alive && setNormalizedTs(i.normalized)).catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [tsValue])
 
   const footer = (
     <>
@@ -143,7 +142,7 @@ export function SourceTypeWizard({
         <button
           className="btn prominent"
           disabled={busy || (step === 1 && !name.trim())}
-          onClick={() => (step === 1 ? void goToMapping() : setStep((s) => s + 1))}
+          onClick={() => setStep((s) => s + 1)}
         >
           Next
         </button>
@@ -160,10 +159,10 @@ export function SourceTypeWizard({
     <Sheet
       title={existing ? 'Edit source type' : 'New source type'}
       icon="🧩"
-      wide
       onClose={onClose}
       footer={footer}
     >
+      <div className="iwiz-col mapping">
       {step === 1 && (
         <>
           <Field label="Name">
@@ -185,19 +184,10 @@ export function SourceTypeWizard({
               style={{ fontFamily: 'var(--mono, monospace)', fontSize: 12 }}
             />
           </Field>
-          <div className="col" style={{ gap: 8 }}>
-            <span className="t-caption fg-secondary" style={{ fontWeight: 600 }}>
-              How would you like to define the fields?
-            </span>
-            <label className="row" style={{ gap: 8, fontSize: 13 }}>
-              <input type="radio" checked={mode === 'auto'} onChange={() => setMode('auto')} style={{ width: 'auto' }} />
-              Auto-detect timestamp, id, step and meta fields (suggested)
-            </label>
-            <label className="row" style={{ gap: 8, fontSize: 13 }}>
-              <input type="radio" checked={mode === 'manual'} onChange={() => setMode('manual')} style={{ width: 'auto' }} />
-              Highlight segments / write regexes myself
-            </label>
-          </div>
+          <span className="t-caption2 fg-tertiary">
+            On the next step you'll map each field yourself — highlight a segment and assign
+            it, or type its regex. Every field is defined manually.
+          </span>
         </>
       )}
 
@@ -239,10 +229,6 @@ export function SourceTypeWizard({
               🎯 Use selection
             </button>
             <button className="btn" onClick={addBlankField}>＋ Add field</button>
-            <span className="spacer" />
-            <button className="btn" onClick={() => void autoDetect()} disabled={busy}>
-              {busy ? 'Detecting…' : '↻ Auto-detect all'}
-            </button>
           </div>
 
           {roleFields.length === 0 ? (
@@ -262,6 +248,10 @@ export function SourceTypeWizard({
                 />
               ))}
             </div>
+          )}
+
+          {fields.length > 0 && (
+            <JourneysRecordPreview fields={fields} sample={sample} normalizedTs={normalizedTs} />
           )}
         </>
       )}
@@ -292,13 +282,20 @@ export function SourceTypeWizard({
                 <code className="t-caption2 fg-tertiary" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {f.regex}
                 </code>
+                {f.role === 'timestamp' && f.format && (
+                  <span className="t-caption2 fg-tertiary">→ {f.format}</span>
+                )}
               </div>
             ))}
           </div>
+          {fields.length > 0 && (
+            <JourneysRecordPreview fields={fields} sample={sample} normalizedTs={normalizedTs} />
+          )}
         </>
       )}
 
       {error && <div className="t-caption fg-red">{error}</div>}
+      </div>
     </Sheet>
   )
 }
@@ -316,8 +313,34 @@ function FieldRow({
 }) {
   const result = testPattern(sample, field.regex)
   const color = result.ok ? 'var(--green)' : result.error ? 'var(--red)' : 'var(--secondary)'
+
+  // For a timestamp field, analyse the captured value → normalised
+  // "YYYY-MM-DD HH:MM:SS" + a parse format, which is stored with the field.
+  const [ts, setTs] = useState<{ format: string; normalized: string } | null>(null)
+  const matchValue = field.role === 'timestamp' && result.ok ? result.value : undefined
+  useEffect(() => {
+    if (!matchValue) {
+      setTs(null)
+      return
+    }
+    let alive = true
+    void api
+      .parseTimestamp(matchValue)
+      .then((info) => {
+        if (!alive) return
+        setTs(info)
+        if (info.format !== (field.format ?? '')) onChange({ format: info.format })
+      })
+      .catch(() => alive && setTs(null))
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchValue])
+
   return (
     <div className="col" style={{ gap: 6, padding: 10, borderRadius: 10, background: 'var(--fill)' }}>
+      {/* field name (or role label) + regex on one line */}
       <div className="row" style={{ gap: 6, alignItems: 'center' }}>
         {field.role === 'meta' ? (
           <input
@@ -325,26 +348,36 @@ function FieldRow({
             value={field.name}
             onChange={(e) => onChange({ name: e.target.value })}
             placeholder="field name"
-            style={{ maxWidth: 180 }}
+            style={{ width: 130, flex: 'none' }}
           />
         ) : (
-          <span className="t-caption" style={{ fontWeight: 600, color: ROLE_COLOR[field.role] }}>
+          <span
+            className="t-caption"
+            style={{ fontWeight: 600, color: ROLE_COLOR[field.role], width: 96, flex: 'none' }}
+          >
             {ROLE_LABEL[field.role]}
           </span>
         )}
-        <span className="spacer" />
+        <input
+          className="text-input"
+          value={field.regex}
+          onChange={(e) => onChange({ regex: e.target.value })}
+          placeholder="regex (one capture group = the value)"
+          spellCheck={false}
+          style={{ flex: 1, minWidth: 0, fontFamily: 'var(--mono, monospace)', fontSize: 12 }}
+        />
         <button className="icon-btn" title="Remove field" aria-label="Remove field" onClick={onRemove}>
           ✕
         </button>
       </div>
-      <input
-        className="text-input"
-        value={field.regex}
-        onChange={(e) => onChange({ regex: e.target.value })}
-        placeholder="regex (one capture group = the value)"
-        spellCheck={false}
-        style={{ fontFamily: 'var(--mono, monospace)', fontSize: 12 }}
-      />
+      {field.role === 'meta' && (
+        <input
+          className="text-input"
+          value={field.title ?? ''}
+          onChange={(e) => onChange({ title: e.target.value })}
+          placeholder="Business name (e.g. Book ID) — shown in the app"
+        />
+      )}
       <span className="t-caption2" style={{ color }}>
         {field.regex
           ? result.ok
@@ -354,6 +387,100 @@ function FieldRow({
               : '• no match in the sample'
           : '• enter a regex'}
       </span>
+      {field.role === 'timestamp' && result.ok && ts && (
+        <span className="t-caption2" style={{ color: ts.normalized ? 'var(--green)' : 'var(--orange)' }}>
+          {ts.normalized
+            ? `🕒 ${ts.normalized}  ·  format ${ts.format}`
+            : '⚠ couldn’t recognise the date — stored as extracted'}
+        </span>
+      )}
+    </div>
+  )
+}
+
+/** A live preview of the JOURNEYS row the current spec would produce from the sample:
+ *  id → EVENT_ID, step → STEP, timestamp → EVENT_TIME (normalised), the first three
+ *  meta fields → META_1..3. PROJECT_ID / STEP_ID / SAMPLE_SET are filled at load time. */
+function JourneysRecordPreview({
+  fields,
+  sample,
+  normalizedTs,
+}: {
+  fields: ExtractionField[]
+  sample: string
+  normalizedTs: string
+}) {
+  const firstValue = (role: FieldRole): string => {
+    const f = fields.find((x) => x.role === role)
+    if (!f) return ''
+    return matchAll(sample, f.regex)?.[0]?.value ?? ''
+  }
+  const metas = fields.filter((f) => f.role === 'meta')
+  const metaCell = (i: number) => {
+    const f = metas[i]
+    if (!f) return null
+    return { name: f.title || f.name, value: matchAll(sample, f.regex)?.[0]?.value ?? '' }
+  }
+
+  const rows: { col: string; note?: string; value: string; muted?: boolean }[] = [
+    { col: 'PROJECT_ID', value: '(set when the source runs)', muted: true },
+    // The original id is shown here; it's stored MD5-hashed in JOURNEYS.
+    { col: 'EVENT_ID', note: 'original — stored as MD5', value: firstValue('id') },
+    { col: 'STEP', value: firstValue('step') },
+    { col: 'STEP_ID', value: '', muted: true },
+    { col: 'EVENT_TIME', value: normalizedTs || firstValue('timestamp') },
+    ...[0, 1, 2].map((i) => {
+      const c = metaCell(i)
+      return { col: `META_${i + 1}`, note: c?.name, value: c?.value ?? '' }
+    }),
+    { col: 'SAMPLE_SET', value: 'ORIGINAL', muted: true },
+  ]
+
+  return (
+    <div className="col" style={{ gap: 4 }}>
+      <span className="t-caption fg-secondary">Example JOURNEYS record</span>
+      <div
+        style={{
+          overflowX: 'auto', border: '1px solid var(--border-soft)', borderRadius: 10,
+        }}
+      >
+        <table
+          style={{
+            borderCollapse: 'collapse', fontFamily: 'var(--mono, monospace)', fontSize: 12,
+            whiteSpace: 'nowrap', width: '100%',
+          }}
+        >
+          <thead>
+            <tr>
+              {rows.map((r) => (
+                <th
+                  key={r.col}
+                  style={{
+                    textAlign: 'left', padding: '6px 10px', color: 'var(--secondary)',
+                    fontWeight: 600, background: 'var(--fill)',
+                    borderBottom: '1px solid var(--border-soft)',
+                  }}
+                >
+                  {r.col}
+                  {r.note ? <div className="t-caption2 fg-tertiary" style={{ fontWeight: 400 }}>{r.note}</div> : null}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              {rows.map((r) => (
+                <td
+                  key={r.col}
+                  style={{ padding: '6px 10px', color: r.muted ? 'var(--tertiary)' : 'inherit' }}
+                >
+                  {r.value !== '' ? r.value : <span className="fg-tertiary">—</span>}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

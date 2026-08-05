@@ -1,11 +1,12 @@
-/** Power-user connection editor.
+/** Connection editor for connection managers.
  *
- * Lets a *power* user (or an admin) create and edit database/LLM connections
- * from the app, and assign them to other users — the same shape the admin
- * interface exposes, scoped to connections the user owns. */
+ * Lets a *power* user, a *developer*, or an admin create and edit database/LLM
+ * connections from the app, assign them to other users, and manage the projects
+ * stored in a connection's schema — the same shape the admin interface exposes,
+ * scoped to connections the user owns. */
 
-import { useState } from 'react'
-import type { ManagedConnection } from '../types'
+import { useEffect, useState } from 'react'
+import type { ConnectionProject, ManagedConnection } from '../types'
 import { useStore } from '../store'
 import { ConfirmSheet, Sheet, Spinner } from './ui'
 
@@ -202,7 +203,12 @@ export function ConnectionEditor({
   const [confirmDelete, setConfirmDelete] = useState(false)
   // Schema provisioning outcome.
   const [provision, setProvision] = useState<{ ok: boolean; text: string } | null>(null)
-  const [tab, setTab] = useState<'details' | 'demo'>('details')
+  const [tab, setTab] = useState<'details' | 'demo' | 'projects'>('details')
+  // Projects stored in this connection's schema (loaded lazily on the Projects tab).
+  const [projects, setProjects] = useState<ConnectionProject[] | null>(null)
+  const [projectsBusy, setProjectsBusy] = useState(false)
+  const [projectsError, setProjectsError] = useState<string | null>(null)
+  const [confirmProject, setConfirmProject] = useState<ConnectionProject | null>(null)
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) =>
     setDraft((d) => ({ ...d, [key]: value }))
@@ -335,6 +341,39 @@ export function ConnectionEditor({
     }
   }
 
+  const loadProjectsList = async () => {
+    if (!draft.id) return
+    setProjectsBusy(true)
+    setProjectsError(null)
+    const res = await store.listConnectionProjects(draft.id)
+    setProjectsBusy(false)
+    if (res.ok) setProjects(res.projects)
+    else {
+      setProjects([])
+      setProjectsError(res.error || 'Could not read the projects for this connection.')
+    }
+  }
+
+  // Load the project list the first time the Projects tab is opened.
+  useEffect(() => {
+    if (tab === 'projects' && draft.id && projects === null) void loadProjectsList()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
+
+  const removeProject = async (p: ConnectionProject) => {
+    if (!draft.id) return
+    setProjectsBusy(true)
+    const res = await store.deleteConnectionProject(draft.id, p.projectId)
+    setProjectsBusy(false)
+    setConfirmProject(null)
+    if (res.ok) {
+      setProjects(null)
+      await loadProjectsList()
+    } else {
+      setProjectsError(res.error || 'Could not delete the project.')
+    }
+  }
+
   const toggleAssignment = (username: string) =>
     set(
       'assignments',
@@ -407,6 +446,14 @@ export function ConnectionEditor({
           <button className={tab === 'demo' ? 'sel' : ''} onClick={() => setTab('demo')}>
             Demo Content
           </button>
+          {!isNew && (
+            <button
+              className={tab === 'projects' ? 'sel' : ''}
+              onClick={() => setTab('projects')}
+            >
+              Projects
+            </button>
+          )}
         </div>
 
         {tab === 'details' && (
@@ -685,6 +732,87 @@ export function ConnectionEditor({
             </div>
           </div>
         )}
+
+        {tab === 'projects' && (
+          <div className="col" style={{ gap: 12 }}>
+            <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
+              <span className="t-caption2 fg-tertiary" style={{ flex: 1 }}>
+                Projects stored in the “{draft.schema.trim() || '…'}” schema, with their
+                journey and event counts. Deleting a project clears its rows from every
+                table (PROJECTS, JOURNEYS, STEPS, METAS, NOTES, TRANSITIONS_RAW) — this
+                cannot be undone.
+              </span>
+              <button
+                className="btn small"
+                disabled={projectsBusy}
+                onClick={() => void loadProjectsList()}
+              >
+                ↻ Refresh
+              </button>
+            </div>
+
+            {projectsError && <span className="t-caption fg-red">{projectsError}</span>}
+
+            {projectsBusy && projects === null ? (
+              <span className="t-caption2 fg-tertiary row" style={{ gap: 6 }}>
+                <Spinner /> Loading projects…
+              </span>
+            ) : projects && projects.length === 0 ? (
+              <span className="t-caption2 fg-tertiary">
+                No projects found in this schema.
+              </span>
+            ) : projects ? (
+              <div
+                className="col"
+                style={{
+                  gap: 2,
+                  border: '1px solid var(--border)',
+                  borderRadius: 8,
+                  padding: 8,
+                }}
+              >
+                {projects.map((p) => (
+                  <div
+                    key={p.projectId}
+                    className="row"
+                    style={{ gap: 10, alignItems: 'center', padding: '4px 2px' }}
+                  >
+                    <div className="col" style={{ flex: 1, minWidth: 0, gap: 0 }}>
+                      <span
+                        className="t-caption"
+                        style={{
+                          fontWeight: 600,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {p.title}
+                      </span>
+                      {p.title !== p.projectId && (
+                        <span className="t-caption2 fg-tertiary">{p.projectId}</span>
+                      )}
+                    </div>
+                    <span className="t-caption2 fg-secondary" style={{ whiteSpace: 'nowrap' }}>
+                      {p.journeys.toLocaleString()} journeys
+                    </span>
+                    <span className="t-caption2 fg-tertiary" style={{ whiteSpace: 'nowrap' }}>
+                      {p.events.toLocaleString()} events
+                    </span>
+                    <button
+                      className="btn small"
+                      style={{ color: 'var(--red)' }}
+                      disabled={projectsBusy}
+                      onClick={() => setConfirmProject(p)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        )}
       </div>
 
       {confirmDelete && (
@@ -695,6 +823,17 @@ export function ConnectionEditor({
           destructive
           onCancel={() => setConfirmDelete(false)}
           onConfirm={() => void remove()}
+        />
+      )}
+
+      {confirmProject && (
+        <ConfirmSheet
+          title="Delete project?"
+          message={`“${confirmProject.title}” (${confirmProject.journeys.toLocaleString()} journeys, ${confirmProject.events.toLocaleString()} events) will be cleared from PROJECTS, JOURNEYS, STEPS, METAS, NOTES and TRANSITIONS_RAW in this schema. This cannot be undone.`}
+          confirmLabel="Delete project"
+          destructive
+          onCancel={() => setConfirmProject(null)}
+          onConfirm={() => void removeProject(confirmProject)}
         />
       )}
     </Sheet>

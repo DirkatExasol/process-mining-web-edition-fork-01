@@ -57,6 +57,11 @@ class IngestBackend(Protocol):
     ) -> int:
         ...
 
+    def existing_keys(
+        self, schema: str, table: str, key_columns: Sequence[str]
+    ) -> set[tuple[str, ...]]:
+        ...
+
 
 class InMemoryIngestBackend:
     """A dependency-free target: tables and rows live in dictionaries. Used for dev
@@ -90,11 +95,20 @@ class InMemoryIngestBackend:
             tbl["rows"].append(dict(zip(columns, row)))
         return len(rows)
 
+    def existing_keys(self, schema, table, key_columns):
+        tbl = self._table(schema, table)
+        if tbl is None:
+            return set()
+        return {
+            tuple("" if r.get(k) is None else str(r.get(k)) for k in key_columns)
+            for r in tbl["rows"]
+        }
+
 
 class SqlIngestBackend:
     """Generates schema-qualified SQL and runs it through ``run_sql`` (a synchronous
-    ``str -> None`` callable). The production wiring binds ``run_sql`` to the user's
-    Exasol connection; tests bind it to a recorder to assert the generated SQL.
+    callable returning the statement's rows — empty for DDL/DML). The production wiring
+    binds ``run_sql`` to the user's Exasol connection; tests bind it to a recorder.
 
     Identifiers are validated (never escaped-and-hoped); values are rendered as
     strictly-escaped literals. Extractor code is trusted, but the layer still escapes
@@ -127,6 +141,15 @@ class SqlIngestBackend:
             self._run(f"INSERT INTO {q} ({col_list}) VALUES {values}")
             written += len(batch)
         return written
+
+    def existing_keys(self, schema, table, key_columns):
+        """The set of existing key tuples in ``table`` (each value stringified). Used to
+        create-if-missing metadata rows (projects, steps). Reads all keys — intended for
+        small metadata tables, not fact tables."""
+        q = self._qualified(schema, table)
+        cols = ", ".join(f'"{valid_identifier(c)}"' for c in key_columns)
+        rows = self._run(f"SELECT {cols} FROM {q}") or []
+        return {tuple("" if v is None else str(v) for v in row) for row in rows}
 
     @staticmethod
     def _qualified(schema: str, table: str) -> str:

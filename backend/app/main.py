@@ -105,6 +105,10 @@ async def lifespan(app: FastAPI):
             logging.getLogger("compute-backend").warning(
                 "PMW_RESET_DEMO set — cleared the one-time demo marker."
             )
+    # Seed the bundled example log(s) into the integration files sandbox (first run).
+    from .integration.files import seed_demo_files
+
+    seed_demo_files()
     watchdog = asyncio.create_task(_license_watchdog())
     yield
     watchdog.cancel()

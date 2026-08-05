@@ -2416,6 +2416,40 @@ textarea.text-input {
 
 /* ── Splash / legal ───────────────────────────────────────────────────────── */
 
+/* Integration import progress bar. */
+.iprogress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--fill);
+  overflow: hidden;
+}
+.iprogress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+.iprogress-fill.indeterminate {
+  width: 35% !important;
+  animation: iprogress-slide 1.1s ease-in-out infinite;
+}
+@keyframes iprogress-slide {
+  0% { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
+
+/* Integration wizards: constrain the form column to a login-panel-like width so
+   single inputs don't stretch across the whole sheet. */
+.iwiz-col {
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.iwiz-col.narrow { max-width: 460px; }
+.iwiz-col.mapping { max-width: 600px; }
+
 .splash {
   width: min(460px, 100%);
   border-radius: 20px;
@@ -2509,4 +2543,131 @@ textarea.text-input {
   display: grid;
   place-items: start center;
   padding: 24px;
+}
+
+/* ── Integration console: pipeline canvas + status details ─────────────────── */
+.integration-console {
+  width: 100%;
+  max-width: 900px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ipipe-canvas {
+  position: relative;
+  height: 320px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--fill);
+}
+
+/* Ingestion pipeline: header above the single accumulating flowchart. */
+.ihist-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* Imported-row total on the Source / Destination nodes. */
+.ipipe-rows {
+  margin-top: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+}
+.ipipe-canvas .react-flow__attribution { display: none; }
+.ipipe-canvas .react-flow__node { cursor: default; }
+.ipipe-canvas .react-flow__handle {
+  width: 7px;
+  height: 7px;
+  min-width: 0;
+  min-height: 0;
+  background: var(--border);
+  border: none;
+}
+
+.ipipe-legend {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  pointer-events: none;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.ipipe-node {
+  width: 210px;
+  /* Fixed height matches NODE_H in IntegrationPipeline.tsx so the DOM node lines up
+     with ReactFlow's declared handle bounds (keeps edges attached across re-renders). */
+  height: 112px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--card, var(--bg));
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: border-color 0.2s, box-shadow 0.2s, opacity 0.2s;
+  overflow: hidden;
+}
+.ipipe-node.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, transparent, var(--accent) 22%);
+}
+.ipipe-node.done {
+  border-color: color-mix(in srgb, var(--border), var(--green) 55%);
+}
+.ipipe-node.error {
+  border-color: var(--red);
+}
+
+.ipipe-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.ipipe-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  flex: none;
+}
+.ipipe-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.ipipe-kicker {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--tertiary);
+  font-weight: 600;
+}
+.ipipe-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ipipe-sub {
+  font-size: 11px;
+  color: var(--secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ipipe-layer {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }

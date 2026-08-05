@@ -73,3 +73,63 @@ def test_regex_from_segment_anchors_on_preceding_context():
 def test_regex_from_segment_empty_selection_raises():
     with pytest.raises(ValueError):
         regex_from_segment(SAMPLE, 5, 5)
+
+
+# ── timestamp analysis / normalisation ────────────────────────────────────────
+
+
+def test_analyze_timestamp_normalises_many_formats():
+    from app.integration.parsing import analyze_timestamp
+    cases = {
+        # ISO-8601 with fractional seconds + offsets / Z
+        "2026-08-03T14:05:09.123Z": "2026-08-03 14:05:09",
+        "2026-08-03T14:05:09.123456+02:00": "2026-08-03 14:05:09",
+        "2026-08-03 14:05:09": "2026-08-03 14:05:09",
+        # dot / slash separators, day-first (European default)
+        "03.08.2026 14:05:09": "2026-08-03 14:05:09",
+        "03/08/2026 14:05:09": "2026-08-03 14:05:09",
+        # 12-hour AM/PM ⇒ month-first (US) reading
+        "08/03/2026 02:05:09 PM": "2026-08-03 14:05:09",
+        # spelled-out / abbreviated month names
+        "03 Aug 2026 14:05:09": "2026-08-03 14:05:09",
+        "August 3, 2026 2:05 PM": "2026-08-03 14:05:00",
+        # web-server / email / date-only
+        "03/Aug/2026:14:05:09 +0000": "2026-08-03 14:05:09",
+        "Mon, 03 Aug 2026 14:05:09 +0000": "2026-08-03 14:05:09",
+        "2026-08-03": "2026-08-03 00:00:00",
+    }
+    for value, expected in cases.items():
+        out = analyze_timestamp(value)
+        assert out["normalized"] == expected, value
+        assert out["format"], value  # a parse format was inferred
+
+
+def test_analyze_timestamp_handles_epochs():
+    from app.integration.parsing import analyze_timestamp
+    assert analyze_timestamp("1754229909")["format"] == "epoch:s"
+    assert analyze_timestamp("1754229909123")["format"] == "epoch:ms"
+    # Same instant in seconds and milliseconds.
+    assert analyze_timestamp("1754229909")["normalized"] == analyze_timestamp("1754229909123")["normalized"]
+
+
+def test_analyze_timestamp_rejects_non_dates():
+    from app.integration.parsing import analyze_timestamp
+    assert analyze_timestamp("not a date") == {"format": "", "normalized": ""}
+    assert analyze_timestamp("") == {"format": "", "normalized": ""}
+
+
+def test_detect_attaches_a_format_to_the_timestamp_field():
+    fields = detect_fields(SAMPLE)
+    ts = next(f for f in fields if f["role"] == "timestamp")
+    assert ts.get("format")  # e.g. "%Y-%m-%dT%H:%M:%S%z"
+
+
+def test_detect_and_normalise_apache_clf_timestamp():
+    import re
+    from app.integration.parsing import analyze_timestamp
+    line = ('10.185.248.71 - - [09/Jan/2015:19:12:06 +0000] 808840 '
+            '"GET /shop/view?userId=20253471&bookId=B-1001 HTTP/1.1" 200 8241 "-" "UA"')
+    ts = next(f for f in detect_fields(line) if f["role"] == "timestamp")
+    m = re.search(ts["regex"], line)
+    assert m and m.group(1) == "09/Jan/2015:19:12:06 +0000"
+    assert analyze_timestamp(m.group(1))["normalized"] == "2015-01-09 19:12:06"

@@ -201,6 +201,12 @@ def _power(store, username="pat"):
     return username
 
 
+def _developer(store, username="dev"):
+    store.create_user(username, "pw", is_admin=False)
+    store.set_developer(username, True)
+    return username
+
+
 def test_manageable_requires_power(backend):
     app, store, _ = backend
     store.create_user("alice", "pw", is_admin=False)
@@ -647,3 +653,67 @@ def test_registry_connect_aborts_on_concurrent_revocation(backend, monkeypatch):
     err = asyncio.run(reg.connect("alice", _ConnDef()))
     assert err is not None and "reconnect" in err.lower()
     assert dropped["n"] >= 1  # the session opened during the revocation was dropped
+
+
+# ── project management (power / developer / admin) ────────────────────────────
+
+
+def test_developer_manages_projects_on_owned_connection(backend, monkeypatch):
+    """A developer owns the connections they create and may list/delete their
+    projects — the endpoints connect via the stored credentials (stubbed here)."""
+    app, store, _ = backend
+    dev = _developer(store)
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/connections",
+        headers={"X-PMW-User": dev},
+        json={"name": "Dev DB", "host": "db", "port": 8563, "username": "svc",
+              "schema": "S", "password": "s3cret"},
+    ).json()
+    assert created["owner"] == dev  # developer-owned → manageable
+
+    import app.db.schema_ddl as ddl
+
+    async def _fake_list(**kw):
+        assert kw["schema"] == "S" and kw["password"] == "s3cret"
+        return {"ok": True, "error": None,
+                "projects": [{"projectId": "P1", "title": "Proj 1", "journeys": 3, "events": 9}]}
+
+    async def _fake_delete(**kw):
+        assert kw["project_id"] == "P1"
+        return {"ok": True, "error": None, "events": 9, "journeys": 3, "tables": ["JOURNEYS", "PROJECTS"]}
+
+    monkeypatch.setattr(ddl, "list_projects_with_counts", _fake_list)
+    monkeypatch.setattr(ddl, "delete_project", _fake_delete)
+
+    listed = client.get(f"/api/connections/{created['id']}/projects", headers={"X-PMW-User": dev})
+    assert listed.status_code == 200
+    assert listed.json()["projects"][0]["projectId"] == "P1"
+
+    deleted = client.post(
+        f"/api/connections/{created['id']}/projects/delete",
+        headers={"X-PMW-User": dev}, json={"projectId": "P1"},
+    )
+    assert deleted.status_code == 200 and deleted.json()["events"] == 9
+
+
+def test_projects_forbidden_for_non_manager_or_non_owner(backend):
+    app, store, _ = backend
+    _developer(store, "dev")
+    store.create_user("alice", "pw", is_admin=False)  # plain user
+    conn = _make_conn(store, owner="someone-else", assignments=["alice"])
+    client = TestClient(app)
+
+    # A plain user is not a manager at all.
+    assert client.get(
+        f"/api/connections/{conn.id}/projects", headers={"X-PMW-User": "alice"}
+    ).status_code == 403
+    # A developer who doesn't OWN this connection can't manage its projects.
+    assert client.get(
+        f"/api/connections/{conn.id}/projects", headers={"X-PMW-User": "dev"}
+    ).status_code == 403
+    assert client.post(
+        f"/api/connections/{conn.id}/projects/delete",
+        headers={"X-PMW-User": "dev"}, json={"projectId": "P1"},
+    ).status_code == 403

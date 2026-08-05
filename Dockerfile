@@ -41,6 +41,8 @@ COPY backend/ ./backend/
 COPY admin/ ./admin/
 COPY integration/ ./integration/
 COPY frontend/ ./frontend/
+# Bundled demo logs — seeded into the integration files sandbox on first run.
+COPY examples/ ./examples/
 COPY run.sh ./run.sh
 RUN chmod +x run.sh
 

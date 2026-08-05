@@ -2013,6 +2013,55 @@ def api_rebuild_token_clear(conn_id: str, user: User = Depends(require_admin)):
     return {"ok": True}
 
 
+# ── projects stored in a connection's schema ──────────────────────────────────
+
+
+class ProjectDeleteBody(BaseModel):
+    projectId: str = Field(min_length=1, max_length=100)
+
+
+@app.get("/api/connections/{conn_id}/projects")
+async def api_list_projects(conn_id: str, user: User = Depends(require_admin)):
+    """List the projects stored in a connection's schema with their journey/event
+    counts. Uses the stored credentials, so the admin never handles them."""
+    conn = store.get_connection(conn_id, with_secrets=True)
+    if conn is None:
+        raise HTTPException(status_code=404, detail="No such connection.")
+
+    from app.db.schema_ddl import list_projects_with_counts
+
+    return await list_projects_with_counts(
+        host=conn.host, port=conn.port, username=conn.username, password=conn.password,
+        schema=conn.schema, use_tls=conn.use_tls, cert_mode=conn.cert_mode,
+        fingerprint=conn.fingerprint, min_rsa_bits=conn.min_rsa_bits,
+    )
+
+
+@app.post("/api/connections/{conn_id}/projects/delete")
+async def api_delete_project(conn_id: str, body: ProjectDeleteBody, user: User = Depends(require_admin)):
+    """Delete a project from a connection's schema, clearing its rows from every
+    project-scoped table (PROJECTS, JOURNEYS, STEPS, METAS, NOTES, TRANSITIONS_RAW)."""
+    conn = store.get_connection(conn_id, with_secrets=True)
+    if conn is None:
+        raise HTTPException(status_code=404, detail="No such connection.")
+
+    from app.db.schema_ddl import delete_project
+
+    result = await delete_project(
+        project_id=body.projectId, host=conn.host, port=conn.port, username=conn.username,
+        password=conn.password, schema=conn.schema, use_tls=conn.use_tls,
+        cert_mode=conn.cert_mode, fingerprint=conn.fingerprint, min_rsa_bits=conn.min_rsa_bits,
+    )
+    logx.warn(
+        f"admin {user.username} deleted project {body.projectId!r} from connection "
+        f"{conn.name!r} ({conn_id}) — "
+        + ("ok" if result.get("ok") else f"failed: {result.get('error')}"),
+        username=user.username,
+        operation="connection",
+    )
+    return result
+
+
 # ── LDAP / directory ──────────────────────────────────────────────────────────
 
 

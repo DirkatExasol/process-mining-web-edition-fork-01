@@ -15,8 +15,10 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..db.manager import current_db
-from ..integration import layer
-from ..integration.parsing import ROLES, detect_fields, regex_from_segment
+from ..integration import SqlIngestBackend, layer
+from ..integration.extractors import FileExtractor
+from ..integration.files import FileAccessError, read_preview
+from ..integration.parsing import ROLES, analyze_timestamp, detect_fields, regex_from_segment
 from ..store.security import store as security_store
 
 router = APIRouter(prefix="/api/integration", tags=["integration"])
@@ -73,6 +75,8 @@ class ExtractionField(BaseModel):
     role: str = "meta"
     regex: str = Field(default="", max_length=2000)
     format: str = Field(default="", max_length=120)
+    # Human-readable business name for a meta field (→ METAS.META_n_TITLE).
+    title: str = Field(default="", max_length=200)
 
 
 class SourceTypeBody(BaseModel):
@@ -91,6 +95,7 @@ def _spec_config(body: SourceTypeBody) -> str:
             "role": f.role if f.role in ROLES else "meta",
             "regex": f.regex,
             **({"format": f.format} if f.format else {}),
+            **({"title": f.title.strip()} if f.title.strip() else {}),
         }
         for f in body.fields
     ]
@@ -130,6 +135,139 @@ def delete_source_type(source_type_id: str, request: Request) -> dict:
     return {"ok": True}
 
 
+# ── data sources (generic kind + config) ──────────────────────────────────────
+
+# Source kinds the backend accepts. Kept small on purpose — extend as new kinds ship;
+# the frontend registry drives the per-kind form, this just gates what may be stored.
+SOURCE_KINDS = {"file"}
+
+
+class SourceBody(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    kind: str = Field(default="file", max_length=40)
+    # Kind-specific settings (e.g. {"path": "/var/log/app.log"} for a file source).
+    config: dict = Field(default_factory=dict)
+
+
+def _source_config(body: SourceBody) -> str:
+    if body.kind not in SOURCE_KINDS:
+        raise HTTPException(status_code=400, detail=f"Unknown source kind {body.kind!r}.")
+    blob = json.dumps(body.config)
+    if len(blob) > 8000:
+        raise HTTPException(status_code=400, detail="Source settings are too large.")
+    return blob
+
+
+@router.get("/sources")
+def list_sources(request: Request) -> list[dict]:
+    """The signed-in user's data sources."""
+    user = _request_user(request)
+    return [s.public() for s in security_store.list_sources(user)]
+
+
+@router.post("/sources")
+def create_source(body: SourceBody, request: Request) -> dict:
+    user = _request_user(request)
+    config = _source_config(body)
+    created = security_store.add_source(user or "", name=body.name, kind=body.kind, config=config)
+    return created.public()
+
+
+@router.put("/sources/{source_id}")
+def update_source(source_id: str, body: SourceBody, request: Request) -> dict:
+    user = _request_user(request)
+    config = _source_config(body)
+    updated = security_store.update_source(source_id, user, name=body.name, kind=body.kind, config=config)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Source not found.")
+    return updated.public()
+
+
+@router.delete("/sources/{source_id}")
+def delete_source(source_id: str, request: Request) -> dict:
+    user = _request_user(request)
+    if not security_store.delete_source(source_id, user):
+        raise HTTPException(status_code=404, detail="Source not found.")
+    return {"ok": True}
+
+
+class PreviewBody(BaseModel):
+    path: str = Field(default="", max_length=4000)
+    limit: int = 5
+
+
+@router.post("/sources/preview")
+def preview_source(body: PreviewBody) -> dict:
+    """First N lines of a File source's file (sandboxed — see integration/files.py)."""
+    try:
+        return read_preview(body.path, body.limit)
+    except FileAccessError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class RunBody(BaseModel):
+    projectId: str = Field(min_length=1, max_length=100)
+
+
+def _source_owned(source_id: str, user: str | None):
+    for s in security_store.list_sources(user):
+        if s.id == source_id:
+            return s
+    return None
+
+
+@router.post("/sources/{source_id}/run")
+async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
+    """Run a File source's extraction into the user's *active* connection + schema under
+    the given project id. The source must link a source type; the file is read sandboxed."""
+    user = _request_user(request)
+    source = _source_owned(source_id, user)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Source not found.")
+    if source.kind != "file":
+        raise HTTPException(status_code=400, detail="Only file sources can be run yet.")
+
+    cfg = source.public()["config"]
+    path = str(cfg.get("path") or "").strip()
+    if not path:
+        raise HTTPException(status_code=400, detail="This source has no file path.")
+    st_id = str(cfg.get("sourceTypeId") or "").strip()
+    st = next((s for s in security_store.list_source_types(user) if s.id == st_id), None)
+    if st is None:
+        raise HTTPException(status_code=400, detail="Link a source type to this source first.")
+    fields = st.public()["fields"]
+    if not any(f.get("role") == "timestamp" for f in fields):
+        raise HTTPException(status_code=400, detail="The source type has no timestamp field.")
+
+    # Destination = the user's active connection + its schema.
+    mgr = current_db()
+    if not mgr.is_connected:
+        raise HTTPException(status_code=400, detail="Connect to a destination database first.")
+    server = mgr.active_database_server
+    schema = (server.schema_ or "").strip() if server is not None else ""
+    if not schema:
+        raise HTTPException(status_code=400, detail="The active connection has no target schema.")
+
+    backend = SqlIngestBackend(run_sql=lambda sql: mgr._execute_sync(sql).rows)
+    extractor = FileExtractor(
+        path=path, encoding=str(cfg.get("encoding") or "utf-8"),
+        fields=fields, project_id=body.projectId.strip(),
+    )
+    conn = security_store.get_connection(mgr.active_profile_id) if mgr.active_profile_id else None
+    try:
+        result = await layer.run(
+            user=user, extractor=extractor, backend=backend, schema=schema,
+            connection_id=mgr.active_profile_id,
+            connection_name=conn.name if conn is not None else None,
+            source_name=source.name, source_type_name=st.name,
+        )
+    except FileAccessError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001 — surfaced to the caller + the status panel
+        raise HTTPException(status_code=400, detail=f"Extraction failed: {exc}")
+    return {"records": result.records, "detail": result.detail}
+
+
 # ── example-log parsing (wizard helpers) ──────────────────────────────────────
 
 
@@ -156,3 +294,14 @@ def parse_segment(body: SegmentBody) -> dict:
         return regex_from_segment(body.sample, body.start, body.end)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+class TimestampBody(BaseModel):
+    value: str = Field(default="", max_length=200)
+
+
+@router.post("/parse/timestamp")
+def parse_timestamp(body: TimestampBody) -> dict:
+    """Infer a timestamp field's parse format and its normalised
+    YYYY-MM-DD HH:MM:SS value from an example captured value."""
+    return analyze_timestamp(body.value)

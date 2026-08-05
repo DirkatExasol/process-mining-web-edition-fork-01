@@ -29,6 +29,8 @@ import {
   type FilterSnapshot,
   type FilterSpec,
   type HappyPath,
+  type ConnectionProjectDeleteResult,
+  type ConnectionProjectsResult,
   type JourneyPath,
   type LegacyHappyPath,
   type ManagedConnection,
@@ -318,6 +320,11 @@ export interface AppActions {
     project?: string
     message?: string
   }>
+  listConnectionProjects: (id: string) => Promise<ConnectionProjectsResult>
+  deleteConnectionProject: (
+    id: string,
+    projectId: string,
+  ) => Promise<ConnectionProjectDeleteResult>
 
 
   loadProjects: () => Promise<void>
@@ -827,7 +834,7 @@ export const useStore = create<Store>((set, get) => {
     // ── power-user connection management ──────────────────────────────────
 
     refreshManageable: async () => {
-      if (!(get().authIsPower || get().authIsAdmin)) {
+      if (!(get().authIsPower || get().authIsAdmin || get().authIsDeveloper)) {
         set({ manageableConnections: [], assignableUsers: [] })
         return
       }
@@ -892,6 +899,24 @@ export const useStore = create<Store>((set, get) => {
       } catch (error) {
         const message = error instanceof ApiError ? error.message : String(error)
         return { ok: false, error: message, journeys: 0 }
+      }
+    },
+
+    listConnectionProjects: async (id) => {
+      try {
+        return await api.listConnectionProjects(id)
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : String(error)
+        return { ok: false, error: message, projects: [] }
+      }
+    },
+
+    deleteConnectionProject: async (id, projectId) => {
+      try {
+        return await api.deleteConnectionProject(id, projectId)
+      } catch (error) {
+        const message = error instanceof ApiError ? error.message : String(error)
+        return { ok: false, error: message }
       }
     },
 

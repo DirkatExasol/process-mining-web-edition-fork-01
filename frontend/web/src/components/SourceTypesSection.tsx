@@ -6,12 +6,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import type { SourceType } from '../types'
+import { ConfirmDialog } from './ConfirmDialog'
+import { SectionHeader } from './SectionHeader'
 import { SourceTypeWizard } from './SourceTypeWizard'
 
-export function SourceTypesSection() {
+export function SourceTypesSection({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   const [sourceTypes, setSourceTypes] = useState<SourceType[]>([])
   // null = closed; 'new' = the add wizard; a SourceType = editing it.
   const [wizard, setWizard] = useState<'new' | SourceType | null>(null)
+  const [confirming, setConfirming] = useState<SourceType | null>(null)
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
@@ -28,47 +32,52 @@ export function SourceTypesSection() {
   }, [refresh])
 
   const remove = async (s: SourceType) => {
-    if (!window.confirm(`Delete source type "${s.name}"?`)) return
+    setBusy(true)
     try {
       await api.deleteSourceType(s.id)
+      setConfirming(null)
       await refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
     }
   }
 
   return (
     <>
-      <div className="section-header">
-        <span className="section-title" style={{ padding: '0 4px' }}>
-          Source types
-        </span>
-        {sourceTypes.length > 0 && <span className="section-count">({sourceTypes.length})</span>}
-        <span className="spacer" />
-        <button
-          className="icon-btn"
-          title="Add a source type"
-          aria-label="Add a source type"
-          onClick={() => setWizard('new')}
-        >
-          ＋
-        </button>
-      </div>
+      <SectionHeader
+        title="Source types"
+        count={sourceTypes.length}
+        open={open}
+        onToggle={onToggle}
+        trailing={
+          <button
+            className="icon-btn"
+            title="Add a source type"
+            aria-label="Add a source type"
+            onClick={() => setWizard('new')}
+          >
+            ＋
+          </button>
+        }
+      />
 
-      {error && (
+      {open && error && (
         <div className="t-caption fg-red" style={{ padding: '0 4px' }}>
           {error}
         </div>
       )}
 
-      {sourceTypes.length === 0 ? (
-        <span className="t-caption fg-tertiary" style={{ padding: '0 4px' }}>
-          No source types yet. Use ＋ to define one.
-        </span>
-      ) : (
-        // At most ~3 badges (each min 52px + gap); scroll past that.
-        <div className="card-list" style={{ maxHeight: 190 }}>
-          {sourceTypes.map((s) => (
+      {open &&
+        (sourceTypes.length === 0 ? (
+          <span className="t-caption fg-tertiary" style={{ padding: '0 4px' }}>
+            No source types yet. Use ＋ to define one.
+          </span>
+        ) : (
+          // At most ~3 badges (each min 52px + gap); scroll past that.
+          <div className="card-list" style={{ maxHeight: 190 }}>
+            {sourceTypes.map((s) => (
             <div
               key={s.id}
               className="card"
@@ -94,15 +103,15 @@ export function SourceTypesSection() {
                 aria-label="Delete source type"
                 onClick={(e) => {
                   e.stopPropagation()
-                  void remove(s)
+                  setConfirming(s)
                 }}
               >
                 ✕
               </button>
             </div>
           ))}
-        </div>
-      )}
+          </div>
+        ))}
 
       {wizard && (
         <SourceTypeWizard
@@ -112,6 +121,17 @@ export function SourceTypesSection() {
             setWizard(null)
             await refresh()
           }}
+        />
+      )}
+
+      {confirming && (
+        <ConfirmDialog
+          title="Delete source type"
+          message={`Delete the source type “${confirming.name}”? Sources that reference it will need a new one.`}
+          confirmLabel="Delete source type"
+          busy={busy}
+          onConfirm={() => void remove(confirming)}
+          onCancel={() => setConfirming(null)}
         />
       )}
     </>

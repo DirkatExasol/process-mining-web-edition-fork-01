@@ -10,6 +10,8 @@ export interface ExtractionField {
   role: FieldRole
   regex: string
   format?: string
+  /** Business name for a meta field (→ METAS.META_n_TITLE). */
+  title?: string
 }
 
 /** One match of a field regex: the captured value and its char span in the sample.
@@ -99,9 +101,9 @@ export const ROLE_COLOR: Record<FieldRole, string> = {
 }
 
 export const ROLE_LABEL: Record<FieldRole, string> = {
-  timestamp: 'Timestamp',
-  id: 'Unique id',
-  step: 'Step',
+  timestamp: 'EVENT_TIME',
+  id: 'EVENT_ID',
+  step: 'STEP',
   meta: 'Meta',
 }
 

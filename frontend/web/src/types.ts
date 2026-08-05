@@ -47,6 +47,28 @@ export interface ManagedConnection {
   owner: string
 }
 
+/** One project stored in a connection's schema, with its journey/event counts. */
+export interface ConnectionProject {
+  projectId: string
+  title: string
+  journeys: number
+  events: number
+}
+
+export interface ConnectionProjectsResult {
+  ok: boolean
+  error: string | null
+  projects: ConnectionProject[]
+}
+
+export interface ConnectionProjectDeleteResult {
+  ok: boolean
+  error?: string | null
+  events?: number
+  journeys?: number
+  tables?: string[]
+}
+
 export interface Project {
   projectId: string
   title: string
@@ -525,9 +547,14 @@ export interface IntegrationStatus {
   state: 'idle' | 'running' | 'completed' | 'failed'
   extractorId: string | null
   extractorName: string | null
+  sourceName: string | null
+  sourceTypeName: string | null
   connectionId: string | null
+  connectionName: string | null
   schema: string | null
   recordsPushed: number
+  recordsDone: number
+  recordsTotal: number
   tablesTouched: string[]
   startedAt: string | null
   finishedAt: string | null
@@ -547,6 +574,7 @@ export interface ExtractionField {
   role: ExtractionRole
   regex: string
   format?: string
+  title?: string
 }
 
 export interface SourceType {
@@ -562,4 +590,19 @@ export interface SourceTypeInput {
   name: string
   sample: string
   fields: ExtractionField[]
+}
+
+export interface Source {
+  id: string
+  owner: string
+  name: string
+  kind: string
+  config: Record<string, unknown>
+  createdAt: string
+}
+
+export interface SourceInput {
+  name: string
+  kind: string
+  config: Record<string, unknown>
 }

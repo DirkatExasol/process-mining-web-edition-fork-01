@@ -10,7 +10,15 @@ import { useStore } from '../store'
 import { Logo } from './Logo'
 import { Spinner } from './ui'
 
-export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
+export function LoginView({
+  onSignedIn,
+  subtitle,
+}: {
+  onSignedIn: () => void
+  /** Optional second title line naming the surface (e.g. "Integration"), like the
+   *  admin sign-in page's "Administration". */
+  subtitle?: string
+}) {
   const store = useStore()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -198,6 +206,7 @@ export function LoginView({ onSignedIn }: { onSignedIn: () => void }) {
         </div>
         <div className="col" style={{ gap: 2, alignItems: 'center' }}>
           <span className="t-title3">Process Mining Demonstrator</span>
+          {subtitle && <span className="t-title3">{subtitle}</span>}
           <span className="t-caption fg-secondary">{caption}</span>
         </div>
 

@@ -4,8 +4,8 @@
  *  on top of this scaffold in later stages. */
 
 import { useEffect, useState } from 'react'
+import { IntegrationConsole } from './components/IntegrationConsole'
 import { IntegrationSidebar } from './components/IntegrationSidebar'
-import { IntegrationStatusPanel } from './components/IntegrationStatusPanel'
 import { LoginView } from './components/LoginView'
 import { Logo } from './components/Logo'
 import { Spinner } from './components/ui'
@@ -74,7 +74,7 @@ export function IntegrationApp() {
     return (
       <>
         <ThemeSync />
-        <LoginView onSignedIn={initAfterAuth} />
+        <LoginView subtitle="Integration" onSignedIn={initAfterAuth} />
       </>
     )
   }
@@ -107,7 +107,7 @@ export function IntegrationApp() {
       <div className="app">
         <IntegrationSidebar />
         <main className="integration-body">
-          <IntegrationStatusPanel />
+          <IntegrationConsole />
         </main>
       </div>
     </>

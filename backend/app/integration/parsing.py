@@ -18,15 +18,120 @@ ReDoS vector.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 
 # Roles a detected/'assigned field can take. Mirrors the process-mining essentials plus
 # free-form meta attributes.
 ROLES = ("timestamp", "id", "step", "meta")
 
+# The canonical timestamp shape every extracted date is normalised to:
+# YEAR-MONTH-DAY HOUR:MINUTE:SECOND.
+TIMESTAMP_TARGET = "%Y-%m-%d %H:%M:%S"
+
+# Fully-specified special formats tried first (structure differs from the grid below).
+_SPECIAL_FORMATS = [
+    "%d/%b/%Y:%H:%M:%S %z",       # Apache / NCSA common log:  03/Aug/2026:14:05:09 +0000
+    "%d/%b/%Y:%H:%M:%S",
+    "%a, %d %b %Y %H:%M:%S %z",   # RFC 2822 / email:          Mon, 03 Aug 2026 14:05:09 +0000
+    "%a %b %d %H:%M:%S %Y",       # C asctime / `date`:        Mon Aug  3 14:05:09 2026
+    "%b %d %H:%M:%S",             # syslog (yearless):         Aug  3 14:05:09
+]
+
+# Numeric date halves. The two orderings differ only in how the ambiguous "08/03"
+# style is read: day-first (European) is the default, but month-first (US) is tried
+# first when the time is a 12-hour AM/PM clock — a strong US-locale signal. ISO
+# (year-first) is unambiguous and always leads.
+_DATE_NUMERIC_DAYFIRST = [
+    "%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d",
+    "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y",
+    "%m/%d/%Y", "%m-%d-%Y",
+]
+_DATE_NUMERIC_MONTHFIRST = [
+    "%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d",
+    "%m/%d/%Y", "%m-%d-%Y",
+    "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y",
+]
+# Spelled-out / abbreviated month names — unambiguous, tried after the numeric dates.
+_DATE_NAMED = [
+    "%d %b %Y", "%d %B %Y",
+    "%b %d %Y", "%B %d %Y", "%b %d, %Y", "%B %d, %Y",
+]
+_TIME_PARTS = [
+    "T%H:%M:%S.%f", "T%H:%M:%S", "T%H:%M",
+    " %H:%M:%S.%f", " %H:%M:%S", " %H:%M",
+    " %I:%M:%S %p", " %I:%M %p",
+    "",  # date only
+]
+
+
+def _candidate_formats() -> list[str]:
+    out = list(_SPECIAL_FORMATS)
+    for time in _TIME_PARTS:
+        month_first = time.endswith("%p")  # AM/PM ⇒ prefer the US month-first reading
+        dates = (_DATE_NUMERIC_MONTHFIRST if month_first else _DATE_NUMERIC_DAYFIRST) + _DATE_NAMED
+        for date in dates:
+            out.append(date + time)
+            # A numeric-offset / Z variant when there is a real time component.
+            if time and not time.endswith("%p"):
+                out.append(date + time + "%z")
+    return out
+
+
+_TS_FORMATS = _candidate_formats()
+
+
+def analyze_timestamp(value: str) -> dict:
+    """Infer how to parse ``value`` as a date/time and normalise it to
+    ``YYYY-MM-DD HH:MM:SS``.
+
+    Returns ``{"format": <token>, "normalized": <str>}``; both empty when the value
+    can't be parsed. ``format`` is a strptime pattern (or ``epoch:s`` / ``epoch:ms`` /
+    ``epoch:us`` for Unix epochs) and is stored with the timestamp field so extraction
+    later parses each value the same way and emits the canonical shape.
+
+    Recognises ISO-8601 (with fractional seconds, ``Z`` or ``±HH:MM`` offsets), common
+    slash/dot/dash dates (day-first and month-first), spelled-out and abbreviated month
+    names, 12-hour clocks with AM/PM, Apache/CLF, RFC-2822 and syslog lines, and Unix
+    epochs in seconds / milliseconds / microseconds.
+    """
+    v = re.sub(r"\s+", " ", (value or "").strip())  # collapse runs of whitespace
+    if not v:
+        return {"format": "", "normalized": ""}
+
+    # Unix epoch (10-digit seconds / 13-digit ms / 16-digit µs).
+    if v.isdigit() and len(v) in (10, 13, 16):
+        divisor, token = {10: (1, "epoch:s"), 13: (1000, "epoch:ms"), 16: (1_000_000, "epoch:us")}[len(v)]
+        try:
+            dt = datetime.fromtimestamp(int(v) / divisor, tz=timezone.utc)
+            return {"format": token, "normalized": dt.strftime(TIMESTAMP_TARGET)}
+        except (ValueError, OverflowError, OSError):
+            return {"format": "", "normalized": ""}
+
+    for fmt in _TS_FORMATS:
+        # Yearless formats (syslog) fill the current year — append it to both the value
+        # and the format so strptime never parses an (ambiguous) yearless date.
+        yearless = "%Y" not in fmt and "%y" not in fmt
+        try:
+            if yearless:
+                parse_v = f"{v} {datetime.now(timezone.utc).year}"
+                dt = datetime.strptime(parse_v, f"{fmt} %Y")
+            else:
+                dt = datetime.strptime(v, fmt)
+        except ValueError:
+            continue
+        # Guard against %Y greedily matching a 2-digit year (e.g. "03/08/26").
+        if dt.year < 1000 and "%Y" in fmt:
+            continue
+        return {"format": fmt, "normalized": dt.strftime(TIMESTAMP_TARGET)}
+
+    return {"format": "", "normalized": ""}
+
 # ── timestamp templates (ordered: most specific first) ────────────────────────
 _TIMESTAMP_PATTERNS = [
     # ISO-8601: 2026-08-03T14:05:09.123 / 2026-08-03 14:05:09
     r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?",
+    # Apache / NCSA common-log: 09/Jan/2015:19:12:06 +0000
+    r"\d{2}/[A-Za-z]{3}/\d{4}:\d{2}:\d{2}:\d{2}(?: ?[+-]\d{4})?",
     # 03/08/2026 14:05:09  or  08/03/2026 14:05:09
     r"\d{2}/\d{2}/\d{4}[ T]\d{2}:\d{2}:\d{2}",
     # syslog: Aug  3 14:05:09
@@ -69,11 +174,15 @@ def detect_fields(sample: str) -> list[dict]:
     def free(span: tuple[int, int]) -> bool:
         return all(span[1] <= s or span[0] >= e for s, e in claimed)
 
-    # timestamp
+    # timestamp — also infer a parse format so the value can be normalised later.
     for pat in _TIMESTAMP_PATTERNS:
         m = _first(sample, pat)
         if m and free(m.span()):
-            fields.append({"name": "timestamp", "role": "timestamp", "regex": _capture(pat)})
+            field = {"name": "timestamp", "role": "timestamp", "regex": _capture(pat)}
+            fmt = analyze_timestamp(m.group(0)).get("format")
+            if fmt:
+                field["format"] = fmt
+            fields.append(field)
             claimed.append(m.span())
             break
 
@@ -123,7 +232,7 @@ def detect_fields(sample: str) -> list[dict]:
 
 
 def _id_kv_regex(matched: str) -> str:
-    key = re.split(r"\s*[=:]", matched, 1)[0]
+    key = re.split(r"\s*[=:]", matched, maxsplit=1)[0]
     return re.escape(key) + r"\s*[=:]\s*" + _capture(r"\w+")
 
 

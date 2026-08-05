@@ -90,6 +90,15 @@ class _Session:
         with self._lock:
             self._status.note(message)
 
+    def progress(self, done: int, total: int | None = None) -> None:
+        with self._lock:
+            self._status.records_done = done
+            if total is not None:
+                self._status.records_total = total
+
+    def existing_keys(self, table: str, key_columns: Sequence[str]) -> set[tuple[str, ...]]:
+        return self._backend.existing_keys(self._schema, table, list(key_columns))
+
 
 class AbstractionLayer:
     """Registry of extractors + per-user run status. A process-wide singleton
@@ -133,17 +142,26 @@ class AbstractionLayer:
         self,
         *,
         user: str | None,
-        extractor_id: str,
+        extractor: "Extractor | str",
         backend: IngestBackend,
         schema: str,
         connection_id: str | None = None,
+        connection_name: str | None = None,
+        source_name: str | None = None,
+        source_type_name: str | None = None,
     ) -> ExtractResult:
-        """Run one extractor against ``backend``/``schema`` for ``user``, updating
-        that user's status as it goes. One concurrent run per user."""
+        """Run an extractor against ``backend``/``schema`` for ``user``, updating that
+        user's status as it goes. ``extractor`` is a registered id, or a configured
+        :class:`~.contract.Extractor` instance (e.g. a per-run FileExtractor). One
+        concurrent run per user. The optional ``source_name`` / ``source_type_name`` /
+        ``connection_name`` describe the run's origin for the console's pipeline canvas
+        and are recorded verbatim in the user's status."""
         key = user or ""
-        extractor = self._extractors.get(extractor_id)
-        if extractor is None:
-            raise IngestError(f"No extractor registered with id {extractor_id!r}.")
+        if isinstance(extractor, str):
+            resolved = self._extractors.get(extractor)
+            if resolved is None:
+                raise IngestError(f"No extractor registered with id {extractor!r}.")
+            extractor = resolved
 
         with self._lock:
             if key in self._running:
@@ -153,9 +171,14 @@ class AbstractionLayer:
             status.state = LayerState.RUNNING
             status.extractor_id = extractor.info.id
             status.extractor_name = extractor.info.name
+            status.source_name = source_name
+            status.source_type_name = source_type_name
             status.connection_id = connection_id
+            status.connection_name = connection_name
             status.schema = schema
             status.records_pushed = 0
+            status.records_done = 0
+            status.records_total = 0
             status.tables_touched = []
             status.started_at = _now()
             status.finished_at = None

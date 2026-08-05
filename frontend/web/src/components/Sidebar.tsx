@@ -52,7 +52,8 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
   const [connEditor, setConnEditor] = useState<
     { conn: ManagedConnection | null } | null
   >(null)
-  const canManageConnections = store.authIsPower || store.authIsAdmin
+  const canManageConnections =
+    store.authIsPower || store.authIsAdmin || store.authIsDeveloper
   // Journey sampling (creating/deleting representative subsets, choosing A/B
   // sources) is a power/admin capability, matching the advanced analysis views.
   const canSample = store.authIsPower || store.authIsAdmin

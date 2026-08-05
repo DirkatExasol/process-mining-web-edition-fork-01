@@ -17,8 +17,12 @@ from .contract import (
     IngestError,
     IngestSession,
 )
+from .extractors import FileExtractor, register_builtin_extractors
 from .layer import AbstractionLayer, layer
 from .status import LayerState, LayerStatus
+
+# Register the built-in extractor descriptors so they show in /extractors.
+register_builtin_extractors(layer)
 
 __all__ = [
     "AbstractionLayer",
@@ -26,6 +30,7 @@ __all__ = [
     "ExtractResult",
     "Extractor",
     "ExtractorInfo",
+    "FileExtractor",
     "IngestError",
     "IngestSession",
     "InMemoryIngestBackend",
