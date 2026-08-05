@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom'
 import {
   ADMIN_TOPIC_IDS,
   HELP_TOPICS,
+  INTEGRATION_TOPIC_IDS,
   type HelpBlock,
   type HelpTopic,
 } from '../help/content'
@@ -26,12 +27,19 @@ const HELP_GROUPS: {
   icon: string
   topicIds: string[]
   adminOnly?: boolean
+  developerOnly?: boolean
 }[] = [
   {
     label: 'Administration',
     icon: '⚙︎',
     topicIds: ADMIN_TOPIC_IDS,
     adminOnly: true,
+  },
+  {
+    label: 'Integration console',
+    icon: '🧩',
+    topicIds: INTEGRATION_TOPIC_IDS,
+    developerOnly: true,
   },
   {
     label: 'Computational Insights',
@@ -257,6 +265,7 @@ function snippetOf(text: string, query: string): string {
 
 export function HelpPanel({ onClose }: { onClose: () => void }) {
   const isAdmin = useStore((s) => s.authIsAdmin)
+  const isDeveloper = useStore((s) => s.authIsDeveloper)
   const [topicId, setTopicId] = useState(HELP_TOPICS[0].id)
   const [query, setQuery] = useState('')
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
@@ -269,15 +278,18 @@ export function HelpPanel({ onClose }: { onClose: () => void }) {
   // clearing it doesn't re-run the scroll effect and reset the scroll position.
   const pendingSection = useRef<number | null>(null)
 
-  // Chapters in an admin-only group are hidden from non-admins everywhere: the
-  // table of contents, search results and the printed documentation.
+  // Chapters in a role-gated group are hidden from users without that role
+  // everywhere: the table of contents, search results and the printed documentation.
+  // Admin-only → admins; developer-only (the Integration console) → developers.
   const visibleTopics = useMemo(() => {
-    if (isAdmin) return HELP_TOPICS
-    const adminOnly = new Set(
-      HELP_GROUPS.filter((g) => g.adminOnly).flatMap((g) => g.topicIds),
-    )
-    return HELP_TOPICS.filter((t) => !adminOnly.has(t.id))
-  }, [isAdmin])
+    const hidden = new Set<string>()
+    for (const g of HELP_GROUPS) {
+      if (g.adminOnly && !isAdmin) g.topicIds.forEach((id) => hidden.add(id))
+      // Developer chapters (Integration console) are shown to developers and admins.
+      if (g.developerOnly && !isDeveloper && !isAdmin) g.topicIds.forEach((id) => hidden.add(id))
+    }
+    return hidden.size ? HELP_TOPICS.filter((t) => !hidden.has(t.id)) : HELP_TOPICS
+  }, [isAdmin, isDeveloper])
 
   const topic = useMemo(
     () => visibleTopics.find((t) => t.id === topicId) ?? visibleTopics[0],

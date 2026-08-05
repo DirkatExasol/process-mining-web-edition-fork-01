@@ -11,13 +11,20 @@ import { ConfirmDialog } from './ConfirmDialog'
 import { IntegrationPipeline } from './IntegrationPipeline'
 import { IntegrationStatusPanel } from './IntegrationStatusPanel'
 
-export function IntegrationConsole() {
+export function IntegrationConsole({ onShowHelp }: { onShowHelp: () => void }) {
   const { status, error } = useIntegrationStatus()
   const { runs, clear, atCap } = useRunHistory(status)
   const [confirmClear, setConfirmClear] = useState(false)
 
   return (
     <div className="integration-console">
+      {/* Top toolbar with the Help button, matching the main app's placement. */}
+      <div className="row" style={{ justifyContent: 'flex-end' }}>
+        <button className="btn small" onClick={onShowHelp} title="Help">
+          ？
+        </button>
+      </div>
+
       <IntegrationStatusPanel status={status} error={error} />
 
       <div className="ihist-head">

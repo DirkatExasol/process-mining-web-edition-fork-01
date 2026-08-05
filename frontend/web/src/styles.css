@@ -2580,7 +2580,14 @@ textarea.text-input {
   font-variant-numeric: tabular-nums;
 }
 .ipipe-canvas .react-flow__attribution { display: none; }
-.ipipe-canvas .react-flow__node { cursor: default; }
+.ipipe-canvas .react-flow__node { cursor: grab; }
+.ipipe-canvas .react-flow__node.dragging { cursor: grabbing; }
+.ipipe-reset {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+}
 .ipipe-canvas .react-flow__handle {
   width: 7px;
   height: 7px;

@@ -4,6 +4,7 @@
  *  on top of this scaffold in later stages. */
 
 import { useEffect, useState } from 'react'
+import { HelpPanel } from './components/HelpPanel'
 import { IntegrationConsole } from './components/IntegrationConsole'
 import { IntegrationSidebar } from './components/IntegrationSidebar'
 import { LoginView } from './components/LoginView'
@@ -35,6 +36,7 @@ function ThemeSync() {
 export function IntegrationApp() {
   const store = useStore()
   const [ready, setReady] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
 
   // After sign-in (gated APIs): load the per-user settings (theme, etc.) and the
   // user's assigned data-source connections.
@@ -47,7 +49,7 @@ export function IntegrationApp() {
     void (async () => {
       await store.checkSession()
       const s = useStore.getState()
-      if (s.authUser && (s.authIsPower || s.authIsDeveloper || s.authIsAdmin)) {
+      if (s.authUser && (s.authIsDeveloper || s.authIsAdmin)) {
         initAfterAuth()
       }
       setReady(true)
@@ -81,7 +83,7 @@ export function IntegrationApp() {
 
   // Defence in depth: the server refuses a login (and drops the session) for anyone
   // without the role, so this is only reached if the role is revoked mid-session.
-  const authorized = store.authIsPower || store.authIsDeveloper || store.authIsAdmin
+  const authorized = store.authIsDeveloper || store.authIsAdmin
   if (!authorized) {
     return (
       <>
@@ -90,7 +92,7 @@ export function IntegrationApp() {
           <Logo />
           <h2 style={{ margin: 0 }}>Access denied</h2>
           <p className="fg-secondary" style={{ maxWidth: 420, textAlign: 'center' }}>
-            The integration console is available to power users and developers only. Ask
+            The integration console is available to developers and administrators only. Ask
             an administrator to grant you the Developer role.
           </p>
           <button className="btn" onClick={() => void store.logout()}>
@@ -107,9 +109,10 @@ export function IntegrationApp() {
       <div className="app">
         <IntegrationSidebar />
         <main className="integration-body">
-          <IntegrationConsole />
+          <IntegrationConsole onShowHelp={() => setShowHelp(true)} />
         </main>
       </div>
+      {showHelp && <HelpPanel onClose={() => setShowHelp(false)} />}
     </>
   )
 }

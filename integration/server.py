@@ -1,7 +1,7 @@
 """Integration / data-source configuration console.
 
-A fourth browser-facing surface (on the admin port + 10), reachable only by power
-users, developers and admins. It reuses the shared surface factory
+A fourth browser-facing surface (on the admin port + 10), reachable only by
+developers and admins. It reuses the shared surface factory
 (`app.web_surface.build_surface_app`) — same SPA-serving, sign-in flow (password,
 TOTP two-factor, WebAuthn passkey, mandatory enrolment) and `/api` proxy as the main
 app — differing only in its session audience/cookie and a role gate. The admin can
@@ -39,8 +39,8 @@ SESSION_COOKIE = "pmw_integration"
 
 
 def _may_enter(user: User) -> bool:
-    """Only power users, developers and admins may use the integration console."""
-    return user.is_power or user.is_developer or user.is_admin
+    """Only developers and admins may use the integration console (not power users)."""
+    return user.is_developer or user.is_admin
 
 
 app = build_surface_app(
@@ -51,7 +51,7 @@ app = build_surface_app(
     index_html=INDEX_HTML,
     role_predicate=_may_enter,
     denied_message=(
-        "You need the Power or Developer role to use the integration console. "
+        "You need the Developer role to use the integration console. "
         "Ask an administrator to grant it."
     ),
     disabled_check=lambda: not store.integration_enabled,

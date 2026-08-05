@@ -22,7 +22,7 @@ Four independent Python processes:
 | **Compute Backend** (`backend/`) | 8000 | Exasol access, analytics, simulation, sampling, LLM proxy, settings store |
 | **GUI Server** (`frontend/`) | 8080 / 8443 | Serves the React SPA and proxies `/api/*`; binds HTTP and/or HTTPS per the TLS mode |
 | **Admin Interface** (`admin/`) | 8090 / 8453 | TLS/certificate management, the user allow-list, and per-user database connections |
-| **Integration Console** (`integration/`) | 8100 / 8463 | Data-source configuration; power users, developers and admins only |
+| **Integration Console** (`integration/`) | 8100 / 8463 | Data-source configuration; developers and admins only |
 
 ```
 Browser ──► GUI Server (:8080 / :8443) ──proxy /api──► Compute Backend (:8000) ──► Exasol
@@ -71,7 +71,7 @@ python3.13 -m venv .venv
 ```
 
 Then open the app at <http://127.0.0.1:8080>, the admin interface at
-<http://127.0.0.1:8090>, and (for power users / developers) the integration console
+<http://127.0.0.1:8090>, and (for developers / admins) the integration console
 at <http://127.0.0.1:8100>. For frontend development with hot reload:
 
 ```bash
@@ -273,6 +273,11 @@ the sidebar *Connections* header opens an editor with the same DB/TLS/LLM fields
 an assign-to-users list — and edit or delete only the connections they created (an
 ✎ button on those cards). Every connection a power user creates is auto-assigned to
 them so they can connect immediately. Admins still see and manage every connection.
+**Developers** get the same connection management. The connection editor also has a
+**Projects** tab that lists the projects stored in the connection's schema — each with
+its journey and event counts — and can **delete a project** (clearing its rows from
+`PROJECTS`, `JOURNEYS`, `STEPS`, `METAS`, `NOTES` and `TRANSITIONS_RAW`); the same tab
+exists in the admin *Database Connections* editor.
 Power users (and admins) also get the advanced-analysis views — Conformance Check,
 Happy Path and Simulation — and the **journey Sampling** section of the left panel
 (creating or deleting samples rewrites the shared sample sets for everyone on the
@@ -521,9 +526,18 @@ flowchart: nodes are **reused** across runs, so every distinct source type, sour
 destination is a single node and the abstraction layer is the one hub in the middle. As
 imports happen the same graph grows — edges connect whatever combinations have run, the
 **Source and Destination nodes show their total imported rows**, and the currently-running
-path lights up. The history is per-user, persisted in the browser's `localStorage`, so it
-survives reloads and backend restarts (which reset the in-memory status to idle), and is
-kept until the user clicks **↺ Clear** (capped at the newest 50 runs).
+path lights up. While a run is active a dot travels the path node-to-node (like the main
+app's Individual Journey), and each connection is **coloured by its latest run** — blue
+(idle/completed), green (running), red (failed). The history is per-user, persisted in the
+browser's `localStorage`, so it survives reloads and backend restarts (which reset the
+in-memory status to idle), and is kept until the user clicks **↺ Clear** (capped at the
+newest 50 runs).
+
+Nodes are **draggable** and the arrangement is **persisted per user** (also in
+`localStorage`, keyed by node id), so a hand-tuned layout is restored on reload; a
+**⤢ Reset layout** button returns to the automatic arrangement. A **？ Help** button
+(top-right of the console, mirroring the main app) opens the in-app help; the
+**Integration console** help chapters are shown to users with the **developer** role.
 
 ### Sources, source types & the File extractor
 

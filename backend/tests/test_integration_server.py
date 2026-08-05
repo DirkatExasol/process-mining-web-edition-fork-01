@@ -2,7 +2,7 @@
 
 Drives the real integration server (`integration/server.py`) with an isolated
 security store. The console reuses the shared surface factory (covered in depth by
-test_auth.py); here we verify only what differs: only power/developer/admin users may
+test_auth.py); here we verify only what differs: only developer/admin users may
 sign in, its session cookie is a distinct audience, and the admin can disable it.
 """
 
@@ -78,7 +78,17 @@ def test_plain_user_is_denied(integ):
     assert server.SESSION_COOKIE not in client.cookies
 
 
-@pytest.mark.parametrize("kw", [{"power": True}, {"developer": True}, {"admin": True}])
+def test_power_user_is_denied(integ):
+    """The power role does NOT admit to the integration console — only developer/admin."""
+    server, store = integ
+    _mk(store, "pat", power=True)
+    client = TestClient(server.app)
+    r = client.post("/auth/login", json={"username": "pat", "password": "pw"})
+    assert r.status_code == 403
+    assert server.SESSION_COOKIE not in client.cookies
+
+
+@pytest.mark.parametrize("kw", [{"developer": True}, {"admin": True}])
 def test_privileged_users_may_sign_in(integ, kw):
     server, store = integ
     _mk(store, "bob", **kw)

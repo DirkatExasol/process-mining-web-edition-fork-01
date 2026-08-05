@@ -247,7 +247,7 @@ const roles: HelpTopic = {
         def('Regular user', 'Explores the process — views the maps and charts, applies filters and saved presets, reads and writes notes, and adjusts their own KPIs, layout and personal settings. They work with the database connections an administrator (or Power user) has assigned to them.'),
         def('Power user', 'A Regular user who can also create, manage and assign their own database connections from within the app (they manage only the connections they created), provision schemas, generate demo data, run journey sampling, and use the advanced-analysis views (Conformance Check, Happy Path, Simulation) — all without needing the separate admin interface.'),
         def('Administrator', 'Full control. Everything a Power user can do over every connection, plus the admin interface (:8090): managing all users and roles, TLS certificates, the LDAP directory, licensing, logging, backups and login customization.'),
-        def('Developer (additional grant)', 'An extra permission (the Developer checkbox in the admin Users tab), independent of the level above. It admits the account to the Integration console — a separate surface on the admin port + 10 (http://…:8100) for configuring the application’s data sources. Power users and administrators may enter it too; a Regular user with only the Developer grant may enter the console but has no other elevated powers in the main app.'),
+        def('Developer (additional grant)', 'An extra permission (the Developer checkbox in the admin Users tab), independent of the level above. It admits the account to the Integration console — a separate surface on the admin port + 10 (http://…:8100) for configuring the application’s data sources. Only developers and administrators may enter it (power users may not); a Regular user with only the Developer grant may enter the console but has no other elevated powers in the main app.'),
         tip('The Integration console reuses the same sign-in (password, passkey, two-factor) and follows the same TLS mode as the app. An administrator can turn it off entirely under Admin → Integration.'),
         tip('Roles require a signed-in identity. If an administrator turns off “Require sign-in for the main application” (the login gate, in the admin Users tab), the app runs with no user identity — so every Power/Admin-only capability below is unavailable: the Sampling section and the advanced views (Conformance, Happy Path, Simulation) are hidden, and their APIs return 403. To use those features, keep Require sign-in on and sign in with a Power or Admin account. There is no way to have both no-login access and the power features at once.'),
       ],
@@ -1347,6 +1347,99 @@ const troubleshooting: HelpTopic = {
   ],
 }
 
+// ── Integration console (developer) ────────────────────────────────────────────
+
+const integrationConsole: HelpTopic = {
+  id: 'integration-console',
+  title: 'Integration Console',
+  subtitle: 'Import event data into a connection from files',
+  icon: '🧩',
+  sections: [
+    {
+      heading: 'What it is',
+      body: [
+        p('The Integration Console is a separate surface for loading event data into a database connection. It runs on its own port (the admin port + 10 — 8100 for HTTP, 8463 for HTTPS by default) and reuses the same sign-in as the main app. It is reachable by developers and administrators only (power users may not enter it).'),
+        p('At its heart is an abstraction layer: pluggable extractors read some source (today, a file) and push the parsed records into the schema of the connection you are connected to — creating the process-mining tables as needed. You define two things and then run an import.'),
+        def('Source type', 'A reusable recipe for parsing one log format: an example line plus the regular expressions that pull out the timestamp, case id, step and up to three meta fields.'),
+        def('Source', 'A concrete thing to import — currently a File (a path + encoding) linked to a source type.'),
+      ],
+    },
+    {
+      heading: 'Getting there',
+      body: [
+        p('Open the console URL, sign in, and pick the destination connection on the left the same way you do in the main app. An import always writes into the schema of the connection you are currently connected to.'),
+        tip('The left panel holds three collapsible sections — Connections, Sources and Source types — plus the theme selector and your account footer, mirroring the main app.'),
+      ],
+    },
+  ],
+}
+
+const integrationSources: HelpTopic = {
+  id: 'integration-sources',
+  title: 'Source Types & Sources',
+  subtitle: 'Define how to parse a log, then import a file',
+  icon: '🗂️',
+  sections: [
+    {
+      heading: 'Building a source type',
+      body: [
+        p('Open the Source types section and click ＋. Paste one example log line, then map each field on the tabbed step: pick a role tab (EVENT_TIME, STEP, EVENT_ID or Metas) and either highlight a piece of the line to generate a regex, or type the regex yourself. Every field is defined manually — there is no auto-detection, by design, so the extraction is always exactly what you intend.'),
+        ul(
+          'EVENT_TIME — the timestamp. It is analysed and normalised to YEAR-MONTH-DAY HOUR:MINUTE:SECOND.',
+          'EVENT_ID — the case/journey key. It is stored MD5-hashed, so a raw login or user id never lands in the clear.',
+          'STEP — the activity name for the event.',
+          'Metas — up to three extra attributes; give each a business name shown in the app.',
+        ),
+        p('A live “Example JOURNEYS record” shows the row your spec would produce from the sample (with the original id, labelled “stored as MD5”), so you can confirm the mapping before saving.'),
+      ],
+    },
+    {
+      heading: 'Adding a File source',
+      body: [
+        p('Open the Sources section and click ＋. Choose the File kind, enter the file path and encoding, preview the first few lines, and link the source type that parses it.'),
+        warn('File reads are sandboxed: by default only files under the server’s integration files directory can be read. Paths that escape it (via “..” or symlinks) are rejected. An operator can opt out with PMW_INTEGRATION_ALLOW_ANY_PATH=1 for trusted deployments.'),
+      ],
+    },
+    {
+      heading: 'Running an import',
+      body: [
+        p('Connect to the destination database, then press ▷ on a File source and enter a project id. The extractor reads the file line by line, applies the source type’s regexes, normalises the timestamp, MD5-hashes the id, and writes one JOURNEYS row per event into the active connection’s schema. A progress bar counts the records as they load.'),
+        p('It also creates anything missing: the PROJECTS row, a STEPS definition for every distinct step (a shape, a colour and a zero score), and the META business-name titles — existing rows are never overwritten.'),
+      ],
+    },
+  ],
+}
+
+const integrationMonitoring: HelpTopic = {
+  id: 'integration-monitoring',
+  title: 'Pipeline Monitoring',
+  subtitle: 'The live import flowchart and run history',
+  icon: '🔀',
+  sections: [
+    {
+      heading: 'The flowchart',
+      body: [
+        p('The main pane shows the imports as one flowchart: Source type → Source → Abstraction layer → Connection. Nodes are reused across runs — every distinct source type, source and destination is a single node, with the Abstraction layer as the hub in the middle. The Source and Destination nodes show the total number of rows imported.'),
+      ],
+    },
+    {
+      heading: 'Live activity & colours',
+      body: [
+        p('While an import runs, a dot travels the active path node-to-node, the way an individual journey animates in the main app. Connections are coloured by their most recent run:'),
+        ul('Blue — idle or completed.', 'Green — currently running.', 'Red — the last run on that path failed.'),
+      ],
+    },
+    {
+      heading: 'History & layout',
+      body: [
+        p('The console keeps a per-user history of every run and folds it into the one growing flowchart, so you can see the ingestion behaviour over time. It survives reloads and server restarts and is kept until you press ↺ Clear.'),
+        p('You can drag the nodes to arrange them however you like; the layout is saved per user and restored automatically. A ⤢ Reset layout button returns to the automatic arrangement.'),
+        tip('Both the run history and the manual layout are stored in your browser, so they are per-device.'),
+      ],
+    },
+  ],
+}
+
 export const HELP_TOPICS: HelpTopic[] = [
   overview,
   database,
@@ -1376,8 +1469,19 @@ export const HELP_TOPICS: HelpTopic[] = [
   sampling,
   aiDocumentation,
   notes,
+  // Integration console chapters — grouped under one developer-only TOC sub-menu.
+  integrationConsole,
+  integrationSources,
+  integrationMonitoring,
   configuration,
   troubleshooting,
+]
+
+/** Topic ids grouped under the developer-only "Integration console" TOC sub-menu. */
+export const INTEGRATION_TOPIC_IDS = [
+  'integration-console',
+  'integration-sources',
+  'integration-monitoring',
 ]
 
 /** Topic ids grouped under the admin-only "Administration" TOC sub-menu. */

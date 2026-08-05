@@ -22,10 +22,12 @@ import {
   type Edge,
   type EdgeProps,
   type Node,
+  type NodeChange,
   type NodeProps,
+  type XYPosition,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { flowKeyframes } from '../flow/MetricEdge'
 import type { IntegrationStatus } from '../types'
@@ -186,6 +188,28 @@ function PipeEdge({
 
 const edgeTypes = { pipe: PipeEdge }
 
+// ── persisted manual layout (per user, keyed by stable node id) ───────────────
+type Layout = Record<string, XYPosition>
+const layoutKey = (user: string) => `pmw.integration.pipelineLayout.${user}`
+
+function loadLayout(user: string): Layout {
+  try {
+    const raw = localStorage.getItem(layoutKey(user))
+    const parsed = raw ? JSON.parse(raw) : {}
+    return parsed && typeof parsed === 'object' ? (parsed as Layout) : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveLayout(user: string, layout: Layout): void {
+  try {
+    localStorage.setItem(layoutKey(user), JSON.stringify(layout))
+  } catch {
+    /* quota / disabled storage — the layout just won't persist */
+  }
+}
+
 const GAP = 118
 const COL_X = { type: 0, src: 235, layer: 470, conn: 705 }
 const NODE_W = 210
@@ -207,6 +231,36 @@ export function IntegrationPipeline({
   live: IntegrationStatus | null
 }) {
   const connections = useStore((s) => s.connections)
+  const user = useStore((s) => s.authUser) ?? ''
+
+  // Manual node positions the user has dragged, persisted per user and merged over the
+  // computed layout so a dragged node keeps its spot across polls, reloads and restarts.
+  const [overrides, setOverrides] = useState<Layout>(() => loadLayout(user))
+  useEffect(() => setOverrides(loadLayout(user)), [user])
+
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      setOverrides((prev) => {
+        let next = prev
+        let ended = false
+        for (const ch of changes) {
+          if (ch.type === 'position' && ch.position) {
+            if (next === prev) next = { ...prev }
+            next[ch.id] = ch.position
+            if (ch.dragging === false) ended = true // gesture finished → persist
+          }
+        }
+        if (next !== prev && ended) saveLayout(user, next)
+        return next
+      })
+    },
+    [user],
+  )
+
+  const resetLayout = useCallback(() => {
+    setOverrides({})
+    saveLayout(user, {})
+  }, [user])
 
   const { nodes, edges, canvasH } = useMemo(() => {
     // ── Aggregate the whole history into ONE graph (reuse nodes by name) ──────
@@ -299,8 +353,8 @@ export function IntegrationPipeline({
     typeOrder.forEach((name, i) => {
       const ph = nodePhase.get(typeId(name)) ?? 'done'
       nodes.push({
-        id: typeId(name), type: 'pipe', draggable: false, ...NODE_DIMS,
-        position: { x: COL_X.type, y: colY(typeOrder.length, i) },
+        id: typeId(name), type: 'pipe', draggable: true, ...NODE_DIMS,
+        position: overrides[typeId(name)] ?? { x: COL_X.type, y: colY(typeOrder.length, i) },
         data: {
           icon: '🧩', kicker: 'Source type', title: name,
           subtitle: 'extraction spec', accent: 'var(--purple, #9b59d0)', phase: ph, ports: ['r'],
@@ -311,8 +365,8 @@ export function IntegrationPipeline({
     srcOrder.forEach((name, i) => {
       const ph = nodePhase.get(srcId(name)) ?? 'done'
       nodes.push({
-        id: srcId(name), type: 'pipe', draggable: false, ...NODE_DIMS,
-        position: { x: COL_X.src, y: colY(srcOrder.length, i) },
+        id: srcId(name), type: 'pipe', draggable: true, ...NODE_DIMS,
+        position: overrides[srcId(name)] ?? { x: COL_X.src, y: colY(srcOrder.length, i) },
         data: {
           icon: '🗂️', kicker: 'Source', title: name,
           subtitle: 'imported & extracted', accent: 'var(--accent)', phase: ph, ports: ['l', 'r'],
@@ -322,8 +376,8 @@ export function IntegrationPipeline({
     })
 
     nodes.push({
-      id: 'layer', type: 'pipe', draggable: false, ...NODE_DIMS,
-      position: { x: COL_X.layer, y: centerY },
+      id: 'layer', type: 'pipe', draggable: true, ...NODE_DIMS,
+      position: overrides['layer'] ?? { x: COL_X.layer, y: centerY },
       data: {
         icon: '⚙️', kicker: 'Abstraction layer', title: 'Ingest & normalise',
         accent: accentFor(layerPhase), phase: layerPhase, ports: ['l', 'r'],
@@ -340,8 +394,8 @@ export function IntegrationPipeline({
       const ph = nodePhase.get(connId(name)) ?? 'done'
       const schema = connSchema.get(name)
       nodes.push({
-        id: connId(name), type: 'pipe', draggable: false, ...NODE_DIMS,
-        position: { x: COL_X.conn, y: colY(connOrder.length, i) },
+        id: connId(name), type: 'pipe', draggable: true, ...NODE_DIMS,
+        position: overrides[connId(name)] ?? { x: COL_X.conn, y: colY(connOrder.length, i) },
         data: {
           icon: '🛢️', kicker: 'Connection', title: name,
           subtitle: schema ? `schema ${schema}` : 'destination database',
@@ -375,20 +429,32 @@ export function IntegrationPipeline({
 
     const canvasH = Math.max(300, maxCount * GAP + 70)
     return { nodes, edges, canvasH }
-  }, [runs, live, connections])
+  }, [runs, live, connections, overrides])
+
+  const hasCustomLayout = Object.keys(overrides).length > 0
 
   return (
     <div className="ipipe-canvas" style={{ height: canvasH }}>
+      {hasCustomLayout && (
+        <button
+          className="btn small ipipe-reset"
+          onClick={resetLayout}
+          title="Reset the node layout to the automatic arrangement"
+        >
+          ⤢ Reset layout
+        </button>
+      )}
       <ReactFlowProvider>
         <ReactFlow
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
+          onNodesChange={onNodesChange}
           fitView
           fitViewOptions={{ padding: 0.16 }}
           nodesConnectable={false}
-          nodesDraggable={false}
+          nodesDraggable
           elementsSelectable={false}
           panOnDrag
           zoomOnScroll={false}
