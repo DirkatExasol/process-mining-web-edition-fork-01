@@ -1,0 +1,194 @@
+"""File-source watchdog: auto-import newly-appended log lines.
+
+A single background loop (started in the compute backend's lifespan) wakes every
+``INTEGRATION_WATCHDOG_TICK_SECS`` and, for each File source with the watchdog enabled,
+reads only the lines appended since that source's stored **checkpoint** (a byte offset
++ a size/head signature that detects truncation or rotation) and pushes them through the
+abstraction layer into the source's configured destination connection. On success the
+checkpoint advances so the same lines are never re-imported; on failure the offset stays
+put and the error is recorded, so the next poll retries from where it left off.
+
+The destination for a watchdog run is stored *with* the source (connection id + project
+id), because the loop runs headless — there is no signed-in user or active connection.
+It reuses the same stored connection credentials the admin rebuild job uses.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime, timezone
+
+from .. import log_events as logx
+from ..config import INTEGRATION_WATCHDOG_ENABLED, INTEGRATION_WATCHDOG_TICK_SECS
+from ..store.security import store
+from .backends import SqlIngestBackend
+from .extractors import FileExtractor
+from .files import FileAccessError, read_new_lines
+from .layer import layer
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _due(checkpoint: dict | None, interval_secs: int) -> bool:
+    """True if this source is due for a poll (never run, or interval elapsed)."""
+    if not checkpoint or not checkpoint.get("updatedAt"):
+        return True
+    try:
+        last = datetime.fromisoformat(checkpoint["updatedAt"])
+    except (ValueError, TypeError):
+        return True
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return (_now() - last).total_seconds() >= interval_secs
+
+
+def _open_run_sql(conn):
+    """Open the stored connection and return ``(raw, run_sql)`` — a synchronous SQL
+    runner bound to it (rows for SELECT, empty otherwise), mirroring the manual run."""
+    from ..db.manager import DatabaseManager
+    from ..models import DatabaseServer
+
+    server = DatabaseServer(
+        id="watchdog", host=conn.host, port=conn.port, username=conn.username,
+        useTLS=conn.use_tls, certModeRaw=conn.cert_mode, fingerprint=conn.fingerprint,
+        minRSAKeySizeBits=conn.min_rsa_bits, **{"schema": conn.schema or ""},
+    )
+    mgr = DatabaseManager.__new__(DatabaseManager)  # no store side effects
+    raw = mgr._open(server, conn.password)
+
+    def run_sql(sql: str):
+        st = raw.execute(sql)
+        return [list(r) for r in st.fetchall()] if st.result_type == "resultSet" else []
+
+    return raw, run_sql
+
+
+async def poll_source(source) -> None:
+    """Import a File source's newly-appended lines, if the watchdog is on and it's due.
+
+    All errors are caught and recorded on the checkpoint — the watchdog must never crash
+    its loop on one misconfigured source."""
+    if source.kind != "file":
+        return
+    cfg = source.public()["config"]
+    wd = cfg.get("watchdog") or {}
+    if not wd.get("enabled"):
+        return
+
+    interval = max(5, int(wd.get("intervalSecs") or 30))
+    checkpoint = store.get_source_checkpoint(source.id)
+    if not _due(checkpoint, interval):
+        return
+
+    path = str(cfg.get("path") or "").strip()
+    project_id = str(wd.get("projectId") or "").strip()
+    connection_id = str(wd.get("connectionId") or "").strip()
+    encoding = str(cfg.get("encoding") or "utf-8")
+    prev_offset = int(checkpoint["byteOffset"]) if checkpoint else 0
+    prev_sig = checkpoint["signature"] if checkpoint else ""
+    prev_records = int(checkpoint["records"]) if checkpoint else 0
+
+    def _fail(msg: str, *, offset: int, size: int, sig: str) -> None:
+        store.set_source_checkpoint(
+            source.id, byte_offset=offset, size=size, signature=sig,
+            records=prev_records, last_error=msg,
+        )
+
+    # ── validate the watchdog's destination + source type ─────────────────────
+    if not (path and project_id and connection_id):
+        _fail("Watchdog is missing a file path, project id or connection.",
+              offset=prev_offset, size=0, sig=prev_sig)
+        return
+    st_id = str(cfg.get("sourceTypeId") or "").strip()
+    st = next((s for s in store.list_source_types(source.owner) if s.id == st_id), None)
+    if st is None:
+        _fail("The source has no source type linked.", offset=prev_offset, size=0, sig=prev_sig)
+        return
+    fields = st.public()["fields"]
+    conn = store.get_connection(connection_id, with_secrets=True)
+    if conn is None:
+        _fail("The watchdog's destination connection no longer exists.",
+              offset=prev_offset, size=0, sig=prev_sig)
+        return
+    schema = (conn.schema or "").strip()
+    if not schema:
+        _fail("The destination connection has no target schema.",
+              offset=prev_offset, size=0, sig=prev_sig)
+        return
+
+    # ── read the newly-appended lines (rotation-aware) ────────────────────────
+    try:
+        res = await asyncio.to_thread(read_new_lines, path, encoding, prev_offset)
+    except FileAccessError as exc:
+        _fail(str(exc), offset=prev_offset, size=0, sig=prev_sig)
+        return
+    # Head changed while the size didn't shrink ⇒ the file was replaced: re-read from 0.
+    if not res["rotated"] and prev_sig and res["signature"] != prev_sig and prev_offset > 0:
+        res = await asyncio.to_thread(read_new_lines, path, encoding, 0)
+
+    if not res["lines"]:
+        # Nothing new — just record the current size/signature (and clear any old error).
+        store.set_source_checkpoint(
+            source.id, byte_offset=res["new_offset"], size=res["size"],
+            signature=res["signature"], records=prev_records, last_error="",
+        )
+        return
+
+    # ── extract the new lines into the stored connection ──────────────────────
+    extractor = FileExtractor(
+        path=path, encoding=encoding, fields=fields, project_id=project_id,
+        lines=res["lines"],
+    )
+    try:
+        raw, run_sql = await asyncio.to_thread(_open_run_sql, conn)
+    except Exception as exc:  # noqa: BLE001 — connect failure is recorded, not fatal
+        _fail(f"Could not connect: {exc}", offset=prev_offset, size=res["size"], sig=res["signature"])
+        return
+    try:
+        result = await layer.run(
+            user=source.owner, extractor=extractor,
+            backend=SqlIngestBackend(run_sql=run_sql), schema=schema,
+            connection_id=connection_id, connection_name=conn.name,
+            source_name=source.name, source_type_name=st.name,
+        )
+        await asyncio.to_thread(raw.commit)
+    except Exception as exc:  # noqa: BLE001 — surfaced on the checkpoint; loop continues
+        _fail(f"Import failed: {exc}", offset=prev_offset, size=res["size"], sig=res["signature"])
+        return
+    finally:
+        await asyncio.to_thread(raw.close)
+
+    store.set_source_checkpoint(
+        source.id, byte_offset=res["new_offset"], size=res["size"],
+        signature=res["signature"], records=prev_records + result.records, last_error="",
+    )
+    logx.usage(
+        f"watchdog imported {result.records} new event(s) from {source.name!r} "
+        f"into {schema} (project {project_id})",
+        username=source.owner, operation="integration",
+    )
+
+
+async def watchdog_loop() -> None:
+    """The background loop. One misbehaving source never stops the others or the loop."""
+    if not INTEGRATION_WATCHDOG_ENABLED:
+        return
+    while True:
+        await asyncio.sleep(INTEGRATION_WATCHDOG_TICK_SECS)
+        try:
+            sources = await asyncio.to_thread(store.list_all_sources)
+        except Exception as exc:  # noqa: BLE001
+            logx.warn(f"watchdog: could not list sources: {exc}", operation="integration")
+            continue
+        for source in sources:
+            try:
+                await poll_source(source)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logx.warn(
+                    f"watchdog: source {source.name!r} poll failed: {exc}",
+                    username=source.owner, operation="integration",
+                )
