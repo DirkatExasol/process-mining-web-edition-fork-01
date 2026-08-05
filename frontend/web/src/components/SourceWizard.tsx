@@ -41,6 +41,14 @@ export function SourceWizard({
   const [wdConnection, setWdConnection] = useState(wd0.connectionId ?? '')
   const [wdProject, setWdProject] = useState(wd0.projectId ?? '')
   const [wdInterval, setWdInterval] = useState(Number(wd0.intervalSecs) || 30)
+  // Transaction bracket: rows committed together. 0 = one transaction for the whole
+  // import. Applies to BOTH a manual run and the watchdog, so it lives outside the
+  // watchdog block. Kept in sync with the backend's DEFAULT_TRANSACTION_ROWS.
+  const [txRows, setTxRows] = useState(
+    existing?.config?.transactionRows === undefined
+      ? 5000
+      : Number(existing.config.transactionRows) || 0,
+  )
   const [connections, setConnections] = useState<AssignedConnection[]>([])
   const [checkpoint, setCheckpoint] = useState<SourceCheckpoint | null>(null)
 
@@ -129,6 +137,7 @@ export function SourceWizard({
       const v = config[f.key]?.trim()
       if (v) cleaned[f.key] = v
     }
+    if (kindId === 'file') cleaned.transactionRows = Math.max(0, txRows)
     if (kindId === 'file' && wdEnabled) {
       cleaned.watchdog = {
         enabled: true,
@@ -324,6 +333,43 @@ export function SourceWizard({
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {kindId === 'file' && (
+            <div
+              className="col"
+              style={{
+                gap: 6, padding: 10, borderRadius: 10,
+                border: '1px solid var(--border-soft, var(--border))', background: 'var(--fill)',
+              }}
+            >
+              <span className="t-caption" style={{ fontWeight: 600 }}>
+                ⇄ Transaction bracket
+              </span>
+              <label className="row" style={{ gap: 8, alignItems: 'center' }}>
+                <input
+                  className="text-input"
+                  type="number"
+                  min={0}
+                  step={1000}
+                  value={txRows}
+                  onChange={(e) => setTxRows(Math.max(0, Number(e.target.value) || 0))}
+                  style={{ width: 120 }}
+                />
+                <span className="t-caption2 fg-secondary">
+                  rows per transaction {txRows === 0 && '(one transaction for the whole import)'}
+                </span>
+              </label>
+              <span className="t-caption2 fg-tertiary">
+                Rows are inserted inside a transaction and committed once this many have
+                been written. A <strong>larger</strong> bracket means fewer, bigger
+                transactions — more atomic, but the database holds more open at once. A{' '}
+                <strong>smaller</strong> one commits steadily, so a failure part-way
+                leaves the already-committed rows in place. <strong>0</strong> imports
+                everything in a single transaction: all-or-nothing. Applies to a manual
+                run and to the watchdog.
+              </span>
             </div>
           )}
 

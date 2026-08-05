@@ -134,6 +134,15 @@ change the password on first use. It is organised into tabs: **App Control**
 **Database Connections**, **Directory (LDAP)**, **Logging**, **Backup** and
 **Customize**.
 
+**Logging.** A shared, structured log written by all servers. Each entry carries a
+timestamp, severity (INFO → USAGE → WARN → ERROR → DEBUG), client IP, user, an
+*operation* (which code path wrote it) and an optional **tag** — a coarser category
+grouping a whole activity across operations and severities. **Data imports are tagged
+`DATA`**: the start and result of every import, whether run by hand in the integration
+console or by a file-source watchdog, at **USAGE** on success and **WARN/ERROR** on
+failure. Filter by tag to see the complete import history. The exported `.log` line is
+`DATE -- TIME -- SEVERITY -- CLIENT-IP -- USER -- TAG -- text`.
+
 **TLS / SSL.** Generate a self-signed certificate (common name + SANs, validity,
 key size) or upload your own PEM cert + key, mark one *active*, then choose the
 mode. The **GUI server and the admin interface both follow this one mode and share
@@ -562,6 +571,16 @@ the source type's regexes, normalises the timestamp to a real `TIMESTAMP`, and p
 `META_1..3`, `SAMPLE_SET='ORIGINAL'`) into the **active connection's schema** via the
 `SqlIngestBackend`. Progress and the result appear in the status panel. Lines that don't
 yield a case id, step and time are skipped and counted.
+
+**Transactions.** Rows are inserted inside a real transaction (the driver's
+per-statement autocommit is turned off for the run) and committed in **brackets** — the
+layer commits once `transactionRows` rows have been written, then a final commit for the
+remainder. Configure the bracket per source in the wizard (*Transaction bracket*, default
+**5000**; **0** = one transaction for the whole import). A larger bracket is more atomic
+but holds more open in the database; a smaller one commits steadily, so a failure
+part-way leaves the already-committed brackets in place. On failure the open bracket is
+rolled back. The same setting applies to a manual run and to the watchdog; the layer
+status reports `commits`.
 
 The captured case id is **MD5-hashed** before it is written, so the raw id (which may be a
 login or user id) never lands in the clear — `EVENT_ID = md5(raw).hexdigest()`, matching

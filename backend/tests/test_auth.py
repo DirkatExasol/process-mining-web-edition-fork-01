@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -707,3 +708,63 @@ def test_mfa_enroll_denied_once_already_enrolled(gui):
     assert r.json() == {"mfaRequired": True, "username": "alice"}  # not setup-required
     # The enroll endpoints refuse when setup isn't required.
     assert client.post("/auth/mfa/enroll/begin").status_code == 401
+
+
+def test_proxy_rejects_dot_segments_escaping_the_api_prefix(gui):
+    """httpx resolves dot segments when merging with the base URL, so "/api/../x" would
+    leave the /api prefix and reach a backend route WITH the proxy-auth header attached.
+    The proxy must reject traversal before forwarding."""
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    client = TestClient(server.app)
+    assert client.post("/auth/login", json={"username": "alice", "password": "pw"}).status_code == 200
+
+    # Percent-encoded traversal is the real vector: an HTTP client normalises a literal
+    # "/api/../x" away, but "%2e%2e" survives the wire and Starlette decodes it INTO the
+    # path param, so the check has to happen in the handler.
+    for bad in ["/api/%2e%2e/openapi.json", "/api/..%2fopenapi.json", "/api/a/%2e%2e/%2e%2e/docs"]:
+        resp = client.request("GET", bad)
+        assert resp.status_code == 400, f"{bad} should be rejected, got {resp.status_code}"
+        assert "stub" not in resp.text  # never reached the (stubbed) backend
+    # A normal API path still proxies through.
+    assert client.get("/api/projects").status_code == 200
+
+
+def test_session_has_an_absolute_lifetime_cap(gui, monkeypatch):
+    """The cookie is re-minted on every authenticated request, so without a hard cap a
+    captured cookie could be kept alive forever by one request per idle window."""
+    import json as _json
+    import app.web_surface as web_surface
+    from app.store.crypto import read_session, sign_session
+
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    client = TestClient(server.app)
+    assert client.post("/auth/login", json={"username": "alice", "password": "pw"}).status_code == 200
+    assert client.get("/api/projects").status_code == 200  # fresh session works
+
+    # Forge the same session with an "iat" older than the cap — everything else valid.
+    raw = read_session(client.cookies["pmw_session"], 12 * 3600)
+    payload = _json.loads(raw)
+    payload["iat"] = int(time.time()) - web_surface.SESSION_MAX_LIFETIME_SECS - 60
+    client.cookies.set("pmw_session", sign_session(_json.dumps(payload).encode()))
+
+    assert client.get("/api/projects").status_code == 401, "aged-out session must be refused"
+    assert client.get("/auth/session").json()["authenticated"] is False
+
+
+def test_refreshing_a_session_does_not_restart_the_absolute_clock(gui):
+    """Activity slides the idle window but must NOT reset the absolute lifetime."""
+    import json as _json
+    from app.store.crypto import read_session
+
+    server, store = gui
+    store.create_user("alice", "pw", is_admin=False)
+    client = TestClient(server.app)
+    client.post("/auth/login", json={"username": "alice", "password": "pw"})
+    first = _json.loads(read_session(client.cookies["pmw_session"], 12 * 3600))["iat"]
+
+    # Any authenticated call re-issues the cookie (that is the sliding window).
+    client.get("/api/projects")
+    after = _json.loads(read_session(client.cookies["pmw_session"], 12 * 3600))["iat"]
+    assert after == first, "the original sign-in time must be carried through a refresh"

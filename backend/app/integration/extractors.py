@@ -13,6 +13,18 @@ import re
 import zlib
 from datetime import datetime
 
+# User-authored regexes are applied to every line, so a catastrophic-backtracking
+# pattern must not be able to hang the process. The `regex` module supports a wall-clock
+# timeout per match; fall back to stdlib `re` (no timeout available) if it is missing.
+try:  # pragma: no cover - exercised by whichever branch the environment provides
+    import regex as _rx
+
+    _MATCH_TIMEOUT_SECS = 0.25
+    _MATCH_KW = {"timeout": _MATCH_TIMEOUT_SECS}
+except ImportError:  # pragma: no cover
+    _rx = re
+    _MATCH_KW = {}
+
 from .contract import ColumnType, ExtractResult, ExtractorInfo, IngestError, IngestSession
 from .files import count_lines, iter_lines
 from .parsing import TIMESTAMP_TARGET, analyze_timestamp
@@ -128,8 +140,8 @@ class FileExtractor:
     @staticmethod
     def _compile(pattern: str):
         try:
-            return re.compile(pattern)
-        except re.error:
+            return _rx.compile(pattern)
+        except Exception:  # noqa: BLE001 — any bad pattern simply yields no matches
             return None
 
     def _compiled(self, fields: list[dict], role: str):
@@ -142,7 +154,15 @@ class FileExtractor:
     def _capture(rx, line: str) -> str | None:
         if rx is None:
             return None
-        m = rx.search(line)
+        try:
+            m = rx.search(line, **_MATCH_KW)
+        except TimeoutError:
+            # Catastrophic backtracking on this line. The regexes come from the user's
+            # source type and run against every line of the log (and inside the
+            # watchdog's background loop) — and CPython's `re` does NOT release the GIL,
+            # so an unbounded match would freeze the whole backend process, not just
+            # this worker. Skip the line instead; it is counted as unparseable.
+            return None
         if not m:
             return None
         return m.group(1) if m.groups() else m.group(0)

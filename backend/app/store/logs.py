@@ -2,8 +2,13 @@
 
 One SQLite store (``data/logs.sqlite3``) is written by all three processes (compute
 backend, GUI server, admin) and read by the admin "Logging" tab. Entries carry a
-severity, the client IP, the acting user, an operation tag and a message, and are
-always shown/exported **newest-first**.
+severity, the client IP, the acting user, an operation, an optional **tag** and a
+message, and are always shown/exported **newest-first**.
+
+The *operation* says which code path emitted the entry (``login``, ``db-sql``, …).
+The *tag* is a coarser, user-facing category that groups a whole activity across
+operations and severities — e.g. every step of a data import carries ``DATA``,
+whether it ends at USAGE (imported) or ERROR (failed).
 
 Severity is a cumulative ladder (the order the user chose): INFO < USAGE < WARN <
 ERROR < DEBUG. A configurable *maximum level* records everything up to and including
@@ -48,6 +53,18 @@ _CTRL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 def _clean_field(value: str) -> str:
     return _CTRL_CHARS.sub(" ", value or "")
 
+
+# A short, uppercase category stamped on an entry so related events can be found
+# across operations and severities — e.g. every event of a data import is TAG=DATA,
+# whether it ends at USAGE (success) or ERROR (failure).
+TAG_DATA = "DATA"
+_MAX_TAG_CHARS = 24
+
+
+def normalize_tag(value: str | None) -> str:
+    """Fold a tag to the stored form: uppercase, no spaces, length-capped."""
+    return _clean_field(str(value or "").strip().upper().replace(" ", "_"))[:_MAX_TAG_CHARS]
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS log_entries (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,9 +73,13 @@ CREATE TABLE IF NOT EXISTS log_entries (
     client_ip TEXT NOT NULL DEFAULT '',
     username  TEXT NOT NULL DEFAULT '',
     operation TEXT NOT NULL DEFAULT '',
+    tag       TEXT NOT NULL DEFAULT '',
     message   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS ix_log_severity ON log_entries(severity);
+-- The tag index is created in _migrate(), AFTER the column is guaranteed to exist:
+-- on an existing database CREATE TABLE IF NOT EXISTS is a no-op, so indexing a
+-- column added later would fail here.
 CREATE TABLE IF NOT EXISTS log_config (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -87,7 +108,21 @@ class LogStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after the initial release to an existing log DB."""
+        cols = {
+            r["name"]
+            for r in self._conn.execute("PRAGMA table_info(log_entries)").fetchall()
+        }
+        if "tag" not in cols:
+            self._conn.execute(
+                "ALTER TABLE log_entries ADD COLUMN tag TEXT NOT NULL DEFAULT ''"
+            )
+        # Safe for both a fresh table and one just migrated.
+        self._conn.execute("CREATE INDEX IF NOT EXISTS ix_log_tag ON log_entries(tag)")
 
     # ── config ────────────────────────────────────────────────────────────────
 
@@ -147,6 +182,7 @@ class LogStore:
         client_ip: str = "",
         username: str = "",
         operation: str = "",
+        tag: str = "",
     ) -> None:
         sev = normalize_level(severity, "")
         if not sev:
@@ -155,14 +191,16 @@ class LogStore:
             if _RANK[sev] > _RANK[normalize_level(self._get("level"), DEFAULT_LEVEL)]:
                 return
             self._conn.execute(
-                "INSERT INTO log_entries (ts, severity, client_ip, username, operation, message) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO log_entries "
+                "(ts, severity, client_ip, username, operation, tag, message) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     _now(),
                     sev,
                     _clean_field(client_ip),
                     _clean_field(username),
                     _clean_field(operation),
+                    normalize_tag(tag),
                     _clean_field(message),
                 ),
             )
@@ -174,7 +212,7 @@ class LogStore:
     def _total_bytes(self) -> int:
         row = self._conn.execute(
             "SELECT COALESCE(SUM(LENGTH(message) + LENGTH(client_ip) + LENGTH(username) "
-            "+ LENGTH(operation) + 40), 0) AS n FROM log_entries"
+            "+ LENGTH(operation) + LENGTH(tag) + 40), 0) AS n FROM log_entries"
         ).fetchone()
         return int(row["n"])
 
@@ -186,7 +224,7 @@ class LogStore:
         if self._total_bytes() <= limit:
             return
         rows = self._conn.execute(
-            "SELECT ts, severity, client_ip, username, operation, message "
+            "SELECT ts, severity, client_ip, username, operation, tag, message "
             "FROM log_entries ORDER BY id DESC"
         ).fetchall()
         if not rows:
@@ -223,6 +261,7 @@ class LogStore:
         severities: list[str] | None,
         client_ip: str,
         operation: str,
+        tag: str,
         search: str,
     ) -> tuple[str, list[object]]:
         """Shared filter for query()/count() so both see the same result set."""
@@ -242,6 +281,9 @@ class LogStore:
         if operation.strip():
             clauses.append("operation = ?")
             params.append(operation.strip())
+        if tag.strip():
+            clauses.append("tag = ?")
+            params.append(normalize_tag(tag))
         if search.strip():
             clauses.append("message REGEXP ?")
             params.append(search.strip())
@@ -255,6 +297,7 @@ class LogStore:
         severities: list[str] | None = None,
         client_ip: str = "",
         operation: str = "",
+        tag: str = "",
         search: str = "",
         limit: int = 500,
         offset: int = 0,
@@ -264,13 +307,14 @@ class LogStore:
             severities=severities,
             client_ip=client_ip,
             operation=operation,
+            tag=tag,
             search=search,
         )
         limit = max(1, min(int(limit), 5000))
         offset = max(0, int(offset))
         with self._lock:
             rows = self._conn.execute(
-                f"SELECT ts, severity, client_ip, username, operation, message "
+                f"SELECT ts, severity, client_ip, username, operation, tag, message "
                 f"FROM log_entries {where} ORDER BY id DESC LIMIT ? OFFSET ?",
                 (*params, limit, offset),
             ).fetchall()
@@ -283,6 +327,7 @@ class LogStore:
         severities: list[str] | None = None,
         client_ip: str = "",
         operation: str = "",
+        tag: str = "",
         search: str = "",
     ) -> int:
         """Total rows matching the same filter query() uses — for pagination."""
@@ -291,6 +336,7 @@ class LogStore:
             severities=severities,
             client_ip=client_ip,
             operation=operation,
+            tag=tag,
             search=search,
         )
         with self._lock:
@@ -306,6 +352,14 @@ class LogStore:
                 "WHERE operation <> '' ORDER BY operation"
             ).fetchall()
         return [r["operation"] for r in rows]
+
+    def tags(self) -> list[str]:
+        """The distinct tags present, for the viewer's filter dropdown."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT tag FROM log_entries WHERE tag <> '' ORDER BY tag"
+            ).fetchall()
+        return [r["tag"] for r in rows]
 
     def render(self, **query_kwargs) -> str:
         """The current log as a DATE -- TIME -- ... file, newest-first."""
@@ -357,6 +411,14 @@ def set_display_timezone(tz: tzinfo | None) -> None:
     _display_tz = tz
 
 
+def _row_value(r: sqlite3.Row, key: str) -> str:
+    """Read a column that may be absent (a row selected before a migration added it)."""
+    try:
+        return r[key] or ""
+    except (IndexError, KeyError):
+        return ""
+
+
 def _row_to_dict(r: sqlite3.Row) -> dict:
     dt = datetime.fromtimestamp(r["ts"], tz=timezone.utc).astimezone(_display_tz)
     return {
@@ -366,6 +428,7 @@ def _row_to_dict(r: sqlite3.Row) -> dict:
         "clientIp": r["client_ip"],
         "user": r["username"],
         "operation": r["operation"],
+        "tag": _row_value(r, "tag"),
         "message": r["message"],
     }
 
@@ -379,6 +442,7 @@ def format_line(r: sqlite3.Row) -> str:
             r["severity"],
             r["client_ip"] or "-",
             r["username"] or "-",
+            _row_value(r, "tag") or "-",
             r["message"] or "",
         ]
     )
@@ -392,6 +456,7 @@ def _format_dict(e: dict) -> str:
             e["severity"],
             e["clientIp"] or "-",
             e["user"] or "-",
+            e.get("tag") or "-",
             e["message"],
         ]
     )

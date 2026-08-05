@@ -21,7 +21,11 @@ from datetime import datetime, timezone
 from .. import log_events as logx
 from ..config import INTEGRATION_WATCHDOG_ENABLED, INTEGRATION_WATCHDOG_TICK_SECS
 from ..store.security import store
-from .backends import SqlIngestBackend
+from .backends import (
+    DEFAULT_TRANSACTION_ROWS,
+    SqlIngestBackend,
+    clamp_transaction_rows,
+)
 from .extractors import FileExtractor
 from .files import FileAccessError, read_new_lines
 from .layer import layer
@@ -57,6 +61,8 @@ def _open_run_sql(conn):
     )
     mgr = DatabaseManager.__new__(DatabaseManager)  # no store side effects
     raw = mgr._open(server, conn.password)
+    # Insert inside real transactions — the layer's bracket decides when to commit.
+    raw.set_autocommit(False)
 
     def run_sql(sql: str):
         st = raw.execute(sql)
@@ -86,6 +92,10 @@ async def poll_source(source) -> None:
     project_id = str(wd.get("projectId") or "").strip()
     connection_id = str(wd.get("connectionId") or "").strip()
     encoding = str(cfg.get("encoding") or "utf-8")
+    transaction_rows = (
+        clamp_transaction_rows(cfg.get("transactionRows"))
+        if "transactionRows" in cfg else DEFAULT_TRANSACTION_ROWS
+    )
     prev_offset = int(checkpoint["byteOffset"]) if checkpoint else 0
     prev_sig = checkpoint["signature"] if checkpoint else ""
     prev_records = int(checkpoint["records"]) if checkpoint else 0
@@ -94,6 +104,12 @@ async def poll_source(source) -> None:
         store.set_source_checkpoint(
             source.id, byte_offset=offset, size=size, signature=sig,
             records=prev_records, last_error=msg,
+        )
+        # Surface it in the admin log too, not just on the checkpoint — a watchdog
+        # runs unattended, so a silent failure would go unnoticed.
+        logx.warn(
+            f"watchdog import failed: {source.name!r} — {msg}",
+            username=source.owner, operation="import", tag=logx.TAG_DATA,
         )
 
     # ── validate the watchdog's destination + source type ─────────────────────
@@ -107,6 +123,15 @@ async def poll_source(source) -> None:
         _fail("The source has no source type linked.", offset=prev_offset, size=0, sig=prev_sig)
         return
     fields = st.public()["fields"]
+    # Authorisation: the watchdog acts AS the source's owner, so the owner must be
+    # assigned to the destination connection. Checked on every poll (not just at save
+    # time) so revoking the assignment stops the watchdog immediately. Without this, any
+    # developer who learns a connection's id could write into it with its stored
+    # credentials.
+    if not store.user_can_use(connection_id, source.owner):
+        _fail("The destination connection is not assigned to you.",
+              offset=prev_offset, size=0, sig=prev_sig)
+        return
     conn = store.get_connection(connection_id, with_secrets=True)
     if conn is None:
         _fail("The watchdog's destination connection no longer exists.",
@@ -149,11 +174,14 @@ async def poll_source(source) -> None:
     try:
         result = await layer.run(
             user=source.owner, extractor=extractor,
-            backend=SqlIngestBackend(run_sql=run_sql), schema=schema,
+            backend=SqlIngestBackend(
+                run_sql=run_sql, commit=raw.commit, rollback=raw.rollback,
+            ),
+            schema=schema,
             connection_id=connection_id, connection_name=conn.name,
             source_name=source.name, source_type_name=st.name,
+            transaction_rows=transaction_rows,
         )
-        await asyncio.to_thread(raw.commit)
     except Exception as exc:  # noqa: BLE001 — surfaced on the checkpoint; loop continues
         _fail(f"Import failed: {exc}", offset=prev_offset, size=res["size"], sig=res["signature"])
         return
@@ -166,8 +194,8 @@ async def poll_source(source) -> None:
     )
     logx.usage(
         f"watchdog imported {result.records} new event(s) from {source.name!r} "
-        f"into {schema} (project {project_id})",
-        username=source.owner, operation="integration",
+        f"into {conn.name}/{schema} (project {project_id})",
+        username=source.owner, operation="import", tag=logx.TAG_DATA,
     )
 
 
@@ -180,7 +208,10 @@ async def watchdog_loop() -> None:
         try:
             sources = await asyncio.to_thread(store.list_all_sources)
         except Exception as exc:  # noqa: BLE001
-            logx.warn(f"watchdog: could not list sources: {exc}", operation="integration")
+            logx.warn(
+                f"watchdog: could not list sources: {exc}",
+                operation="import", tag=logx.TAG_DATA,
+            )
             continue
         for source in sources:
             try:
@@ -188,7 +219,7 @@ async def watchdog_loop() -> None:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
-                logx.warn(
+                logx.error(
                     f"watchdog: source {source.name!r} poll failed: {exc}",
-                    username=source.owner, operation="integration",
+                    username=source.owner, operation="import", tag=logx.TAG_DATA,
                 )

@@ -71,7 +71,12 @@ def test_watchdog_imports_only_new_lines_and_advances_checkpoint(wd_env, monkeyp
     captured: list[str] = []
 
     class _Raw:
-        def commit(self): pass
+        # The watchdog inserts inside transactions, so the connection must offer the
+        # full set the layer drives: commit at each bracket, rollback on failure.
+        commits = 0
+
+        def commit(self): type(self).commits += 1
+        def rollback(self): pass
         def close(self): pass
 
     def _fake_open(conn):
@@ -115,6 +120,32 @@ def test_watchdog_records_error_without_advancing_offset(wd_env, monkeypatch):
     cp = store.get_source_checkpoint(source.id)
     assert cp["records"] == 0 and cp["byteOffset"] == 0
     assert cp["lastError"] and "connection refused" in cp["lastError"]
+
+
+def test_watchdog_refuses_a_connection_not_assigned_to_the_owner(wd_env, monkeypatch):
+    """The watchdog acts as the source's owner, so pointing it at a connection that is
+    NOT assigned to that owner must be refused — never opened, no data written."""
+    config, store, wd = wd_env
+    source, _, st = _seed(config, store)
+    # A second connection owned by someone else and NOT assigned to "dev".
+    other = store.upsert_connection({
+        "name": "Foreign", "host": "db2", "port": 8563, "username": "svc",
+        "schema": "OTHER", "password": "x", "owner": "someone", "assignments": [],
+    })
+    store.update_source(source.id, "dev", name="Live log", kind="file", config=json.dumps({
+        "path": "live.log", "encoding": "utf-8", "sourceTypeId": st.id,
+        "watchdog": {"enabled": True, "connectionId": other.id, "projectId": "LIVE", "intervalSecs": 5},
+    }))
+    src = store.list_sources("dev")[0]
+
+    monkeypatch.setattr(
+        wd, "_open_run_sql",
+        lambda c: (_ for _ in ()).throw(AssertionError("must not open an unassigned connection")),
+    )
+    asyncio.run(wd.poll_source(src))
+    cp = store.get_source_checkpoint(src.id)
+    assert cp is not None and cp["records"] == 0 and cp["byteOffset"] == 0
+    assert cp["lastError"] and "not assigned" in cp["lastError"]
 
 
 def test_watchdog_ignores_sources_with_the_watchdog_off(wd_env, monkeypatch):

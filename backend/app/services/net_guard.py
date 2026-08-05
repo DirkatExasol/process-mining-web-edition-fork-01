@@ -114,8 +114,25 @@ class _PinnedTransport(httpx.AsyncHTTPTransport):
         self._host = host
         self._ip = ip
 
+    @staticmethod
+    def _canonical_host(value: str) -> str:
+        """Fold a hostname to a single comparable form.
+
+        `urlsplit().hostname` yields the ASCII/punycode form while
+        `httpx.Request.url.host` yields the DECODED unicode form, so for an
+        internationalised name ("xn--bcher-kva.example" vs "bücher.example") a plain
+        equality test fails — the pin would silently not be applied and httpx would
+        re-resolve the name at connect time, reopening exactly the DNS-rebinding
+        window this transport exists to close.
+        """
+        text = (value or "").strip().rstrip(".").lower()
+        try:
+            return text.encode("idna").decode("ascii")
+        except (UnicodeError, UnicodeDecodeError):
+            return text  # already ASCII, or not encodable — compare as-is
+
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        if request.url.host == self._host:
+        if self._canonical_host(request.url.host) == self._canonical_host(self._host):
             # Keep SNI + cert verification bound to the real hostname; the Host
             # header was already set from the original URL at build time.
             request.extensions = {**request.extensions, "sni_hostname": self._host}

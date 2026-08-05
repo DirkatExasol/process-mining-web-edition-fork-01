@@ -36,6 +36,25 @@ _SQL_TYPE = {
 
 _MAX_BATCH = 1000  # rows per INSERT statement
 
+# Transaction bracket: how many rows are written before the layer commits. 0 means
+# "one transaction for the whole import" (fully atomic, but the database holds the
+# entire import open). The default keeps a large import from becoming one huge
+# transaction while still committing far less often than per-statement autocommit.
+DEFAULT_TRANSACTION_ROWS = 5000
+MAX_TRANSACTION_ROWS = 1_000_000
+
+
+def clamp_transaction_rows(value) -> int:
+    """Normalise a user-supplied bracket size. Invalid → the default; 0 stays 0
+    (single transaction); anything else is clamped to a sane range."""
+    try:
+        rows = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_TRANSACTION_ROWS
+    if rows <= 0:
+        return 0
+    return max(_MAX_BATCH, min(rows, MAX_TRANSACTION_ROWS))
+
 
 def valid_identifier(name: str) -> str:
     """Return ``name`` if it is a safe SQL identifier, else raise IngestError."""
@@ -62,6 +81,14 @@ class IngestBackend(Protocol):
     ) -> set[tuple[str, ...]]:
         ...
 
+    def commit(self) -> None:
+        """Commit the work done since the last commit (end of a transaction bracket)."""
+        ...
+
+    def rollback(self) -> None:
+        """Discard the uncommitted work of the current bracket (a failed run)."""
+        ...
+
 
 class InMemoryIngestBackend:
     """A dependency-free target: tables and rows live in dictionaries. Used for dev
@@ -70,6 +97,8 @@ class InMemoryIngestBackend:
     def __init__(self) -> None:
         # schema → table → {"columns": {name: type}, "rows": [ {col: value} ]}
         self.tables: dict[str, dict[str, dict[str, Any]]] = {}
+        self.commits = 0
+        self.rollbacks = 0
 
     def _table(self, schema: str, table: str) -> dict[str, Any] | None:
         return self.tables.get(schema, {}).get(table)
@@ -104,6 +133,13 @@ class InMemoryIngestBackend:
             for r in tbl["rows"]
         }
 
+    def commit(self) -> None:
+        """No transactions in memory — recorded so tests can assert the bracketing."""
+        self.commits += 1
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
+
 
 class SqlIngestBackend:
     """Generates schema-qualified SQL and runs it through ``run_sql`` (a synchronous
@@ -115,8 +151,19 @@ class SqlIngestBackend:
     defensively so a malformed source value can't corrupt a statement.
     """
 
-    def __init__(self, run_sql: Callable[[str], Any]) -> None:
+    def __init__(
+        self,
+        run_sql: Callable[[str], Any],
+        *,
+        commit: Callable[[], None] | None = None,
+        rollback: Callable[[], None] | None = None,
+    ) -> None:
         self._run = run_sql
+        # Supplied by the caller that owns the connection. Without them the backend
+        # behaves as before (the driver's autocommit ends every statement), which is
+        # what the tests that only record SQL expect.
+        self._commit = commit
+        self._rollback = rollback
 
     # ── DDL ───────────────────────────────────────────────────────────────────
     def create_table(self, schema, table, columns, keys) -> None:
@@ -150,6 +197,14 @@ class SqlIngestBackend:
         cols = ", ".join(f'"{valid_identifier(c)}"' for c in key_columns)
         rows = self._run(f"SELECT {cols} FROM {q}") or []
         return {tuple("" if v is None else str(v) for v in row) for row in rows}
+
+    def commit(self) -> None:
+        if self._commit is not None:
+            self._commit()
+
+    def rollback(self) -> None:
+        if self._rollback is not None:
+            self._rollback()
 
     @staticmethod
     def _qualified(schema: str, table: str) -> str:

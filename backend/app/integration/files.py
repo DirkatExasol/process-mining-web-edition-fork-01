@@ -126,12 +126,20 @@ def _signature(fh) -> str:
     return hashlib.md5(head).hexdigest() if len(head) >= _SIG_BYTES else ""
 
 
+# Upper bound on the bytes one poll reads into memory. A larger backlog (e.g. the first
+# poll of a huge existing file) is consumed over successive polls, cap by cap, instead of
+# loading it all at once.
+_MAX_CHUNK_BYTES = 8 * 1024 * 1024
+
+
 def read_new_lines(path: str, encoding: str, offset: int) -> dict:
     """Read the file's newly-appended, *complete* lines since byte ``offset``.
 
     Returns ``{lines, new_offset, size, signature, rotated}``:
     * only whole lines (up to the last newline) are returned — a partial trailing line
       is left for the next poll, and ``new_offset`` stops at that boundary;
+    * at most ``_MAX_CHUNK_BYTES`` are read per call — a bigger backlog is drained over
+      successive calls (``new_offset`` < ``size`` signals more is pending);
     * ``rotated`` is True when the file shrank below ``offset`` (truncated/rotated), in
       which case reading restarts from 0;
     * blank lines are skipped and each line is length-capped, matching ``iter_lines``.
@@ -149,11 +157,18 @@ def read_new_lines(path: str, encoding: str, offset: int) -> dict:
         if start >= size:
             return {"lines": [], "new_offset": start, "size": size,
                     "signature": signature, "rotated": rotated}
+        capped = min(size - start, _MAX_CHUNK_BYTES)
         fh.seek(start)
-        data = fh.read(size - start)
+        data = fh.read(capped)
 
     last_nl = data.rfind(b"\n")
-    if last_nl == -1:  # no complete new line yet — wait for the rest
+    if last_nl == -1:
+        if len(data) >= _MAX_CHUNK_BYTES:
+            # A single "line" longer than the whole cap is not a parseable log line —
+            # skip past it rather than re-reading it forever.
+            return {"lines": [], "new_offset": start + len(data), "size": size,
+                    "signature": signature, "rotated": rotated}
+        # No complete new line yet — wait for the rest.
         return {"lines": [], "new_offset": start, "size": size,
                 "signature": signature, "rotated": rotated}
     consumed = data[: last_nl + 1]

@@ -642,7 +642,11 @@ def test_lockout_disables_account_after_threshold(security):
     u = store.get_user("u")
     assert u.is_enabled is False and u.login_locked is True
     assert store.authenticate("u", "pw") is None  # correct pw, still locked out
-    assert "locked" in store.login_block_message("u").lower()
+    # The reason is released only to someone who proves they know the password —
+    # otherwise it is an account-existence oracle for an unauthenticated attacker.
+    assert "locked" in store.login_block_message("u", "pw").lower()
+    assert store.login_block_message("u", "wrong") is None
+    assert store.login_block_message("u") is None
 
 
 def test_lockout_counter_resets_on_success(security):
@@ -1152,3 +1156,78 @@ def test_sources_crud_and_owner_isolation(security):
     assert updated is not None and updated.public()["name"] == "Renamed"
     assert store.update_source(a.id, "bob", name="X", kind="file", config="") is None
     assert store.delete_source(a.id, "alice") is True
+
+
+def test_lockout_auto_expires(security, monkeypatch):
+    """A permanent lockout is a DoS an unauthenticated attacker can trigger against any
+    known username. It must age out on its own."""
+    store = security.store
+    store.create_user("u", "pw", is_admin=False)
+    store.set_max_failed_logins(3)
+    store.set_lockout_minutes(15)
+
+    for _ in range(3):
+        store.authenticate("u", "wrong")
+    assert store.get_user("u").is_enabled is False  # locked
+
+    # Still locked inside the window.
+    assert store.authenticate("u", "pw") is None
+
+    # Rewind the lock stamp past the window → the next attempt succeeds.
+    from datetime import datetime, timedelta, timezone
+
+    old = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
+    with store._lock:
+        store._conn.execute("UPDATE users SET login_locked_at = ?", (old,))
+        store._conn.commit()
+
+    user = store.authenticate("u", "pw")
+    assert user is not None, "an aged-out lockout must lift itself"
+    fresh = store.get_user("u")
+    assert fresh.is_enabled is True and fresh.login_locked is False
+
+
+def test_lockout_zero_minutes_stays_until_an_admin_clears_it(security):
+    """0 = the old behaviour, for operators who want it."""
+    store = security.store
+    store.create_user("u", "pw", is_admin=False)
+    store.set_max_failed_logins(3)
+    store.set_lockout_minutes(0)
+    for _ in range(3):
+        store.authenticate("u", "wrong")
+
+    from datetime import datetime, timedelta, timezone
+
+    old = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    with store._lock:
+        store._conn.execute("UPDATE users SET login_locked_at = ?", (old,))
+        store._conn.commit()
+    assert store.authenticate("u", "pw") is None  # never auto-lifts
+
+
+def test_password_change_invalidates_outstanding_sessions(security):
+    """Resetting a password is the standard response to a stolen session cookie — it
+    must actually kill the outstanding tokens."""
+    store = security.store
+    store.create_user("u", "pw", is_admin=False)
+    before = store.session_epoch("u")
+    store.set_password("u", "new-password")
+    assert store.session_epoch("u") > before
+
+
+def test_unknown_cert_mode_falls_back_to_verify(security):
+    """An unrecognised cert mode must never mean 'no verification'."""
+    store = security.store
+    for bad, expected in (
+        ("verify ", "verify"),      # trailing space used to disable verification
+        ("VERIFY", "verify"),
+        ("typo", "verify"),
+        ("", "verify"),
+        ("insecure", "insecure"),   # explicit opt-out still honoured
+        ("fingerprint", "fingerprint"),
+    ):
+        conn = store.upsert_connection({
+            "name": f"c-{bad!r}", "host": "h", "port": 8563, "username": "u",
+            "schema": "S", "certModeRaw": bad, "useTLS": True,
+        })
+        assert conn.cert_mode == expected, f"{bad!r} → {conn.cert_mode!r}"

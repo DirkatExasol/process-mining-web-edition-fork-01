@@ -200,3 +200,31 @@ def test_run_creates_meta_titles(env):
     assert mem.tables["MINING"]["METAS"]["rows"] == [{
         "PROJECT_ID": "RETAIL", "META_1_TITLE": "Book ID", "META_2_TITLE": "", "META_3_TITLE": "",
     }]
+
+
+def test_catastrophic_regex_cannot_hang_the_extractor(env):
+    """Source-type regexes are user-authored and run against EVERY line — including
+    inside the watchdog's background loop. CPython's `re` does not release the GIL, so
+    an unbounded match would freeze the whole backend process, not just one worker."""
+    import time as _time
+
+    config, extractors_mod, AbstractionLayer, InMemoryIngestBackend = env
+    evil = [
+        {"name": "timestamp", "role": "timestamp", "regex": r"(a+)+$"},
+        {"name": "event_id", "role": "id", "regex": r"userId=(\d+)"},
+        {"name": "step", "role": "step", "regex": r"step=(\w+)"},
+    ]
+    line = "userId=1 step=x " + "a" * 60 + "!"
+    (config.INTEGRATION_FILES_DIR / "evil.log").write_text(line + "\n")
+
+    ext = extractors_mod.FileExtractor(
+        path="evil.log", encoding="utf-8", fields=evil, project_id="P",
+    )
+    started = _time.perf_counter()
+    result = asyncio.run(
+        AbstractionLayer().run(user="dev", extractor=ext, backend=InMemoryIngestBackend(), schema="S")
+    )
+    elapsed = _time.perf_counter() - started
+    # The line is skipped (no timestamp captured) rather than hanging the process.
+    assert result.records == 0
+    assert elapsed < 10, f"extraction took {elapsed:.1f}s — the match was not bounded"

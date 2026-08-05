@@ -57,16 +57,26 @@ def test_newest_first_and_format(logs):
 
 
 def test_format_line_matches_the_spec(logs):
-    logs.record("ERROR", "boom", client_ip="9.9.9.9", username="carol")
+    logs.record("ERROR", "boom", client_ip="9.9.9.9", username="carol", tag="DATA")
     row = logs._conn.execute(
-        "SELECT ts, severity, client_ip, username, operation, message FROM log_entries"
+        "SELECT ts, severity, client_ip, username, operation, tag, message FROM log_entries"
     ).fetchone()
     line = format_line(row)
     parts = line.split(" -- ")
-    # DATE -- TIME -- SEVERITY -- CLIENT-IP -- USER -- text
-    assert len(parts) == 6
+    # DATE -- TIME -- SEVERITY -- CLIENT-IP -- USER -- TAG -- text
+    assert len(parts) == 7
     assert parts[2] == "ERROR" and parts[3] == "9.9.9.9" and parts[4] == "carol"
-    assert parts[5] == "boom"
+    assert parts[5] == "DATA"
+    assert parts[6] == "boom"
+
+
+def test_format_line_shows_a_dash_for_an_untagged_entry(logs):
+    logs.record("INFO", "plain", client_ip="1.1.1.1", username="dave")
+    row = logs._conn.execute(
+        "SELECT ts, severity, client_ip, username, operation, tag, message FROM log_entries"
+    ).fetchone()
+    parts = format_line(row).split(" -- ")
+    assert len(parts) == 7 and parts[5] == "-" and parts[6] == "plain"
 
 
 def test_filters_severity_ip_operation(logs):
@@ -152,7 +162,7 @@ def test_rotation_writes_archive_and_empties_store(logs):
     # Archive is newest-first and in the spec format.
     text = (logs_mod.LOGS_DIR / archives[0]).read_text()
     lines = text.splitlines()
-    assert " -- " in lines[0] and len(lines[0].split(" -- ")) == 6
+    assert " -- " in lines[0] and len(lines[0].split(" -- ")) == 7
 
 
 def test_store_enables_busy_timeout(logs):
@@ -236,3 +246,55 @@ def test_record_strips_control_chars_to_prevent_log_forgery(logs):
     assert "\n" not in entry["user"] and "\r" not in entry["user"]
     # The exported form is a single line per entry (no forged extra line).
     assert logs.render().count("\n") == 1
+
+
+def test_tag_is_stored_filtered_and_exported(logs):
+    """A tag groups a whole activity across operations and severities."""
+    store = logs
+    store.set_level("DEBUG")
+    store.record("USAGE", "import started", operation="import", tag="DATA")
+    store.record("ERROR", "import failed", operation="import", tag="DATA")
+    store.record("USAGE", "signed in", operation="login")  # untagged
+
+    assert store.tags() == ["DATA"]
+    tagged = store.query(tag="DATA")
+    assert len(tagged) == 2
+    assert {e["tag"] for e in tagged} == {"DATA"}
+    assert store.count(tag="DATA") == 2
+    # The tag spans severities — the failure is found by the same filter.
+    assert {e["severity"] for e in tagged} == {"USAGE", "ERROR"}
+    # Untagged entries are excluded, and an unknown tag matches nothing.
+    assert store.count(tag="NOPE") == 0
+    assert store.query()[0]["tag"] == ""  # newest = the untagged login
+
+    # Tags are normalised, and appear in the exported .log line.
+    store.record("INFO", "x", tag=" data import ")
+    assert store.query(limit=1)[0]["tag"] == "DATA_IMPORT"
+    assert "DATA" in store.render(tag="DATA")
+
+
+def test_tag_column_is_added_to_an_existing_log_database(logs, tmp_path):
+    """A log DB created before tags existed must migrate, not crash."""
+    import sqlite3
+
+    path = tmp_path / "old-logs.sqlite3"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE log_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,"
+        " severity TEXT NOT NULL, client_ip TEXT NOT NULL DEFAULT '',"
+        " username TEXT NOT NULL DEFAULT '', operation TEXT NOT NULL DEFAULT '',"
+        " message TEXT NOT NULL DEFAULT '');"
+        "CREATE TABLE log_config (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+    )
+    conn.execute(
+        "INSERT INTO log_entries (ts, severity, message) VALUES (1.0, 'INFO', 'legacy')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = LogStore(path=path)  # must not raise
+    rows = store.query()
+    assert rows and rows[0]["message"] == "legacy"
+    assert rows[0]["tag"] == ""  # pre-existing rows are simply untagged
+    store.record("USAGE", "new", tag="DATA")
+    assert store.count(tag="DATA") == 1

@@ -30,10 +30,16 @@ CREATE TABLE IF NOT EXISTS secrets (
 
 
 def _load_fernet() -> Fernet:
-    if not SECRET_KEY_PATH.exists():
-        SECRET_KEY_PATH.write_bytes(Fernet.generate_key())
-        SECRET_KEY_PATH.chmod(0o600)
-    return Fernet(SECRET_KEY_PATH.read_bytes())
+    """The shared master key. Delegates to ``crypto.get_fernet`` — there must be exactly
+    ONE creator of ``secret.key``. This module used to create it itself with
+    ``write_bytes`` + ``chmod``, which is the very race ``crypto._create_key_atomically``
+    documents as unsafe: it leaves the key world-readable between the two calls, follows
+    a pre-planted symlink, and lets two of the concurrently-booted processes generate
+    *different* keys. This store is imported first on a fresh install, so that unsafe
+    path was the one that actually ran."""
+    from .crypto import get_fernet
+
+    return get_fernet()
 
 
 class SettingsStore:

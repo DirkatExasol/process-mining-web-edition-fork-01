@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import ssl
 import threading
 import time
@@ -52,6 +53,12 @@ class QueryResult:
     def __init__(self, rows: list[list[Any]], columns: list[str]) -> None:
         self.rows = rows
         self.columns = columns
+
+
+# A pinned fingerprint must be pure hex. pyexasol's DSN grammar also accepts the literal
+# "nocertcheck", so an unvalidated value in this field could disable verification while
+# the UI still reported the certificate as pinned.
+_VALID_FINGERPRINT_RE = re.compile(r"^[0-9a-fA-F]{16,128}$")
 
 
 class ExasolError(RuntimeError):
@@ -199,12 +206,24 @@ class DatabaseManager:
 
         if server.useTLS:
             kwargs["encryption"] = True
-            mode = (server.certModeRaw or "verify").lower()
+            # Whitespace-tolerant; anything unrecognised is treated as "verify" rather
+            # than falling through to no verification. Previously ANY value that wasn't
+            # exactly "verify" (a typo, a trailing space, a legacy/restored value)
+            # silently disabled certificate checking — a fail-OPEN default.
+            mode = (server.certModeRaw or "verify").strip().lower()
             fingerprint = (server.fingerprint or "").replace(":", "").strip()
-            if mode == "fingerprint" and fingerprint:
+            if mode == "fingerprint":
                 # pyexasol pins the certificate when the DSN carries a fingerprint.
+                # A blank/invalid fingerprint used to fall through to CERT_NONE while
+                # the UI still said "pinned", so refuse instead of silently downgrading.
+                if not _VALID_FINGERPRINT_RE.match(fingerprint):
+                    raise ExasolError(
+                        "This connection is set to pin a certificate fingerprint, but "
+                        "the fingerprint is missing or not hexadecimal. Enter the "
+                        "server's SHA-256 fingerprint, or change the certificate mode."
+                    )
                 dsn = f"{server.host}/{fingerprint}:{server.port}"
-            elif mode != "verify":
+            elif mode == "insecure":
                 kwargs["websocket_sslopt"] = {
                     "cert_reqs": ssl.CERT_NONE,
                     "check_hostname": False,

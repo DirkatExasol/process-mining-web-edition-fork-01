@@ -39,12 +39,25 @@ class _Session:
     :class:`IngestBackend` and reports progress into a :class:`LayerStatus` under a
     lock (``push`` may be called from the extractor's worker thread)."""
 
-    def __init__(self, backend: IngestBackend, schema: str, status: LayerStatus, lock: threading.Lock) -> None:
+    def __init__(
+        self,
+        backend: IngestBackend,
+        schema: str,
+        status: LayerStatus,
+        lock: threading.Lock,
+        transaction_rows: int = 0,
+    ) -> None:
         self._backend = backend
         self._schema = valid_identifier(schema)
         self._status = status
         self._lock = lock
         self._columns: dict[str, list[str]] = {}  # table → declared column order
+        # Transaction bracket: commit once this many rows have been written since the
+        # last commit. 0 = never commit mid-run, i.e. the whole import is ONE
+        # transaction (atomic, but the database holds all of it open).
+        self._transaction_rows = max(0, int(transaction_rows or 0))
+        self._since_commit = 0
+        self.commits = 0
 
     @property
     def schema(self) -> str:
@@ -84,7 +97,29 @@ class _Session:
         n = self._backend.insert(self._schema, table, order, batch)
         with self._lock:
             self._status.records_pushed += n
+        self._since_commit += n
+        # Close the transaction bracket once it is full. Committing here (rather than
+        # only at the end) keeps the database's transaction small on a large import and
+        # makes the written rows visible as the run progresses.
+        if self._transaction_rows and self._since_commit >= self._transaction_rows:
+            self.commit()
         return n
+
+    def commit(self) -> None:
+        """End the current transaction bracket.
+
+        A no-op when nothing has been written since the last commit — so the final
+        commit after a run whose last bracket closed exactly on the boundary doesn't
+        cost a second, empty round-trip. The very first commit always runs, even with
+        no rows, to close out the transaction any DDL/SELECT opened.
+        """
+        if self._since_commit == 0 and self.commits > 0:
+            return
+        self._backend.commit()
+        self._since_commit = 0
+        self.commits += 1
+        with self._lock:
+            self._status.commits = self.commits
 
     def log(self, message: str) -> None:
         with self._lock:
@@ -149,6 +184,7 @@ class AbstractionLayer:
         connection_name: str | None = None,
         source_name: str | None = None,
         source_type_name: str | None = None,
+        transaction_rows: int = 0,
     ) -> ExtractResult:
         """Run an extractor against ``backend``/``schema`` for ``user``, updating that
         user's status as it goes. ``extractor`` is a registered id, or a configured
@@ -177,6 +213,7 @@ class AbstractionLayer:
             status.connection_name = connection_name
             status.schema = schema
             status.records_pushed = 0
+            status.commits = 0
             status.records_done = 0
             status.records_total = 0
             status.tables_touched = []
@@ -185,9 +222,11 @@ class AbstractionLayer:
             status.last_error = None
             status.messages = []
 
-        session = _Session(backend, schema, status, self._lock)
+        session = _Session(backend, schema, status, self._lock, transaction_rows)
         try:
             result = await asyncio.to_thread(extractor.run, session)
+            # Close the final (possibly partial) bracket so nothing is left uncommitted.
+            await asyncio.to_thread(session.commit)
             with self._lock:
                 status.state = LayerState.COMPLETED
                 status.finished_at = _now()
@@ -197,6 +236,13 @@ class AbstractionLayer:
             )
             return result
         except Exception as exc:  # noqa: BLE001 — surfaced in status, not swallowed
+            # Discard the open bracket. Brackets already committed stay committed —
+            # that is the point of bracketing — so a failed run can leave the rows of
+            # earlier brackets behind; the status/detail says how many were written.
+            try:
+                await asyncio.to_thread(backend.rollback)
+            except Exception:  # noqa: BLE001 — a rollback failure must not mask the real error
+                pass
             with self._lock:
                 status.state = LayerState.FAILED
                 status.finished_at = _now()

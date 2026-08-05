@@ -55,7 +55,22 @@ _TLS_MODES = {TLS_OFF, TLS_OPTIONAL, TLS_REQUIRED}
 # Lock an account after this many consecutive failed sign-ins when the admin has
 # not configured a value. A secure-by-default: fresh installs get a lockout even
 # before anyone visits the Users tab. An admin can still set 0 (= never lock).
+# How a connection verifies the database server's TLS certificate. Anything outside
+# this set is stored as "verify": an unrecognised value (a typo, a trailing space, a
+# legacy or restored row) must never silently mean "no verification".
+_CERT_MODES = ("verify", "fingerprint", "insecure")
+
+
+def _valid_cert_mode(value) -> str:
+    mode = str(value or "verify").strip().lower()
+    return mode if mode in _CERT_MODES else "verify"
+
+
 _DEFAULT_MAX_FAILED_LOGINS = 3
+# A lockout auto-expires after this long (0 = never, admin must re-enable). Keeps the
+# brute-force brake while denying an unauthenticated attacker a permanent
+# account-disable primitive against any username they know.
+_DEFAULT_LOCKOUT_MINUTES = 15
 
 # How many scheduled-backup files to retain (newest-first) when none is configured.
 _DEFAULT_BACKUP_RETENTION = 30
@@ -450,6 +465,10 @@ class SecurityStore:
             # Failed-sign-in lockout (admin-configurable threshold).
             ("failed_logins", "failed_logins INTEGER NOT NULL DEFAULT 0"),
             ("login_locked", "login_locked INTEGER NOT NULL DEFAULT 0"),
+            # When the lockout was applied — a lockout auto-expires after
+            # `lockout_minutes`, so an unauthenticated attacker cannot permanently
+            # disable a known account by sending a few bad passwords.
+            ("login_locked_at", "login_locked_at TEXT NOT NULL DEFAULT ''"),
             # Bumped on logout to invalidate that user's outstanding session tokens.
             ("session_epoch", "session_epoch INTEGER NOT NULL DEFAULT 0"),
         ):
@@ -593,6 +612,63 @@ class SecurityStore:
             self._conn.commit()
 
     @property
+    def lockout_minutes(self) -> int:
+        """How long a failed-sign-in lockout lasts before it auto-expires
+        (0 = until an administrator re-enables the account).
+
+        A permanent lockout is a denial-of-service an *unauthenticated* attacker can
+        trigger at will: a few bad passwords against a known username disables the
+        account. Auto-expiry keeps the brute-force protection (the attacker still can't
+        guess faster than one window per `max_failed_logins` tries) without handing out
+        a free account-disable primitive."""
+        with self._lock:
+            raw = self._get_config("lockout_minutes")
+        if raw is None:
+            return _DEFAULT_LOCKOUT_MINUTES
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            return _DEFAULT_LOCKOUT_MINUTES
+
+    def set_lockout_minutes(self, minutes: int) -> None:
+        with self._lock:
+            self._set_config("lockout_minutes", str(max(0, int(minutes))))
+            self._conn.commit()
+
+    def _clear_expired_lockout(self, username: str) -> None:
+        """Re-enable an account whose failed-sign-in lockout has aged out. No-op for an
+        account an administrator disabled by hand (login_locked = 0)."""
+        minutes = self.lockout_minutes
+        if minutes <= 0:
+            return
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT login_locked, login_locked_at FROM users "
+                "WHERE LOWER(username) = LOWER(?)",
+                (username,),
+            ).fetchone()
+            if row is None or not row["login_locked"]:
+                return
+            stamp = row["login_locked_at"] or ""
+            if stamp:
+                try:
+                    locked_at = datetime.fromisoformat(stamp)
+                except ValueError:
+                    locked_at = None
+                if locked_at is not None:
+                    if locked_at.tzinfo is None:
+                        locked_at = locked_at.replace(tzinfo=timezone.utc)
+                    age = (datetime.now(timezone.utc) - locked_at).total_seconds()
+                    if age < minutes * 60:
+                        return  # still inside the lockout window
+            self._conn.execute(
+                "UPDATE users SET is_enabled = 1, login_locked = 0, failed_logins = 0, "
+                "login_locked_at = '' WHERE LOWER(username) = LOWER(?)",
+                (username,),
+            )
+            self._conn.commit()
+
+    @property
     def display_timezone(self) -> str:
         """IANA zone name for server-rendered timestamps (logs, backups). Empty
         means the server's own local zone (the historical behaviour)."""
@@ -630,9 +706,11 @@ class SecurityStore:
             self._conn.execute(
                 "UPDATE users SET failed_logins = ?, "
                 "is_enabled = CASE WHEN ? THEN 0 ELSE is_enabled END, "
-                "login_locked = CASE WHEN ? THEN 1 ELSE login_locked END "
+                "login_locked = CASE WHEN ? THEN 1 ELSE login_locked END, "
+                # Stamp WHEN it locked so the lockout can auto-expire.
+                "login_locked_at = CASE WHEN ? THEN ? ELSE login_locked_at END "
                 "WHERE LOWER(username) = LOWER(?)",
-                (count, int(locked), int(locked), username),
+                (count, int(locked), int(locked), int(locked), _now(), username),
             )
             self._conn.commit()
         if locked:  # logged outside the store lock (the log store has its own lock)
@@ -750,11 +828,26 @@ class SecurityStore:
             )
             self._conn.commit()
 
-    def login_block_message(self, username: str) -> str | None:
+    def login_block_message(self, username: str, password: str = "") -> str | None:
         """A message to show the user when their account is disabled/locked, or None
-        for a plain bad-credentials failure (so we don't reveal account existence)."""
+        for a plain bad-credentials failure (so we don't reveal account existence).
+
+        The explanation is released ONLY when the supplied password is correct.
+        Otherwise "This account has been locked…" vs. the generic message is an
+        oracle: anyone could confirm an account exists (and, combined with the
+        lockout, deliberately trip it) without knowing any credential. A user who
+        types their real password still gets the helpful reason.
+        """
         user = self.get_user(username)
         if user is None or user.is_enabled:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT password_hash FROM users WHERE LOWER(username) = LOWER(?)",
+                (username,),
+            ).fetchone()
+        # Always run one scrypt check so timing doesn't distinguish the branches.
+        if not verify_password(password, row["password_hash"] if row else _DUMMY_HASH):
             return None
         if user.login_locked:
             return (
@@ -1135,7 +1228,15 @@ class SecurityStore:
             raise ValueError("Password is required.")
         with self._lock:
             self._conn.execute(
-                "UPDATE users SET password_hash = ? WHERE LOWER(username) = LOWER(?)",
+                # Bump the session epoch in the same statement: a password change must
+                # invalidate every outstanding token. Otherwise the standard response to
+                # a stolen cookie ("reset the password") does nothing — the thief's
+                # session keeps working, and because tokens are re-minted on every
+                # request it can be kept alive indefinitely. The caller re-issues a
+                # cookie for the *current* session where that is the right UX
+                # (self-service change), so only OTHER sessions are dropped.
+                "UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 "
+                "WHERE LOWER(username) = LOWER(?)",
                 (hash_password(password), username),
             )
             # Changing the bootstrap admin's password clears the default-password flag.
@@ -1465,6 +1566,9 @@ class SecurityStore:
         (see max_failed_logins); a success clears the counter. One scrypt check runs
         even when the account is missing, so timing doesn't reveal its existence.
         """
+        # An aged-out lockout is lifted before the attempt, so a locked-out user can
+        # simply try again after the window instead of needing an administrator.
+        self._clear_expired_lockout(username)
         user = self.get_user(username)
         with self._lock:
             row = self._conn.execute(
@@ -1826,7 +1930,7 @@ class SecurityStore:
                     data.get("username") or "",
                     data.get("schema") or "",
                     int(bool(data.get("useTLS"))),
-                    data.get("certModeRaw") or "verify",
+                    _valid_cert_mode(data.get("certModeRaw")),
                     data.get("fingerprint") or "",
                     int(data.get("minRSAKeySizeBits") or 2048),
                     password_enc,

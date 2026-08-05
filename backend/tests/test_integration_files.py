@@ -61,6 +61,27 @@ def test_read_new_lines_is_incremental_and_handles_partial_and_rotation(files):
     assert r4["rotated"] is True and r4["lines"] == ["fresh"]
 
 
+def test_read_new_lines_caps_the_chunk_per_call(files, monkeypatch):
+    """A large backlog is drained cap-by-cap instead of being read into memory at once;
+    each call stops at the last complete line inside the cap."""
+    files_mod, config = files
+    monkeypatch.setattr(files_mod, "_MAX_CHUNK_BYTES", 8)
+    f = config.INTEGRATION_FILES_DIR / "big.log"
+    f.write_text("aa\nbb\ncc\ndd\n")  # 12 bytes, 4 lines
+
+    r1 = files_mod.read_new_lines("big.log", "utf-8", 0)
+    assert r1["lines"] == ["aa", "bb"]  # 8-byte cap → "aa\nbb\ncc" cut at last newline
+    assert r1["new_offset"] == 6
+    r2 = files_mod.read_new_lines("big.log", "utf-8", r1["new_offset"])
+    assert r2["lines"] == ["cc", "dd"]
+    assert r2["new_offset"] == 12
+
+    # A single "line" longer than the cap is skipped, not re-read forever.
+    f.write_text("x" * 20)  # no newline at all
+    r3 = files_mod.read_new_lines("big.log", "utf-8", 0)
+    assert r3["lines"] == [] and r3["new_offset"] == 8  # advanced past the chunk
+
+
 def test_rejects_paths_outside_the_sandbox(files):
     files_mod, _ = files
     for bad in ["../../etc/passwd", "/etc/passwd", "../secret", "sub/../../escape"]:

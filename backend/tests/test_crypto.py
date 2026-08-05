@@ -59,3 +59,37 @@ def test_write_private_file_refuses_symlink(tmp_path):
     with pytest.raises(OSError):
         crypto.write_private_file(link, "SECRET-KEY")
     assert target.read_text() == "original"  # target untouched through the symlink
+
+
+def test_settings_store_does_not_create_the_key_itself(tmp_path, monkeypatch):
+    """There must be exactly ONE creator of secret.key. The settings store used to
+    create it with write_bytes + chmod — the very race crypto._create_key_atomically
+    documents as unsafe (world-readable window, symlink-following, and two concurrently
+    booted processes generating DIFFERENT keys). It is imported first on a fresh
+    install, so that unsafe path was the one that actually ran."""
+    import importlib
+    import os
+    import stat
+
+    monkeypatch.setenv("PMW_DATA_DIR", str(tmp_path))
+    import app.config as config
+
+    importlib.reload(config)
+    import app.store.crypto as crypto
+
+    importlib.reload(crypto)
+    import app.store.settings as settings_mod
+
+    importlib.reload(settings_mod)
+
+    # Importing the settings store is what creates the key on a fresh install (its
+    # module-level singleton), so by now it exists — it must have been created SAFELY.
+    settings_mod.SettingsStore(path=str(tmp_path / "s.sqlite3"))
+
+    # The key exists and is 0600 from birth — never world-readable.
+    assert config.SECRET_KEY_PATH.exists()
+    mode = stat.S_IMODE(os.stat(config.SECRET_KEY_PATH).st_mode)
+    assert mode == 0o600, f"secret.key must be 0600, got {oct(mode)}"
+
+    # Both stores agree on the same key (no divergence between processes).
+    assert settings_mod._load_fernet()._signing_key == crypto.get_fernet()._signing_key

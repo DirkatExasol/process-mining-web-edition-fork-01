@@ -37,6 +37,9 @@ class LayerStatus:
     connection_name: str | None = None
     schema: str | None = None
     records_pushed: int = 0
+    # Transaction brackets committed so far in this run (see the layer's
+    # transaction_rows) — surfaced so the console can show durable progress.
+    commits: int = 0
     # Progress for a progress bar: items processed so far, and the total (0 = unknown).
     records_done: int = 0
     records_total: int = 0
@@ -66,6 +69,7 @@ class LayerStatus:
             "connectionName": self.connection_name,
             "schema": self.schema,
             "recordsPushed": self.records_pushed,
+            "commits": self.commits,
             "recordsDone": self.records_done,
             "recordsTotal": self.records_total,
             "tablesTouched": list(self.tables_touched),

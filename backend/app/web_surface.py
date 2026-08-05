@@ -10,7 +10,7 @@ The only differences between the two surfaces are:
 * the **session audience + cookie name** (so an app cookie is not accepted by the
   integration console, and vice-versa — the two share one Fernet key);
 * a **role predicate** — the app admits any enabled user; the integration console
-  admits only power users, developers and admins;
+  admits only developers and admins (power users are refused);
 * an optional **disabled gate** — the admin can turn a surface off.
 
 `build_surface_app(...)` builds a fully-wired FastAPI app for one surface. Keeping
@@ -34,7 +34,12 @@ from fastapi.staticfiles import StaticFiles
 
 from app import licensing
 from app import log_events as logx
-from app.config import BACKEND_CA_PATH, BACKEND_URL, SESSION_TTL_SECS
+from app.config import (
+    BACKEND_CA_PATH,
+    BACKEND_URL,
+    SESSION_MAX_LIFETIME_SECS,
+    SESSION_TTL_SECS,
+)
 from app.services import mfa, passkey
 from app.services.login_throttle import LoginThrottle
 from app.store.crypto import proxy_auth_secret, read_session, sign_session
@@ -133,12 +138,18 @@ def build_surface_app(
 
     _login_throttle = LoginThrottle()
 
-    def _issue_session(username: str) -> str:
+    def _issue_session(username: str, issued_at: int | None = None) -> str:
         # Embed the user's session epoch so logout (which bumps it) invalidates this
         # token. The audience ("a") binds the token to THIS surface: every surface
         # signs with the same Fernet key, so without it one surface's cookie would be
-        # structurally valid on another.
-        payload = {"u": username, "e": store.session_epoch(username), "a": audience}
+        # structurally valid on another. "iat" is the ORIGINAL sign-in time, carried
+        # through every re-issue, so the sliding window can't extend a session forever.
+        payload = {
+            "u": username,
+            "e": store.session_epoch(username),
+            "a": audience,
+            "iat": int(issued_at if issued_at is not None else time.time()),
+        }
         return sign_session(json.dumps(payload).encode("utf-8"))
 
     def _session_ttl() -> int:
@@ -148,10 +159,30 @@ def build_surface_app(
         idle = store.idle_timeout_mins
         return idle * 60 if idle > 0 else SESSION_TTL_SECS
 
-    def _set_session_cookie(response: Response, request: Request, username: str) -> None:
+    def _session_issued_at(request: Request) -> int | None:
+        """The original sign-in time from the request's current cookie, so a refresh
+        preserves it instead of restarting the absolute clock."""
+        token = request.cookies.get(cookie_name)
+        if not token:
+            return None
+        raw = read_session(token, _session_ttl())
+        if raw is None:
+            return None
+        try:
+            value = json.loads(raw).get("iat")
+            return int(value) if value is not None else None
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return None
+
+    def _set_session_cookie(
+        response: Response, request: Request, username: str, *, keep_issued_at: bool = False
+    ) -> None:
+        # A refresh (keep_issued_at) carries the original "iat" forward; a fresh sign-in
+        # starts a new absolute window.
+        issued_at = _session_issued_at(request) if keep_issued_at else None
         response.set_cookie(
             cookie_name,
-            _issue_session(username),
+            _issue_session(username, issued_at),
             httponly=True,
             samesite="lax",
             secure=request.url.scheme == "https",
@@ -173,6 +204,14 @@ def build_surface_app(
             return None
         if data.get("a") != audience:
             return None  # a cookie for another surface is not accepted here
+        # Absolute lifetime: the cookie is re-minted on every authenticated request, so
+        # without this cap a captured cookie could be kept alive indefinitely by one
+        # request per idle window. Tokens with no "iat" predate this and are refused.
+        issued_at = data.get("iat")
+        if not isinstance(issued_at, int):
+            return None
+        if time.time() - issued_at > SESSION_MAX_LIFETIME_SECS:
+            return None
         user = store.get_user(username)
         if user is None or not user.is_enabled:
             return None
@@ -282,7 +321,7 @@ def build_surface_app(
         if user is None:
             _login_throttle.record_failure(ip)
             # Tell the user when the account is disabled/locked; otherwise stay generic.
-            detail = store.login_block_message(username) or "Invalid username or password."
+            detail = store.login_block_message(username, password) or "Invalid username or password."
             logx.warn(
                 f"failed sign-in for username {username!r}",
                 request=request,
@@ -781,7 +820,7 @@ def build_surface_app(
         response = JSONResponse(payload)
         # Polling this (the client does so on activity) slides the idle window.
         if user is not None:
-            _set_session_cookie(response, request, user.username)
+            _set_session_cookie(response, request, user.username, keep_issued_at=True)
         return response
 
     @app.api_route(
@@ -789,6 +828,13 @@ def build_surface_app(
     )
     async def proxy(path: str, request: Request) -> Response:
         user = _current_user(request)
+
+        # Reject dot segments before forwarding. httpx resolves them while merging with
+        # the base URL, so "/api/../openapi.json" would leave the /api prefix entirely
+        # and reach a backend route with the proxy-auth header attached. (Starlette hands
+        # percent-encoded traversal through decoded, so this must be checked here.)
+        if path.startswith("/") or ".." in path.split("/"):
+            return JSONResponse({"detail": "Invalid API path."}, status_code=400)
 
         # Gate every API call behind a valid session when sign-in is required.
         if store.require_login and path not in _OPEN_API_PATHS and user is None:
@@ -839,7 +885,7 @@ def build_surface_app(
         )
         # Any authenticated API activity slides the idle-timeout window.
         if user is not None:
-            _set_session_cookie(response, request, user.username)
+            _set_session_cookie(response, request, user.username, keep_issued_at=True)
         return response
 
     if (dist_dir / "assets").is_dir():

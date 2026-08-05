@@ -110,3 +110,16 @@ def test_pinned_transport_connects_to_vetted_ip_and_keeps_host():
         assert seen["host"] == f"evil.example:{port}"  # Host preserved
     finally:
         srv.shutdown()
+
+
+def test_pin_applies_to_internationalised_hosts():
+    """urlsplit gives the ASCII/punycode form while httpx gives the decoded unicode
+    form; a plain equality test silently skipped the pin for IDN hosts, letting httpx
+    re-resolve at connect time and reopening the DNS-rebinding window."""
+    from app.services.net_guard import _PinnedTransport
+
+    canon = _PinnedTransport._canonical_host
+    assert canon("xn--bcher-kva.example") == canon("bücher.example")
+    assert canon("EVIL.example") == canon("evil.example")
+    assert canon("a.example.") == canon("a.example")
+    assert canon("a.example") != canon("b.example")

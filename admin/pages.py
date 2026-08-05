@@ -1033,6 +1033,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       <div class="seg" id="logSeverityFilter"></div>
       <input type="text" id="logIp" placeholder="Client IP" style="width:130px" oninput="scheduleLogReload()">
       <select id="logOp" onchange="logResetReload()"><option value="">All operations</option></select>
+      <select id="logTag" onchange="logResetReload()"><option value="">All tags</option></select>
       <input type="text" id="logSearch" placeholder="Search message (regex / wildcards)…"
         style="flex:1; min-width:180px" oninput="scheduleLogReload()">
       <button class="btn small" onclick="loadLogs()">↻ Refresh</button>
@@ -1848,6 +1849,7 @@ function _logParams() {
   if (LOG_SEVS.size) p.set('severities', [...LOG_SEVS].join(','));
   const ip = $('logIp').value.trim(); if (ip) p.set('clientIp', ip);
   const op = $('logOp').value; if (op) p.set('operation', op);
+  const tg = $('logTag').value; if (tg) p.set('tag', tg);
   const q = $('logSearch').value.trim(); if (q) p.set('search', q);
   return p;
 }
@@ -1868,6 +1870,10 @@ async function loadLogs() {
   $('logOp').innerHTML = '<option value="">All operations</option>' +
     (r.operations || []).map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('');
   $('logOp').value = curOp;
+  const curTag = $('logTag').value;
+  $('logTag').innerHTML = '<option value="">All tags</option>' +
+    (r.tags || []).map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
+  $('logTag').value = curTag;
   _logPage = r.page; _logPerPage = r.perPage; _logTotal = r.total; _logPages = r.pages;
   _logEntries = r.entries || [];
   renderLogRows(_logEntries);
@@ -1907,11 +1913,12 @@ function toggleLogSeverity(lv) {
 }
 function renderLogRows(entries) {
   if (!entries.length) { $('logTable').innerHTML = '<p class="subtle">No matching log entries.</p>'; return; }
-  let h = '<table><thead><tr><th>Date</th><th>Time</th><th>Severity</th><th>Client IP</th><th>User</th><th>Message</th></tr></thead><tbody>';
+  let h = '<table><thead><tr><th>Date</th><th>Time</th><th>Severity</th><th>Tag</th><th>Client IP</th><th>User</th><th>Message</th></tr></thead><tbody>';
   entries.forEach((e, i) => {
     h += `<tr onclick="showLogEntry(${i})" title="Click to view the full entry">` +
       `<td class="mono">${e.date}</td><td class="mono">${e.time}</td>` +
       `<td><span class="pill log-${e.severity.toLowerCase()}">${e.severity}</span></td>` +
+      `<td>${e.tag ? '<span class="pill neutral">' + esc(e.tag) + '</span>' : '<span class="muted">—</span>'}</td>` +
       `<td class="mono">${esc(e.clientIp || '—')}</td><td>${esc(e.user || '—')}</td>` +
       `<td>${esc(e.message)}</td></tr>`;
   });
@@ -1993,6 +2000,7 @@ function showLogEntry(i) {
   $('logModalBody').innerHTML =
     field('Date', e.date) + field('Time', e.time) + field('Severity', e.severity) +
     field('Client IP', e.clientIp) + field('User', e.user) + field('Operation', e.operation) +
+    field('Tag', e.tag) +
     (durMatch ? field('Execution time', durMatch[1]) : '') +
     `<div class="subtle" style="margin:12px 0 4px">${isSql ? 'SQL' : 'Message'}</div>` +
     `<pre class="codeblock" style="white-space:pre-wrap; word-break:break-word; max-height:52vh; overflow:auto">${esc(body)}</pre>`;

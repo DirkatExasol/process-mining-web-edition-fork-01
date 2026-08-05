@@ -34,6 +34,7 @@ import pages  # noqa: E402
 from app.config import (  # noqa: E402
     ADMIN_PID_PATH,
     ADMIN_SESSION_TTL_SECS,
+    SESSION_MAX_LIFETIME_SECS,
     BACKUPS_DIR,
     DEFAULT_ADMIN_USERNAME,
     FRONTEND_HTTPS_PORT,
@@ -191,14 +192,36 @@ logx.install_request_logging(app, lambda r: _current_user(r))
 _SESSION_AUDIENCE = "admin"  # this cookie is only valid for the admin interface
 
 
-def _issue_session(username: str) -> str:
+def _issue_session(username: str, issued_at: int | None = None) -> str:
     # Embed the user's session epoch so logout (which bumps it) invalidates this
     # token — otherwise the stateless Fernet token would stay valid until its TTL.
     # The audience ("a") binds the token to THIS interface: admin and app tokens
     # are signed with the same Fernet key, so without it an app session cookie
-    # would be structurally valid here (and vice-versa).
-    payload = {"u": username, "e": store.session_epoch(username), "a": _SESSION_AUDIENCE}
+    # would be structurally valid here (and vice-versa). "iat" is the ORIGINAL
+    # sign-in time, carried through every re-issue, so the sliding idle window
+    # cannot keep one session (or a captured cookie) alive forever.
+    payload = {
+        "u": username,
+        "e": store.session_epoch(username),
+        "a": _SESSION_AUDIENCE,
+        "iat": int(issued_at if issued_at is not None else time.time()),
+    }
     return sign_session(json.dumps(payload).encode("utf-8"))
+
+
+def _session_issued_at(request: Request) -> int | None:
+    """The original sign-in time from the current cookie, so a refresh preserves it."""
+    token = request.cookies.get(COOKIE)
+    if not token:
+        return None
+    raw = read_session(token, _admin_session_ttl())
+    if raw is None:
+        return None
+    try:
+        value = json.loads(raw).get("iat")
+        return int(value) if value is not None else None
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
 
 
 def _admin_session_ttl() -> int:
@@ -222,6 +245,13 @@ def _current_user(request: Request) -> User | None:
         return None
     if data.get("a") != _SESSION_AUDIENCE:
         return None  # an app session cookie is not accepted here
+    # Absolute lifetime cap — see _issue_session. Tokens minted before this existed
+    # carry no "iat" and are refused (one re-login).
+    issued_at = data.get("iat")
+    if not isinstance(issued_at, int):
+        return None
+    if time.time() - issued_at > SESSION_MAX_LIFETIME_SECS:
+        return None
     user = store.get_user(username)
     if not (user and user.is_admin and user.is_enabled):
         return None
@@ -238,10 +268,15 @@ def require_admin(request: Request) -> User:
     return user
 
 
-def _set_cookie(response: Response, request: Request, username: str) -> None:
+def _set_cookie(
+    response: Response, request: Request, username: str, *, keep_issued_at: bool = False
+) -> None:
+    # A refresh (keep_issued_at) carries the original "iat" forward so the absolute
+    # lifetime keeps counting from the real sign-in; a fresh sign-in starts a new one.
+    issued_at = _session_issued_at(request) if keep_issued_at else None
     response.set_cookie(
         COOKIE,
-        _issue_session(username),
+        _issue_session(username, issued_at),
         httponly=True,
         samesite="lax",
         secure=request.url.scheme == "https",
@@ -624,7 +659,7 @@ def login_post(request: Request, username: str = Form(...), password: str = Form
             username=username,
             operation="login",
         )
-        message = store.login_block_message(username) or (
+        message = store.login_block_message(username, password) or (
             "Invalid credentials, or the account is not an administrator."
         )
         return HTMLResponse(
@@ -804,7 +839,7 @@ class PasswordBody(BaseModel):
 @app.get("/api/session")
 def api_session(request: Request, response: Response, user: User = Depends(require_admin)):
     # Polling this on activity slides the admin idle window (re-issues the cookie).
-    _set_cookie(response, request, user.username)
+    _set_cookie(response, request, user.username, keep_issued_at=True)
     return {
         "username": user.username,
         "isAdmin": user.is_admin,
@@ -949,6 +984,7 @@ def api_logs(
     severities: str = "",
     clientIp: str = "",
     operation: str = "",
+    tag: str = "",
     search: str = "",
     page: int = 1,
     perPage: int = 25,
@@ -960,6 +996,7 @@ def api_logs(
         severities=sev_list,
         client_ip=clientIp,
         operation=operation,
+        tag=tag,
         search=search,
     )
     per_page = perPage if perPage in _LOG_PAGE_SIZES else 25
@@ -976,6 +1013,7 @@ def api_logs(
         "pages": pages,
         "config": log_store.config(),
         "operations": log_store.operations(),
+        "tags": log_store.tags(),
         "severities": list(LEVELS),
     }
 
@@ -1017,6 +1055,7 @@ def api_logs_download(
     severities: str = "",
     clientIp: str = "",
     operation: str = "",
+    tag: str = "",
     search: str = "",
     user: User = Depends(require_admin),
 ):
@@ -1026,6 +1065,7 @@ def api_logs_download(
         severities=sev_list,
         client_ip=clientIp,
         operation=operation,
+        tag=tag,
         search=search,
         limit=5000,
     )
@@ -1266,12 +1306,22 @@ async def api_backup_run_now(
 
 
 @app.post("/api/self/password")
-def api_self_password(body: PasswordBody, user: User = Depends(require_admin)):
+def api_self_password(body: PasswordBody, request: Request, user: User = Depends(require_admin)):
     try:
         store.set_password(user.username, body.password)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True}
+    # set_password bumps the session epoch, which invalidates every outstanding token
+    # (that is the point — a stolen cookie must die with the old password). Re-issue a
+    # cookie for THIS session so the admin who just changed their own password isn't
+    # signed out; every other session for them is now dead.
+    response = JSONResponse({"ok": True})
+    _set_cookie(response, request, user.username, keep_issued_at=True)
+    logx.info(
+        f"admin {user.username} changed their password — other sessions invalidated",
+        request=request, username=user.username, operation="config",
+    )
+    return response
 
 
 # ── API: users ────────────────────────────────────────────────────────────────

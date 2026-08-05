@@ -60,8 +60,8 @@ ADMIN_HTTPS_PORT = int(os.environ.get("PMW_ADMIN_HTTPS_PORT", "8453"))
 
 # The integration / data-source configuration surface runs on its own port — by
 # convention the admin port + 10 (HTTP 8100 / HTTPS 8463 with the defaults). It
-# follows the same shared TLS plan as the app + admin, and only power users,
-# developers and admins may sign in.
+# follows the same shared TLS plan as the app + admin, and only developers and
+# admins may sign in (power users are refused).
 INTEGRATION_HOST = os.environ.get("PMW_INTEGRATION_HOST", ADMIN_HOST)
 INTEGRATION_PORT = int(os.environ.get("PMW_INTEGRATION_PORT", str(ADMIN_PORT + 10)))
 INTEGRATION_HTTPS_PORT = int(
@@ -95,6 +95,15 @@ ADMIN_SESSION_TTL_SECS = int(os.environ.get("PMW_ADMIN_SESSION_TTL", str(8 * 360
 
 # Main-app sign-in session lifetime.
 SESSION_TTL_SECS = int(os.environ.get("PMW_SESSION_TTL", str(12 * 3600)))
+
+# Hard cap on how long ONE sign-in can live, regardless of activity. The session cookie
+# is re-minted on every authenticated request (that is what makes the idle timeout a
+# sliding window), so without this a captured cookie could be kept valid forever by
+# issuing one request per window. Measured from the original sign-in, carried through
+# every refresh; reaching it forces a fresh sign-in.
+SESSION_MAX_LIFETIME_SECS = int(
+    os.environ.get("PMW_SESSION_MAX_LIFETIME", str(7 * 24 * 3600))
+)
 
 # Default bootstrap administrator (created on first run if no users exist).
 DEFAULT_ADMIN_USERNAME = os.environ.get("PMW_DEFAULT_ADMIN_USER", "Administrator")

@@ -238,3 +238,104 @@ def test_inmemory_existing_keys():
     b.insert("S", "STEPS", ["PROJECT_ID", "STEP"], [["P", "a"], ["P", "b"]])
     assert b.existing_keys("S", "STEPS", ["PROJECT_ID", "STEP"]) == {("P", "a"), ("P", "b")}
     assert b.existing_keys("S", "MISSING", ["X"]) == set()
+
+
+# ── transaction brackets ──────────────────────────────────────────────────────
+
+
+def _pusher(total: int, per_push: int = 100, fail_after: int | None = None):
+    """An extractor fn that pushes `total` rows in chunks, optionally failing part-way,
+    so transaction-bracket boundaries are observable."""
+
+    def run(session):
+        session.define_table("T", {"N": ColumnType.INT}, keys=["N"])
+        written = 0
+        while written < total:
+            n = min(per_push, total - written)
+            session.push("T", [{"N": written + i} for i in range(n)])
+            written += n
+            if fail_after is not None and written >= fail_after:
+                raise RuntimeError("boom")
+        return ExtractResult(records=written, tables=("T",), detail=f"{written} rows")
+
+    return run
+
+
+def test_rows_are_committed_once_per_transaction_bracket():
+    """Rows are written inside transactions committed every `transaction_rows`, plus a
+    final commit for the remainder."""
+    mem = InMemoryIngestBackend()
+    _run(AbstractionLayer().run(
+        user="dev", extractor=_Extractor(_pusher(2500)), backend=mem, schema="S",
+        transaction_rows=1000,
+    ))
+    assert len(mem.tables["S"]["T"]["rows"]) == 2500
+    # Committed at 1000 and 2000, then a final commit for the remaining 500.
+    assert mem.commits == 3
+    assert mem.rollbacks == 0
+
+
+def test_zero_bracket_means_a_single_transaction():
+    """0 = one transaction for the whole import: exactly one commit, at the end."""
+    mem = InMemoryIngestBackend()
+    _run(AbstractionLayer().run(
+        user="dev", extractor=_Extractor(_pusher(5000)), backend=mem, schema="S",
+        transaction_rows=0,
+    ))
+    assert mem.commits == 1 and mem.rollbacks == 0
+
+
+def test_a_failed_run_rolls_back_the_open_bracket():
+    """The open bracket is discarded; brackets already committed stay committed."""
+    mem = InMemoryIngestBackend()
+    with pytest.raises(RuntimeError):
+        _run(AbstractionLayer().run(
+            user="dev", extractor=_Extractor(_pusher(5000, fail_after=1500)),
+            backend=mem, schema="S", transaction_rows=1000,
+        ))
+    assert mem.commits == 1    # the first full bracket was already durable
+    assert mem.rollbacks == 1  # the partial bracket is discarded
+
+
+def test_commit_count_is_reported_in_the_status():
+    layer = AbstractionLayer()
+    _run(layer.run(
+        user="dev", extractor=_Extractor(_pusher(2000)), backend=InMemoryIngestBackend(),
+        schema="S", transaction_rows=1000,
+    ))
+    assert layer.status_for("dev").public()["commits"] == 2
+
+
+def test_sql_backend_commits_through_the_supplied_callable():
+    """SqlIngestBackend forwards commit/rollback to the connection that owns them."""
+    calls: list[str] = []
+    backend = SqlIngestBackend(
+        run_sql=lambda sql: calls.append("sql") or [],
+        commit=lambda: calls.append("commit"),
+        rollback=lambda: calls.append("rollback"),
+    )
+    _run(AbstractionLayer().run(
+        user="dev", extractor=_Extractor(_pusher(2000)), backend=backend, schema="S",
+        transaction_rows=1000,
+    ))
+    assert calls.count("commit") == 2 and "rollback" not in calls
+    # Without the callables the backend is a no-op (autocommit), never raising.
+    plain = SqlIngestBackend(run_sql=lambda sql: [])
+    plain.commit()
+    plain.rollback()
+
+
+def test_clamp_transaction_rows():
+    from app.integration.backends import (
+        DEFAULT_TRANSACTION_ROWS,
+        MAX_TRANSACTION_ROWS,
+        clamp_transaction_rows,
+    )
+
+    assert clamp_transaction_rows(0) == 0        # explicit single transaction
+    assert clamp_transaction_rows(-5) == 0
+    assert clamp_transaction_rows(50) == 1000    # below one INSERT batch → floored
+    assert clamp_transaction_rows(25_000) == 25_000
+    assert clamp_transaction_rows(10**9) == MAX_TRANSACTION_ROWS
+    assert clamp_transaction_rows("nope") == DEFAULT_TRANSACTION_ROWS
+    assert clamp_transaction_rows(None) == DEFAULT_TRANSACTION_ROWS

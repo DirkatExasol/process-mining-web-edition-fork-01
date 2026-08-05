@@ -8,6 +8,10 @@ forward to the shared LogStore. Use the severity helpers for intent:
     log.warn(...)   # recoverable problems (failed login, unauthorised)
     log.error(...)  # exceptions / failures
     log.debug(...)  # verbose request/trace detail
+
+Every helper also takes ``tag=`` — a coarse category that groups a whole activity
+across operations and severities, e.g. ``tag=TAG_DATA`` ("DATA") on every event of a
+data import so the admin can filter the log down to imports alone.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from .store import logs as _logs
+from .store.logs import TAG_DATA  # noqa: F401 — re-exported for callers
 
 
 def client_ip(request: Any) -> str:
@@ -36,6 +41,7 @@ def _emit(
     request: Any = None,
     username: str = "",
     operation: str = "",
+    tag: str = "",
 ) -> None:
     try:
         _logs.store.record(
@@ -44,6 +50,7 @@ def _emit(
             client_ip=client_ip(request),
             username=username,
             operation=operation,
+            tag=tag,
         )
     except Exception:  # noqa: BLE001 — never let logging break a request
         pass

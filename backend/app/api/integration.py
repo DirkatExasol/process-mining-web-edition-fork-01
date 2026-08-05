@@ -11,17 +11,17 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from .. import log_events as logx
 from ..db.manager import current_db
 from ..integration import SqlIngestBackend, layer
+from ..integration.backends import DEFAULT_TRANSACTION_ROWS, clamp_transaction_rows
 from ..integration.extractors import FileExtractor
 from ..integration.files import FileAccessError, read_preview
 from ..integration.parsing import ROLES, analyze_timestamp, detect_fields, regex_from_segment
 from ..store.security import store as security_store
-
-router = APIRouter(prefix="/api/integration", tags=["integration"])
 
 USER_HEADER = "x-pmw-user"
 
@@ -29,6 +29,42 @@ USER_HEADER = "x-pmw-user"
 def _request_user(request: Request) -> str | None:
     value = request.headers.get(USER_HEADER)
     return value.strip() if value and value.strip() else None
+
+
+def _require_developer(request: Request) -> str | None:
+    """Gate every integration endpoint on the Developer (or admin) role.
+
+    The integration *console* checks this too (integration/server.py), but that only
+    guards signing in to port 8100. These endpoints live on the shared compute backend,
+    and the MAIN app proxies `/api/*` for any enabled user — so without this check a
+    plain user (or a power user, who is deliberately refused the console) could drive the
+    whole data-source surface through the app's proxy. Also honours the admin's
+    integration on/off switch, so disabling the console disables its API too.
+
+    When no user header is present, sign-in is disabled for the whole deployment
+    (single-user/dev mode) and the surface is open, matching the other routers.
+    """
+    username = _request_user(request)
+    if username is None:
+        return None
+    if not security_store.integration_enabled:
+        raise HTTPException(status_code=403, detail="The integration console is turned off.")
+    user = security_store.get_user(username)
+    if user is None or not user.is_enabled or not (user.is_developer or user.is_admin):
+        raise HTTPException(
+            status_code=403,
+            detail="You need the Developer role to use the integration features.",
+        )
+    return username
+
+
+# The gate is a ROUTER-level dependency, so it covers every endpoint below —
+# including ones added later — rather than relying on each to remember it.
+router = APIRouter(
+    prefix="/api/integration",
+    tags=["integration"],
+    dependencies=[Depends(_require_developer)],
+)
 
 
 def _active_schema() -> tuple[str | None, str | None, bool]:
@@ -142,6 +178,13 @@ def delete_source_type(source_type_id: str, request: Request) -> dict:
 SOURCE_KINDS = {"file"}
 
 
+def _transaction_rows(cfg: dict) -> int:
+    """The source's configured transaction-bracket size (rows committed together)."""
+    if "transactionRows" not in cfg:
+        return DEFAULT_TRANSACTION_ROWS
+    return clamp_transaction_rows(cfg.get("transactionRows"))
+
+
 class SourceBody(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     kind: str = Field(default="file", max_length=40)
@@ -149,12 +192,23 @@ class SourceBody(BaseModel):
     config: dict = Field(default_factory=dict)
 
 
-def _source_config(body: SourceBody) -> str:
+def _source_config(body: SourceBody, user: str | None) -> str:
     if body.kind not in SOURCE_KINDS:
         raise HTTPException(status_code=400, detail=f"Unknown source kind {body.kind!r}.")
     blob = json.dumps(body.config)
     if len(blob) > 8000:
         raise HTTPException(status_code=400, detail="Source settings are too large.")
+    # A watchdog runs headless with the destination's STORED credentials, so the saver
+    # must be assigned to that connection. (Also re-checked on every poll, which covers
+    # later revocation — this save-time check just fails fast with a clear message.)
+    wd = body.config.get("watchdog")
+    if isinstance(wd, dict) and wd.get("enabled"):
+        conn_id = str(wd.get("connectionId") or "").strip()
+        if not conn_id or not security_store.user_can_use(conn_id, user):
+            raise HTTPException(
+                status_code=400,
+                detail="The watchdog's destination connection is not assigned to you.",
+            )
     return blob
 
 
@@ -168,7 +222,7 @@ def list_sources(request: Request) -> list[dict]:
 @router.post("/sources")
 def create_source(body: SourceBody, request: Request) -> dict:
     user = _request_user(request)
-    config = _source_config(body)
+    config = _source_config(body, user)
     created = security_store.add_source(user or "", name=body.name, kind=body.kind, config=config)
     return created.public()
 
@@ -176,7 +230,7 @@ def create_source(body: SourceBody, request: Request) -> dict:
 @router.put("/sources/{source_id}")
 def update_source(source_id: str, body: SourceBody, request: Request) -> dict:
     user = _request_user(request)
-    config = _source_config(body)
+    config = _source_config(body, user)
     # If the file path changed, the old read checkpoint no longer applies — forget it so
     # the watchdog re-reads the new file from the start.
     old = _source_owned(source_id, user)
@@ -279,23 +333,54 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
     if not schema:
         raise HTTPException(status_code=400, detail="The active connection has no target schema.")
 
-    backend = SqlIngestBackend(run_sql=lambda sql: mgr._execute_sync(sql).rows)
+    # Insert inside real transactions: turn the driver's per-statement autocommit off
+    # so the layer's bracket (transactionRows) decides when work becomes durable.
+    raw = mgr._conn
+    if raw is not None:
+        raw.set_autocommit(False)
+    backend = SqlIngestBackend(
+        run_sql=lambda sql: mgr._execute_sync(sql).rows,
+        commit=(lambda: raw.commit()) if raw is not None else None,
+        rollback=(lambda: raw.rollback()) if raw is not None else None,
+    )
     extractor = FileExtractor(
         path=path, encoding=str(cfg.get("encoding") or "utf-8"),
         fields=fields, project_id=body.projectId.strip(),
     )
     conn = security_store.get_connection(mgr.active_profile_id) if mgr.active_profile_id else None
+    project_id = body.projectId.strip()
+    transaction_rows = _transaction_rows(cfg)
+    target = f"{conn.name if conn is not None else schema}/{schema}"
+    logx.usage(
+        f"import started: {source.name!r} (source type {st.name!r}) → {target} "
+        f"project {project_id}",
+        request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
+    )
     try:
         result = await layer.run(
             user=user, extractor=extractor, backend=backend, schema=schema,
             connection_id=mgr.active_profile_id,
             connection_name=conn.name if conn is not None else None,
             source_name=source.name, source_type_name=st.name,
+            transaction_rows=transaction_rows,
         )
     except FileAccessError as exc:
+        logx.error(
+            f"import failed: {source.name!r} → {target} project {project_id} — {exc}",
+            request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
+        )
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:  # noqa: BLE001 — surfaced to the caller + the status panel
+        logx.error(
+            f"import failed: {source.name!r} → {target} project {project_id} — {exc}",
+            request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
+        )
         raise HTTPException(status_code=400, detail=f"Extraction failed: {exc}")
+    logx.usage(
+        f"import finished: {source.name!r} → {target} project {project_id} — "
+        f"{result.detail}",
+        request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
+    )
     return {"records": result.records, "detail": result.detail}
 
 
