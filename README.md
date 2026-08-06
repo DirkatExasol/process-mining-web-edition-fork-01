@@ -8,8 +8,8 @@
 [![Exasol|database](https://img.shields.io/badge/Exasol-database-blue.svg)](https://www.exasol.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-**In-place lakehouse query engine for Exasol. DataFusion runs in Rust UDFs and queries Iceberg
-and Databricks tables straight from SQL.**
+**A demonstrator for analyzing business or technical processes in a multiuser web environment. A suite for analyzing,  
+administration, and integration of data sources**
 
 </div>
 
