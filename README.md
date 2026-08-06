@@ -1,4 +1,27 @@
-# Process Mining Demonstrator — Web Edition
+<div align="center">
+
+<img src="frontend/web/public/logo.svg" width="128" height="128">
+
+# Process Mining Demonstrator —- Web-Edition
+
+
+[![Exasol|database](https://img.shields.io/badge/Exasol-database-blue.svg)](https://www.exasol.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
+**In-place lakehouse query engine for Exasol. DataFusion runs in Rust UDFs and queries Iceberg
+and Databricks tables straight from SQL.**
+
+</div>
+
+
+
+
+
+
+
+
+
+
 
 ## **What Is Process Mining and why it matters?**
 Every transaction in your ERP, CRM, or ticketing system leaves a trace: a case ID, an activity, a timestamp. Process mining reads those event logs and reconstructs how your processes actually run — not how the flowchart says they should.
@@ -137,8 +160,9 @@ change the password on first use. It is organised into tabs: **App Control**
 **Logging.** A shared, structured log written by all servers. Each entry carries a
 timestamp, severity (INFO → USAGE → WARN → ERROR → DEBUG), client IP, user, an
 *operation* (which code path wrote it) and an optional **tag** — a coarser category
-grouping a whole activity across operations and severities. **Data imports are tagged
-`DATA`**: the start and result of every import, whether run by hand in the integration
+grouping a whole activity across operations and severities. Three tags ship today: **`SQL`** on every entry that quotes an executed statement (the
+per-statement DEBUG trace and the error/timeout entries), **`BACKUP/RESTORE`** on every
+export, inspect and restore including their failures, and **`DATA`** on data imports: the start and result of every import, whether run by hand in the integration
 console or by a file-source watchdog, at **USAGE** on success and **WARN/ERROR** on
 failure. Filter by tag to see the complete import history. The exported `.log` line is
 `DATE -- TIME -- SEVERITY -- CLIENT-IP -- USER -- TAG -- text`.

@@ -395,21 +395,21 @@ class DatabaseManager:
             if log_errors:
                 logx.error(
                     f"SQL execution timed out after {timeout}s: {_short_sql(sql)}",
-                    operation="db-timeout",
+                    operation="db-timeout", tag=logx.TAG_SQL,
                 )
             raise
         except Exception as exc:  # noqa: BLE001
             if log_errors:
                 logx.error(
                     f"SQL execution error: {friendly_error(exc)} — SQL: {_short_sql(sql)}",
-                    operation="db-sql",
+                    operation="db-sql", tag=logx.TAG_SQL,
                 )
             raise
         # Every executed statement, verbatim (filters are inlined in the WHERE
         # clause) with its execution time, at DEBUG under its own 'sql' operation
         # — only persisted when the admin raises the log level to DEBUG.
         elapsed_ms = (time.perf_counter() - started) * 1000.0
-        logx.debug(f"SQL ({elapsed_ms:.1f} ms): {sql}", operation="sql")
+        logx.debug(f"SQL ({elapsed_ms:.1f} ms): {sql}", operation="sql", tag=logx.TAG_SQL)
         return result
 
     async def execute(self, sql: str, timeout: float | None = None) -> QueryResult:

@@ -440,7 +440,7 @@ const adminLogging: HelpTopic = {
       body: [
         p('The Logging tab is a shared, structured application log written by all three servers (main app, admin interface and compute backend). Each entry records a timestamp, severity, client IP, user, an operation, an optional tag and a message.'),
         p('Severity is a cumulative ladder — INFO, USAGE, WARN, ERROR, DEBUG. Pick the maximum level to record (the cheaper levels are always kept; DEBUG only when explicitly selected). Filter the view by severity, client IP, operation or tag, narrow it with a regular-expression search, page through the results, and Download the current log or Clear it.'),
-        def('Tags', 'Where the operation says which code path wrote an entry, a tag is a coarser category that groups an entire activity across operations and severities. Data imports carry the tag DATA — the start and the result of every import, whether triggered by hand in the integration console or by a file-source watchdog. Pick DATA in the tag filter to see the complete import history: successful imports are recorded at USAGE, and a failure at WARN or ERROR with the reason.'),
+        def('Tags', 'Where the operation says which code path wrote an entry, a tag is a coarser category that groups an entire activity across operations and severities. Three tags ship today. SQL marks every entry that quotes an executed database statement — the per-statement DEBUG trace plus the error and timeout entries — so picking SQL in the tag filter gives you the database traffic on its own, at whatever severity it occurred. BACKUP/RESTORE marks every export, inspect and restore, scheduled or manual, including the failures — the whole custody trail of a backup file in one filter. DATA marks data imports — the start and the result of every import, whether triggered by hand in the integration console or by a file-source watchdog. Pick DATA in the tag filter to see the complete import history: successful imports are recorded at USAGE, and a failure at WARN or ERROR with the reason.'),
         def('Audited actions', 'Security- and configuration-relevant actions are recorded with a dedicated operation tag so you can filter to them: sign-in and sign-out (login / logout), LDAP server and account tests and config changes (ldap), certificate generate / upload / activate / delete (tls), database-connection create / edit / assign / delete and connection and LLM-server tests (connection / llm-test), backup export / inspect / restore (backup), and login-page customization (customize). Deletions are recorded as warnings.'),
         tip('A fresh log file is started automatically once the live log passes the configured size (“New file after N MB”); rotated files are saved under data/logs/.'),
       ],
@@ -1384,13 +1384,16 @@ const integrationSources: HelpTopic = {
     {
       heading: 'Building a source type',
       body: [
-        p('Open the Source types section and click ＋. Paste one example log line, then map each field on the tabbed step: pick a role tab (EVENT_TIME, STEP, EVENT_ID or Metas) and either highlight a piece of the line to generate a regex, or type the regex yourself. Every field is defined manually — there is no auto-detection, by design, so the extraction is always exactly what you intend.'),
+        p('Open the Source types section and click ＋. Paste one example log line, then map each field on the tabbed step: pick a role tab, then either highlight a piece of the line and press 🎯 Use selection to generate a regex, or press ＋ Add field and type the regex yourself. Every field is defined manually — there is no auto-detection, by design, so the extraction is always exactly what you intend.'),
         ul(
           'EVENT_TIME — the timestamp. It is analysed and normalised to YEAR-MONTH-DAY HOUR:MINUTE:SECOND.',
           'EVENT_ID — the case/journey key. It is stored MD5-hashed, so a raw login or user id never lands in the clear.',
           'STEP — the activity name for the event.',
           'Metas — up to three extra attributes; give each a business name shown in the app.',
+          'Helper — a value used only by compound-step rules (see below). Extracted from the line but written to no column.',
         ),
+        p('A field’s regex should have exactly one capturing group — that group is the value. Without a group the whole match is used. Each row shows live what it captured from your sample, so a wrong pattern is obvious immediately.'),
+        tip('Name your Metas and Helpers deliberately: the name is the label a compound rule uses to reference the field, and META names become the business titles shown in the app.'),
         p('A live “Example JOURNEYS record” shows the row your spec would produce from the sample (with the original id, labelled “stored as MD5”), so you can confirm the mapping before saving.'),
       ],
     },
@@ -1411,17 +1414,70 @@ const integrationSources: HelpTopic = {
     {
       heading: 'Compound steps — build a step from several fields',
       body: [
-        p('Sometimes the real activity is split across fields: the log records the action in one place and its outcome in another. In an Apache log, “POST /shop/login … 200” is a successful login and “… 500” a failed one, but the path alone gives “login” for both.'),
-        p('Open the STEP tab: under the step field you’ll find Compound steps. Each rule is a badge showing the step it produces and its conditions (about four are visible, then the list scrolls); a ✓ marks the rules that match your sample line. Click ＋ Add rule, or click a badge, to open a panel where you set:'),
+        p('Sometimes the real activity is split across fields: the log records the action in one place and its outcome in another. In an Apache log, “POST /shop/login … 200” is a successful login and “… 500” a failed one — but the path alone yields “login” for both, so the process map cannot tell them apart.'),
+        p('A compound rule fixes that. It names the step to produce and the conditions that must all hold. Take this line:'),
+        code('10.185.248.71 - - [09/Jan/2015:19:12:06 +0000] 4213\n"POST /shop/login?userId=20253471 HTTP/1.1" 200 512 "-" "Mozilla/5.0 …"'),
+        p('With step mapped to the path segment and the HTTP status mapped as a Helper, two rules split one activity into two:'),
+        table(
+          ['Rule', 'Conditions (all must hold)', 'STEP written'],
+          [
+            ['1', 'step is “login” · status is “200”', 'login successful'],
+            ['2', 'step is “login” · status is “500”', 'login failed'],
+          ],
+        ),
+        p('Anything the rules do not cover is untouched — a “basket” line still writes “basket”.'),
+      ],
+    },
+    {
+      heading: 'Writing the rules',
+      body: [
+        p('Compound steps live in the STEP tab of the mapping screen, under the step field — they only ever produce a STEP value, so that is where they belong.'),
+        p('Each rule is a badge showing the step it produces and its conditions; three badges are visible and the list scrolls beyond that. A ✓ on a badge means that rule matches your sample line. Click ＋ Add rule, or click a badge, to open its panel:'),
         ul(
           'Step becomes — the name written to STEP, e.g. “login successful”.',
-          'when / and — a field, a comparison (is, is not, contains, starts with, ends with, matches regex) and a value.',
+          'when / and — a field, a comparison, and a value. Add as many conditions as you need; every one must hold.',
+          'Add a helper field — extract a new value on the spot without leaving the panel.',
         ),
-        p('Rules are numbered in the order they are checked, and the panel tells you whether the rule you are editing matches the sample.'),
-        p('Rules are checked from top to bottom and the first one whose conditions all hold wins. If no rule matches, the plain STEP field’s value is used unchanged — so compound steps are entirely optional and can be added to an existing source type without disturbing it.'),
-        def('Helper fields', 'A value you only need for matching — an HTTP status, a result code — does not belong in META. Extract it as a helper field instead: helper fields are read from the line and are available to compound rules, but are NEVER written to the database, so all three META columns stay free for business attributes. Add one straight from the rule panel (name + regex, with a live check against your sample), or map it with the highlighting tools on the Helper tab.'),
-        tip('While you build the rules the wizard shows what each field captures from your sample line, and the “Example JOURNEYS record” updates to the derived step (marked “compound”), so you can confirm the outcome before saving.'),
-        warn('Comparisons ignore case and surrounding spaces (log casing is rarely dependable). Use “matches regex” when you need an exact pattern. A rule with no resulting step, or no conditions, is ignored rather than applied to every event.'),
+        p('The panel shows what each referenced field captures from your sample (“= 200”) and whether the rule as a whole matches, so you can confirm a rule before closing it.'),
+        table(
+          ['Comparison', 'True when the captured value…'],
+          [
+            ['is', 'equals the value'],
+            ['is not', 'differs from the value'],
+            ['contains', 'contains the value anywhere'],
+            ['starts with', 'begins with the value'],
+            ['ends with', 'ends with the value'],
+            ['matches regex', 'matches the pattern (case-sensitive, exact control)'],
+          ],
+        ),
+        warn('All comparisons except “matches regex” ignore case and surrounding spaces — log casing is rarely dependable. Use “matches regex” when you need an exact pattern.'),
+      ],
+    },
+    {
+      heading: 'How rules are applied',
+      body: [
+        ul(
+          'Rules are checked in the order they are listed — the badge number is that order — and the FIRST rule whose conditions all hold wins. Put specific rules above general ones.',
+          'If no rule matches, the plain STEP field’s value is used unchanged. Compound steps are therefore purely additive: adding them to an existing source type cannot break it.',
+          'A rule with no resulting step, or no conditions, is ignored rather than applied to every event — a half-built rule can never relabel your data.',
+          'The same rules apply to a manual ▷ run and to a watchdog import, so a live feed is labelled identically.',
+        ),
+        p('Derived names are real step names: the import creates a STEPS definition — shape, colour, zero score — for “login successful” and “login failed” just as it would for any other step, so both appear as separate nodes in the process map with their own paths through it.'),
+        def('Locked fields', 'A field referenced by a compound rule shows a 🔒 instead of its remove button, and the row names the rules using it. Deleting it would leave those rules pointing at a field that no longer exists — they would quietly stop matching — so remove it from the rules first, then delete it. Renaming needs no such care: the rules follow the new name automatically.'),
+        warn('Changed rules only affect FUTURE imports; rows already written keep the step names they were given. Importing the same file again APPENDS its events rather than replacing them, so to re-apply changed rules to existing data, delete the project first — in the app’s connection editor, Projects tab — and then import again.'),
+        tip('A misconfigured rule usually shows up as a surprise in the console’s “Events skipped” KPI or as unexpected nodes on the map. The Example JOURNEYS record in the wizard marks a compound-derived step with “compound”, so check it there before you import.'),
+      ],
+    },
+    {
+      heading: 'Helper fields',
+      body: [
+        p('A value you need only for matching — an HTTP status, a result code, a queue name — does not belong in META. Map it on the Helper tab, or add one directly from a rule panel.'),
+        ul(
+          'Helper fields are extracted from every line and are available to compound rules.',
+          'They are written to NO database column, so all three META columns stay free for business attributes.',
+          'They are named like Metas, and that name is what a rule references. Give each a distinct, meaningful name.',
+        ),
+        tip('Adding a helper from inside the rule panel also wires it into the rule’s first empty condition, so you go straight from “I need the status” to “status is 200” without switching tabs.'),
       ],
     },
     {

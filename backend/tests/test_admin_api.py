@@ -888,8 +888,14 @@ def test_backup_actions_are_logged(admin):
     assert "inspected a backup file" in joined
     assert "restored a settings backup" in joined
     assert "inspect failed" in joined  # the failure is recorded
-    # Every one is tagged with the backup operation.
+    # Every one carries the backup operation AND the BACKUP/RESTORE tag, so the whole
+    # custody trail of a backup file — export, inspect, restore and their failures —
+    # is reachable from the tag filter alone, at any severity.
     assert entries and all(e["operation"] == "backup" for e in entries)
+    assert all(e["tag"] == "BACKUP/RESTORE" for e in entries)
+    tagged = server.log_store.query(tag="BACKUP/RESTORE", limit=50)
+    assert len(tagged) == len(entries)
+    assert {"USAGE", "WARN"} & {e["severity"] for e in tagged}
 
 
 def test_max_failed_logins_config_roundtrip(admin):

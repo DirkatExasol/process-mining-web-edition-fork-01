@@ -125,11 +125,11 @@ def _write_scheduled_backup(trigger: str, password: str | None = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         status = {"at": stamp, "ok": False, "trigger": trigger, "error": str(exc)}
         store.set_backup_schedule_status(status)
-        logx.error(f"scheduled backup failed ({trigger}): {exc}", operation="backup")
+        logx.error(f"scheduled backup failed ({trigger}): {exc}", operation="backup", tag=logx.TAG_BACKUP)
         raise
     status = {"at": stamp, "ok": True, "trigger": trigger, "file": name, "bytes": len(data)}
     store.set_backup_schedule_status(status)
-    logx.usage(f"automatic backup written: {name} ({trigger})", operation="backup")
+    logx.usage(f"automatic backup written: {name} ({trigger})", operation="backup", tag=logx.TAG_BACKUP)
     return status
 
 
@@ -1171,12 +1171,12 @@ def api_backup_export(
     except Exception as exc:  # noqa: BLE001
         logx.error(
             f"admin {user.username} backup export failed: {exc}",
-            request=request, username=user.username, operation="backup",
+            request=request, username=user.username, operation="backup", tag=logx.TAG_BACKUP,
         )
         raise
     logx.usage(
         f"admin {user.username} exported a settings backup — {_export_desc(body, bool(password))}",
-        request=request, username=user.username, operation="backup",
+        request=request, username=user.username, operation="backup", tag=logx.TAG_BACKUP,
     )
     stamp = datetime.datetime.now().strftime("%Y-%m-%d")
     return Response(
@@ -1199,12 +1199,12 @@ def api_backup_inspect(
     except HTTPException as exc:
         logx.warn(
             f"admin {user.username} backup inspect failed: {exc.detail}",
-            request=request, username=user.username, operation="backup",
+            request=request, username=user.username, operation="backup", tag=logx.TAG_BACKUP,
         )
         raise
     logx.usage(
         f"admin {user.username} inspected a backup file",
-        request=request, username=user.username, operation="backup",
+        request=request, username=user.username, operation="backup", tag=logx.TAG_BACKUP,
     )
     return backup_service.summarize(payload)
 
@@ -1218,7 +1218,7 @@ def api_backup_restore(
     except HTTPException as exc:
         logx.warn(
             f"admin {user.username} backup restore failed (decode): {exc.detail}",
-            request=request, username=user.username, operation="backup",
+            request=request, username=user.username, operation="backup", tag=logx.TAG_BACKUP,
         )
         raise
     try:
@@ -1226,13 +1226,13 @@ def api_backup_restore(
     except Exception as exc:  # noqa: BLE001
         logx.error(
             f"admin {user.username} backup restore failed: {exc}",
-            request=request, username=user.username, operation="backup",
+            request=request, username=user.username, operation="backup", tag=logx.TAG_BACKUP,
         )
         raise
     logx.warn(
         f"admin {user.username} restored a settings backup — options: "
         f"{_restore_opts_desc(body.options)}",
-        request=request, username=user.username, operation="backup",
+        request=request, username=user.username, operation="backup", tag=logx.TAG_BACKUP,
     )
     return {"ok": True}
 
@@ -1274,7 +1274,7 @@ def api_backup_schedule_set(
     logx.usage(
         f"admin {user.username} updated the backup schedule "
         f"(enabled={body.enabled}, cron={body.cron!r})",
-        request=request, username=user.username, operation="backup",
+        request=request, username=user.username, operation="backup", tag=logx.TAG_BACKUP,
     )
     return store.backup_schedule()
 
@@ -1300,7 +1300,7 @@ async def api_backup_run_now(
         raise HTTPException(status_code=400, detail=status.get("error", "Backup failed."))
     logx.usage(
         f"admin {user.username} ran a manual scheduled backup → {status.get('file')}",
-        request=request, username=user.username, operation="backup",
+        request=request, username=user.username, operation="backup", tag=logx.TAG_BACKUP,
     )
     return status
 

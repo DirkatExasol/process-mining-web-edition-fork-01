@@ -60,9 +60,28 @@ export function SourceTypeWizard({
   const [error, setError] = useState<string | null>(null)
   const previewRef = useRef<HTMLDivElement>(null)
 
-  const setField = (id: string, patch: Partial<ExtractionField>) =>
+  const setField = (id: string, patch: Partial<ExtractionField>) => {
+    // Compound rules reference a field BY NAME, so a rename would otherwise orphan
+    // every rule pointing at the old one. Carry the rename into the rules instead —
+    // the reference follows the field and nothing silently stops matching.
+    const before = fields.find((f) => f.id === id)?.name.trim() ?? ''
+    const after = (patch.name ?? '').trim()
+    if (patch.name !== undefined && before && after && before !== after) {
+      setCompound((rs) =>
+        rs.map((r) => ({
+          ...r,
+          when: r.when.map((c) => (c.field.trim() === before ? { ...c, field: after } : c)),
+        })),
+      )
+    }
     setFields((fs) => fs.map((f) => (f.id === id ? { ...f, ...patch } : f)))
-  const removeField = (id: string) => setFields((fs) => fs.filter((f) => f.id !== id))
+  }
+  const removeField = (id: string) => {
+    // Guarded in the UI by the lock, and here too so no other path can orphan a rule.
+    const name = fields.find((f) => f.id === id)?.name.trim() ?? ''
+    if (name && rulesUsingField(compound, name).length > 0) return
+    setFields((fs) => fs.filter((f) => f.id !== id))
+  }
 
   const useSelection = async () => {
     const el = previewRef.current
@@ -262,6 +281,7 @@ export function SourceTypeWizard({
                   key={f.id}
                   field={f}
                   sample={sample}
+                  usedBy={rulesUsingField(compound, f.name)}
                   onChange={(patch) => setField(f.id!, patch)}
                   onRemove={() => removeField(f.id!)}
                 />
@@ -696,6 +716,16 @@ function CompoundRuleEditor({
   )
 }
 
+/** The steps of every compound rule that references `name` — a field with any is locked
+ *  against deletion, because removing it would leave those rules unable to match. */
+function rulesUsingField(rules: CompoundRule[], name: string): string[] {
+  const key = (name || '').trim()
+  if (!key) return []
+  return rules
+    .filter((r) => r.when.some((c) => c.field.trim() === key))
+    .map((r) => r.step.trim() || '(unnamed rule)')
+}
+
 /** What each named field captures from the sample — the values compound rules match on. */
 function fieldValues(fields: ExtractionField[], sample: string): Record<string, string> {
   const values: Record<string, string> = {}
@@ -711,11 +741,14 @@ function fieldValues(fields: ExtractionField[], sample: string): Record<string, 
 function FieldRow({
   field,
   sample,
+  usedBy,
   onChange,
   onRemove,
 }: {
   field: ExtractionField
   sample: string
+  /** Steps of the compound rules referencing this field — non-empty means it is locked. */
+  usedBy: string[]
   onChange: (patch: Partial<ExtractionField>) => void
   onRemove: () => void
 }) {
@@ -747,7 +780,10 @@ function FieldRow({
   }, [matchValue])
 
   return (
-    <div className="col" style={{ gap: 6, padding: 10, borderRadius: 10, background: 'var(--fill)' }}>
+    <div
+      className="col field-row"
+      style={{ gap: 6, padding: 10, borderRadius: 10, background: 'var(--fill)' }}
+    >
       {/* field name (or role label) + regex on one line */}
       <div className="row" style={{ gap: 6, alignItems: 'center' }}>
         {field.role === 'meta' || field.role === 'aux' ? (
@@ -783,9 +819,28 @@ function FieldRow({
           spellCheck={false}
           style={{ flex: 1, minWidth: 0, fontFamily: 'var(--mono, monospace)', fontSize: 12 }}
         />
-        <button className="icon-btn" title="Remove field" aria-label="Remove field" onClick={onRemove}>
-          ✕
-        </button>
+        {usedBy.length > 0 ? (
+          // Deleting it would leave those rules pointing at a field that no longer
+          // exists, so they would quietly stop matching. Refuse, and say why.
+          <span
+            className="icon-btn"
+            style={{ cursor: 'not-allowed', color: 'var(--orange)' }}
+            aria-disabled="true"
+            role="img"
+            aria-label={`Locked — used by ${usedBy.length} compound rule${usedBy.length === 1 ? '' : 's'}`}
+            title={
+              `Used by ${usedBy.length} compound step rule${usedBy.length === 1 ? '' : 's'} ` +
+              `(${usedBy.join(', ')}).\n\nRemove the field from those rules first — ` +
+              `deleting it now would stop them matching. Renaming is safe: the rules follow the new name.`
+            }
+          >
+            🔒
+          </span>
+        ) : (
+          <button className="icon-btn" title="Remove field" aria-label="Remove field" onClick={onRemove}>
+            ✕
+          </button>
+        )}
       </div>
       {field.role === 'meta' && (
         <input
@@ -794,6 +849,12 @@ function FieldRow({
           onChange={(e) => onChange({ title: e.target.value })}
           placeholder="Business name (e.g. Book ID) — shown in the app"
         />
+      )}
+      {usedBy.length > 0 && (
+        <span className="t-caption2" style={{ color: 'var(--orange)' }}>
+          🔒 Used by {usedBy.length} compound rule{usedBy.length === 1 ? '' : 's'}:{' '}
+          {usedBy.join(', ')} — remove it there before deleting this field. Renaming is safe.
+        </span>
       )}
       <span className="t-caption2" style={{ color }}>
         {field.regex

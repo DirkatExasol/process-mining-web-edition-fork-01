@@ -300,3 +300,43 @@ def test_sql_trace_is_dropped_below_debug_level(logstore):
     mgr = _bare_manager(OkConn())
     asyncio.run(mgr.execute("SELECT 1"))
     assert logstore.query(operation="sql") == []
+
+
+def test_sql_logs_carry_the_sql_tag(logstore):
+    """Every entry that quotes an executed statement is tagged SQL, so the admin can
+    filter the log down to database traffic across all severities."""
+    import app.db.manager as manager
+    from app.store.logs import TAG_SQL
+
+    store = logstore
+
+    mgr = manager.DatabaseManager.__new__(manager.DatabaseManager)
+    mgr._lock = __import__("threading").Lock()
+
+    # A successful statement → the DEBUG trace.
+    class _Stmt:
+        result_type = "resultSet"
+        def column_names(self): return ["A"]
+        def fetchall(self): return [[1]]
+
+    class _Conn:
+        def execute(self, sql): return _Stmt()
+
+    mgr._conn = _Conn()
+    asyncio.run(mgr.execute("SELECT 1 FROM DUAL"))
+
+    # A failing statement → the ERROR entry that quotes it.
+    class _Boom:
+        def execute(self, sql): raise RuntimeError("nope")
+
+    mgr._conn = _Boom()
+    with pytest.raises(Exception):
+        asyncio.run(mgr.execute("SELECT bad FROM DUAL"))
+
+    tagged = store.query(tag=TAG_SQL)
+    severities = {e["severity"] for e in tagged}
+    assert "DEBUG" in severities and "ERROR" in severities
+    assert all(e["tag"] == "SQL" for e in tagged)
+    # Both statements are findable through the one tag.
+    joined = " ".join(e["message"] for e in tagged)
+    assert "SELECT 1 FROM DUAL" in joined and "SELECT bad FROM DUAL" in joined

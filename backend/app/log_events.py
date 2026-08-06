@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from .store import logs as _logs
-from .store.logs import TAG_DATA  # noqa: F401 — re-exported for callers
+from .store.logs import TAG_BACKUP, TAG_DATA, TAG_SQL  # noqa: F401 — re-exported
 
 
 def client_ip(request: Any) -> str:

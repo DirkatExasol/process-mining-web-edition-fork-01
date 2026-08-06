@@ -58,6 +58,14 @@ def _clean_field(value: str) -> str:
 # across operations and severities — e.g. every event of a data import is TAG=DATA,
 # whether it ends at USAGE (success) or ERROR (failure).
 TAG_DATA = "DATA"
+# Every log entry that carries an executed SQL statement — the DEBUG trace of each
+# statement plus the error/timeout entries that quote it — so the admin can filter the
+# log down to database traffic alone.
+TAG_SQL = "SQL"
+# Every backup or restore action — scheduled and manual export, inspect, restore, and
+# each of their failure paths — so the whole custody trail of a backup file reads as one
+# filterable group.
+TAG_BACKUP = "BACKUP/RESTORE"
 _MAX_TAG_CHARS = 24
 
 
