@@ -60,7 +60,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full component and formula map.
 
 | Item | Version |
 |---|---|
-| Python | 3.13 (falls back gracefully to 3.11+) |
+| Python | 3.13 or 3.14 (falls back gracefully to 3.11+) — the Docker image pins 3.13 |
 | Node.js | 20+ (only to build the SPA) |
 | Exasol | any reachable instance |
 | LLM (optional) | any OpenAI-compatible endpoint |
@@ -69,7 +69,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full component and formula map.
 ## Setup
 
 ```bash
-# 1. Python environment + backend dependencies
+# 1. Python environment + backend dependencies (python3.14 works too)
 python3.13 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 # (optional) test dependencies:
@@ -319,6 +319,15 @@ mandatory-2FA enrolment) and follows the same TLS mode + certificate as the app 
 admin (change them in *TLS / SSL*; a restart applies to all three surfaces at once).
 Admins can turn the whole console off from **Admin → Integration**. The data-source
 configuration features themselves are being built on this scaffold.
+
+Developers also **manage database connections from the console** (＋ / ✎ on the
+*Connections* section), not just in the main app — a data source is useless without a
+destination, so both live on one surface. It reuses the main app's `ConnectionEditor` and
+the same `/api/connections/*` endpoints, which already admit developers; the console's
+`/api` proxy forwards them unchanged, so this needed no backend change. Editing stays
+gated on **ownership** (`can_manage_connection`): a developer may edit the connections
+they created, while one an admin created and merely *assigned* to them is usable for
+imports but read-only.
 
 **Database Connections.** Administrators define each connection here — the Exasol
 host/port/user/password/schema, an optional OpenAI-compatible LLM server, and TLS
@@ -579,13 +588,59 @@ The console lets a user build the pieces of an extraction:
   absolute path the server can read (developer-trusted deployments only — it enables
   reading arbitrary server files).
 
-**Running a File source** (`POST /api/integration/sources/{id}/run {projectId}`) builds a
-`FileExtractor` and calls `AbstractionLayer.run`: it reads the file line by line, applies
-the source type's regexes, normalises the timestamp to a real `TIMESTAMP`, and pushes a
-`JOURNEYS` row per event (`PROJECT_ID`=the project id, `EVENT_ID`/`STEP`/`EVENT_TIME` +
-`META_1..3`, `SAMPLE_SET='ORIGINAL'`) into the **active connection's schema** via the
-`SqlIngestBackend`. Progress and the result appear in the status panel. Lines that don't
-yield a case id, step and time are skipped and counted.
+**Running a File source** (`POST /api/integration/sources/{id}/run {projectId,
+connectionId}`) builds a `FileExtractor` and calls `AbstractionLayer.run`: it reads the
+file line by line, applies the source type's regexes, normalises the timestamp to a real
+`TIMESTAMP`, and pushes a `JOURNEYS` row per event (`PROJECT_ID`=the project id,
+`EVENT_ID`/`STEP`/`EVENT_TIME` + `META_1..3`, `SAMPLE_SET='ORIGINAL'`) into the **chosen
+connection's schema** via the `SqlIngestBackend`. Progress and the result appear in the
+status panel. Lines that don't yield a case id, step and time are skipped and counted.
+
+**The destination is named by the caller**, not taken from the browser session. The Run
+dialog offers every connection assigned to the developer; the backend re-checks that
+assignment and then opens the connection itself with its *stored* credentials
+(`integration/destinations.py`, shared with the watchdog), so there is no need to connect
+to it in the main app first — and a run can be triggered with no signed-in session at
+all. When the session already happens to be connected to exactly that connection, its
+live handle is reused instead of opening a second one; any connection opened for the run
+is closed again when it ends. Omitting `connectionId` falls back to the session's active
+connection. A connection the caller is not assigned to is a 404, whether or not its id is
+known.
+
+**The destination is remembered per source.** After a successful run the endpoint writes
+`config.lastRun = {connectionId, projectId}` onto the source, and the Run dialog reopens on
+it — so a repeated import is one click rather than two pickers. It is written by the run
+endpoint only, never edited in the wizard, so `PUT /sources/{id}` carries it across a save
+rather than letting a rename drop it. The restore is defensive on both halves: a
+connection no longer assigned to the user falls back to the active one, and a project that
+has since been deleted stays in the new-project field instead of vanishing. Recording it
+is best-effort — the rows are already committed by then, so a store failure is logged, not
+raised.
+
+**Every manual run is a delta upload** (`delta`, default `true`). The run reads only the
+bytes appended since this source's **checkpoint**, imports them, and advances the
+checkpoint once the rows are safely in — so pressing ▷ twice tops the project up instead
+of storing the file again. `delta: false` reads from byte 0 for a deliberate full
+re-import. The checkpoint is **one per source, shared with the watchdog**: a manual run
+and a poll advance the same offset, which is what stops the two triggers importing a line
+twice between them. Rotation is handled by `files.read_delta` — a file that shrank, or
+whose head changed without shrinking (replaced under the same name), is re-read from the
+start. An empty file, or one with nothing appended, is a normal outcome: the run happens,
+writes nothing, and reports `linesRead: 0` so the console can say "nothing new" rather
+than blaming the regexes. A **failed** run deliberately leaves the checkpoint untouched,
+so the next attempt re-reads those lines rather than skipping them. `POST
+/sources/{id}/checkpoint/reset` forgets the position; it deletes nothing from the
+database, so re-importing after a reset appends the file's events again unless the project
+is cleared first.
+
+**The project is picked the same way.** `GET /api/integration/connections/{id}/projects`
+lists the projects already in that connection's schema (with journey/event counts) so the
+Run dialog can offer them in a dropdown instead of asking for a retyped id; `＋ New
+project…` reveals a free-text field for a first import. It is a separate endpoint from the
+manager-gated `/api/connections/{id}/projects` on purpose — a developer is normally only
+*assigned* a connection, never its manager, so that one would refuse them. Assignment is
+the gate here too. Failing to list the projects (unreachable schema, no `PROJECTS` table
+yet) is not fatal: the dialog says so and still accepts a new project id.
 
 **Transactions.** Rows are inserted inside a real transaction (the driver's
 per-statement autocommit is turned off for the run) and committed in **brackets** — the

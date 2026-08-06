@@ -9,6 +9,7 @@ user arrives in the trusted ``X-PMW-User`` header the proxy injects.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -20,8 +21,9 @@ from ..db.manager import current_db
 from ..integration import SqlIngestBackend, layer
 from ..integration.backends import DEFAULT_TRANSACTION_ROWS, clamp_transaction_rows
 from ..integration.extractors import FileExtractor
-from ..integration.files import FileAccessError, read_preview
+from ..integration.files import FileAccessError, read_delta, read_preview
 from ..integration.compound import OPS as COMPOUND_OPS
+from ..integration.destinations import open_stored_connection
 from ..integration.parsing import ROLES, analyze_timestamp, detect_fields, regex_from_segment
 from ..store.security import store as security_store
 
@@ -291,11 +293,16 @@ def create_source(body: SourceBody, request: Request) -> dict:
 @router.put("/sources/{source_id}")
 def update_source(source_id: str, body: SourceBody, request: Request) -> dict:
     user = _request_user(request)
+    old = _source_owned(source_id, user)
+    old_cfg = old.public()["config"] if old else {}
+    # `lastRun` is written by the run endpoint, never edited in the wizard, so carry it
+    # across a save — otherwise renaming a source would forget where it last imported to.
+    if "lastRun" not in body.config and old_cfg.get("lastRun"):
+        body.config["lastRun"] = old_cfg["lastRun"]
     config = _source_config(body, user)
     # If the file path changed, the old read checkpoint no longer applies — forget it so
     # the watchdog re-reads the new file from the start.
-    old = _source_owned(source_id, user)
-    old_path = str((old.public()["config"].get("path") if old else "") or "")
+    old_path = str(old_cfg.get("path") or "")
     updated = security_store.update_source(source_id, user, name=body.name, kind=body.kind, config=config)
     if updated is None:
         raise HTTPException(status_code=404, detail="Source not found.")
@@ -329,6 +336,13 @@ def preview_source(body: PreviewBody) -> dict:
 
 class RunBody(BaseModel):
     projectId: str = Field(min_length=1, max_length=100)
+    # The destination connection, picked in the Run dialog. Optional only for callers
+    # that still rely on the signed-in session's active connection; naming it here is
+    # what lets a run be triggered without a session at all (remote push, scheduler).
+    connectionId: str = Field(default="", max_length=100)
+    # Delta upload: import only what was appended since this source's checkpoint. On by
+    # default — re-running a source should top it up, not duplicate everything.
+    delta: bool = True
 
 
 def _source_owned(source_id: str, user: str | None):
@@ -340,8 +354,12 @@ def _source_owned(source_id: str, user: str | None):
 
 @router.get("/sources/{source_id}/checkpoint")
 def source_checkpoint(source_id: str, request: Request) -> dict:
-    """The watchdog's read checkpoint for a File source (byte offset, imported records,
-    last error, when it last ran) — or nulls if it has never imported."""
+    """A File source's read checkpoint (byte offset, imported records, last error, when
+    it last ran) — or nulls if it has never imported.
+
+    One checkpoint per source, shared by both triggers: a manual delta run and a watchdog
+    poll advance the same offset, which is what keeps them from importing a line twice
+    between them."""
     user = _request_user(request)
     if _source_owned(source_id, user) is None:
         raise HTTPException(status_code=404, detail="Source not found.")
@@ -354,7 +372,9 @@ def source_checkpoint(source_id: str, request: Request) -> dict:
 
 @router.post("/sources/{source_id}/checkpoint/reset")
 def reset_source_checkpoint(source_id: str, request: Request) -> dict:
-    """Forget the read checkpoint so the next watchdog poll re-imports from the start."""
+    """Forget the read checkpoint, so the next import — manual or watchdog — starts from
+    the top of the file again. Nothing is deleted from the database, so re-importing after
+    a reset appends the file's events a second time unless the project is cleared first."""
     user = _request_user(request)
     if _source_owned(source_id, user) is None:
         raise HTTPException(status_code=404, detail="Source not found.")
@@ -362,10 +382,56 @@ def reset_source_checkpoint(source_id: str, request: Request) -> dict:
     return {"ok": True}
 
 
+def _remember_last_run(source, user: str | None, *, connection_id: str, project_id: str) -> None:
+    """Persist the destination an import used, so the Run dialog reopens on it.
+
+    Best-effort bookkeeping: a failure here must never turn an import that already wrote
+    its rows into an error for the caller.
+    """
+    try:
+        cfg = source.public()["config"]
+        last = cfg.get("lastRun") or {}
+        if last.get("connectionId") == connection_id and last.get("projectId") == project_id:
+            return  # unchanged — no write needed
+        cfg["lastRun"] = {"connectionId": connection_id, "projectId": project_id}
+        security_store.update_source(
+            source.id, user, name=source.name, kind=source.kind, config=json.dumps(cfg)
+        )
+    except Exception as exc:  # noqa: BLE001 — the import itself already succeeded
+        logx.warn(
+            f"could not remember the destination for source {source.name!r}: {exc}",
+            username=user or "", operation="import", tag=logx.TAG_DATA,
+        )
+
+
+@router.get("/connections/{conn_id}/projects")
+async def list_destination_projects(conn_id: str, request: Request) -> dict:
+    """The projects already stored in a destination connection's schema, so the Run
+    dialog can offer them instead of asking the user to retype a project id.
+
+    Deliberately *not* the manager-gated ``/api/connections/{id}/projects``: a developer
+    is normally only **assigned** a connection, never its manager, so that endpoint would
+    refuse them. Assignment is the gate here, exactly as it is for running.
+    """
+    user = _request_user(request)
+    if not security_store.user_can_use(conn_id, user):
+        raise HTTPException(status_code=404, detail="Connection not found.")
+    conn = security_store.get_connection(conn_id, with_secrets=True)
+    if conn is None:
+        raise HTTPException(status_code=404, detail="Connection not found.")
+    from ..db.schema_ddl import list_projects_with_counts
+
+    return await list_projects_with_counts(
+        host=conn.host, port=conn.port, username=conn.username, password=conn.password,
+        schema=conn.schema, use_tls=conn.use_tls, cert_mode=conn.cert_mode,
+        fingerprint=conn.fingerprint, min_rsa_bits=conn.min_rsa_bits,
+    )
+
+
 @router.post("/sources/{source_id}/run")
 async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
-    """Run a File source's extraction into the user's *active* connection + schema under
-    the given project id. The source must link a source type; the file is read sandboxed."""
+    """Run a File source's extraction into the chosen connection's schema under the given
+    project id. The source must link a source type; the file is read sandboxed."""
     user = _request_user(request)
     source = _source_owned(source_id, user)
     if source is None:
@@ -385,43 +451,101 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
     if not any(f.get("role") == "timestamp" for f in fields):
         raise HTTPException(status_code=400, detail="The source type has no timestamp field.")
 
-    # Destination = the user's active connection + its schema.
+    # ── destination ───────────────────────────────────────────────────────────
+    # The caller names the connection; we open it with its *stored* credentials, the
+    # same way the watchdog does. Falling back to the session's active connection
+    # keeps older clients working.
     mgr = current_db()
-    if not mgr.is_connected:
-        raise HTTPException(status_code=400, detail="Connect to a destination database first.")
-    server = mgr.active_database_server
-    schema = (server.schema_ or "").strip() if server is not None else ""
-    if not schema:
-        raise HTTPException(status_code=400, detail="The active connection has no target schema.")
+    conn_id = body.connectionId.strip()
+    if conn_id:
+        # Authorisation: assignment is the gate, re-checked here rather than trusted
+        # from the dropdown — otherwise knowing a connection's id would be enough to
+        # write into it with credentials the caller never had.
+        if not security_store.user_can_use(conn_id, user):
+            raise HTTPException(status_code=404, detail="Connection not found.")
+        conn = security_store.get_connection(conn_id, with_secrets=True)
+        if conn is None:
+            raise HTTPException(status_code=404, detail="Connection not found.")
+        schema = (conn.schema or "").strip()
+        if not schema:
+            raise HTTPException(
+                status_code=400, detail=f"“{conn.name}” has no target schema configured."
+            )
+    else:
+        if not mgr.is_connected:
+            raise HTTPException(status_code=400, detail="Pick a destination connection first.")
+        conn_id = mgr.active_profile_id or ""
+        conn = security_store.get_connection(conn_id, with_secrets=True) if conn_id else None
+        server = mgr.active_database_server
+        schema = (server.schema_ or "").strip() if server is not None else ""
+        if not schema:
+            raise HTTPException(
+                status_code=400, detail="The active connection has no target schema."
+            )
 
-    # Insert inside real transactions: turn the driver's per-statement autocommit off
-    # so the layer's bracket (transactionRows) decides when work becomes durable.
-    raw = mgr._conn
-    if raw is not None:
-        raw.set_autocommit(False)
-    backend = SqlIngestBackend(
-        run_sql=lambda sql: mgr._execute_sync(sql).rows,
-        commit=(lambda: raw.commit()) if raw is not None else None,
-        rollback=(lambda: raw.rollback()) if raw is not None else None,
-    )
+    # Reuse the live session when it already points at exactly this database, otherwise
+    # open our own connection for the run (and close it again below).
+    opened = None
+    if mgr.is_connected and mgr.active_profile_id == conn_id:
+        # Insert inside real transactions: turn the driver's per-statement autocommit
+        # off so the layer's bracket (transactionRows) decides when work is durable.
+        live = mgr._conn
+        if live is not None:
+            live.set_autocommit(False)
+        backend = SqlIngestBackend(
+            run_sql=lambda sql: mgr._execute_sync(sql).rows,
+            commit=(lambda: live.commit()) if live is not None else None,
+            rollback=(lambda: live.rollback()) if live is not None else None,
+        )
+    else:
+        try:
+            opened, run_sql = await asyncio.to_thread(open_stored_connection, conn)
+        except Exception as exc:  # noqa: BLE001 — a bad destination is a 400, not a 500
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not connect to “{conn.name}”: {exc}",
+            )
+        backend = SqlIngestBackend(
+            run_sql=run_sql, commit=opened.commit, rollback=opened.rollback,
+        )
+
+    # ── what to read ──────────────────────────────────────────────────────────
+    # Every manual run is checkpointed, so re-running a source tops it up instead of
+    # importing the file again. `delta=False` is the explicit "start over" and reads
+    # from byte 0. Either way the checkpoint is advanced to the end of what we read.
+    encoding = str(cfg.get("encoding") or "utf-8")
+    checkpoint = security_store.get_source_checkpoint(source_id)
+    prev_records = int(checkpoint["records"]) if checkpoint else 0
+    prev_offset = int(checkpoint["byteOffset"]) if (checkpoint and body.delta) else 0
+    prev_sig = str(checkpoint["signature"] or "") if (checkpoint and body.delta) else ""
+    try:
+        read = await asyncio.to_thread(read_delta, path, encoding, prev_offset, prev_sig)
+    except FileAccessError as exc:
+        if opened is not None:
+            await asyncio.to_thread(opened.close)
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # An empty file, or nothing appended since the checkpoint, is a normal outcome — the
+    # run still happens (so it shows in the pipeline) and simply writes no rows.
     extractor = FileExtractor(
-        path=path, encoding=str(cfg.get("encoding") or "utf-8"),
+        path=path, encoding=encoding,
         fields=fields, project_id=body.projectId.strip(),
+        lines=read["lines"],
         compound=st.public().get("compound") or [],
     )
-    conn = security_store.get_connection(mgr.active_profile_id) if mgr.active_profile_id else None
     project_id = body.projectId.strip()
     transaction_rows = _transaction_rows(cfg)
     target = f"{conn.name if conn is not None else schema}/{schema}"
     logx.usage(
         f"import started: {source.name!r} (source type {st.name!r}) → {target} "
-        f"project {project_id}",
+        f"project {project_id} — {'delta' if body.delta else 'full'}, "
+        f"{len(read['lines'])} line(s) to read",
         request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
     )
     try:
         result = await layer.run(
             user=user, extractor=extractor, backend=backend, schema=schema,
-            connection_id=mgr.active_profile_id,
+            connection_id=conn_id or None,
             connection_name=conn.name if conn is not None else None,
             source_name=source.name, source_type_name=st.name, trigger="manual",
             transaction_rows=transaction_rows,
@@ -438,12 +562,34 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
             request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
         )
         raise HTTPException(status_code=400, detail=f"Extraction failed: {exc}")
+    finally:
+        if opened is not None:  # a connection we opened for this run only
+            await asyncio.to_thread(opened.close)
+    # Advance the checkpoint only once the rows are safely in — a failed run leaves it
+    # where it was, so the next attempt re-reads those lines rather than skipping them.
+    # (A full re-import restarts the counter; a delta run adds to it.)
+    security_store.set_source_checkpoint(
+        source_id, byte_offset=read["new_offset"], size=read["size"],
+        signature=read["signature"],
+        records=(prev_records if body.delta else 0) + result.records,
+        last_error="",
+    )
+    _remember_last_run(source, user, connection_id=conn_id, project_id=project_id)
     logx.usage(
         f"import finished: {source.name!r} → {target} project {project_id} — "
         f"{result.detail}",
         request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
     )
-    return {"records": result.records, "detail": result.detail}
+    detail = result.detail
+    if not read["lines"]:
+        detail = (
+            "Nothing new to import — the file has not grown since the last import."
+            if body.delta and checkpoint
+            else "Nothing to import — the file is empty."
+        )
+    # `linesRead` separates the two ways a run can write nothing: no new lines at all
+    # (normal for a delta run) versus lines that matched no regex (a real misconfiguration).
+    return {"records": result.records, "detail": detail, "linesRead": len(read["lines"])}
 
 
 # ── example-log parsing (wizard helpers) ──────────────────────────────────────

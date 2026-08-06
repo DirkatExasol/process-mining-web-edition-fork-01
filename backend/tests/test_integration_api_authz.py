@@ -52,6 +52,7 @@ ENDPOINTS = [
     ("get", "/api/integration/source-types", None),
     ("get", "/api/integration/status", None),
     ("post", "/api/integration/sources/preview", {"path": "x.log", "limit": 5}),
+    ("get", "/api/integration/connections/c1/projects", None),
     ("post", "/api/integration/source-types", {"name": "x", "sample": "", "fields": []}),
     ("post", "/api/integration/parse/timestamp", {"value": "2026-01-01"}),
 ]

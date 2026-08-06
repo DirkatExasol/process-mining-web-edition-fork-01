@@ -182,6 +182,24 @@ def read_new_lines(path: str, encoding: str, offset: int) -> dict:
             "signature": signature, "rotated": rotated}
 
 
+def read_delta(path: str, encoding: str, offset: int, signature: str) -> dict:
+    """:func:`read_new_lines` plus *replacement* detection — the read every incremental
+    import does, whether triggered by the watchdog or by hand.
+
+    A file whose head changed while its size did not shrink was replaced rather than
+    appended to (rotation that reuses the name), so the stored offset points into
+    unrelated content and the file must be re-read from the start. ``read_new_lines``
+    only catches the shrinking case on its own.
+
+    An empty file, or one with nothing appended since ``offset``, yields no lines and
+    the current size/signature — not an error.
+    """
+    res = read_new_lines(path, encoding, offset)
+    if not res["rotated"] and signature and res["signature"] != signature and offset > 0:
+        res = read_new_lines(path, encoding, 0)
+    return res
+
+
 def seed_demo_files() -> None:
     """Copy the bundled example log(s) into the sandbox dir on first use, so the demo
     works out of the box. Never overwrites an existing file. Best-effort."""

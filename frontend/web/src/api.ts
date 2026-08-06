@@ -205,8 +205,16 @@ export const api = {
   deleteSource: (id: string) => del<{ ok: boolean }>(`/api/integration/sources/${enc(id)}`),
   previewSource: (path: string, limit: number) =>
     post<{ lines: string[]; truncated: boolean }>('/api/integration/sources/preview', { path, limit }),
-  runSource: (id: string, projectId: string) =>
-    post<{ records: number; detail: string }>(`/api/integration/sources/${enc(id)}/run`, { projectId }),
+  // Projects already in a destination connection's schema (gated on assignment, unlike
+  // the manager-only /api/connections/{id}/projects).
+  destinationProjects: (connectionId: string) =>
+    get<ConnectionProjectsResult>(`/api/integration/connections/${enc(connectionId)}/projects`),
+  runSource: (id: string, projectId: string, connectionId: string, delta = true) =>
+    post<{ records: number; detail: string }>(`/api/integration/sources/${enc(id)}/run`, {
+      projectId,
+      connectionId,
+      delta,
+    }),
   sourceCheckpoint: (id: string) =>
     get<SourceCheckpoint>(`/api/integration/sources/${enc(id)}/checkpoint`),
   resetSourceCheckpoint: (id: string) =>

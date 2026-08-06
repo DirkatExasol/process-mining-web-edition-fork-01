@@ -4,8 +4,9 @@
 
 import { useMemo, useState } from 'react'
 import { useStore } from '../store'
-import type { AssignedConnection } from '../types'
+import type { AssignedConnection, ManagedConnection } from '../types'
 import { AuthFooter } from './AuthFooter'
+import { ConnectionEditor } from './ConnectionEditor'
 import { Logo } from './Logo'
 import { SectionHeader } from './SectionHeader'
 import { SourcesSection } from './SourcesSection'
@@ -32,11 +33,17 @@ function IntegrationBrand() {
 /** The user's assigned connections as clickable badges — click to connect /
  *  disconnect, with a live status dot on the active one (same behaviour as the
  *  main app's Connections list). */
-function ConnectionBadges() {
+function ConnectionBadges({ onEdit }: { onEdit?: (conn: ManagedConnection) => void }) {
   const store = useStore()
   const sorted = useMemo(
     () => [...store.connections].sort((a, b) => a.name.localeCompare(b.name)),
     [store.connections],
+  )
+  // Connections this developer owns and may edit, keyed by id. Being *assigned* a
+  // connection is not the same as owning it — an admin's connection stays read-only.
+  const manageableById = useMemo(
+    () => new Map(store.manageableConnections.map((c) => [c.id, c])),
+    [store.manageableConnections],
   )
 
   const connectOrDisconnect = async (conn: AssignedConnection) => {
@@ -53,7 +60,9 @@ function ConnectionBadges() {
     return (
       <div className="col" style={{ gap: 6, padding: '0 4px' }}>
         <span className="t-caption fg-tertiary">
-          No connections assigned to you. Ask an administrator to grant access.
+          {onEdit
+            ? 'No connections yet. Use ＋ above to create one and assign users.'
+            : 'No connections assigned to you. Ask an administrator to grant access.'}
         </span>
         {store.connection.lastError && (
           <span className="t-caption fg-red">{store.connection.lastError}</span>
@@ -91,6 +100,19 @@ function ConnectionBadges() {
                 <span className="card-sub">LLM: {conn.llmURL || '(configured)'}</span>
               )}
             </div>
+            {onEdit && manageableById.has(conn.id) && (
+              <button
+                className="icon-btn"
+                style={{ width: 22, height: 22, color: 'var(--secondary)' }}
+                title="Edit connection"
+                onClick={(e) => {
+                  e.stopPropagation() // the card itself connects/disconnects
+                  onEdit(manageableById.get(conn.id)!)
+                }}
+              >
+                ✎
+              </button>
+            )}
             {isActive && (
               <span
                 className="status-dot"
@@ -114,6 +136,12 @@ export function IntegrationSidebar() {
   const [openSection, setOpenSection] = useState<SectionId | null>('connections')
   const toggle = (id: SectionId) => setOpenSection((cur) => (cur === id ? null : id))
 
+  // Same capability as the main app's sidebar — the console is developer/admin only, but
+  // keep the predicate identical so the two surfaces can never drift apart.
+  const [connEditor, setConnEditor] = useState<{ conn: ManagedConnection | null } | null>(null)
+  const canManageConnections =
+    store.authIsPower || store.authIsAdmin || store.authIsDeveloper
+
   return (
     <aside className="sidebar">
       <div className="sidebar-scroll">
@@ -124,8 +152,35 @@ export function IntegrationSidebar() {
           count={store.connections.length}
           open={openSection === 'connections'}
           onToggle={() => toggle('connections')}
+          trailing={
+            <>
+              {canManageConnections && (
+                <button
+                  className="icon-btn"
+                  title="New connection"
+                  onClick={() => {
+                    void store.refreshManageable()
+                    setConnEditor({ conn: null })
+                  }}
+                >
+                  ＋
+                </button>
+              )}
+              <button
+                className="icon-btn"
+                title="Refresh connections"
+                onClick={() => void store.refreshConnections()}
+              >
+                ↻
+              </button>
+            </>
+          }
         />
-        {openSection === 'connections' && <ConnectionBadges />}
+        {openSection === 'connections' && (
+          <ConnectionBadges
+            onEdit={canManageConnections ? (conn) => setConnEditor({ conn }) : undefined}
+          />
+        )}
         <Divider />
         <SourcesSection open={openSection === 'sources'} onToggle={() => toggle('sources')} />
         <Divider />
@@ -137,6 +192,13 @@ export function IntegrationSidebar() {
       <AuthFooter />
       <Divider />
       <ThemeBar />
+
+      {connEditor && (
+        <ConnectionEditor
+          connection={connEditor.conn}
+          onClose={() => setConnEditor(null)}
+        />
+      )}
     </aside>
   )
 }

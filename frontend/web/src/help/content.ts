@@ -1368,8 +1368,9 @@ const integrationConsole: HelpTopic = {
     {
       heading: 'Getting there',
       body: [
-        p('Open the console URL, sign in, and pick the destination connection on the left the same way you do in the main app. An import always writes into the schema of the connection you are currently connected to.'),
-        tip('The left panel holds three collapsible sections — Connections, Sources and Source types — plus the theme selector and your account footer, mirroring the main app.'),
+        p('Open the console URL and sign in. The left panel holds three collapsible sections — Connections, Sources and Source types — plus the theme selector and your account footer, mirroring the main app. Clicking a connection connects to it, as in the main app, but an import does not depend on that: the Run dialog picks its own destination.'),
+        p('Connections can be created and edited here, so you do not have to switch to the main app to set up the database you are about to import into. Use ＋ on the Connections header for a new one, or ✎ on a connection you own to edit it — host, port, credentials, TLS, target schema, an optional LLM server, and which users it is assigned to.'),
+        warn('✎ appears only on connections you own — the ones you created. A connection an administrator created and assigned to you can be used for imports but not edited; ask an administrator to change it.'),
       ],
     },
   ],
@@ -1407,7 +1408,13 @@ const integrationSources: HelpTopic = {
     {
       heading: 'Running an import',
       body: [
-        p('Connect to the destination database, then press ▷ on a File source and enter a project id. The extractor reads the file line by line, applies the source type’s regexes, normalises the timestamp, MD5-hashes the id, and writes one JOURNEYS row per event into the active connection’s schema. A progress bar counts the records as they load.'),
+        p('Press ▷ on a File source, pick the destination connection and the project. The extractor reads the file line by line, applies the source type’s regexes, normalises the timestamp, MD5-hashes the id, and writes one JOURNEYS row per event into that connection’s schema. A progress bar counts the records as they load.'),
+        tip('The connection dropdown lists every connection an administrator has assigned to you, and defaults to the one the main app is connected to. You do not have to connect to it first — the import opens the connection itself with its saved credentials, exactly as the watchdog does. The line under the dropdown shows the host and the schema the rows will land in.'),
+        p('The project dropdown is filled from the projects already in that schema, so you pick an existing one instead of retyping its id. Choose ＋ New project… to start a new one and type its id — the PROJECTS row is created for you. Changing the connection reloads the list.'),
+        tip('Both choices are remembered on the source: the next time you press ▷ the dialog reopens on the connection and project that source last imported into, so repeating an import is a single click. If the connection is no longer assigned to you it falls back to the one the main app is connected to, and a project deleted in the meantime is offered again as a new project id.'),
+        p('Delta upload is on by default. A checkpoint records how far the file has been read, so pressing ▷ again imports only the lines added since — running the same source twice tops the project up instead of storing everything a second time. The panel shows the checkpoint: records imported, how far into the file it has read, and when it last ran. An empty log file, or one that has not grown, simply reports “nothing new” — it is not an error.'),
+        p('Switch delta upload off to read the whole file from the top again, and use ↺ Reset checkpoint to forget the position so the next import starts over. Both are the same thing from the database\'s point of view: events are never de-duplicated, so a full re-read stores the file\'s events a second time. To genuinely reload a project, delete it first (Connections → Projects) and import again.'),
+        warn('The checkpoint is shared with the watchdog — there is one per source. A manual delta import and a watchdog poll advance the same position, which is what keeps them from importing the same line twice between them. Resetting it therefore also makes the watchdog re-read the file from the start.'),
         p('It also creates anything missing: the PROJECTS row, a STEPS definition for every distinct step (a shape, a colour and a zero score), and the META business-name titles — existing rows are never overwritten.'),
       ],
     },
@@ -1498,7 +1505,7 @@ const integrationSources: HelpTopic = {
         p('A File source can run a watchdog (turn it on in the source wizard, under the file path). It picks a destination connection, a project id and a poll interval. A background job then watches the file and, whenever it grows, imports only the newly-appended lines — never the whole file again — so a continuously-written log streams into the database on its own.'),
         p('A checkpoint is kept per source file (how far it has been read, plus the imported record count), so nothing is imported twice — even across server restarts. If the file is truncated or replaced (rotated), the watchdog notices and re-reads it from the start.'),
         tip('The wizard shows the checkpoint status (records imported, last check, any error) and a Reset checkpoint button to force a full re-read. A source with the watchdog on is marked with a 👁 in the Sources list, and its imports appear in the live pipeline like any other run.'),
-        warn('Because the watchdog runs headless (no signed-in session), it writes into the connection you store with it — not your current active connection. It uses that connection’s saved credentials, so pick one you own and that points at the right schema.'),
+        warn('The watchdog runs headless (no signed-in session), so its destination is stored with the source rather than picked each time. It uses that connection’s saved credentials, so pick one you are assigned to and that points at the right schema — the assignment is re-checked on every poll, and revoking it stops the watchdog.'),
       ],
     },
   ],

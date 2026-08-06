@@ -26,8 +26,9 @@ from .backends import (
     SqlIngestBackend,
     clamp_transaction_rows,
 )
+from .destinations import open_stored_connection as _open_run_sql
 from .extractors import FileExtractor
-from .files import FileAccessError, read_new_lines
+from .files import FileAccessError, read_delta
 from .layer import layer
 
 
@@ -46,29 +47,6 @@ def _due(checkpoint: dict | None, interval_secs: int) -> bool:
     if last.tzinfo is None:
         last = last.replace(tzinfo=timezone.utc)
     return (_now() - last).total_seconds() >= interval_secs
-
-
-def _open_run_sql(conn):
-    """Open the stored connection and return ``(raw, run_sql)`` — a synchronous SQL
-    runner bound to it (rows for SELECT, empty otherwise), mirroring the manual run."""
-    from ..db.manager import DatabaseManager
-    from ..models import DatabaseServer
-
-    server = DatabaseServer(
-        id="watchdog", host=conn.host, port=conn.port, username=conn.username,
-        useTLS=conn.use_tls, certModeRaw=conn.cert_mode, fingerprint=conn.fingerprint,
-        minRSAKeySizeBits=conn.min_rsa_bits, **{"schema": conn.schema or ""},
-    )
-    mgr = DatabaseManager.__new__(DatabaseManager)  # no store side effects
-    raw = mgr._open(server, conn.password)
-    # Insert inside real transactions — the layer's bracket decides when to commit.
-    raw.set_autocommit(False)
-
-    def run_sql(sql: str):
-        st = raw.execute(sql)
-        return [list(r) for r in st.fetchall()] if st.result_type == "resultSet" else []
-
-    return raw, run_sql
 
 
 async def poll_source(source) -> None:
@@ -145,13 +123,10 @@ async def poll_source(source) -> None:
 
     # ── read the newly-appended lines (rotation-aware) ────────────────────────
     try:
-        res = await asyncio.to_thread(read_new_lines, path, encoding, prev_offset)
+        res = await asyncio.to_thread(read_delta, path, encoding, prev_offset, prev_sig)
     except FileAccessError as exc:
         _fail(str(exc), offset=prev_offset, size=0, sig=prev_sig)
         return
-    # Head changed while the size didn't shrink ⇒ the file was replaced: re-read from 0.
-    if not res["rotated"] and prev_sig and res["signature"] != prev_sig and prev_offset > 0:
-        res = await asyncio.to_thread(read_new_lines, path, encoding, 0)
 
     if not res["lines"]:
         # Nothing new — just record the current size/signature (and clear any old error).
