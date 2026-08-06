@@ -164,7 +164,7 @@ async def poll_source(source) -> None:
     # ── extract the new lines into the stored connection ──────────────────────
     extractor = FileExtractor(
         path=path, encoding=encoding, fields=fields, project_id=project_id,
-        lines=res["lines"],
+        lines=res["lines"], compound=st.public().get("compound") or [],
     )
     try:
         raw, run_sql = await asyncio.to_thread(_open_run_sql, conn)
@@ -179,7 +179,7 @@ async def poll_source(source) -> None:
             ),
             schema=schema,
             connection_id=connection_id, connection_name=conn.name,
-            source_name=source.name, source_type_name=st.name,
+            source_name=source.name, source_type_name=st.name, trigger="watchdog",
             transaction_rows=transaction_rows,
         )
     except Exception as exc:  # noqa: BLE001 — surfaced on the checkpoint; loop continues

@@ -582,6 +582,25 @@ part-way leaves the already-committed brackets in place. On failure the open bra
 rolled back. The same setting applies to a manual run and to the watchdog; the layer
 status reports `commits`.
 
+**Compound steps (optional).** When the real activity is split across fields — an action
+plus an outcome — a source type may carry rules that build the final `STEP` from several
+extracted values:
+
+```jsonc
+{"step": "login successful",
+ "when": [{"field": "step",   "op": "eq", "value": "login"},
+          {"field": "status", "op": "eq", "value": "200"}]}
+```
+
+All conditions must hold (AND); rules are checked in order and the **first match wins**;
+when none match the plain `step` field is used unchanged, so the feature is purely
+additive. Operators: `eq`, `ne`, `contains`, `startswith`, `endswith`, `regex` (string
+comparisons are case-insensitive and trimmed; `regex` is the exact-match escape hatch).
+Rules may reference any named field, including the **`aux`** ("Helper") role — extracted
+like the others but written to no column, so a value such as an HTTP status can drive a
+rule without consuming one of the three `META` slots. Built in the source-type wizard,
+which previews the derived step against your sample line.
+
 The captured case id is **MD5-hashed** before it is written, so the raw id (which may be a
 login or user id) never lands in the clear — `EVENT_ID = md5(raw).hexdigest()`, matching
 the lowercase-hex convention used by every bundled dataset (see *Event-ID format* above).

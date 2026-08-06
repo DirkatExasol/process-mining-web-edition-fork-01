@@ -1409,6 +1409,34 @@ const integrationSources: HelpTopic = {
       ],
     },
     {
+      heading: 'Compound steps — build a step from several fields',
+      body: [
+        p('Sometimes the real activity is split across fields: the log records the action in one place and its outcome in another. In an Apache log, “POST /shop/login … 200” is a successful login and “… 500” a failed one, but the path alone gives “login” for both.'),
+        p('Open the STEP tab: under the step field you’ll find Compound steps. Each rule is a badge showing the step it produces and its conditions (about four are visible, then the list scrolls); a ✓ marks the rules that match your sample line. Click ＋ Add rule, or click a badge, to open a panel where you set:'),
+        ul(
+          'Step becomes — the name written to STEP, e.g. “login successful”.',
+          'when / and — a field, a comparison (is, is not, contains, starts with, ends with, matches regex) and a value.',
+        ),
+        p('Rules are numbered in the order they are checked, and the panel tells you whether the rule you are editing matches the sample.'),
+        p('Rules are checked from top to bottom and the first one whose conditions all hold wins. If no rule matches, the plain STEP field’s value is used unchanged — so compound steps are entirely optional and can be added to an existing source type without disturbing it.'),
+        def('Helper fields', 'A value you only need for matching — an HTTP status, a result code — does not belong in META. Extract it as a helper field instead: helper fields are read from the line and are available to compound rules, but are NEVER written to the database, so all three META columns stay free for business attributes. Add one straight from the rule panel (name + regex, with a live check against your sample), or map it with the highlighting tools on the Helper tab.'),
+        tip('While you build the rules the wizard shows what each field captures from your sample line, and the “Example JOURNEYS record” updates to the derived step (marked “compound”), so you can confirm the outcome before saving.'),
+        warn('Comparisons ignore case and surrounding spaces (log casing is rarely dependable). Use “matches regex” when you need an exact pattern. A rule with no resulting step, or no conditions, is ignored rather than applied to every event.'),
+      ],
+    },
+    {
+      heading: 'Transaction bracket',
+      body: [
+        p('Rows are inserted inside a real database transaction, committed in brackets: the import commits once the configured number of rows has been written, then a final commit for the remainder. Set the bracket per source in the wizard (Transaction bracket, default 5000 rows). It applies to both a manual run and the watchdog.'),
+        ul(
+          'A larger bracket is more atomic, but the database holds more of the import open at once.',
+          'A smaller bracket commits steadily, so if the import fails part-way the brackets already committed stay in the database.',
+          '0 means one single transaction for the whole import — all of it lands, or none of it.',
+        ),
+        tip('If a run fails, the bracket that was still open is rolled back; whatever was committed before it remains. The result message tells you how many events were written.'),
+      ],
+    },
+    {
       heading: 'Watchdog — auto-import new lines',
       body: [
         p('A File source can run a watchdog (turn it on in the source wizard, under the file path). It picks a destination connection, a project id and a poll interval. A background job then watches the file and, whenever it grows, imports only the newly-appended lines — never the whole file again — so a continuously-written log streams into the database on its own.'),
@@ -1427,9 +1455,25 @@ const integrationMonitoring: HelpTopic = {
   icon: '🔀',
   sections: [
     {
+      heading: 'Ingestion KPIs',
+      body: [
+        p('The Abstraction layer card at the top summarises ingestion with the same KPI tiles the main app uses. They cover the whole recorded history, not just the last run:'),
+        ul(
+          'Manual imports — runs you started with ▷ Run.',
+          'Watchdog imports — runs the background file watchdog started on its own.',
+          'Last import — how long ago the most recent run finished (or “running…” while one is in flight).',
+          'Events pushed — journey events written to the database.',
+          'Events skipped — source lines that could not be parsed into an event.',
+        ),
+        warn('A non-zero “Events skipped” is highlighted in orange: it usually means the linked source type’s regexes do not fit that log. Edit the source type and test it against a real line.'),
+        tip('The card also shows the target schema, the run state, and — behind the Run log button — the log lines of the most recent run. The counts reset when you clear the run history.'),
+      ],
+    },
+    {
       heading: 'The flowchart',
       body: [
-        p('The main pane shows the imports as one flowchart: Source type → Source → Abstraction layer → Connection. Nodes are reused across runs — every distinct source type, source and destination is a single node, with the Abstraction layer as the hub in the middle. The Source and Destination nodes show the total number of rows imported.'),
+        p('Below the KPIs the imports are drawn as one flowchart: Source type → Source → Abstraction layer → Connection. Nodes are reused across runs — every distinct source type, source and destination is a single node, with the Abstraction layer as the hub in the middle. The Source and Destination nodes show the total number of rows imported.'),
+        p('Each stage is tinted in its own pastel colour (source types violet, sources blue, the layer by its state, destinations teal) so you can tell them apart at a glance; the stage currently running gets a deeper wash.'),
       ],
     },
     {
@@ -1443,8 +1487,8 @@ const integrationMonitoring: HelpTopic = {
       heading: 'History & layout',
       body: [
         p('The console keeps a per-user history of every run and folds it into the one growing flowchart, so you can see the ingestion behaviour over time. It survives reloads and server restarts and is kept until you press ↺ Clear.'),
-        p('You can drag the nodes to arrange them however you like; the layout is saved per user and restored automatically. A ⤢ Reset layout button returns to the automatic arrangement.'),
-        tip('Both the run history and the manual layout are stored in your browser, so they are per-device.'),
+        p('You can drag the nodes to arrange them however you like, and drag the grip on the bottom edge of the canvas to make the working area taller. Both the arrangement and the canvas height are saved per user and restored automatically; ⤢ Reset layout returns to the automatic arrangement and the default size.'),
+        tip('The run history, the manual layout and the canvas height are stored in your browser, so they are per-device.'),
       ],
     },
   ],

@@ -26,6 +26,9 @@ class LayerStatus:
     """A snapshot of one user's abstraction-layer activity."""
 
     state: LayerState = LayerState.IDLE
+    # What triggered the run: "manual" (a console ▷ Run) or "watchdog" (the background
+    # file poller). Drives the manual-vs-watchdog KPI split in the console.
+    trigger: str = ""
     extractor_id: str | None = None
     extractor_name: str | None = None
     # Origin of the run, for the console's pipeline canvas (the source it read from and
@@ -37,6 +40,10 @@ class LayerStatus:
     connection_name: str | None = None
     schema: str | None = None
     records_pushed: int = 0
+    # Journey events the extractor produced vs. source items it could not parse. These
+    # count EVENTS, unlike records_pushed which also counts the project/step/meta rows.
+    events_written: int = 0
+    events_skipped: int = 0
     # Transaction brackets committed so far in this run (see the layer's
     # transaction_rows) — surfaced so the console can show durable progress.
     commits: int = 0
@@ -61,6 +68,7 @@ class LayerStatus:
     def public(self) -> dict:
         return {
             "state": self.state.value,
+            "trigger": self.trigger,
             "extractorId": self.extractor_id,
             "extractorName": self.extractor_name,
             "sourceName": self.source_name,
@@ -69,6 +77,8 @@ class LayerStatus:
             "connectionName": self.connection_name,
             "schema": self.schema,
             "recordsPushed": self.records_pushed,
+            "eventsWritten": self.events_written,
+            "eventsSkipped": self.events_skipped,
             "commits": self.commits,
             "recordsDone": self.records_done,
             "recordsTotal": self.records_total,

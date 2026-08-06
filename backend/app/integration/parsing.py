@@ -22,7 +22,10 @@ from datetime import datetime, timezone
 
 # Roles a detected/'assigned field can take. Mirrors the process-mining essentials plus
 # free-form meta attributes.
-ROLES = ("timestamp", "id", "step", "meta")
+# "aux" fields are extracted like any other but written to no column — they exist so a
+# compound-step rule can match on a value (an HTTP status, a result code) that does not
+# belong in META.
+ROLES = ("timestamp", "id", "step", "meta", "aux")
 
 # The canonical timestamp shape every extracted date is normalised to:
 # YEAR-MONTH-DAY HOUR:MINUTE:SECOND.

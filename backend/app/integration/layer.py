@@ -184,6 +184,7 @@ class AbstractionLayer:
         connection_name: str | None = None,
         source_name: str | None = None,
         source_type_name: str | None = None,
+        trigger: str = "",
         transaction_rows: int = 0,
     ) -> ExtractResult:
         """Run an extractor against ``backend``/``schema`` for ``user``, updating that
@@ -205,6 +206,7 @@ class AbstractionLayer:
             self._running.add(key)
             status = self._status.setdefault(key, LayerStatus())
             status.state = LayerState.RUNNING
+            status.trigger = trigger
             status.extractor_id = extractor.info.id
             status.extractor_name = extractor.info.name
             status.source_name = source_name
@@ -213,6 +215,8 @@ class AbstractionLayer:
             status.connection_name = connection_name
             status.schema = schema
             status.records_pushed = 0
+            status.events_written = 0
+            status.events_skipped = 0
             status.commits = 0
             status.records_done = 0
             status.records_total = 0
@@ -230,6 +234,8 @@ class AbstractionLayer:
             with self._lock:
                 status.state = LayerState.COMPLETED
                 status.finished_at = _now()
+                status.events_written = result.records
+                status.events_skipped = result.skipped
             logx.usage(
                 f"extractor {extractor.info.id} pushed {status.records_pushed} rows to {schema}",
                 username=user or "", operation="integration",

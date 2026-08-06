@@ -2563,6 +2563,20 @@ textarea.text-input {
   background: var(--fill);
 }
 
+/* The KPI strip inside the abstraction-layer card: it sits in a card rather than
+   under a toolbar, so drop the app strip's chrome and let the five tiles share the
+   width evenly (wrapping instead of scrolling on a narrow window). */
+.ikpi-strip {
+  padding: 0;
+  background: none;
+  border-bottom: none;
+  overflow-x: visible;
+  flex-wrap: wrap;
+}
+.ikpi-strip .kpi-tile {
+  flex: 1 1 132px;
+}
+
 /* Ingestion pipeline: header above the single accumulating flowchart. */
 .ihist-head {
   display: flex;
@@ -2587,6 +2601,30 @@ textarea.text-input {
   top: 8px;
   right: 8px;
   z-index: 5;
+}
+
+/* Drag strip along the bottom edge for resizing the working area. */
+.ipipe-resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 12px;
+  z-index: 5;
+  cursor: ns-resize;
+  display: grid;
+  place-items: center;
+  touch-action: none; /* let the pointer gesture drive the resize, not a page scroll */
+}
+.ipipe-grip {
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 0.15s;
+}
+.ipipe-resize:hover .ipipe-grip {
+  background: var(--accent);
 }
 .ipipe-canvas .react-flow__handle {
   width: 7px;
@@ -2614,15 +2652,29 @@ textarea.text-input {
   box-sizing: border-box;
   padding: 10px 12px;
   border-radius: 12px;
-  background: var(--card, var(--bg));
-  border: 1px solid var(--border);
+  /* Pastel, semi-transparent tint in the node's own accent (--node-accent, set per
+     node in IntegrationPipeline.tsx): the canvas dot-grid stays faintly visible
+     through the card, so each stage reads as its own colour without becoming a solid
+     block. The alpha stays low enough for the body text to keep full contrast. */
+  --node-tint: 14%;
+  background: color-mix(in srgb, transparent, var(--node-accent, var(--secondary)) var(--node-tint));
+  border: 1px solid color-mix(in srgb, var(--border), var(--node-accent, var(--border)) 45%);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  transition: border-color 0.2s, box-shadow 0.2s, opacity 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s, opacity 0.2s, background 0.2s;
   overflow: hidden;
 }
+/* Dark mode: the same hue needs a touch more alpha to register against a dark canvas. */
+:root[data-theme='dark'] .ipipe-node {
+  --node-tint: 20%;
+}
 .ipipe-node.active {
+  /* The stage currently running gets a deeper wash so it stands out of the row. */
+  --node-tint: 24%;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, transparent, var(--accent) 22%);
+}
+:root[data-theme='dark'] .ipipe-node.active {
+  --node-tint: 30%;
 }
 .ipipe-node.done {
   border-color: color-mix(in srgb, var(--border), var(--green) 55%);

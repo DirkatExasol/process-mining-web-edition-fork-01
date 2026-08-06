@@ -53,6 +53,10 @@ class ExtractResult:
     human-readable summary."""
 
     records: int = 0
+    # Source items the extractor could not turn into a record (e.g. log lines that
+    # matched no regex). Surfaced as a KPI so a silently-misconfigured source type is
+    # visible as "lots skipped" rather than only as a small `records` number.
+    skipped: int = 0
     tables: tuple[str, ...] = ()
     detail: str = ""
 

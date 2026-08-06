@@ -15,11 +15,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import log_events as logx
+from ..config import INTEGRATION_WATCHDOG_ENABLED
 from ..db.manager import current_db
 from ..integration import SqlIngestBackend, layer
 from ..integration.backends import DEFAULT_TRANSACTION_ROWS, clamp_transaction_rows
 from ..integration.extractors import FileExtractor
 from ..integration.files import FileAccessError, read_preview
+from ..integration.compound import OPS as COMPOUND_OPS
 from ..integration.parsing import ROLES, analyze_timestamp, detect_fields, regex_from_segment
 from ..store.security import store as security_store
 
@@ -81,18 +83,37 @@ def _active_schema() -> tuple[str | None, str | None, bool]:
         return (None, None, False)
 
 
+def _watchdog_counts(user: str | None) -> tuple[int, int]:
+    """(watchdogs switched on, file sources that could have one) for this user."""
+    file_sources = [s for s in security_store.list_sources(user) if s.kind == "file"]
+    active = sum(
+        1
+        for s in file_sources
+        if ((s.public()["config"].get("watchdog") or {}).get("enabled"))
+    )
+    return active, len(file_sources)
+
+
 @router.get("/status")
 def integration_status(request: Request) -> dict:
     """The abstraction-layer status for the signed-in user, plus the current target
-    (the active connection's schema) and how many extractors are registered."""
+    (the active connection's schema), how many extractors are registered, and how many
+    of the user's file sources have their watchdog switched on."""
     user = _request_user(request)
     conn_id, schema, connected = _active_schema()
+    active, total = _watchdog_counts(user)
     return {
         **layer.status_for(user).public(),
         "registeredExtractors": len(layer.extractors()),
         "activeConnectionId": conn_id,
         "activeSchema": schema,
         "connected": connected,
+        "watchdogsActive": active,
+        "watchdogsTotal": total,
+        # The whole loop can be switched off for the deployment (PMW_INTEGRATION_WATCHDOG=0),
+        # in which case an "enabled" watchdog still never polls — surfaced so the console
+        # can say so instead of showing a count that quietly does nothing.
+        "watchdogEnabled": INTEGRATION_WATCHDOG_ENABLED,
     }
 
 
@@ -115,11 +136,29 @@ class ExtractionField(BaseModel):
     title: str = Field(default="", max_length=200)
 
 
+class CompoundCondition(BaseModel):
+    """One test in a compound-step rule: a named field compared to a value."""
+
+    field: str = Field(default="", max_length=60)
+    op: str = "eq"
+    value: str = Field(default="", max_length=500)
+
+
+class CompoundRule(BaseModel):
+    """Derive the final STEP from several fields at once (optional). All conditions
+    must hold; the first matching rule wins."""
+
+    step: str = Field(default="", max_length=500)
+    when: list[CompoundCondition] = Field(default_factory=list)
+
+
 class SourceTypeBody(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     # The extraction spec captured by the wizard.
     sample: str = Field(default="", max_length=20000)
     fields: list[ExtractionField] = Field(default_factory=list)
+    # Optional compound-step rules. Absent/empty = the plain step field is used as-is.
+    compound: list[CompoundRule] = Field(default_factory=list, max_length=200)
 
 
 def _spec_config(body: SourceTypeBody) -> str:
@@ -135,7 +174,29 @@ def _spec_config(body: SourceTypeBody) -> str:
         }
         for f in body.fields
     ]
-    return json.dumps({"sample": body.sample, "fields": fields})
+    # Compound rules are stored only when complete (a resulting step + at least one
+    # condition naming a field), so a half-built rule from the wizard can never relabel
+    # events at import time.
+    compound = [
+        {
+            "step": r.step.strip(),
+            "when": [
+                {
+                    "field": c.field.strip(),
+                    "op": c.op if c.op in COMPOUND_OPS else "eq",
+                    "value": c.value,
+                }
+                for c in r.when
+                if c.field.strip()
+            ],
+        }
+        for r in body.compound
+        if r.step.strip() and any(c.field.strip() for c in r.when)
+    ]
+    spec: dict = {"sample": body.sample, "fields": fields}
+    if compound:
+        spec["compound"] = compound
+    return json.dumps(spec)
 
 
 @router.get("/source-types")
@@ -346,6 +407,7 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
     extractor = FileExtractor(
         path=path, encoding=str(cfg.get("encoding") or "utf-8"),
         fields=fields, project_id=body.projectId.strip(),
+        compound=st.public().get("compound") or [],
     )
     conn = security_store.get_connection(mgr.active_profile_id) if mgr.active_profile_id else None
     project_id = body.projectId.strip()
@@ -361,7 +423,7 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
             user=user, extractor=extractor, backend=backend, schema=schema,
             connection_id=mgr.active_profile_id,
             connection_name=conn.name if conn is not None else None,
-            source_name=source.name, source_type_name=st.name,
+            source_name=source.name, source_type_name=st.name, trigger="manual",
             transaction_rows=transaction_rows,
         )
     except FileAccessError as exc:

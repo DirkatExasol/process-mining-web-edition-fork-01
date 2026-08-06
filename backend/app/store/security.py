@@ -305,12 +305,15 @@ class SourceType:
             except (json.JSONDecodeError, TypeError):
                 spec = {}
         fields = spec.get("fields")
+        # Optional compound-step rules (absent for a source type that doesn't use them).
+        compound = spec.get("compound")
         return {
             "id": self.id,
             "owner": self.owner,
             "name": self.name,
             "sample": spec.get("sample", ""),
             "fields": fields if isinstance(fields, list) else [],
+            "compound": compound if isinstance(compound, list) else [],
             "createdAt": self.created_at,
         }
 

@@ -27,7 +27,7 @@ import {
   type XYPosition,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useStore } from '../store'
 import { flowKeyframes } from '../flow/MetricEdge'
 import type { IntegrationStatus } from '../types'
@@ -81,7 +81,13 @@ const accentFor = (p: Phase): string =>
 function PipeNode({ data }: NodeProps) {
   const d = data as PipeData
   return (
-    <div className={`ipipe-node ${d.phase}`} style={{ opacity: d.phase === 'idle' ? 0.72 : 1 }}>
+    <div
+      className={`ipipe-node ${d.phase}`}
+      // The accent travels as a CSS variable rather than an inline background, so the
+      // phase rules (.active/.done/.error) can still override the border and the tint
+      // is defined once in the stylesheet.
+      style={{ ['--node-accent' as string]: d.accent, opacity: d.phase === 'idle' ? 0.78 : 1 } as CSSProperties}
+    >
       {d.ports.includes('l') && <Handle type="target" position={Position.Left} id="l" className="ipipe-handle" />}
       <div className="ipipe-row">
         <span className="ipipe-icon" style={{ background: `color-mix(in srgb, transparent, ${d.accent} 20%)`, color: d.accent }}>
@@ -188,6 +194,31 @@ function PipeEdge({
 
 const edgeTypes = { pipe: PipeEdge }
 
+// Canvas sizing. The floor is generous so there is real room to rearrange nodes; the
+// user can drag the bottom edge to make it taller still (persisted per user).
+const MIN_CANVAS_H = 520
+const MAX_CANVAS_H = 1400
+const heightKey = (user: string) => `pmw.integration.pipelineHeight.${user}`
+
+function loadHeight(user: string): number | null {
+  try {
+    const raw = localStorage.getItem(heightKey(user))
+    const n = raw ? Number(raw) : NaN
+    return Number.isFinite(n) ? Math.min(MAX_CANVAS_H, Math.max(MIN_CANVAS_H, n)) : null
+  } catch {
+    return null
+  }
+}
+
+function saveHeight(user: string, px: number | null): void {
+  try {
+    if (px == null) localStorage.removeItem(heightKey(user))
+    else localStorage.setItem(heightKey(user), String(Math.round(px)))
+  } catch {
+    /* quota / disabled storage — the height just won't persist */
+  }
+}
+
 // ── persisted manual layout (per user, keyed by stable node id) ───────────────
 type Layout = Record<string, XYPosition>
 const layoutKey = (user: string) => `pmw.integration.pipelineLayout.${user}`
@@ -257,10 +288,48 @@ export function IntegrationPipeline({
     [user],
   )
 
+  // User-set canvas height (drag the bottom edge). null = follow the computed height.
+  const [customHeight, setCustomHeight] = useState<number | null>(() => loadHeight(user))
+  useEffect(() => setCustomHeight(loadHeight(user)), [user])
+
   const resetLayout = useCallback(() => {
     setOverrides({})
     saveLayout(user, {})
+    setCustomHeight(null)
+    saveHeight(user, null)
   }, [user])
+
+  /** Drag the bottom edge to make the working area taller/shorter. Pointer capture
+   *  keeps the gesture alive even when the cursor leaves the handle. */
+  const startResize = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      const el = e.currentTarget
+      const startY = e.clientY
+      const startH = el.parentElement?.getBoundingClientRect().height ?? MIN_CANVAS_H
+      el.setPointerCapture(e.pointerId)
+
+      const onMove = (ev: PointerEvent) => {
+        const next = Math.min(
+          MAX_CANVAS_H,
+          Math.max(MIN_CANVAS_H, startH + (ev.clientY - startY)),
+        )
+        setCustomHeight(next)
+      }
+      const onUp = (ev: PointerEvent) => {
+        el.releasePointerCapture(ev.pointerId)
+        el.removeEventListener('pointermove', onMove)
+        el.removeEventListener('pointerup', onUp)
+        setCustomHeight((h) => {
+          saveHeight(user, h)
+          return h
+        })
+      }
+      el.addEventListener('pointermove', onMove)
+      el.addEventListener('pointerup', onUp)
+    },
+    [user],
+  )
 
   const { nodes, edges, canvasH } = useMemo(() => {
     // ── Aggregate the whole history into ONE graph (reuse nodes by name) ──────
@@ -427,19 +496,23 @@ export function IntegrationPipeline({
       }
     })
 
-    const canvasH = Math.max(300, maxCount * GAP + 70)
+    // Grows with the number of rows, on a floor that already leaves room to rearrange.
+    const canvasH = Math.max(MIN_CANVAS_H, maxCount * GAP + 120)
     return { nodes, edges, canvasH }
   }, [runs, live, connections, overrides])
 
-  const hasCustomLayout = Object.keys(overrides).length > 0
+  const hasCustomLayout = Object.keys(overrides).length > 0 || customHeight != null
+  // A dragged height wins over the computed one, but never shrinks below what the
+  // current number of rows needs.
+  const height = customHeight != null ? Math.max(customHeight, MIN_CANVAS_H) : canvasH
 
   return (
-    <div className="ipipe-canvas" style={{ height: canvasH }}>
+    <div className="ipipe-canvas" style={{ height }}>
       {hasCustomLayout && (
         <button
           className="btn small ipipe-reset"
           onClick={resetLayout}
-          title="Reset the node layout to the automatic arrangement"
+          title="Reset the node layout and canvas size to the automatic arrangement"
         >
           ⤢ Reset layout
         </button>
@@ -465,6 +538,18 @@ export function IntegrationPipeline({
           <Background variant={BackgroundVariant.Dots} gap={22} size={1} />
         </ReactFlow>
       </ReactFlowProvider>
+
+      {/* Drag the bottom edge to give yourself more room to arrange nodes. */}
+      <div
+        className="ipipe-resize"
+        onPointerDown={startResize}
+        title="Drag to resize the canvas"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize the pipeline canvas"
+      >
+        <span className="ipipe-grip" aria-hidden />
+      </div>
     </div>
   )
 }

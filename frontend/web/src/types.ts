@@ -545,6 +545,8 @@ export interface ExtractorInfo {
 
 export interface IntegrationStatus {
   state: 'idle' | 'running' | 'completed' | 'failed'
+  /** What started the run: a console ▷ Run, or the background file watchdog. */
+  trigger: 'manual' | 'watchdog' | ''
   extractorId: string | null
   extractorName: string | null
   sourceName: string | null
@@ -553,6 +555,10 @@ export interface IntegrationStatus {
   connectionName: string | null
   schema: string | null
   recordsPushed: number
+  /** Journey EVENTS produced vs. source items that could not be parsed (unlike
+   *  recordsPushed, which also counts the project/step/meta rows). */
+  eventsWritten: number
+  eventsSkipped: number
   recordsDone: number
   recordsTotal: number
   tablesTouched: string[]
@@ -564,9 +570,18 @@ export interface IntegrationStatus {
   activeConnectionId: string | null
   activeSchema: string | null
   connected: boolean
+  /** File sources with the watchdog switched on, out of all file sources. */
+  watchdogsActive: number
+  watchdogsTotal: number
+  /** False when the whole watchdog loop is disabled for the deployment, in which case
+   *  an "on" watchdog still never polls. */
+  watchdogEnabled: boolean
 }
 
-export type ExtractionRole = 'timestamp' | 'id' | 'step' | 'meta'
+/** "aux" is a helper field: extracted like the others but written to no column — it
+ *  exists so a compound-step rule can match on a value (an HTTP status, a result code)
+ *  that doesn't belong in META. */
+export type ExtractionRole = 'timestamp' | 'id' | 'step' | 'meta' | 'aux' 
 
 export interface ExtractionField {
   id?: string
@@ -577,12 +592,40 @@ export interface ExtractionField {
   title?: string
 }
 
+/** One test in a compound-step rule: a named field compared against a value. */
+export interface CompoundCondition {
+  field: string
+  op: CompoundOp
+  value: string
+}
+
+export const COMPOUND_OPS = ['eq', 'ne', 'contains', 'startswith', 'endswith', 'regex'] as const
+export type CompoundOp = (typeof COMPOUND_OPS)[number]
+
+export const COMPOUND_OP_LABEL: Record<CompoundOp, string> = {
+  eq: 'is',
+  ne: 'is not',
+  contains: 'contains',
+  startswith: 'starts with',
+  endswith: 'ends with',
+  regex: 'matches regex',
+}
+
+/** Derive the final STEP from several fields at once. All conditions must hold; the
+ *  first matching rule wins; if none match the plain step value is used. Optional. */
+export interface CompoundRule {
+  id?: string
+  step: string
+  when: CompoundCondition[]
+}
+
 export interface SourceType {
   id: string
   owner: string
   name: string
   sample: string
   fields: ExtractionField[]
+  compound?: CompoundRule[]
   createdAt: string
 }
 

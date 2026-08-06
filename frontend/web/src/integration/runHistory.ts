@@ -16,6 +16,11 @@ export interface PipelineRun extends PipelineView {
   extractorName: string | null
   startedAt: string | null
   finishedAt: string | null
+  /** What started this run — drives the manual-vs-watchdog KPI split. */
+  trigger: 'manual' | 'watchdog' | ''
+  /** Journey events written vs. source items skipped (not the metadata rows). */
+  eventsWritten: number
+  eventsSkipped: number
 }
 
 const MAX_RUNS = 50
@@ -55,6 +60,9 @@ function toRun(s: IntegrationStatus): PipelineRun {
     lastError: s.lastError,
     startedAt: s.startedAt,
     finishedAt: s.finishedAt,
+    trigger: s.trigger ?? '',
+    eventsWritten: s.eventsWritten ?? 0,
+    eventsSkipped: s.eventsSkipped ?? 0,
   }
 }
 

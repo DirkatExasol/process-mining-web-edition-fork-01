@@ -2,7 +2,10 @@
  *  sample (client-side, so arbitrary user regexes never reach the server) and build a
  *  non-overlapping, role-coloured highlight of the sample. */
 
-export type FieldRole = 'timestamp' | 'id' | 'step' | 'meta'
+import type { CompoundRule } from '../types'
+
+/** "aux" is a helper field: extracted for compound-step matching, written to no column. */
+export type FieldRole = 'timestamp' | 'id' | 'step' | 'meta' | 'aux' 
 
 export interface ExtractionField {
   id?: string
@@ -98,6 +101,7 @@ export const ROLE_COLOR: Record<FieldRole, string> = {
   id: '#bf5af2',
   step: 'var(--green)',
   meta: 'var(--orange)',
+  aux: 'var(--teal, #1a9e8f)',
 }
 
 export const ROLE_LABEL: Record<FieldRole, string> = {
@@ -105,6 +109,7 @@ export const ROLE_LABEL: Record<FieldRole, string> = {
   id: 'EVENT_ID',
   step: 'STEP',
   meta: 'Meta',
+  aux: 'Helper',
 }
 
 /** Map the current text selection *inside* `container` to character offsets in the
@@ -122,4 +127,47 @@ export function selectionOffsetsWithin(container: HTMLElement): [number, number]
   const len = range.toString().length
   if (len === 0) return null
   return [start, start + len]
+}
+
+/** Evaluate compound-step rules against a line's extracted field values — the
+ *  browser-side mirror of backend/app/integration/compound.py, so the wizard preview
+ *  shows exactly the step an import would write. First fully-matching rule wins;
+ *  string comparisons are case-insensitive. */
+export function deriveCompoundStep(
+  rules: CompoundRule[],
+  values: Record<string, string>,
+): string | null {
+  for (const rule of rules) {
+    const conditions = rule.when.filter((c) => c.field.trim())
+    if (!rule.step.trim() || conditions.length === 0) continue
+    const ok = conditions.every((c) => {
+      const raw = values[c.field.trim()]
+      if (raw == null) return false
+      if (c.op === 'regex') {
+        try {
+          return new RegExp(c.value).test(raw)
+        } catch {
+          return false
+        }
+      }
+      const a = raw.trim().toLowerCase()
+      const b = (c.value ?? '').trim().toLowerCase()
+      switch (c.op) {
+        case 'eq':
+          return a === b
+        case 'ne':
+          return a !== b
+        case 'contains':
+          return a.includes(b)
+        case 'startswith':
+          return a.startsWith(b)
+        case 'endswith':
+          return a.endsWith(b)
+        default:
+          return false
+      }
+    })
+    if (ok) return rule.step.trim()
+  }
+  return null
 }

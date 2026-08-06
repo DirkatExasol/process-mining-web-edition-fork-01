@@ -79,6 +79,9 @@ export function SourcesSection({ open, onToggle }: { open: boolean; onToggle: ()
           <div className="card-list" style={{ maxHeight: 190 }}>
             {sources.map((s) => {
             const kind = sourceKind(s.kind)
+            const watching = Boolean(
+              (s.config?.watchdog as { enabled?: boolean } | undefined)?.enabled,
+            )
             return (
               <div
                 key={s.id}
@@ -91,7 +94,7 @@ export function SourcesSection({ open, onToggle }: { open: boolean; onToggle: ()
                 <div className="card-body">
                   <span className="card-title">
                     {s.name}
-                    {(s.config?.watchdog as { enabled?: boolean } | undefined)?.enabled && (
+                    {watching && (
                       <span title="Watchdog on — auto-imports new lines" style={{ marginLeft: 6 }}>👁</span>
                     )}
                   </span>
@@ -103,8 +106,18 @@ export function SourcesSection({ open, onToggle }: { open: boolean; onToggle: ()
                 {s.kind === 'file' && (
                   <button
                     className="icon-btn"
-                    style={{ width: 22, height: 22, color: 'var(--accent)' }}
-                    title="Run extraction"
+                    // Green ▷ while a watchdog is on this source: it is importing on its
+                    // own, so the button reads "live" rather than just "you can run it".
+                    style={{
+                      width: 22,
+                      height: 22,
+                      color: watching ? 'var(--green)' : 'var(--accent)',
+                    }}
+                    title={
+                      watching
+                        ? 'Watchdog active — run an import now as well'
+                        : 'Run extraction'
+                    }
                     aria-label="Run extraction"
                     onClick={(e) => {
                       e.stopPropagation()

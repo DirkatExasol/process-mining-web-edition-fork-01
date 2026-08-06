@@ -25,7 +25,7 @@ export function IntegrationConsole({ onShowHelp }: { onShowHelp: () => void }) {
         </button>
       </div>
 
-      <IntegrationStatusPanel status={status} error={error} />
+      <IntegrationStatusPanel status={status} runs={runs} error={error} />
 
       <div className="ihist-head">
         <h2 style={{ margin: 0, fontSize: 15 }}>Ingestion pipeline</h2>

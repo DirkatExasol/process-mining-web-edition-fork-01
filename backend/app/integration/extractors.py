@@ -25,6 +25,7 @@ except ImportError:  # pragma: no cover
     _rx = re
     _MATCH_KW = {}
 
+from .compound import CompoundRules
 from .contract import ColumnType, ExtractResult, ExtractorInfo, IngestError, IngestSession
 from .files import count_lines, iter_lines
 from .parsing import TIMESTAMP_TARGET, analyze_timestamp
@@ -117,6 +118,7 @@ class FileExtractor:
         fields: list[dict],
         project_id: str,
         lines: list[str] | None = None,
+        compound: list[dict] | None = None,
     ) -> None:
         self._path = path
         self._encoding = encoding or "utf-8"
@@ -135,6 +137,19 @@ class FileExtractor:
         # Business names for META_1..3 — only the explicitly-given titles (a METAS row
         # is written only when at least one is set).
         self._meta_titles = [(f.get("title") or "").strip() for f in meta_fields]
+        # Compound steps (optional): rules that derive the final STEP from several field
+        # values. Every named field — including "aux" helper fields that are extracted
+        # but written to no column — is available to them, so compile them all by name.
+        self._compound = CompoundRules(compound)
+        self._named = (
+            [
+                (str(f.get("name") or "").strip(), self._compile(f.get("regex", "")))
+                for f in fields
+                if str(f.get("name") or "").strip()
+            ]
+            if self._compound
+            else []
+        )
         self._seen_steps: set[str] = set()
 
     @staticmethod
@@ -218,7 +233,8 @@ class FileExtractor:
         if project_created:
             detail += ", project created"
         return ExtractResult(
-            records=written, tables=("JOURNEYS", "PROJECTS", "STEPS", "METAS"), detail=detail,
+            records=written, skipped=skipped,
+            tables=("JOURNEYS", "PROJECTS", "STEPS", "METAS"), detail=detail,
         )
 
     def _ensure_project(self, session: IngestSession) -> bool:
@@ -272,6 +288,12 @@ class FileExtractor:
         event_time = self._to_datetime(ts_raw)
         if event_time is None:
             return None
+        # Compound steps: when rules are configured, the final STEP may be derived from
+        # several fields at once (e.g. step "login" + status "200" → "login successful").
+        # The plain step value stands whenever no rule matches, so rules are additive.
+        if self._compound:
+            values = {name: v for name, rx in self._named if (v := self._capture(rx, line)) is not None}
+            step = self._compound.derive(values) or step
         self._seen_steps.add(step)
         metas = [self._capture(rx, line) for rx in self._metas]
         metas += [None] * (3 - len(metas))

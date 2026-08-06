@@ -215,6 +215,35 @@ def test_status_endpoint_reports_idle_and_registration_count():
     assert "activeSchema" in body
 
 
+def test_status_reports_active_watchdogs_out_of_total(monkeypatch):
+    """The console's "Watchdogs active" KPI counts file sources whose watchdog is on,
+    out of all file sources — computed server-side from the user's own sources."""
+    from app.api import integration as integ_api
+
+    class _Src:
+        def __init__(self, kind, enabled=None):
+            self.kind = kind
+            self._enabled = enabled
+
+        def public(self):
+            wd = {} if self._enabled is None else {"enabled": self._enabled}
+            return {"config": {"watchdog": wd} if wd else {}}
+
+    sources = [
+        _Src("file", True),    # on
+        _Src("file", True),    # on
+        _Src("file", False),   # configured but off
+        _Src("file"),          # never configured
+        _Src("api", True),     # a non-file kind is not counted at all
+    ]
+    monkeypatch.setattr(integ_api.security_store, "list_sources", lambda user: sources)
+
+    body = integ_api.integration_status(_Req("dave"))
+    assert body["watchdogsActive"] == 2
+    assert body["watchdogsTotal"] == 4  # the four FILE sources
+    assert body["watchdogEnabled"] is True  # loop enabled by default
+
+
 def test_extractors_endpoint_returns_a_list():
     from app.api import integration as integ_api
 
