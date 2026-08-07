@@ -1,0 +1,398 @@
+<section class="chapter" id="ch-process-map" data-title="The Process Map" data-num="9">
+  <h1><span class="chnum">9</span> The Process Map</h1>
+
+  <p class="chintro">The process map is the flowchart canvas at the heart of the application. It appears in almost every view mode — A-Chart, B-Chart, both panels of the A/B Comparison, Individual Journey, the left pane of Happy Path, Conformance Check and the Simulation "Flow" tab — and it always behaves the same way. This chapter explains the canvas in detail: how nodes are drawn and what their badges mean, how start and end markers are placed, how edges encode the selected metric, how grouping boxes collapse and expand, and how you zoom, pan, drag and reset the layout. It then covers the four view modes built directly on the canvas: the A-Chart and the B-Chart, the A/B Comparison with its Process Goodness and Process Similarity tinting, and the Individual Journey. This chapter is for every user; the two role-restricted views built on the same canvas (Conformance Check and Happy Path) have chapters of their own.</p>
+
+  <figure data-fig="app-03-achart"><figcaption>The A-Chart: KPI strip, the "Date &amp; Metrics" controls card and the flowchart canvas with its zoom overlay and edge-colour legend.</figcaption></figure>
+
+  <h2 id="ch9-nodes">Nodes</h2>
+
+  <p>Every process step in the filtered result set is drawn as one coloured node. Shape and colour come from the step definition held in the database, not from anything you set on the canvas, so the same step always looks the same in every chart and every view mode.</p>
+
+  <table>
+    <thead><tr><th>Shape value</th><th>Appearance</th></tr></thead>
+    <tbody>
+      <tr><td><code>stadium</code></td><td>Pill with fully rounded ends. This is the default when a step defines no shape.</td></tr>
+      <tr><td><code>round</code></td><td>Rectangle with a 12&nbsp;px corner radius.</td></tr>
+      <tr><td><code>circle</code></td><td>Circle.</td></tr>
+      <tr><td><code>hex</code></td><td>Flat-top hexagon.</td></tr>
+    </tbody>
+  </table>
+
+  <p>Background and foreground colours are also per step. They may be given either as a named SwiftUI colour (a legacy of the desktop edition the web edition was ported from) or as a six-digit hex value. Any value the application cannot resolve falls back to the accent blue, so an unexpectedly blue node usually means a malformed colour in the step definition rather than a rendering fault.</p>
+
+  <h3 id="ch9-node-content">What a node shows</h3>
+
+  <p>The node always carries the step name. A second line underneath it is filled according to the following order of precedence:</p>
+
+  <ol class="steps">
+    <li>If the step carries an event time — which happens only in Individual Journey mode — the time is shown as <code>HH:MM:SS</code> in 24-hour notation.</li>
+    <li>Otherwise, if <b>Show node descriptions</b> is enabled and the step has a description that differs from its name, a truncated description is shown: the first 20 characters followed by an ellipsis.</li>
+    <li>Otherwise the node shows only its name.</li>
+  </ol>
+
+  <p>Hovering a node shows the full description as a tooltip, or the step name if there is no description. The description line is controlled by the setting <code>processmap.showNodeDescriptions</code>, which is on by default and is reached from the sidebar under Config.</p>
+
+  <h3 id="ch9-badges">Badges</h3>
+
+  <p>Up to three badges can be attached to a node. They are independent of each other and can appear together.</p>
+
+  <dl>
+    <dt>End-of-process dot</dt>
+    <dd>An orange dot marking a step that is flagged <i>endOfProcess</i> in its definition. This is a property of the step itself — it says "this is a legitimate place for a journey to finish" — and is not derived from the current data.</dd>
+    <dt>Score badge</dt>
+    <dd>Shows the step's score. The badge is green when the score is greater than zero, red when it is less than zero, and blue when it is exactly zero. Steps without a score carry no badge.</dd>
+    <dt>Note badge</dt>
+    <dd>A yellow ✎ badge appears when the node has one or more notes attached, with the tooltip "This node has notes". Click the node and choose <b>Show Notes</b> to read them.</dd>
+  </dl>
+
+  <div class="note"><strong>Note</strong> Node scores drive the <b>Graph Value</b> KPI tile: it is the sum of step score × visits over all scored nodes, where the visit count of a node is the larger of its incoming and outgoing occurrence totals. If no step in the project carries a score, the tile is hidden entirely rather than showing zero.</div>
+
+  <h3 id="ch9-markers">Start and end markers</h3>
+
+  <p>The map annotates where journeys enter and leave the process, derived purely from the currently visible transitions:</p>
+
+  <ul>
+    <li>A <b>green downward arrow</b> — a dot, a stem and an arrowhead — is drawn <i>above</i> every node that has no incoming transitions. That node is a process start under the current filters.</li>
+    <li>An <b>orange arrow</b> is drawn <i>below</i> every node with no outgoing transitions. That node is a process end under the current filters.</li>
+  </ul>
+
+  <p>When grouping boxes are visible the markers are offset so that they clear the box outline rather than overlapping it.</p>
+
+  <div class="tip"><strong>Tip</strong> Start and end markers are recomputed from the filtered graph, so they change as you narrow the date window or exclude steps. A node that suddenly grows a green start marker usually means the step that used to precede it has been filtered out.</div>
+
+  <h2 id="ch9-node-actions">Selecting a node and its context actions</h2>
+
+  <p>Clicking a node opens a context popover titled with the step name. The popover is the primary way of drilling into the process from the canvas.</p>
+
+  <table>
+    <thead><tr><th>Action</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><b>✓ Require in journeys</b></td><td>Adds the step to the <i>included steps</i> filter and removes it from the excluded list if it was there, then reloads the graph. Only journeys that visit this step remain.</td></tr>
+      <tr><td><b>⊖ Exclude from journeys</b> (red)</td><td>Adds the step to the <i>excluded steps</i> filter and removes it from the included list, then reloads. Journeys visiting this step are dropped.</td></tr>
+      <tr><td><b>≡ Show description</b></td><td>Shown only when node descriptions are enabled and the step really has a description. Opens a centred popover with the step name, the full description text and a <b>Done</b> button.</td></tr>
+      <tr><td><b>✎ Show Notes (N)</b> (yellow)</td><td>Opens the note flow for this node; <i>N</i> is the number of notes already attached. With no existing notes the editor opens directly on a new note; with one or more, a list sheet opens first.</td></tr>
+    </tbody>
+  </table>
+
+  <p>Require and Exclude are mutually exclusive per step: applying one always clears the other, so you cannot accidentally require and exclude the same step at the same time. Both immediately trigger a reload of the chart you are working in.</p>
+
+  <div class="warn"><strong>Warning</strong> When the chart's data source is a <b>simulation</b> slot (Sim-A or Sim-B), the source is read-only: <b>Require in journeys</b> and <b>Exclude from journeys</b> are hidden from the popover and only the description and notes items remain. A red notice at the top right of the canvas states this — "Sim-A: simulation data is read-only — interactive filtering, drill-down and step editing are not available."</div>
+
+  <h3 id="ch9-drag">Dragging nodes</h3>
+
+  <p>Nodes can be dragged freely. They snap to a 20&nbsp;px grid, and the new position is written to storage only when you release the pointer, not continuously during the drag.</p>
+
+  <p>Layouts are stored server-side per user, and they are keyed by project <i>and</i> by chart mode. A-Chart, B-Chart, Happy Path, Conformance, each simulation slot (<code>sim_&lt;slot&gt;</code>) and each individual journey (<code>ij_&lt;eventId&gt;</code>) therefore keep completely independent arrangements of the same steps. Because the storage is server-side, your layouts follow you to another browser or machine and are included in backups.</p>
+
+  <h2 id="ch9-edges">Edges and metric labels</h2>
+
+  <p>Each edge is one observed transition from one step to another. Five metrics can be displayed, selected with the metric chips in the "Date &amp; Metrics" card above the chart:</p>
+
+  <table>
+    <thead><tr><th>Chip</th><th>Metric</th></tr></thead>
+    <tbody>
+      <tr><td><b># Count</b></td><td>Number of times the transition occurred.</td></tr>
+      <tr><td><b>⏱ Avg Time</b></td><td>Mean time between the two steps.</td></tr>
+      <tr><td><b>⌄ Min Time</b></td><td>Shortest observed time.</td></tr>
+      <tr><td><b>⌃ Max Time</b></td><td>Longest observed time.</td></tr>
+      <tr><td><b>〰 Std Dev</b></td><td>Standard deviation of the transition times.</td></tr>
+    </tbody>
+  </table>
+
+  <figure data-fig="app-04-metrics"><figcaption>The five metric chips. Exactly one is active at a time; the chips are disabled while a chart holds no data.</figcaption></figure>
+
+  <h3 id="ch9-edge-encoding">Thickness, opacity and colour</h3>
+
+  <p>Thickness and opacity always encode the selected metric. Line width runs from 3&nbsp;px to 22&nbsp;px and alpha from 0.3 to 0.8, scaled linearly against the largest value among the currently visible edges — so the encoding is relative to what is on screen, and changing the filter can make a formerly thin edge thick. The arrowhead scales with the line width.</p>
+
+  <p>Colour is a separate channel. When <b>Colorise edges by weight</b> is on, each edge is tinted along the gradient configured for the active metric; when it is off, all edges are grey and only thickness carries the value.</p>
+
+  <h3 id="ch9-edge-labels">Edge labels</h3>
+
+  <p>Every edge carries a label with the metric value:</p>
+
+  <ul>
+    <li><b>Count</b> is shown compactly — for example <code>1.2k</code> or <code>3.4M</code>.</li>
+    <li><b>Time metrics</b> are shown as <code>Ns</code>, <code>Nm</code>, <code>N.nh</code> or <code>N.nd</code> depending on magnitude.</li>
+    <li>A missing time value is shown as <code>—</code>.</li>
+  </ul>
+
+  <p>The label tooltip reads "<code>&lt;from&gt; → &lt;to&gt; · &lt;occurrences&gt;</code>", which gives you the raw occurrence count even while a time metric is displayed. A yellow ✎ bubble sits next to the label when the transition has notes, with the tooltip "This transition has notes".</p>
+
+  <p>A transition from a step to itself is drawn as a <b>self-loop</b>: a circle above the node, without an arrowhead.</p>
+
+  <h3 id="ch9-edge-click">Clicking an edge</h3>
+
+  <p>The edge line has a wide invisible hit area, and the label itself is clickable too, so you do not have to hit the stroke exactly. In the normal charts a click opens a popover titled "<code>&lt;from&gt; → &lt;to&gt;</code>" containing <b>✎ Show Notes (N)</b>. (In Conformance Check's edit mode the same click opens the norm editor instead — see the Conformance Check chapter.)</p>
+
+  <h3 id="ch9-colour-legend">The colour-scale legend and the Edge Colour Wizard</h3>
+
+  <p>When <code>graph.edge.colorizeByWeight</code> is on — it is on by default — a small legend card floats over the canvas showing the current metric name, a ⚙ icon and a Low→High gradient bar. If the neutral schema is selected the bar is replaced by the text "No color scale".</p>
+
+  <ol class="steps">
+    <li>Click the legend card (tooltip "Configure edge colour schema per metric") to open the <b>Edge Colour Schema</b> sheet.</li>
+    <li>Use the <b>Colorise edges by weight</b> switch at the top to turn colouring on or off globally.</li>
+    <li>For each metric — Count, Avg Time, Min Time, Max Time, Std Dev — pick a schema from its dropdown. A live gradient preview updates beside it.</li>
+    <li>Choose <b>Reset to defaults</b> to restore the per-metric defaults, or <b>Done</b> to close.</li>
+  </ol>
+
+  <table>
+    <thead><tr><th>Schema</th><th>Gradient</th><th>Default for</th></tr></thead>
+    <tbody>
+      <tr><td>None (grey)</td><td>Flat grey, no scale</td><td>—</td></tr>
+      <tr><td>Green (high is good)</td><td>Red → green</td><td>Count</td></tr>
+      <tr><td>Red (low is good)</td><td>Green → red</td><td>Max Time</td></tr>
+      <tr><td>Blue scale</td><td>Light → dark blue</td><td>Min Time</td></tr>
+      <tr><td>Orange scale</td><td>Light → dark orange</td><td>Avg Time</td></tr>
+      <tr><td>Purple scale</td><td>Light → dark purple</td><td>Std Dev</td></tr>
+    </tbody>
+  </table>
+
+  <p>Choices are saved per metric under <code>graph.edge.colorSchema.&lt;metric&gt;</code> and are included in backups. The sheet's own explanatory text summarises the rule: edge thickness always encodes the selected metric; colouring is an additional layer tinting each transition from the lowest to the highest value.</p>
+
+  <h2 id="ch9-groups">Grouping boxes</h2>
+
+  <p>Steps that share a <code>BELONGS_TO</code> value are treated as a group. With <b>Show grouping</b> on (setting <code>processmap.showGrouping</code>, on by default) each group is surrounded by a dashed, tinted box with a coloured name pill. The pill's hue is derived deterministically from the group name, so a given group keeps its colour across charts and sessions.</p>
+
+  <p>At the top right of each box sits a round collapse toggle: a red <b>−</b> collapses the group (tooltip "Collapse &lt;group&gt;") and a green <b>+</b> expands it again (tooltip "Expand &lt;group&gt;").</p>
+
+  <h3 id="ch9-collapsed">Collapsed groups</h3>
+
+  <p>A collapsed group is replaced by a single accent-coloured proxy node showing the member count, for example "7 nodes". Edges to and from the members are merged into edges to and from the proxy, and this merging changes the numbers:</p>
+
+  <ul>
+    <li><b>Connection counts are summed.</b></li>
+    <li><b>Times are weighted-averaged.</b></li>
+    <li><b>Intra-group transitions are dropped</b> — a transition between two members of the same collapsed group disappears from the map entirely.</li>
+  </ul>
+
+  <p>A grey hint at the bottom centre of the canvas restates this while any group is collapsed: "Collapsed groups: connection counts summed · times weighted-averaged".</p>
+
+  <div class="warn"><strong>Warning</strong> Min Time, Max Time and Std Dev cannot be reconstructed from merged transitions. On an edge that touches a collapsed group these metrics are unavailable and the label shows <code>—</code>. If you need those figures, expand the group first.</div>
+
+  <p>Dragging the group <b>box</b> moves all of its member nodes together — or the proxy node when the group is collapsed — which is the quickest way to rearrange a large map.</p>
+
+  <h3 id="ch9-startmode">Initial collapse state</h3>
+
+  <p>What happens when you open a project is governed by the setting <code>graph.startMode</code>:</p>
+
+  <table>
+    <thead><tr><th>Value</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td><code>expanded</code> (default)</td><td>All groups open.</td></tr>
+      <tr><td><code>collapsed</code></td><td>All groups collapsed.</td></tr>
+      <tr><td><code>persisted</code></td><td>Restore the last collapse state, remembered per project and per chart mode.</td></tr>
+    </tbody>
+  </table>
+
+  <p>When grouping is on and the project actually contains groups, the zoom overlay gains an extra button: <b>⤡ Collapse all groups</b> or <b>⤢ Expand all groups</b>, whichever is appropriate for the current state.</p>
+
+  <h2 id="ch9-viewport">Layout, zoom and pan</h2>
+
+  <p>The canvas has a dotted-grid background and an overlay of viewport controls along the bottom edge.</p>
+
+  <table>
+    <thead><tr><th>Control</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><b>−</b></td><td>Zoom out (divides the current zoom by 1.3).</td></tr>
+      <tr><td>Percentage readout</td><td>Current zoom level, for example "100%".</td></tr>
+      <tr><td><b>+</b></td><td>Zoom in (multiplies the current zoom by 1.3).</td></tr>
+      <tr><td><b>⤢</b></td><td>Fit to view — frames the whole graph.</td></tr>
+      <tr><td><b>↺</b></td><td>Reset node layout — clears all manual drag positions for this chart and re-fits.</td></tr>
+    </tbody>
+  </table>
+
+  <p>Zoom is clamped between 15&nbsp;% and 500&nbsp;%. Double-clicking anywhere on the canvas background also fits the view, which is usually faster than reaching for the ⤢ button.</p>
+
+  <div class="note"><strong>Note</strong> <b>↺ Reset node layout</b> affects only the chart you are looking at. Because layouts are keyed per project <i>and</i> per chart mode, resetting the A-Chart leaves your B-Chart, Happy Path, Conformance and simulation arrangements untouched.</div>
+
+  <p>While a reload is in flight, a small "Loading…" pill with a spinner appears over the canvas. The chart stays interactive during the reload — you can keep panning and zooming.</p>
+
+  <h3 id="ch9-scaling">Display scaling</h3>
+
+  <p>Four settings in the sidebar under Config → Fonts control how large the map is drawn. They are read directly by the canvas, so changes take effect immediately.</p>
+
+  <table>
+    <thead><tr><th>Setting</th><th>Default</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>graph.node.scale</code></td><td>2.25</td><td>Grows the node box and its font together, so text never spills out of the shape.</td></tr>
+      <tr><td><code>graph.edge.scale</code></td><td>3.375</td><td>Sizes edge labels, badges and the note bubbles on edges.</td></tr>
+      <tr><td><code>graph.group.scale</code></td><td>2.25</td><td>Sizes the group name pill and its collapse toggle.</td></tr>
+      <tr><td><code>graph.optimisedLayout</code></td><td>on</td><td>Uses the optimised automatic layout algorithm.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="ch9-achart">The A-Chart</h2>
+
+  <p>The A-Chart is the primary analysis chart and the default view mode. It consists of the KPI strip, the collapsible "Date &amp; Metrics" controls card and the canvas. It is the chart other parts of the application defer to: Statistics always mirrors the A-Chart's filters, AI supported Documentation always analyses the A-Chart dataset, and the Simulation builds its Markov model from the observed A-Chart graph.</p>
+
+  <p>When you open a project for the first time, the A-Chart loads immediately using the default window — the last 30 days of data, configurable with <code>graph.defaultWindowDays</code> (0 means the full range). Every other mode is seeded with the same window and the project's real filter bounds but is not loaded until you ask for it.</p>
+
+  <h3 id="ch9-achart-states">A-Chart states</h3>
+
+  <table>
+    <thead><tr><th>State</th><th>Glyph, title and message</th></tr></thead>
+    <tbody>
+      <tr><td>Not connected</td><td>⛁ <b>Not Connected</b> — "Add a connection in the sidebar and tap it to connect to your Exasol database."</td></tr>
+      <tr><td>No project</td><td>🗺 <b>No Project Selected</b> — "Select a project from the sidebar."</td></tr>
+      <tr><td>Loading</td><td>Spinner + "Loading process map".</td></tr>
+      <tr><td>No data</td><td>📊 <b>No Process Data</b> — "No event transitions found for this project.", with a prominent <b>Load</b> button.</td></tr>
+      <tr><td>Load error</td><td>⚠️ <b>Failed to Load</b> — the backend error message.</td></tr>
+    </tbody>
+  </table>
+
+  <p>With data present, a right-aligned footer reads "Query time: N ms" (or "N.NN s" for longer queries). Its tooltip — "Server-side execution time of the queries behind this view" — is a reminder that this figure measures the database, not the browser.</p>
+
+  <h2 id="ch9-bchart">The B-Chart</h2>
+
+  <figure data-fig="app-10-b-chart"><figcaption>The B-Chart is a second, fully featured process map with its own filter state and its own node layout.</figcaption></figure>
+
+  <p>The B-Chart is a second, entirely independent process map. It has the same KPI strip, the same controls card and the same canvas, and it remembers its own filter state (dates, included and excluded steps, meta filters and metric) and its own node layout. Nothing you do on the A-Chart changes the B-Chart or vice versa.</p>
+
+  <p>Two things differ from the A-Chart:</p>
+
+  <ul>
+    <li>The B-Chart does not load automatically. Its empty state reads 📊 <b>No Process Data</b> — "Use the sidebar filters and tap Apply to load the B-Chart.", with a <b>Load</b> button.</li>
+    <li>Its loading message is "Loading B-Chart".</li>
+  </ul>
+
+  <p>Use the B-Chart when you want to keep one configuration of the process on screen while you build a second one — for example one product line against another — and then switch to A/B Comparison to see both at once.</p>
+
+  <div class="note"><strong>Note</strong> Each view mode remembers its own filter state. When you switch modes the application saves the state you are leaving and restores the state of the mode you are entering. Statistics is the exception: it always inherits the A-Chart's filters.</div>
+
+  <h2 id="ch9-ab">A/B Comparison</h2>
+
+  <figure data-fig="app-11-a-b-comparison"><figcaption>A/B Comparison: panel A on the left, panel B on the right, with the valve button between them and the similarity badge along the bottom.</figcaption></figure>
+
+  <p>A/B Comparison places the two charts side by side — A on the left, B on the right. Each panel has its own header, an optional KPI strip, its own "Date &amp; Metrics" card and its own flowchart. The panels map onto the saved A-Chart and B-Chart states, so anything you already configured in those modes is what you see here. The active side starts as A.</p>
+
+  <h3 id="ch9-ab-active">Choosing the active side</h3>
+
+  <p>The sidebar filters can only edit one side at a time. The side currently being edited is the <b>active</b> side, and the panel header tells you which is which: the active panel shows "✎ A-Chart · editing", the inactive one shows "○ B-Chart".</p>
+
+  <ol class="steps">
+    <li>Click the header button of the panel you want to work on. That side becomes active.</li>
+    <li>Adjust filters in the sidebar, or use that panel's own "Date &amp; Metrics" card, and apply them. Only the active side reloads.</li>
+    <li>Click the other panel's header to switch, then repeat.</li>
+  </ol>
+
+  <p>Each panel header also shows that side's journey count ("N journeys") and a chevron that collapses or expands that panel's KPI strip (<code>abpanel.a/b.kpiExpanded</code>, expanded by default). Panel A carries one extra button: <b>⧉ Copy A's node layout to B</b>, which copies both the viewport and the node positions across so that the two maps line up for visual comparison.</p>
+
+  <p>Changing a metric inside one panel's card changes that panel only — and also the shared metric if that panel happens to be the active side.</p>
+
+  <h3 id="ch9-valve">The valve</h3>
+
+  <p>Between the two panels sits a <b>⇄ valve</b> button that controls whether the panels move together.</p>
+
+  <table>
+    <thead><tr><th>State</th><th>Tooltip</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td>Open (default)</td><td>"Valve open — pan, zoom and reset are synchronised"</td><td>Panning, zooming and node dragging in one panel are mirrored in the other.</td></tr>
+      <tr><td>Closed</td><td>"Valve closed — charts move independently"</td><td>Each panel pans, zooms and is dragged on its own.</td></tr>
+    </tbody>
+  </table>
+
+  <p>Closing the valve first snapshots A's current viewport and node positions into B, so the two maps start from the same arrangement before diverging. The state persists as <code>abComparison.valveOpen</code> and defaults to open.</p>
+
+  <h3 id="ch9-ab-sources">Data sources per side</h3>
+
+  <p>Each side's data source is chosen in the sidebar Sampling section and can be the original data, one of the sample sets (Sample 1–3), or a simulation slot (Sim-A or Sim-B). The <b>Active Sample</b> KPI tile on each side names the source it is actually reading — "Original", "Sample 1" … "Sample 3", or "Sim-A"/"Sim-B" — and its value is that source's journey count.</p>
+
+  <div class="warn"><strong>Warning</strong> A side fed from a simulation slot is read-only: it shows the red canvas notice and its nodes offer no Require or Exclude actions. You can still read the map, open descriptions and work with notes.</div>
+
+  <h3 id="ch9-ab-reading">Reading the comparison: Goodness and Similarity</h3>
+
+  <p>Two figures make the comparison quantitative.</p>
+
+  <dl>
+    <dt>Process Goodness ◔</dt>
+    <dd>A server-computed goodness score for one side, shown signed with two decimals. In A/B mode the tile is tinted by comparison with the other side: <b>green</b> when this side is better, <b>red</b> when it is worse, and <b>blue</b> when the two are equal within 0.005. The tile is hidden when the score is null.</dd>
+    <dt>Process Similarity ⇄</dt>
+    <dd>How alike the two sides are, on a scale of 0 to 1 with two decimals, computed from both sides' journey-path variants together with their graphs. It is tinted <b>green</b> at 0.70 and above, <b>red</b> at 0.30 and below, and <b>blue</b> in between. The tile only exists once a similarity has been computed.</dd>
+  </dl>
+
+  <p>The same similarity figure is repeated as a badge along the bottom row of the comparison — "⇄ Similarity N.NN" — once both sides have been computed, using the identical green/red/blue thresholds.</p>
+
+  <h3 id="ch9-ab-states">Empty and loading panels</h3>
+
+  <p>An unloaded panel shows 📈 with the title <b>A-Chart</b> or <b>B-Chart</b>. The message depends on whether that side is active: the active side reads "Apply filters in the sidebar to load."; the inactive side reads "Tap the header to make this side active, then load." Both offer a <b>Load</b> button, which makes that side active and loads it in one step. While loading, the panel shows a spinner with "Loading A-Chart" or "Loading B-Chart".</p>
+
+  <h2 id="ch9-journey">Individual Journey</h2>
+
+  <figure data-fig="app-12-individual-journey"><figcaption>Individual Journey: a single case drawn step by step, with event times on the nodes and the journey KPI tiles above.</figcaption></figure>
+
+  <p>Individual Journey draws exactly one case. Instead of an aggregated map you see that journey's steps in the order they occurred, with the clock time of each event on the node and an animated dot travelling the path.</p>
+
+  <h3 id="ch9-journey-load">Finding a journey</h3>
+
+  <div class="role">Requires: <b>any user</b></div>
+
+  <ol class="steps">
+    <li>Switch to <b>Individual Journey</b> from the <b>☰</b> "Switch view" menu in the toolbar.</li>
+    <li>In the sidebar, type into the <b>Event ID</b> field. After two or more characters the field offers autocomplete suggestions.</li>
+    <li>Pick a suggestion or finish typing the identifier.</li>
+    <li>Tap <b>Load Journey</b>.</li>
+  </ol>
+
+  <p>The sidebar's Metrics selector is hidden in this mode, because a single traversal makes counts meaningless: the edge metric is forced to <b>Avg Time</b>.</p>
+
+  <h3 id="ch9-journey-reading">Reading the journey</h3>
+
+  <p>On the canvas:</p>
+
+  <ul>
+    <li>Each node shows the event <b>time</b> as <code>HH:MM:SS</code> beneath the step name, in place of the usual description line.</li>
+    <li>A single blue dot with a white outline travels along the edges in chronological order, hopping from edge to edge at 0.8&nbsp;seconds per edge and looping endlessly. This is the playback of the case, not a metric.</li>
+    <li>Node positions are stored per event ID (chart mode key <code>ij_&lt;eventId&gt;</code>), so rearranging one journey does not disturb another.</li>
+  </ul>
+
+  <p>The KPI strip is replaced by a journey-specific set of tiles:</p>
+
+  <table>
+    <thead><tr><th>Tile</th><th>Icon</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><b>Date</b></td><td>📅</td><td>The journey's start date, in short format.</td></tr>
+      <tr><td><b>Duration</b></td><td>⏱️</td><td>End minus start of the journey.</td></tr>
+      <tr><td><b>Sum of Scores</b></td><td>ƒ</td><td>Sum of the step scores across the visited steps, shown signed; "—" when no step carries a score.</td></tr>
+      <tr><td><b>Steps visited / distinct</b></td><td>⑂</td><td>"<i>total</i> / <i>distinct</i>", where the total is the number of transitions traversed plus one.</td></tr>
+      <tr><td>Meta tiles</td><td>🏷</td><td>Up to three further tiles for the project's meta fields. The label is the project's meta1/meta2/meta3 title and the value is this journey's value. A tile appears only when both the title and the value exist.</td></tr>
+    </tbody>
+  </table>
+
+  <p>The meta tiles are what let you recognise the case in business terms — customer, order number, region, or whatever the project's meta fields have been configured to hold.</p>
+
+  <h3 id="ch9-journey-states">Individual Journey states</h3>
+
+  <table>
+    <thead><tr><th>State</th><th>Glyph, title and message</th></tr></thead>
+    <tbody>
+      <tr><td>No project</td><td>🗺 <b>No Project Selected</b> — "Select a project from the sidebar to view a journey."</td></tr>
+      <tr><td>No Event ID entered</td><td>🧍 <b>No Journey Selected</b> — "Enter an Event ID in the sidebar and tap Load Journey."</td></tr>
+      <tr><td>Loading</td><td>Spinner + "Loading journey".</td></tr>
+      <tr><td>Not found</td><td>🔍 <b>Journey Not Found</b> — "No steps found for "&lt;entered id&gt;". Queried hash: &lt;hash&gt;"</td></tr>
+      <tr><td>Error</td><td>⚠️ <b>Failed to Load</b> + the error message.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="tip"><strong>Tip</strong> The "Journey Not Found" message deliberately echoes the <b>queried hash</b> as well as the identifier you typed. Event IDs are hashed before being sent to the database; quoting the hash when you raise a support request lets an administrator check the stored data directly.</div>
+
+  <h2 id="ch9-summary">What persists, and where</h2>
+
+  <p>Because the process map is highly configurable, it is worth knowing what survives a reload and what does not.</p>
+
+  <table>
+    <thead><tr><th>Item</th><th>Scope</th></tr></thead>
+    <tbody>
+      <tr><td>Node positions</td><td>Server-side per user, keyed per project <i>and</i> chart mode (A-Chart, B-Chart, HappyPath, Conformance, <code>sim_&lt;slot&gt;</code>, <code>ij_&lt;eventId&gt;</code>).</td></tr>
+      <tr><td>Collapsed-group state</td><td>Per project and chart mode; restored only when <code>graph.startMode</code> is <code>persisted</code>.</td></tr>
+      <tr><td>Edge colour schemas</td><td>Per metric, under <code>graph.edge.colorSchema.&lt;metric&gt;</code>; included in backups.</td></tr>
+      <tr><td>Selected metric</td><td>Per chart, as part of that chart's saved state.</td></tr>
+      <tr><td>KPI strip expansion</td><td><code>processmap.kpiExpanded</code>, and per panel in A/B (<code>abpanel.a/b.kpiExpanded</code>).</td></tr>
+      <tr><td>Valve state</td><td><code>abComparison.valveOpen</code>, default open.</td></tr>
+      <tr><td>Controls-card expansion</td><td>Per surface: <code>achart.controlsExpanded</code>, <code>bchart.controlsExpanded</code>, <code>abpanel.a/b.controlsExpanded</code>.</td></tr>
+    </tbody>
+  </table>
+
+  <p>Server-side storage means these settings travel with your account rather than with the browser, and they round-trip through the administrator's backups.</p>
+</section>

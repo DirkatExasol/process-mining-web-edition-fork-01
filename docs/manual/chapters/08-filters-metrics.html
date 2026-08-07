@@ -1,0 +1,368 @@
+<section class="chapter" id="ch-filters-metrics" data-title="Filters, Metrics, Sampling and Configuration" data-num="8">
+
+<h1><span class="chnum">8</span> Filters, Metrics, Sampling and Configuration</h1>
+
+<p class="chintro">This chapter is the reference for the four sidebar sections that shape what a chart shows and how it looks: <b>Metrics</b> (which transition figure the edges carry), <b>Filters</b> (which journeys are counted at all), <b>Sampling</b> (which data source each chart reads from) and <b>Configuration</b> (display settings, KPI layout, step properties and the AI prompt). Every user needs the Filters and Metrics sections; Sampling is restricted to power users and administrators. Each control is listed with its exact on-screen label, its default and — where the behaviour is easy to misread — the reason it works the way it does.</p>
+
+<h2 id="ch8-orientation">8.1 Where these sections live</h2>
+
+<p>All four sections are accordion panels in the sidebar, in this fixed order: <b>Connections</b>, <b>Projects</b>, <b>Metrics</b>, <b>Filters</b>, <b>Sampling</b>, <b>Configuration</b>. Only one section is open at a time — opening one collapses the others. On start-up the <b>Connections</b> section is open; selecting a project collapses every section so the chart gets the full height.</p>
+
+<p>Two sections change with the active view mode:</p>
+
+<ul>
+<li>Switching to <b>Individual Journey</b> hides <b>Metrics</b> and <b>Sampling</b> entirely and automatically opens <b>Filters</b>, so that the Event ID field is immediately at hand. The automatic opening happens once per mode change; you can collapse the section again afterwards.</li>
+<li>Switching to <b>AI supported Documentation</b> replaces the filter controls with a notice — that view always analyses the A-Chart's filters.</li>
+</ul>
+
+<div class="note"><strong>Note</strong> Each view mode keeps its own filter state. Switching modes saves the state you were editing and restores the target mode's state. There are two exceptions: <b>Statistics</b> always inherits the A-Chart's filters, and <b>A/B Comparison</b> maps onto the saved A-Chart and B-Chart states, with side A active first.</div>
+
+<h2 id="ch8-metrics">8.2 The Metrics section</h2>
+
+<figure data-fig="app-04-metrics"><figcaption>The Metrics section: one transition metric is active at a time.</figcaption></figure>
+
+<p>The section header reads <b>ƒ Transition metric</b> and contains a two-column grid of chips. The chips are disabled until a project is selected. The same five chips also appear in the <b>Date &amp; Metrics</b> card above each chart, so you can change the metric without opening the sidebar.</p>
+
+<table>
+<thead><tr><th>Chip</th><th>Meaning on an edge</th><th>Label format</th></tr></thead>
+<tbody>
+<tr><td><b># Count</b> (default)</td><td>Number of times the transition was traversed across the filtered journeys.</td><td>Compact count, e.g. "1.2k", "3.4M"</td></tr>
+<tr><td><b>⏱ Avg Time</b></td><td>Mean elapsed time between the two steps.</td><td>"Ns", "Nm", "N.nh", "N.nd"</td></tr>
+<tr><td><b>⌄ Min Time</b></td><td>Shortest observed elapsed time for that transition.</td><td>as above</td></tr>
+<tr><td><b>⌃ Max Time</b></td><td>Longest observed elapsed time.</td><td>as above</td></tr>
+<tr><td><b>〰 Std Dev</b></td><td>Standard deviation of the elapsed times — a measure of how erratic the transition is.</td><td>as above</td></tr>
+</tbody>
+</table>
+
+<p>Where a time value is unavailable the label shows an em dash ("—"). Hovering an edge label shows "<code>&lt;from&gt; → &lt;to&gt; · &lt;occurrences&gt;</code>", so the traversal count is always available even when a time metric is selected.</p>
+
+<h3 id="ch8-metrics-visual">8.2.1 How the metric is drawn</h3>
+
+<p>The chosen metric drives three visual channels at once:</p>
+
+<dl>
+<dt>Thickness</dt><dd>Edge width runs from 3 px to 22 px, scaled linearly against the largest value among the visible edges. The arrowhead scales with the width.</dd>
+<dt>Opacity</dt><dd>Alpha runs from 0.3 to 0.8 on the same linear scale, so weak transitions recede.</dd>
+<dt>Colour</dt><dd>When <b>Colorise edges by weight</b> is on (see §8.5.6) the edge is tinted along the gradient configured for that metric; otherwise it is grey.</dd>
+</dl>
+
+<p>Each metric has its own colour schema, configured in the <b>Edge Colour Schema</b> sheet (open it by clicking the colour-scale legend on the canvas) and stored separately per metric. The built-in defaults are:</p>
+
+<table>
+<thead><tr><th>Metric</th><th>Default schema</th><th>Gradient</th></tr></thead>
+<tbody>
+<tr><td>Count</td><td>Green (high is good)</td><td>red → green</td></tr>
+<tr><td>Avg Time</td><td>Orange scale</td><td>light → dark orange</td></tr>
+<tr><td>Min Time</td><td>Blue scale</td><td>light → dark blue</td></tr>
+<tr><td>Max Time</td><td>Red (low is good)</td><td>green → red</td></tr>
+<tr><td>Std Dev</td><td>Purple scale</td><td>light → dark purple</td></tr>
+</tbody>
+</table>
+
+<h3 id="ch8-metrics-nodes">8.2.2 Metrics and nodes</h3>
+
+<p>Nodes do not carry the transition metric themselves. What a node shows is its own step definition — name, colours, shape, optional description, an orange end-of-process dot, a note badge, and a <b>score</b> badge when the step has a score (green above zero, red below, blue at zero). Node <i>visits</i>, used by the Graph Value KPI, by Happy Path coverage and by the Statistics step-traffic chart, are computed as <code>max(incoming, outgoing)</code> occurrences — not as the sum of both, which would double-count pass-through steps.</p>
+
+<div class="warn"><strong>Warning</strong> When a step group is collapsed, its edges are merged: connection counts are <b>summed</b> and times are <b>weighted-averaged</b>, and transitions inside the group disappear. Min Time, Max Time and Std Dev cannot be reconstructed for a merged edge, so those three metrics show "—" on it. A grey hint at the bottom of the canvas repeats this while any group is collapsed.</div>
+
+<div class="note"><strong>Note</strong> In <b>A/B Comparison</b>, changing the metric applies it to the side you are currently editing (A or B), not to both. In <b>Individual Journey</b> the metric selector is hidden and the edge metric is forced to <b>Avg Time</b>, because a count is meaningless for a single traversal. In <b>Conformance Check</b> the metric chips select which metric's norms you are viewing or editing.</div>
+
+<h2 id="ch8-filters">8.3 The Filters section</h2>
+
+<figure data-fig="app-05-filters"><figcaption>The Filters section with its collapsible sub-sections, action row and preset list.</figcaption></figure>
+
+<p>Every filter sub-section has its own collapsible header. The expansion state is remembered per user. Out of the box only <b>Date</b> is expanded. A sub-section that is currently narrowing the data shows a <b>badge</b> with its present value and a <b>⊗</b> button (tooltip "Clear &lt;Title&gt;") that resets just that sub-section.</p>
+
+<h3 id="ch8-filter-controls">8.3.1 The filter controls</h3>
+
+<table>
+<thead><tr><th>Sub-section</th><th>Control</th><th>Badge</th><th>Disabled when</th></tr></thead>
+<tbody>
+<tr><td><b>Date</b></td><td>"From" and "To" date pickers</td><td>—</td><td>no project</td></tr>
+<tr><td><b>Include Steps</b></td><td>Searchable step list, radio-style rows (◉ selected / ○ not)</td><td>Number of included steps</td><td>no project</td></tr>
+<tr><td><b>Exclude Steps</b></td><td>Identical, mirrored list</td><td>Number of excluded steps</td><td>no project</td></tr>
+<tr><td><b>Num Steps</b></td><td>Dual-handle range slider over the project's min/max step count</td><td>e.g. "2–14"</td><td>no project, or min equals max</td></tr>
+<tr><td><b>Journey Time</b></td><td>Range slider with human-readable durations (e.g. "3m 20s")</td><td>Formatted range</td><td>no project, or degenerate bounds</td></tr>
+<tr><td><b>Journey Score</b></td><td>Range slider over the project's score bounds</td><td>Formatted range</td><td>no project, or degenerate bounds</td></tr>
+<tr><td><b>Meta</b></td><td>Up to three autocomplete combo fields, labelled with the project's meta titles</td><td>Number of meta filters set</td><td>no project</td></tr>
+</tbody>
+</table>
+
+<p>The step lists carry a search field with the placeholder <b>Search</b> and a ⊗ button (tooltip "Clear search"). A step already present in <b>Exclude Steps</b> appears disabled in <b>Include Steps</b> and vice versa — a step can never be required and forbidden at the same time. The lists show <i>"No project selected"</i> when no steps are loaded and <i>"No matches"</i> when the search finds nothing.</p>
+
+<p>The <b>Meta</b> sub-section appears only if the project defines at least one meta attribute title. Each field uses the placeholder <b>All values</b>, which is also its cleared state. Focusing a field opens the full list of distinct values (at most 50 entries are shown; the list scrolls); typing narrows it. The <b>▾</b> button (tooltip "Show values") opens and closes the list, <b>⊗</b> (tooltip "Clear") empties the field, <b>Enter</b> confirms the typed value and <b>Escape</b> closes the list. The ⊗ on the sub-section header clears all three fields at once.</p>
+
+<h3 id="ch8-filter-combine">8.3.2 How filters combine and when they take effect</h3>
+
+<p>The sub-sections narrow the journey set together: a journey must fall inside the date window, contain every step listed under <b>Include Steps</b>, contain none of the steps listed under <b>Exclude Steps</b>, and fall inside the Num Steps, Journey Time and Journey Score ranges as well as matching any meta values you have set. Clearing a sub-section removes that condition without touching the others.</p>
+
+<p>Edits you make in the sidebar are <b>staged</b>, not live. They reach the chart when one of the following happens:</p>
+
+<ul>
+<li>You press <b>Apply</b>.</li>
+<li>You press <b>↺ Reset</b> — the reset is applied immediately.</li>
+<li>You click a preset, in the sidebar list or in the chart header's preset menu.</li>
+<li>You use a node's context actions <b>✓ Require in journeys</b> or <b>⊖ Exclude from journeys</b> on the process map — these write straight into the include/exclude lists (removing the step from the opposite list) and reload the graph at once.</li>
+<li>You release a handle of the journey time slider above the chart. Dragging only previews; the query fires on release.</li>
+</ul>
+
+<div class="tip"><strong>Tip</strong> In <b>Statistics</b> mode the filter controls look and behave normally, but <b>Apply</b> recomputes the statistics view instead of the graph. Statistics always starts from the A-Chart's filters, and shows an orange "⚠ Filters changed since last load" banner if you change them afterwards.</div>
+
+<h3 id="ch8-filter-actions">8.3.3 The action row</h3>
+
+<dl>
+<dt>↺ Reset</dt><dd>Restores every filter to the project's initial values — the initial date window, empty include and exclude lists, empty meta fields and full range bounds — and reapplies immediately.</dd>
+<dt>🔖 Save Preset…</dt><dd>Opens the <b>Save Filter Preset</b> sheet.</dd>
+<dt>Apply</dt><dd>Reloads the graph (or the statistics view) with the staged filters.</dd>
+</dl>
+
+<p>All three buttons stay disabled until a project is selected.</p>
+
+<h3 id="ch8-presets">8.3.4 Filter presets</h3>
+
+<p>A preset captures the entire current filter state — dates, include and exclude step lists, meta values and all three range bounds — under a name.</p>
+
+<ol class="steps">
+<li>Set the filters you want to keep.</li>
+<li>Press <b>🔖 Save Preset…</b>. The <b>Save Filter Preset</b> sheet opens with the message "Saves the current filter settings as a named preset."</li>
+<li>Type a name in the <b>Name</b> field. Leaving it empty is allowed — the preset is then auto-named "Preset N".</li>
+<li>Press <b>Save</b>, or simply press Enter. <b>Cancel</b> discards.</li>
+</ol>
+
+<p>Saved presets appear under the action row beneath the heading <b>Presets</b>, sorted alphabetically (A→Z). Four rows are visible at a time; more scroll. The same list, in the same order, is available from the preset menu button in each chart's <b>Date &amp; Metrics</b> header.</p>
+
+<ol class="steps">
+<li>Click a preset name to apply it — the filters are replaced and the graph reloads immediately. The applied row is highlighted.</li>
+<li>Press <b>✎</b> (tooltip "Rename preset") to open the <b>Rename Filter Preset</b> sheet, which is prefilled with the current name; confirm with <b>Rename</b>.</li>
+<li>Press <b>🗑</b> (tooltip "Delete preset") to remove it.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> Preset deletion is immediate — there is <b>no confirmation dialogue</b>, either in the sidebar list or in the chart header's preset menu. Re-creating a deleted preset means rebuilding its filter state by hand.</div>
+
+<div class="note"><strong>Note</strong> Presets are stored in the backend settings store <b>per user and per project</b>. They follow you to another browser or machine and are included in backups, but they are private to you — unlike sample sets, which are shared with everyone on the same project database.</div>
+
+<h3 id="ch8-eventid">8.3.5 The Event ID filter (Individual Journey)</h3>
+
+<figure data-fig="app-12-individual-journey"><figcaption>Individual Journey: the Filters section is reduced to the Event ID field and the Load Journey button.</figcaption></figure>
+
+<p>In <b>Individual Journey</b> mode the Filters section shows a single control labelled <b>Event ID</b>, a text field with the placeholder <b>Enter EVENT_ID</b>. Autocorrect, autocapitalisation and spellcheck are switched off so that identifiers are not mangled.</p>
+
+<ol class="steps">
+<li>Type at least two characters. The app fetches matching event IDs from the current project and the active A-side sample set and shows them in a dropdown while the field has focus. Typing fewer than two characters clears the suggestions.</li>
+<li>Click a suggestion — the field is filled and the journey loads at once — or finish typing the identifier yourself.</li>
+<li>Press <b>Enter</b> in the field, or press the <b>Load Journey</b> button on the right. The button is disabled while the field is blank or no project is selected.</li>
+<li>Press <b>⊗</b> (tooltip "Clear") to empty the field and the suggestion list.</li>
+</ol>
+
+<p>Errors from loading appear in the app's standard error area, not inside the sidebar. If nothing matches, the canvas shows "🔍 <b>Journey Not Found</b> — No steps found for "&lt;entered id&gt;". Queried hash: &lt;hash&gt;", which gives support staff the exact value that was looked up.</p>
+
+<div class="tip"><strong>Tip</strong> In the bundled demo datasets an EVENT_ID is the MD5 hash of a key such as "ORD-000001", "CRA-000001" or "FLT-000001", so the suggestions are hexadecimal strings. Type a few hex characters and pick from the list rather than trying to guess an identifier.</div>
+
+<div class="note"><strong>Note</strong> The <b>Notes</b> view is not governed by the sidebar filters at all; it has its own filter bar (type, importance, status, user, time, sort, grouping and page size). Notes do, however, record the filter context that was active when they were created, shown in the note editor as "Filter context: …".</div>
+
+<h2 id="ch8-sampling">8.4 The Sampling section</h2>
+
+<div class="role">Requires: <b>Power user</b> or <b>Administrator</b></div>
+
+<figure data-fig="app-06-sampling"><figcaption>The Sampling section: active data pickers for A and B above the three sample slots.</figcaption></figure>
+
+<p>Sampling lets you work on a representative subset of a large project so that charts, statistics and simulations respond quickly, and it selects which data source each chart side reads from. The section is hidden from plain users and from developers, and it is hidden in Individual Journey mode.</p>
+
+<div class="warn"><strong>Warning</strong> The section carries this notice at the top: <i>"Sample sets are stored in the project's database and are shared by everyone connected to it — unlike your personal settings and filter presets. Creating or deleting one changes it for all users of this project."</i> Creating or deleting a sample is therefore not a private action — agree the use of the three slots with your colleagues before overwriting one.</div>
+
+<h3 id="ch8-active-data">8.4.1 Active data (A and B)</h3>
+
+<p>Under the heading <b>▤ Active data</b> sit two dropdowns, labelled <b>A</b> (accent blue) and <b>B</b> (purple). Each chooses the data source that side's chart reads from. Both are disabled until a project is selected.</p>
+
+<table>
+<thead><tr><th>Option</th><th>Shown as</th><th>Availability</th></tr></thead>
+<tbody>
+<tr><td><b>Original</b></td><td>"Original (N)" — N = total journey count</td><td>always selectable</td></tr>
+<tr><td><b>Sample 1 / 2 / 3</b></td><td>"Sample 1 (1,000 · Random)"</td><td>disabled and labelled "Sample 1 — not created" until the set exists</td></tr>
+<tr><td><b>Sim-A / Sim-B</b></td><td>"Sim-A (N sim)"</td><td>disabled and labelled "Sim-A — not loaded" until a simulation has been run into that slot</td></tr>
+</tbody>
+</table>
+
+<p>Your choice is stored per user (settings <code>sampling.activeSampleSetA</code> and <code>sampling.activeSampleSetB</code>, both defaulting to <code>ORIGINAL</code>) and the affected chart reloads at once. If a persisted choice points at a sample set that no longer exists when the project loads, that side silently falls back to <b>Original</b>.</p>
+
+<div class="warn"><strong>Warning</strong> Choosing a simulation slot makes that side <b>read-only</b>. The canvas shows "&lt;slot&gt;: simulation data is read-only — interactive filtering, drill-down and step editing are not available.", and the node actions <b>✓ Require in journeys</b> and <b>⊖ Exclude from journeys</b> are hidden.</div>
+
+<h3 id="ch8-sample-slots">8.4.2 The three sample slots</h3>
+
+<p>Below the pickers are three rows, <b>Sample 1</b>, <b>Sample 2</b> and <b>Sample 3</b>. Each row shows ◉ in the accent colour when the set exists and ◌ when it does not; the title is bold and accent-coloured while that set is the active source on A or B. A created set shows "N journeys" plus a method tag (icon and label, tooltip "Sampling strategy: &lt;Method&gt;"); an empty slot shows "Not created".</p>
+
+<p>The row buttons are <b>＋</b> (tooltip "Create Sample N") on an empty slot — disabled while no project is selected or another sampling operation is running — and <b>🗑</b> (tooltip "Delete Sample N") on a filled one. While an operation runs, a spinner row shows the progress text ("Preparing…", "Writing N journeys…", or "Working…"); errors appear in red beneath the pickers.</p>
+
+<h3 id="ch8-create-sample">8.4.3 Creating a sample set</h3>
+
+<ol class="steps">
+<li>Press <b>＋</b> on an empty slot. The sheet <b>Create Sample Set N</b> (icon ▤) opens and reports "N journeys available" for the original data.</li>
+<li>Type the size in the <b>Journeys</b> field. The default is <b>1000</b>. The value is typed freely; <b>Create Sample</b> stays disabled unless it is a positive whole number.</li>
+<li>Choose a <b>Sampling Method</b> card (see the table below). The method you used last is remembered per user and becomes your default; before that the default is <b>Random</b>.</li>
+<li>Press <b>Create Sample</b>. A spinner runs in the button; <b>Cancel</b> and closing the sheet are disabled while the sample is being written.</li>
+<li>On success the sheet closes and the slot fills. On failure the sheet stays open and shows "⚠ &lt;error&gt;" so you can adjust and retry.</li>
+</ol>
+
+<table>
+<thead><tr><th>Method</th><th>Description</th><th>Use it when</th></tr></thead>
+<tbody>
+<tr><td>🔀 <b>Random</b> (initial default)</td><td>Uniform random selection</td><td>You want an unbiased miniature of the whole project.</td></tr>
+<tr><td>📅 <b>Temporal Stratified</b></td><td>Proportional across time periods</td><td>Volume varies strongly over time and each period must stay represented.</td></tr>
+<tr><td>🌿 <b>Path Diversity</b></td><td>Coverage across journey variants</td><td>You care about rare routes, which uniform sampling would drop.</td></tr>
+</tbody>
+</table>
+
+<h3 id="ch8-delete-sample">8.4.4 Deleting a sample set</h3>
+
+<ol class="steps">
+<li>Press <b>🗑</b> on the slot. The confirmation <b>Delete Sample Set N?</b> appears with the message "This removes &lt;count&gt; sample journey rows from the database. Original data is not affected."</li>
+<li>Press <b>Delete</b> (red) to confirm, or <b>Cancel</b> to keep the set.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> If the deleted set was the active source on side A or B, that side automatically switches back to <b>Original</b> and the chart reloads. The original journeys are never touched by sampling — only the generated sample rows are removed.</div>
+
+<h2 id="ch8-configuration">8.5 The Configuration section</h2>
+
+<figure data-fig="app-07-configuration"><figcaption>The Configuration section: step groups, font scaling, KPI order, the step editor and the display toggles.</figcaption></figure>
+
+<p>Configuration holds display settings, the KPI strip layout, the step editor and the AI prompt. Its four collapsible sub-headers — <b>Step Groups</b>, <b>Flowchart Font Sizes</b>, <b>KPIs</b> and <b>Steps</b> — are all expanded by default, and their expansion state is remembered per user. Every setting on this page is stored per user in the backend settings store, so it follows you between browsers and machines; the exception is the <b>Steps</b> editor, which writes shared step properties to the project database.</p>
+
+<h3 id="ch8-cfg-groups">8.5.1 🗂 Step Groups</h3>
+
+<dl>
+<dt>Show step groups</dt><dd>Toggle, default <b>on</b>. Draws a dashed tinted box with a coloured name pill around every set of steps sharing a BELONGS_TO value.</dd>
+<dt>▦ Groups start</dt><dd>Segmented control, visible only while the toggle is on: <b>Expanded</b> (default) | <b>Collapsed</b> | <b>Persisted</b>. It decides whether group containers on the process map start open, start closed, or restore the state you last left them in for that project and chart mode.</dd>
+</dl>
+
+<h3 id="ch8-cfg-fonts">8.5.2 🔠 Flowchart Font Sizes</h3>
+
+<p>Three segmented controls, each offering <b>S | M | L | XL</b>. Enlarging a node font also enlarges the node box, so text never spills outside its shape.</p>
+
+<table>
+<thead><tr><th>Control</th><th>Default</th><th>Scale factors (S / M / L / XL)</th><th>Affects</th></tr></thead>
+<tbody>
+<tr><td><b>Nodes</b></td><td>M (2.25)</td><td>1.95 / 2.25 / 2.7 / 3.15</td><td>Node box and node text</td></tr>
+<tr><td><b>Edges</b></td><td>M (3.375)</td><td>2.925 / 3.375 / 4.05 / 4.725</td><td>Edge labels, badges and note bubbles</td></tr>
+<tr><td><b>Group titles</b></td><td>M (2.25)</td><td>1.95 / 2.25 / 2.7 / 3.15</td><td>Group name pill and its collapse toggle</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> The edge presets are deliberately 50 % larger than the node presets at every step, because transition labels are small floating text and would otherwise be unreadable next to a node caption of nominally the same size.</div>
+
+<h3 id="ch8-cfg-kpis">8.5.3 📊 KPIs</h3>
+
+<p>This is a drag-to-reorder list of the ten KPI tiles shown in the strip above the charts. Each row has a ≡ handle, an icon, a label and an on/off switch. <b>All ten default to on</b>, in this order:</p>
+
+<table>
+<thead><tr><th>#</th><th>Tile</th><th>What it reports</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>👥 <b>Total Journeys</b></td><td>Unfiltered journey count of the project</td></tr>
+<tr><td>2</td><td>⛃ <b>Filtered Journeys</b></td><td>Journeys matching the current filters</td></tr>
+<tr><td>3</td><td>🐇 <b>Shortest Journey</b></td><td>Minimum journey duration</td></tr>
+<tr><td>4</td><td>⏱️ <b>Avg Journey</b></td><td>Mean journey duration</td></tr>
+<tr><td>5</td><td>〰️ <b>Std Dev</b></td><td>Standard deviation of journey durations</td></tr>
+<tr><td>6</td><td>🐢 <b>Longest Journey</b></td><td>Maximum journey duration</td></tr>
+<tr><td>7</td><td>ƒ <b>Graph Value</b></td><td>Σ (step score × visits) over scored nodes, shown with an explicit sign. Hidden when no step carries a score.</td></tr>
+<tr><td>8</td><td>◔ <b>Process Goodness</b></td><td>Server-computed goodness score, signed, two decimals. Hidden when null.</td></tr>
+<tr><td>9</td><td>⇄ <b>Process Similarity</b></td><td>A/B similarity between 0 and 1. Present only once a similarity has been computed.</td></tr>
+<tr><td>10</td><td>▤ <b>Active Sample</b></td><td>The side's data source ("Original", "Sample 1"–"Sample 3", "Sim-A", "Sim-B") and its journey count.</td></tr>
+</tbody>
+</table>
+
+<ol class="steps">
+<li>Grab a row by its ≡ handle and drag it onto another row to change the order. The new order persists per user.</li>
+<li>Use each row's switch to hide or show that tile.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> Order and visibility apply to the KPI strip above A-Chart, B-Chart and the A/B panels. Individual Journey renders its own fixed tiles (Date, Duration, Sum of Scores, Steps visited/distinct plus up to three meta tiles) and is not affected by these settings.</div>
+
+<h3 id="ch8-cfg-steps">8.5.4 ⬭ Steps (the Step Editor)</h3>
+
+<div class="warn"><strong>Warning</strong> Step properties live in the project's STEPS table and are therefore <b>shared with every user of that database</b>. Recolouring or rescoring a step changes it for everyone, and scores feed the Graph Value KPI and the Journey Score filter.</div>
+
+<ol class="steps">
+<li>Choose a step in the <b>Step</b> dropdown ("— Select a step —" plus every step of the project). The editor appears only once a step is chosen; the dropdown is disabled when no project or no steps are loaded.</li>
+<li>Set <b>Colors</b> using the two pickers <b>BG</b> and <b>FG</b>. A live pill preview shows the step in those colours.</li>
+<li>Set the <b>Score</b>: tick the "set" checkbox and enter a number between −999 and 999. The number input stays disabled while the checkbox is clear; un-ticking it saves the score as unset.</li>
+<li>Pick a <b>Shape</b>: <b>▭ Stadium</b> (default), <b>▢ Rounded</b>, <b>⬡ Hexagon</b> or <b>◯ Circle</b>.</li>
+<li>Type a <b>Group</b> name (placeholder "BELONGS_TO"); existing group names are offered as autocomplete. This assigns the step to a step group.</li>
+<li>Type a <b>Note</b> — free multi-line text, placeholder "Shown under the step name on the map".</li>
+<li>Press <b>Save Step</b>. The button shows a spinner while writing; errors appear in red beside it.</li>
+</ol>
+
+<p>Saving refreshes the score filter bounds and reloads the graph, so a changed score is reflected in the Journey Score slider and the Graph Value KPI straight away.</p>
+
+<h3 id="ch8-cfg-toggles">8.5.5 Display toggles</h3>
+
+<dl>
+<dt>🗒 Show node notes</dt><dd>Default <b>on</b>. Shows the step description or note under the step name on the map (truncated to 20 characters plus an ellipsis; the full text is in the hover tooltip and behind the node action <b>≡ Show description</b>).</dd>
+<dt>✨ Optimise layout</dt><dd>Default <b>on</b>. Uses the optimised automatic layout for the flow chart.</dd>
+<dt>🎨 Colorise edges by weight</dt><dd>Default <b>on</b>. Tints each transition along its metric's gradient; when off, all edges are grey and only thickness and opacity encode the metric. The same switch also appears at the top of the Edge Colour Schema sheet.</dd>
+</dl>
+
+<h3 id="ch8-cfg-window">8.5.6 🗓 Default date window</h3>
+
+<p>A number input (whole numbers, minimum 0) followed by the word "days", default <b>30</b>. The hint below it reads: <i>"On load, show the last N days. 0 = full range. Applies next project load."</i></p>
+
+<p>When a project is opened, the from-date is set to the latest event date minus N days, clamped to the project's earliest date; with N = 0 the whole range is shown. The A-Chart loads immediately with that window and every other view mode is seeded with the same window plus the project's real filter bounds.</p>
+
+<div class="warn"><strong>Warning</strong> Changing this value does <b>not</b> reload the project you are currently working on. It takes effect the next time a project is opened. To apply it now, reselect the project — which also resets filters, A/B state, statistics and AI results.</div>
+
+<h3 id="ch8-cfg-prompt">8.5.7 💬 LLM Prompt</h3>
+
+<p>The last row pairs the label <b>LLM Prompt</b> with an <b>Edit</b> button, which is disabled until a project is selected.</p>
+
+<ol class="steps">
+<li>Press <b>Edit</b>. The <b>LLM Prompt Template</b> sheet opens with the explanation "This prompt is sent to the LLM together with the current transition table. Use it to guide the analysis style and output format."</li>
+<li>Edit the template in the large textarea.</li>
+<li>Press <b>Save</b> to store it, or <b>Cancel</b> to discard your edits.</li>
+<li>Press <b>Reset to Default</b> to load the built-in template back into the editor. This only fills the editor — you still have to press <b>Save</b> for it to take effect.</li>
+</ol>
+
+<p>The built-in default is:</p>
+
+<pre><code>Analyze the transitions table and identify outliers, min, max, avg
+values for transitions. Use project name as a title, make a decent
+layout.</code></pre>
+
+<p>The template is stored <b>per user and per project</b>. The AI supported Documentation report prints the template it used, block-quoted, in its "Analysis Parameters" chapter, and the exact prompt that was sent is available there behind <b>Show prompt</b>.</p>
+
+<h2 id="ch8-defaults">8.6 Defaults at a glance</h2>
+
+<table>
+<thead><tr><th>Setting</th><th>Section</th><th>Default</th></tr></thead>
+<tbody>
+<tr><td>Transition metric</td><td>Metrics</td><td># Count</td></tr>
+<tr><td>Filter sub-section expansion</td><td>Filters</td><td>Date expanded, all others collapsed</td></tr>
+<tr><td>Active data A / B</td><td>Sampling</td><td>Original</td></tr>
+<tr><td>Sample size</td><td>Sampling</td><td>1000 journeys</td></tr>
+<tr><td>Sampling method</td><td>Sampling</td><td>Random (then your last used method)</td></tr>
+<tr><td>Show step groups</td><td>Configuration</td><td>On</td></tr>
+<tr><td>Groups start</td><td>Configuration</td><td>Expanded</td></tr>
+<tr><td>Font size — Nodes / Edges / Group titles</td><td>Configuration</td><td>M / M / M</td></tr>
+<tr><td>KPI tiles</td><td>Configuration</td><td>All ten on, in the order listed in §8.5.3</td></tr>
+<tr><td>Show node notes</td><td>Configuration</td><td>On</td></tr>
+<tr><td>Optimise layout</td><td>Configuration</td><td>On</td></tr>
+<tr><td>Colorise edges by weight</td><td>Configuration</td><td>On</td></tr>
+<tr><td>Default date window</td><td>Configuration</td><td>30 days</td></tr>
+<tr><td>Date slider mode</td><td>Chart header</td><td>Range</td></tr>
+<tr><td>Theme</td><td>Theme bar</td><td>System</td></tr>
+</tbody>
+</table>
+
+<h2 id="ch8-persistence">8.7 What is private and what is shared</h2>
+
+<p>Because some of the controls in this chapter change only your own view and others change the database for everybody, it is worth knowing which is which.</p>
+
+<table>
+<thead><tr><th>Scope</th><th>Covers</th></tr></thead>
+<tbody>
+<tr><td><b>Per user, cross-device</b> (backend settings store; included in backups; private to you)</td><td>Theme; all Configuration toggles and font scales; KPI order and visibility; filter sub-section expansion; active sample-set choices; default sampling method; filter presets; LLM prompt templates; happy paths; target norms; node layouts.</td></tr>
+<tr><td><b>Shared in the project database</b> (visible to and changed for every user of that connection)</td><td>Sample sets (SAMPLE_1–3); step properties edited in the Step Editor — colours, scores, shapes, groups and step notes; notes; projects; demo data.</td></tr>
+<tr><td><b>Session only</b> (lost on reload or disconnect)</td><td>The current connection, the selected project, unsaved filter edits and the Notes view's own filter settings.</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> Disconnecting from a database clears the whole session state — project, filters and graphs — but does not sign you out of the app, and nothing stored per user or in the project database is lost.</div>
+
+</section>

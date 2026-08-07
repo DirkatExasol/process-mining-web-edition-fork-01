@@ -1,0 +1,265 @@
+<section class="chapter" id="ch-app-orientation" data-title="The Application: Orientation" data-num="6">
+
+<h1><span class="chnum">6</span> The Application: Orientation</h1>
+
+<p class="chintro">This chapter is your map of the application window. It explains what happens between opening the address and seeing your first process map, describes every permanent element of the shell — sidebar, detail pane, title capsule, toolbar, alerts and theme — and then covers the two controls you will use most often: the <strong>view-mode menu</strong>, which switches the detail pane between the ten analysis modes, and the <strong>KPI strip</strong>, the band of figures above the chart. It is written for every user of the application, whatever their role; where a feature is restricted to power users or administrators this is stated explicitly. Later chapters describe each view mode and each sidebar section in detail.</p>
+
+<figure data-fig="app-01-shell"><figcaption>The application shell: sidebar on the left, detail pane on the right with the title capsule, toolbar, KPI strip and process map.</figcaption></figure>
+
+<h2 id="app-startup">Starting the application</h2>
+
+<p>The application always passes through the same sequence of states before the working surface appears. Understanding the sequence makes it obvious where you are if something stalls.</p>
+
+<ol class="steps">
+  <li>While the application boots it shows a large spinner with the text <strong>Starting…</strong>. Nothing is interactive at this point.</li>
+  <li>If the administrator has made login mandatory and you have no valid session, the <strong>Login</strong> view is shown instead of the application. The Login view also stays up during a forced two-factor enrolment, until your recovery codes have been displayed and acknowledged.</li>
+  <li>The <strong>legal gate</strong> appears next. You must accept it before any part of the application UI is shown.</li>
+  <li>The shell appears: sidebar on the left with the <strong>Connections</strong> section already open, detail pane on the right.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> Declining the legal gate signs you out and returns you to the Login view. There is no way past the gate other than accepting it; if you cannot accept the terms, contact your administrator.</div>
+
+<p>Until you connect to a database, every view mode shows the same placeholder in the detail pane: the glyph <strong>⛁</strong>, the title <strong>Not Connected</strong> and the text “Add a connection in the sidebar and tap it to connect to your Exasol database.” This is a global state, not a per-mode error — switching modes will not make it go away.</p>
+
+<h2 id="app-shell">The application shell</h2>
+
+<p>The window is divided into two areas that never change: the <strong>sidebar</strong> on the left and the <strong>detail pane</strong> on the right.</p>
+
+<h3 id="app-sidebar">The sidebar</h3>
+
+<p>The sidebar is the control surface. From top to bottom it contains the brand header (“Process Mining” over the caption “Demonstrator”, with the logo), a divider, six accordion sections, the signed-in identity footer, a divider and the theme bar.</p>
+
+<p>The accordion sections are, in order: <strong>Connections</strong>, <strong>Projects</strong>, <strong>Metrics</strong>, <strong>Filters</strong>, <strong>Sampling</strong> and <strong>Configuration</strong>. Only one section is open at a time — opening a section collapses all the others. <strong>Connections</strong> is open when the application starts. The <strong>Connections</strong> and <strong>Projects</strong> headers show the number of items in parentheses, for example “Connections (3)”, whenever that number is greater than zero.</p>
+
+<p>Two sections react to the active view mode:</p>
+
+<dl>
+  <dt>Individual Journey</dt>
+  <dd>Switching to this mode opens the <strong>Filters</strong> section automatically so that the Event ID field is immediately at hand. This happens once per mode change; you may collapse the section again afterwards. The <strong>Metrics</strong> and <strong>Sampling</strong> sections are hidden entirely in this mode, because an individual journey is always drawn with a fixed <em>Avg Time</em> metric.</dd>
+  <dt>Sampling</dt>
+  <dd>Visible to power users and administrators only.</dd>
+</dl>
+
+<p>To reclaim horizontal space for the chart, hide the sidebar:</p>
+
+<ol class="steps">
+  <li>Click <strong>⇤ Hide sidebar</strong> in the theme bar at the very bottom of the sidebar.</li>
+  <li>The sidebar disappears and a floating <strong>▤</strong> button (tooltip and screen-reader label “Show sidebar”) appears at the top left of the detail pane.</li>
+  <li>Click <strong>▤</strong> to bring the sidebar back.</li>
+</ol>
+
+<h3 id="app-detail-pane">The detail pane</h3>
+
+<p>The detail pane renders the active view mode. Whatever the mode, its top edge carries the same two elements.</p>
+
+<dl>
+  <dt>Title capsule (top left)</dt>
+  <dd>Shows the title of the selected project, falling back to “Process Map” when no project is selected. Underneath it, the name of the active view mode is shown; this second line is invisible until a project is selected.</dd>
+  <dt>Toolbar (top right)</dt>
+  <dd>Contains the <strong>？</strong> button (tooltip “Help”) and, when applicable, the <strong>☰</strong> view-switch button.</dd>
+</dl>
+
+<h3 id="app-help">The Help panel</h3>
+
+<p>The <strong>？</strong> button opens a floating Help panel over the detail pane. The panel can also be toggled from the keyboard.</p>
+
+<figure data-fig="app-19-help"><figcaption>The floating Help panel, opened with the ？ toolbar button or ⌘/Ctrl + /.</figcaption></figure>
+
+<h3 id="app-alerts">Alerts</h3>
+
+<p>Errors and confirmations that require your attention appear as modal alert boxes centred over a dimming scrim. An alert has a title, a message and one or two buttons — typically a primary action and a secondary <strong>Cancel</strong>. Clicking the scrim outside the box dismisses the alert.</p>
+
+<p>Alerts are used consistently throughout the application. Examples you will meet early are <strong>Connection Failed</strong> (buttons <em>Retry</em> / <em>Cancel</em>, where Retry re-attempts the same connection), <strong>Failed to Load Projects</strong> and <strong>Failed to Load Project</strong> (both <em>Retry</em> / <em>Cancel</em>), <strong>No Journeys on &lt;date&gt;</strong> when the day slider lands on an empty day, and <strong>Note Not Synced</strong> when a note cannot be written to the database.</p>
+
+<h3 id="app-theme">Theme</h3>
+
+<p>The theme bar at the bottom of the sidebar is labelled <strong>🎨 Theme</strong> and offers three icon buttons: <strong>System (◐)</strong>, <strong>Light (☀)</strong> and <strong>Dark (☾)</strong>.</p>
+
+<ol class="steps">
+  <li>Click the theme bar button you want. The change applies immediately.</li>
+  <li>Leave the setting on <strong>System</strong> (the default) to follow your operating system’s light/dark preference automatically.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> The theme is stored per user in the backend settings store as <code>app.theme</code> (default <code>system</code>). It follows you to another browser or another machine, and it is included in backups.</div>
+
+<h3 id="app-shortcuts">Keyboard shortcuts</h3>
+
+<table>
+  <thead><tr><th>Shortcut</th><th>Where</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td><strong>⌘/Ctrl + /</strong> or <strong>⌘/Ctrl + ?</strong></td><td>Anywhere in the application</td><td>Toggles the Help panel</td></tr>
+    <tr><td><strong>Esc</strong></td><td>Popovers, menus, sheets</td><td>Closes the preset menu, the view-mode menu, the value list of a meta filter, and modal sheets (without saving)</td></tr>
+    <tr><td><strong>Enter</strong></td><td>Event ID field, norm editor, name prompts</td><td>Confirms the field (loads the journey, saves the norm, confirms the name)</td></tr>
+    <tr><td><strong>← / →</strong></td><td>Journey time slider</td><td>Moves the focused thumb by one day and commits</td></tr>
+    <tr><td><strong>Home / End</strong></td><td>Journey time slider</td><td>Jumps to the start / end of the data range and commits</td></tr>
+    <tr><td><strong>Double-click</strong></td><td>Chart background</td><td>Fits the graph to the view</td></tr>
+  </tbody>
+</table>
+
+<h2 id="app-view-modes">Switching view modes</h2>
+
+<p>The detail pane can display ten different analysis modes. You change between them with the toolbar’s view-switch button.</p>
+
+<ol class="steps">
+  <li>Connect to a database and select a project in the sidebar. The <strong>☰ &lt;mode icon&gt;</strong> button (tooltip “Switch view”) appears in the toolbar only when you are connected <em>and</em> a project is selected.</li>
+  <li>Click <strong>☰</strong>. A popover menu lists the available view modes; the current mode is marked with a <strong>✓</strong>.</li>
+  <li>Click a mode to switch to it. Clicking anywhere outside the menu closes it without changing the mode.</li>
+</ol>
+
+<h3 id="app-mode-list">The view modes</h3>
+
+<table>
+  <thead><tr><th>Mode</th><th>Icon</th><th>Purpose</th><th>Who can see it</th></tr></thead>
+  <tbody>
+    <tr><td><strong>A-Chart</strong></td><td>📈</td><td>The primary process map with its own filter set</td><td>All users</td></tr>
+    <tr><td><strong>B-Chart</strong></td><td>📉</td><td>A second, fully independent process map</td><td>All users</td></tr>
+    <tr><td><strong>A/B Comparison</strong></td><td>⇄</td><td>A and B side by side with a similarity score</td><td>All users</td></tr>
+    <tr><td><strong>Individual Journey</strong></td><td>🧍</td><td>One journey, drawn in chronological order</td><td>All users</td></tr>
+    <tr><td><strong>AI supported Documentation</strong></td><td>🧠</td><td>LLM-generated process documentation</td><td>All users</td></tr>
+    <tr><td><strong>Statistics</strong></td><td>📊</td><td>Journey routes and analytics</td><td>All users</td></tr>
+    <tr><td><strong>Conformance Check</strong></td><td>🛡️</td><td>Actual transition values against per-edge norms</td><td>Power users and administrators</td></tr>
+    <tr><td><strong>Happy Path</strong></td><td>🪧</td><td>Ideal step sequence and its coverage</td><td>Power users and administrators</td></tr>
+    <tr><td><strong>Notes</strong></td><td>🗒️</td><td>All notes on the project, with filters</td><td>All users</td></tr>
+    <tr><td><strong>Simulation</strong></td><td>🎲</td><td>Monte-Carlo simulation from the observed graph</td><td>Power users and administrators</td></tr>
+  </tbody>
+</table>
+
+<div class="role">Requires: <b>Power user</b> or <b>Administrator</b> — Conformance Check, Happy Path and Simulation. For plain users these three entries are not merely disabled, they are absent from the menu.</div>
+
+<h3 id="app-filter-memory">Per-mode filter memory</h3>
+
+<p>Each view mode keeps <strong>its own filter state</strong> — date window, included and excluded steps, meta filters and the selected transition metric. When you switch modes, the application saves the state of the mode you are leaving and restores the state of the mode you are entering. This is why the A-Chart still shows last week’s window after you have been editing filters in the B-Chart.</p>
+
+<p>Two modes deviate from this rule:</p>
+
+<dl>
+  <dt>Statistics</dt>
+  <dd>Always inherits the <strong>A-Chart’s</strong> filter state on entry. It never keeps a private filter set. The Statistics view itself displays the reminder “ⓘ Statistics use the same filters as Chart A.”</dd>
+  <dt>A/B Comparison</dt>
+  <dd>Maps onto the saved A-Chart and B-Chart states rather than holding a third state. The active (editable) side starts as <strong>A</strong>.</dd>
+</dl>
+
+<div class="note"><strong>Note</strong> Switching to A-Chart, B-Chart, A/B Comparison, AI supported Documentation or Notes also reloads the project’s notes list, so note badges on nodes and edges are up to date in those modes.</div>
+
+<p>When a project is loaded for the first time, the A-Chart loads immediately using the default date window (the last <strong>30</strong> days of data by default, controlled by the <em>Default date window</em> setting in Configuration; <code>0</code> means the full range). Every other mode is seeded with the same window plus the project’s real filter bounds, so no mode starts with an impossible range.</p>
+
+<div class="tip"><strong>Tip</strong> Use this deliberately. Set the A-Chart to your reference period and the B-Chart to the period you want to question; both survive any number of trips through the other modes, and A/B Comparison then shows exactly those two states side by side.</div>
+
+<h2 id="app-kpi-strip">The KPI strip</h2>
+
+<p>The KPI strip is the horizontal band of figures between the title capsule and the chart. It summarises the currently filtered data set in a fixed set of tiles.</p>
+
+<figure data-fig="app-04-metrics"><figcaption>The KPI strip above a process map, with the collapse handle on the left and the transitions-mode pill on the right.</figcaption></figure>
+
+<h3 id="app-kpi-where">Where the strip appears</h3>
+
+<p>The strip is shown when you are connected, a project is selected and data is present. In <strong>Individual Journey</strong> mode it appears once a journey has been loaded, and it shows a different set of tiles (see below).</p>
+
+<p>The following modes render their own header instead of the shared strip: A/B Comparison (one strip per panel), Statistics, Notes, AI supported Documentation, Happy Path, Conformance Check and Simulation. Statistics and Conformance Check show the standard tiles under their own collapse handle; Notes and Simulation show tile sets of their own.</p>
+
+<h3 id="app-kpi-handle">The handle: collapsing and expanding</h3>
+
+<ol class="steps">
+  <li>Click the chevron on the KPI handle — the narrow bar along the top edge of the strip.</li>
+  <li>Collapsed, the handle shows a one-line summary in the form “<em>filtered</em> / <em>total</em> Journeys”, for example “1,234 / 10,000 Journeys”.</li>
+  <li>Click the chevron again to expand the tiles.</li>
+</ol>
+
+<p>The expanded/collapsed state is remembered per user and per surface:</p>
+
+<table>
+  <thead><tr><th>Surface</th><th>Setting</th><th>Default</th></tr></thead>
+  <tbody>
+    <tr><td>A-Chart, B-Chart, Individual Journey</td><td><code>processmap.kpiExpanded</code></td><td>Expanded</td></tr>
+    <tr><td>A/B Comparison, panel A / panel B</td><td><code>abpanel.a.kpiExpanded</code> / <code>abpanel.b.kpiExpanded</code></td><td>Expanded</td></tr>
+    <tr><td>Statistics</td><td><code>statistics.kpiExpanded</code></td><td>Expanded</td></tr>
+    <tr><td>Conformance Check</td><td><code>compliance.kpiExpanded</code></td><td>Expanded</td></tr>
+  </tbody>
+</table>
+
+<div class="note"><strong>Note</strong> In Conformance Check the collapsed handle summarises compliance instead of journeys: “N violations · M compliant”.</div>
+
+<h3 id="app-kpi-pill">The transitions-mode pill</h3>
+
+<p>At the right-hand end of the KPI handle a small pill tells you <em>how</em> the transitions behind the current chart were obtained. This matters for both performance and freshness. The pill is not shown in Individual Journey mode.</p>
+
+<table>
+  <thead><tr><th>Pill</th><th>Tooltip</th><th>What it means for you</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>⚡ Pre-materialized</strong></td>
+      <td>“Transitions are read from the pre-materialized TRANSITIONS_RAW table.”</td>
+      <td>Fastest path. Queries read a prepared table rather than deriving transitions from the raw event log.</td>
+    </tr>
+    <tr>
+      <td><strong>↻ Live query</strong></td>
+      <td>“Transitions are computed live from the event log on each load.”</td>
+      <td>Pre-materialisation is switched off for this connection. Every load recomputes the transitions; results are always current but slower on large logs.</td>
+    </tr>
+    <tr>
+      <td><strong>⚠ Live (not built)</strong></td>
+      <td>“Pre-materialized transitions are enabled for this connection, but TRANSITIONS_RAW is not built yet — running the live query meanwhile. Rebuild it in the admin interface (Connections → Rebuild now).”</td>
+      <td>An intended optimisation is missing. The chart is correct but slower than it should be.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="role">Requires: <b>Administrator</b> — building or rebuilding TRANSITIONS_RAW. If you see <strong>⚠ Live (not built)</strong>, ask your administrator to run <em>Connections → Rebuild now</em> in the admin interface.</div>
+
+<h3 id="app-kpi-tiles">The standard KPI tiles</h3>
+
+<p>Every tile shows an icon, a label and a value. A value that cannot be determined displays as <strong>—</strong>; while a figure is still being fetched the tile shows a small spinner in place of the value.</p>
+
+<table>
+  <thead><tr><th>Tile</th><th>Icon</th><th>Meaning and formatting</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Total Journeys</strong></td><td>👥</td><td>The unfiltered journey count of the project.</td></tr>
+    <tr><td><strong>Filtered Journeys</strong></td><td>⛃</td><td>The number of journeys matching the current filters.</td></tr>
+    <tr><td><strong>Shortest Journey</strong></td><td>🐇</td><td>Minimum journey duration. Durations are formatted by magnitude: under 60 seconds as “N s”, then “N.n min”, “N.n h”, “N.n d”.</td></tr>
+    <tr><td><strong>Avg Journey</strong></td><td>⏱️</td><td>Mean journey duration, same duration formatting.</td></tr>
+    <tr><td><strong>Std Dev</strong></td><td>〰️</td><td>Standard deviation of the journey durations, same duration formatting.</td></tr>
+    <tr><td><strong>Longest Journey</strong></td><td>🐢</td><td>Maximum journey duration, same duration formatting.</td></tr>
+    <tr><td><strong>Graph Value</strong></td><td>ƒ</td><td>The sum of (step score × visits) over all scored nodes, where <em>visits</em> = max(incoming, outgoing) occurrences of that step. Shown with an explicit <strong>+</strong> or <strong>−</strong> sign. The tile is hidden entirely when no step of the project carries a score.</td></tr>
+    <tr><td><strong>Process Goodness</strong></td><td>◔</td><td>A server-computed goodness score, shown signed with two decimals. Hidden when the server returns no value. In A/B Comparison the tile is tinted: green when this side is better than the other, red when worse, blue when the two are equal within 0.005.</td></tr>
+    <tr><td><strong>Process Similarity</strong></td><td>⇄</td><td>The A/B similarity, a value from 0 to 1 with two decimals. Green at 0.7 and above, red at 0.3 and below, blue in between. The tile is only present once an A/B similarity has actually been computed.</td></tr>
+    <tr><td><strong>Active Sample</strong></td><td>▤</td><td>The label is the side’s data source — “Original”, “Sample 1” to “Sample 3”, or “Sim-A” / “Sim-B” when a simulation is the source. The value is the journey count of that source.</td></tr>
+  </tbody>
+</table>
+
+<div class="note"><strong>Note</strong> <em>Graph Value</em> and <em>Process Goodness</em> disappear rather than showing “—” when they cannot be computed. If you expected a Graph Value and see none, no step in the project has a score; assign scores in <em>Configuration → Steps</em>.</div>
+
+<h3 id="app-kpi-config">Choosing and ordering the tiles</h3>
+
+<p>Which tiles appear, and in which order, is a per-user preference.</p>
+
+<ol class="steps">
+  <li>Open the sidebar section <strong>Configuration</strong>.</li>
+  <li>Expand <strong>📊 KPIs</strong>. The list shows every tile with its icon, label and an on/off switch. All tiles are on by default.</li>
+  <li>Switch a tile off to remove it from the strip.</li>
+  <li>To reorder, drag a row by its <strong>≡</strong> handle onto another row.</li>
+</ol>
+
+<p>The default order is: Total Journeys, Filtered Journeys, Shortest Journey, Avg Journey, Std Dev, Longest Journey, Graph Value, Process Goodness, Process Similarity, Active Sample. Visibility is stored as <code>kpi.show.&lt;id&gt;</code> and the order as <code>kpi.order</code>.</p>
+
+<div class="tip"><strong>Tip</strong> The KPI settings, like all Configuration settings, are stored per user in the backend rather than in the browser. They follow you to a different browser or machine and are included in administrator backups.</div>
+
+<h3 id="app-kpi-journey">The Individual-Journey KPI strip</h3>
+
+<p>In Individual Journey mode the standard tiles are replaced entirely — averages and totals are meaningless for a single journey. The transitions-mode pill is not shown either.</p>
+
+<figure data-fig="app-12-individual-journey"><figcaption>Individual Journey mode with its own KPI tiles: date, duration, sum of scores, steps visited and up to three meta fields.</figcaption></figure>
+
+<table>
+  <thead><tr><th>Tile</th><th>Icon</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Date</strong></td><td>📅</td><td>The start date of the journey, in short date format.</td></tr>
+    <tr><td><strong>Duration</strong></td><td>⏱️</td><td>End minus start of the journey.</td></tr>
+    <tr><td><strong>Sum of Scores</strong></td><td>ƒ</td><td>The sum of the step scores across the visited steps, shown signed. Displays “—” when no scores are defined.</td></tr>
+    <tr><td><strong>Steps visited / distinct</strong></td><td>⑂</td><td>Two numbers, “<em>total</em> / <em>distinct</em>”. The total is the number of transitions traversed plus one; the distinct count ignores repeats, so a journey that loops shows a smaller second number.</td></tr>
+    <tr><td><strong>Meta fields</strong></td><td>🏷</td><td>Up to three additional tiles, one per meta attribute the project defines. The label is the project’s meta title, the value is this journey’s value. A tile only appears when both the title and a value exist.</td></tr>
+  </tbody>
+</table>
+
+<div class="note"><strong>Note</strong> Individual Journey always draws its edges with the <strong>Avg Time</strong> metric and hides the sidebar’s <em>Metrics</em> section, because a transition count is meaningless when each transition is traversed once.</div>
+
+</section>

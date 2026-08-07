@@ -1,0 +1,405 @@
+<section class="chapter" id="ch-getting-started" data-title="Getting Started: Your First Session" data-num="4">
+<h1><span class="chnum">4</span> Getting Started: Your First Session</h1>
+
+<p class="chintro">This chapter walks you through a complete first run of Process Mining Demonstrator — Web Edition, from opening the address in your browser to reading your first process map. It is written for a new user sitting in front of the application for the first time, and it assumes nothing has been set up for you yet. Where a step needs a permission you may not have, the chapter says so and tells you who to ask. Later chapters return to each subject in depth; here the aim is simply to get a map on screen and to make sure you can name everything you see.</p>
+
+<h2 id="gs-before">4.1 Before you begin</h2>
+
+<p>You need four things to complete a first session. If any of them is missing, the relevant section below explains how to obtain it.</p>
+
+<table>
+<thead><tr><th>What you need</th><th>Detail</th></tr></thead>
+<tbody>
+<tr><td>The application address</td><td>The main application runs on port <b>8080</b> (HTTP) or <b>8443</b> (HTTPS). Your administrator gives you the host name — for example <code>https://pm.example.com:8443</code>.</td></tr>
+<tr><td>A browser</td><td>Any current desktop browser. Reach the server by <b>host name</b>, not by a bare IP address, if you intend to use passkeys.</td></tr>
+<tr><td>An application account</td><td>A username and password, either a local account or a directory (LDAP / Active Directory) account. Only accounts that are <b>enabled</b> can sign in.</td></tr>
+<tr><td>A database connection</td><td>At least one Exasol connection assigned to your account. Without one, the Connections list is empty and no data can be loaded.</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> Your application sign-in is completely separate from the database credentials. You never type a database password into the application; those live only in the connection definition, encrypted at rest, and are never sent to the browser.</div>
+
+<h2 id="gs-open">4.2 Opening the application</h2>
+
+<ol class="steps">
+<li>Type the address your administrator gave you into the browser and press Return.</li>
+<li>The application shows a spinner and the word <b>Starting…</b> while it checks for an existing session and loads your settings.</li>
+<li>The sign-in panel appears, headed <b>Process Mining Demonstrator</b>.</li>
+</ol>
+
+<p>Two banners can appear above the sign-in fields before you have typed anything:</p>
+
+<dl>
+<dt>Demo Mode — remaining time: N min</dt>
+<dd>No license has been applied yet, and the installation is inside its one-time grace period. The application works normally; when the period expires the compute backend stops until a license is uploaded.</dd>
+<dt>No License installed</dt>
+<dd>The grace period is spent. Ask your administrator to apply a license in the admin interface under <b>App Control → License</b>.</dd>
+</dl>
+
+<p>If a user directory is configured, a small <b>status light</b> sits below the buttons: green when the directory server answered a connection test, red when it did not. The light is hidden entirely when no directory is configured.</p>
+
+<figure data-fig="app-login"><figcaption>The sign-in panel. The background is set by an administrator under Customize; the passkey button appears only when passkeys are permitted for your account and the page is served over a secure context.</figcaption></figure>
+
+<h2 id="gs-signin">4.3 Signing in</h2>
+
+<ol class="steps">
+<li>Type your account name into <b>Username</b>. The field takes focus automatically.</li>
+<li>Type your password into <b>Password</b>.</li>
+<li>Click <b>Sign in</b>, or press Return. The button is disabled while the username is blank.</li>
+</ol>
+
+<p>If two-factor authentication is required for your account, sign-in continues with a code step. If you have not yet enrolled, the application <em>forces</em> enrolment there and then — you cannot skip it by declining to set it up.</p>
+
+<ol class="steps">
+<li>Scan the displayed QR code with an authenticator app (Google Authenticator, 1Password, Authy or similar).</li>
+<li>Type the current 6-digit code into the confirmation field and confirm.</li>
+<li>The panel shows <b>Two-factor is on — save your recovery codes</b> together with a grid of one-time codes. Copy them somewhere safe now.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> The recovery codes are shown once and never again. Each one signs you in a single time if you lose your authenticator. If you lose both, an administrator cannot read your secret — they can only untick two-factor for your account so you can enrol afresh.</div>
+
+<p>On later sign-ins you are simply asked for the current 6-digit code (or one recovery code) after your password. Once inside the application you can review the setup at any time from <b>🔒 Two-factor</b> in the sidebar footer.</p>
+
+<h3 id="gs-passkey">Signing in with a passkey</h3>
+
+<p>If your administrator has permitted passkeys for your account, a <b>🔑 Sign with Passkey</b> button sits beside <b>Sign in</b>. A passkey is an alternative to your password, never a replacement — the password always keeps working, so you cannot be locked out.</p>
+
+<ol class="steps">
+<li>Sign in with your password first.</li>
+<li>Open <b>🔑 Passkeys</b> in the sidebar footer, next to <b>Sign out</b>, and add a passkey for this device (Touch ID, Windows Hello, or a hardware security key).</li>
+<li>From then on, type your username on the sign-in panel and click <b>🔑 Sign with Passkey</b>.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> Passkeys are tied to a domain name and require a secure context. They work only when you reach the application by host name (or <code>localhost</code> on the same machine) over HTTPS — never by a bare IP address. If the application detects an IP address it hides the passkey controls entirely and enrolment is blocked; password sign-in works either way. A passkey sign-in also skips the two-factor code step, because it is already strong authentication.</div>
+
+<h3 id="gs-signin-problems">When sign-in does not work</h3>
+
+<table>
+<thead><tr><th>Symptom</th><th>Cause and remedy</th></tr></thead>
+<tbody>
+<tr><td>A message says the account is locked</td><td>Too many wrong passwords. The lockout threshold defaults to <b>3</b> attempts (0 turns it off). The account carries a <b>Locked</b> badge in the admin Users tab; an administrator unlocks it there.</td></tr>
+<tr><td>Repeated failures are refused outright</td><td>The sign-in page throttles repeated failures from the same IP address with a short, self-clearing cooldown (HTTP 429). Wait, then try again.</td></tr>
+<tr><td>Correct credentials, still refused</td><td>Your account may be disabled. Only enabled users can sign in; ask an administrator to check the Users tab. Directory accounts must also exist in the directory.</td></tr>
+<tr><td><i>You were signed out due to inactivity.</i></td><td>Your administrator has configured an idle timeout. Simply sign in again.</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> Your administrator can turn the login gate off altogether. The application then opens without any sign-in — but it also runs with <b>no user identity</b>, so every Power and Administrator capability disappears (Sampling and the advanced views are hidden and their APIs return 403), and all personal settings and filter presets fall back to one shared profile. There is no way to have both open access and the power features.</div>
+
+<h2 id="gs-legal">4.4 Accepting the legal disclaimer</h2>
+
+<p>The first time you enter the application, a full-screen <b>Legal Disclaimer</b> dialog appears. Read it — it sets out what the product is for and how far you may rely on its output.</p>
+
+<dl>
+<dt>Purpose and scope</dt>
+<dd>The application is provided for educational and exploratory purposes only. Any productive or business-critical use is the sole responsibility of the user.</dd>
+<dt>AI-generated results</dt>
+<dd>The AI-powered analysis features use large language models to interpret process data, and such models can produce results that are incorrect, incomplete or misleading.</dd>
+<dt>Data accuracy</dt>
+<dd>Process maps, KPIs, journey statistics and every other computed result depend entirely on the quality, completeness and correctness of the data in your database.</dd>
+<dt>🖥 Device transfer</dt>
+<dd>Acceptance is recorded for this installation. If the device or account passes to another person, the obligation to comply with the terms — and the acknowledgement of their content — passes automatically to the new user.</dd>
+</dl>
+
+<ol class="steps">
+<li>Scroll through all four blocks of text.</li>
+<li>Tick <b>I have read and accept all terms stated above</b>. Until you do, the confirm button stays disabled.</li>
+<li>Click <b>Accept &amp; Continue</b>.</li>
+</ol>
+
+<p>Clicking <b>Decline</b> signs you out and returns you to the sign-in panel. Acceptance is stored with your personal settings, so the dialog does not reappear on every visit.</p>
+
+<h2 id="gs-connect">4.5 Connecting to a database</h2>
+
+<p>After the disclaimer you see the application shell: the sidebar on the left with the <b>Connections</b> section already open, and an empty canvas on the right. There is no KPI strip and no date slider yet — both appear only once a chart has loaded data.</p>
+
+<figure data-fig="app-01-shell"><figcaption>The application shell immediately after sign-in: sidebar with the Connections section open, and an empty main area awaiting a project.</figcaption></figure>
+
+<p>The Connections section lists only the connections assigned to you, as read-only cards sorted alphabetically by name. You cannot change a host, credentials or TLS settings here — that is the administrator's responsibility. Each card shows a database glyph (⛁), the connection <b>Name</b>, an optional comment line, <b>Database:</b> <i>host:port</i>, and — when a model server is attached — <b>LLM:</b> followed by its URL.</p>
+
+<ol class="steps">
+<li>Click a connection card. The application opens your own Exasol session against it.</li>
+<li>Watch the <b>status dots</b> on the right of the active card. The first dot is the database: green means "Connected", orange means "Not connected". The second dot appears only when the connection carries an LLM server: blue means "LLM reachable", orange means "LLM not reachable".</li>
+<li>On success the sidebar closes Connections and opens the <b>Projects</b> section for you, with the project list already loading.</li>
+</ol>
+
+<p>Clicking the connected card again disconnects. Clicking a <em>different</em> card while connected disconnects first, then connects to the new one. Only one connection is active at a time, and disconnecting clears the whole session state — project, map, KPIs and filters all reset. It does <em>not</em> sign you out of the application.</p>
+
+<figure data-fig="app-08-connections"><figcaption>The Connections section. The ↻ button refreshes the list; the ＋ button appears only for users who may manage connections.</figcaption></figure>
+
+<div class="tip"><strong>Tip</strong> Use the <b>↻</b> button in the Connections header (tooltip "Refresh connections") after an administrator has just granted you a new connection — the list does not poll on its own.</div>
+
+<p>If the list is empty you see one of two messages. Plain users see <i>"No connections assigned to you. Ask an administrator to grant access."</i>; users who may manage connections see <i>"No connections yet. Use ＋ above to create one and assign users."</i></p>
+
+<p>A failed connection raises an alert titled <b>Connection Failed</b> with the message and two buttons, <b>Retry</b> and <b>Cancel</b>. The message is deliberately generic — the detailed driver error goes to the server log, not to your screen.</p>
+
+<table>
+<thead><tr><th>Message</th><th>What it usually means</th></tr></thead>
+<tbody>
+<tr><td>Authentication failed — check your username and password.</td><td>The stored database credentials are wrong or have expired.</td></tr>
+<tr><td>Connection timed out. Verify the host address, port, and network connectivity.</td><td>No answer within the 15-second connect timeout.</td></tr>
+<tr><td>Connection refused. No server is accepting connections at this host and port.</td><td>Wrong port, or the database is not running.</td></tr>
+<tr><td>Host not found. Check the hostname spelling and your DNS / network connectivity.</td><td>The host name does not resolve.</td></tr>
+<tr><td>TLS certificate error. Try 'Skip verification' or configure a fingerprint in the server's security settings.</td><td>The certificate is not trusted. For Exasol 7.x and the Docker image the connection's minimum RSA key size must be set to 1024 bits (legacy).</td></tr>
+<tr><td>This connection is not available to you.</td><td>The connection is no longer assigned to your account (HTTP 403).</td></tr>
+<tr><td>This connection changed during sign-in. Please reconnect.</td><td>An administrator edited or deleted the connection while your session was opening.</td></tr>
+</tbody>
+</table>
+
+<h2 id="gs-provision">4.6 If you have no data yet: provision a schema and generate demo data</h2>
+
+<div class="role">Requires: <b>Power user</b>, <b>Developer</b> or <b>Administrator</b></div>
+
+<p>Regular users skip this section — ask an administrator to assign you a connection instead. With the power role (or the developer grant, or administrator rights) a <b>＋</b> button appears in the Connections header, and you can build a working environment from scratch without leaving the application: create a connection, create the schema and tables, and load a ready-made dataset.</p>
+
+<h3 id="gs-newconn">Creating a connection</h3>
+
+<ol class="steps">
+<li>Click <b>＋</b> in the Connections header (tooltip "New connection"). The <b>New Connection</b> sheet opens on the <b>Database / LLM Details</b> tab.</li>
+<li>Fill in the fields below. Only <b>Name</b> is mandatory to save; the database fields are needed before anything can be tested or provisioned.</li>
+<li>Click <b>Test</b> in the footer. The result appears beside the button: green when everything is fine, orange when one of two components failed, red when all failed. The text reads "Database OK" or "Database: <i>error</i>", joined by "·" with "LLM OK (N models)" or "LLM: <i>error</i>" when an LLM URL is set.</li>
+<li>Tick the users who should see this connection under <b>Assigned users</b>, then click <b>Save</b>.</li>
+</ol>
+
+<table>
+<thead><tr><th>Field</th><th>Default</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Name</td><td>—</td><td>Required. The display name in everyone's Connections list. Saving without it shows "Name is required."</td></tr>
+<tr><td>Comment</td><td>—</td><td>Optional description line shown on the card.</td></tr>
+<tr><td>Host / Port</td><td>— / <b>8563</b></td><td>The Exasol server. 8563 is the Exasol default.</td></tr>
+<tr><td>Username</td><td>—</td><td>The database login.</td></tr>
+<tr><td>Schema</td><td>—</td><td>The schema holding the process-mining tables. Optional for connecting, required for provisioning, demo data and project listings.</td></tr>
+<tr><td>Password</td><td>—</td><td>Write-only. When a password is already stored the placeholder reads "•••••• (unchanged)". Leave it untouched to keep the stored value; type to replace it; clearing it deliberately to empty <b>erases</b> it.</td></tr>
+<tr><td>Use TLS</td><td>off</td><td>When ticked, three more fields appear.</td></tr>
+<tr><td>Certificate mode</td><td>Verify (system trust store)</td><td>Also "Pin fingerprint" and "Accept any (insecure)". The last disables both certificate and host-name verification — lab and self-signed setups only.</td></tr>
+<tr><td>Fingerprint (SHA-256)</td><td>—</td><td>Used with "Pin fingerprint". Must be pure hexadecimal; a blank or non-hex value in that mode refuses the connection rather than silently skipping verification.</td></tr>
+<tr><td>Minimum RSA key size</td><td>2048</td><td>Stored and carried through every operation for compatibility with the macOS edition's connection records, but not currently enforced by the web backend.</td></tr>
+<tr><td>LLM Server URL / Model / API key</td><td>—</td><td>Optional OpenAI-compatible endpoint; enables the AI supported Documentation view. The API key is write-only like the password.</td></tr>
+</tbody>
+</table>
+
+<figure data-fig="app-09-connection-editor"><figcaption>The connection editor. The footer Test button checks the values currently typed into the sheet, not the stored ones.</figcaption></figure>
+
+<div class="warn"><strong>Warning</strong> <b>Test</b>, <b>Create schema &amp; tables</b> and demo generation all use the password <em>typed into the sheet</em>, not the stored secret. When you reopen a saved connection the password field is blank, so those operations run with an empty password and typically report an authentication failure even though the saved connection itself works. Retype the password before using them.</div>
+
+<div class="warn"><strong>Warning</strong> Saving an edit disconnects every user currently connected through that connection — they must reconnect against the new definition. Un-assigning a user drops their live session immediately, and deleting a connection drops all sessions on it first.</div>
+
+<h3 id="gs-schema">Creating the schema and tables</h3>
+
+<ol class="steps">
+<li>On the <b>Database / LLM Details</b> tab, enter the target <b>Schema</b> name and make sure the database credentials are complete.</li>
+<li>Click <b>Create schema &amp; tables</b>. The button is disabled while the Schema field is blank.</li>
+<li>On success a green line reads <b>Created:</b> followed by what was made — the schema plus PROJECTS, JOURNEYS, STEPS, METAS and NOTES. On failure the error appears in red, or the fallback "Could not create the schema."</li>
+</ol>
+
+<p>Provisioning is idempotent: every statement uses <code>IF NOT EXISTS</code>, so re-running never disturbs existing data. If it fails part-way, the result still lists everything that was created before the failure.</p>
+
+<div class="role">Requires on the database: <b>CREATE SCHEMA</b> and <b>CREATE TABLE</b></div>
+
+<div class="warn"><strong>Warning</strong> Only your database administrator can grant those rights. The application cannot authorise you, and no amount of application-level permission substitutes for them.</div>
+
+<h3 id="gs-demo">Generating a demo dataset</h3>
+
+<p>The <b>Demo Content</b> tab loads a complete, realistic dataset into the connection's schema, creating the schema and tables first if they are missing. Three datasets are offered.</p>
+
+<table>
+<thead><tr><th>Group</th><th>Dataset</th><th>Project ID</th><th>Meta attributes 1 / 2 / 3</th></tr></thead>
+<tbody>
+<tr><td>Retail</td><td>📚 Online Bookstore</td><td><code>BOOKSTORE</code></td><td>Payment Method / Customer Segment / Order Value</td></tr>
+<tr><td>Finance/Insurance</td><td>💶 Online Credit Application</td><td><code>CREDIT</code></td><td>Applied Credit Sum / Income Class / Channel</td></tr>
+<tr><td>Transportation</td><td>✈️ Flight Booking &amp; Management</td><td><code>FLIGHTS</code></td><td>Journey Type / Airline / Payment Method</td></tr>
+</tbody>
+</table>
+
+<p><b>Online Bookstore</b> generates an order lifecycle — login, browse, basket, checkout, payment, fulfilment, delivery — with roughly 5&nbsp;% of orders taking a returns flow and a deliberately unreliable bank-transfer path that fails about 35&nbsp;% of the time per attempt and retries. Its 24 steps are grouped into Customer Interaction, Purchase Process, Payment, Fulfilment and Returns, with scores from −10 (Payment Failed, Return Initiated) to +15 (Delivered) — which means the Process Goodness KPI works out of the box.</p>
+
+<p><b>Online Credit Application</b> models bank and affiliate intake, an application check with a rework loop, credit assessment, and a score- and sum-driven decision with agent-review loops, ending in payment or rejection. <b>Flight Booking &amp; Management</b> models a Star Alliance-style booking: 80&nbsp;% new bookings (with a modify loop in search, and 50&nbsp;% interline itineraries that query a partner airline's system) and 20&nbsp;% manage-booking journeys. In every dataset, event times are spread randomly between 2024-01-01 08:00 and 2024-12-31 22:00.</p>
+
+<ol class="steps">
+<li>Open the <b>Demo Content</b> tab of the connection editor.</li>
+<li>Check the <b>Schema</b> field on the dataset panel you want. It is the same value as on the Details tab — editing it in any demo panel changes the connection's schema.</li>
+<li>Set <b>Journeys</b>. The default is <b>500</b>; the minimum is 1 and the field accepts up to 20,000.</li>
+<li>Click <b>Generate</b>. The button reads "Generating…" with a spinner while it runs.</li>
+<li>A green line confirms the result — <i>Created N journeys for "&lt;title&gt;" in &lt;SCHEMA&gt;.JOURNEYS</i> — or a red one reports the error.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> Generation replaces only that dataset's own project: its PROJECTS row, its METAS row and <b>all</b> of its JOURNEYS rows, including any sample sets. Other projects in the schema are untouched. STEPS rows are only <em>added</em> where missing, so colours, shapes and scores you have customised in the Step Editor survive a regeneration.</div>
+
+<div class="note"><strong>Note</strong> The journey count is hard-capped at 20,000 on the server and a larger request is silently clamped to exactly that. Rows are inserted in batches of 200 journeys.</div>
+
+<p>Demo journeys do not use plain order numbers as case keys. Each <code>EVENT_ID</code> is the MD5 hash of a synthetic reference built from the dataset prefix and a 1-based, zero-padded six-digit sequence number:</p>
+
+<pre><code>Online Bookstore (BOOKSTORE):          EVENT_ID = md5("ORD-000001"), md5("ORD-000002"), …
+Online Credit Application (CREDIT):    EVENT_ID = md5("CRA-000001"), …
+Flight Booking &amp; Management (FLIGHTS): EVENT_ID = md5("FLT-000001"), …
+
+# reproduce a specific ID from a shell:
+printf 'ORD-%06d' 1  | md5      # macOS  → the stored 32-char hex EVENT_ID
+printf 'FLT-%06d' 42 | md5sum   # Linux</code></pre>
+
+<div class="tip"><strong>Tip</strong> You rarely need to hash anything by hand. In the Individual Journey view you can type the friendly reference — <code>ORD-000001</code> — straight into the Event ID field and the application hashes it for you.</div>
+
+<h2 id="gs-project">4.7 Selecting a project</h2>
+
+<p>With a connection live, the <b>Projects</b> section lists what the schema contains. Each project card shows a 📈 icon, the title and an optional description; the selected project carries a ✓.</p>
+
+<ol class="steps">
+<li>Open the <b>Projects</b> section if it is not already open, or press <b>↻</b> (tooltip "Reload projects") to re-read the list. The button is disabled while no database is connected.</li>
+<li>Click a project card.</li>
+</ol>
+
+<p>Selecting a project collapses every sidebar section and does a good deal of work at once: it switches the main area to <b>A-Chart</b>, resets all filters, A/B state, statistics and AI results; loads the project's bootstrap data (steps, meta titles and values, date range, filter bounds and sample counts); applies your <b>Default date window</b>; and restores your per-user, per-project state — filter presets, target norms, happy paths and the LLM prompt template.</p>
+
+<div class="note"><strong>Note</strong> The default date window is <b>30 days</b>. The map opens on the window ending at the project's latest event date and reaching back that many days, clamped to the project's earliest date. Set it to <b>0</b> in <b>Configuration → Default date window</b> to load the full range instead. The change applies the next time a project is opened — it does not move the slider on the current map.</div>
+
+<p>If the list stays empty you see <i>"No projects found."</i>; before connecting it reads <i>"Connect to a database to load projects."</i> A failure raises the alert <b>Failed to Load Projects</b> (or <b>Failed to Load Project</b> when the selection itself fails) with <b>Retry</b> and <b>Cancel</b>.</p>
+
+<figure data-fig="app-02-projects"><figcaption>The Projects section. Selecting a project loads the A-Chart automatically and collapses the sidebar sections.</figcaption></figure>
+
+<h2 id="gs-map">4.8 Reading your first process map</h2>
+
+<p>The A-Chart is an aggregated <b>directly-follows graph</b>: every node is a distinct process step, and every arrow is a transition observed between two chronologically consecutive steps within the same journey. The map shows all journeys that match the current filters.</p>
+
+<figure data-fig="app-03-achart"><figcaption>The A-Chart. Arrow thickness encodes the selected transition metric relative to the highest value on the map.</figcaption></figure>
+
+<dl>
+<dt>Arrows</dt>
+<dd>Thickness and opacity reflect the selected transition metric <em>relative to the largest value on the map</em>. The label carries the value — a plain number for Count, a readable duration (4m, 1.2h, 3.5d) for the time-based metrics.</dd>
+<dt>Green arrow above a node</dt>
+<dd>An entry point: a step with no incoming transitions.</dd>
+<dt>Orange arrow below a node</dt>
+<dd>An exit point: a step with no outgoing transitions.</dd>
+<dt>Score badge (top-left of a node)</dt>
+<dd>The step's SCORE from the STEPS table — green for positive, red for negative, blue for zero.</dd>
+<dt>Orange dot</dt>
+<dd>Marks an end-of-process step.</dd>
+<dt>Yellow ✎ badge</dt>
+<dd>The node or edge carries at least one note.</dd>
+<dt>Dashed box with a name pill</dt>
+<dd>A step group: all steps sharing a <code>BELONGS_TO</code> value. The <b>+/−</b> badge collapses or expands it; a collapsed group sums connection counts and weight-averages the times.</dd>
+</dl>
+
+<p>A small pill in the chart header tells you how the transitions were computed: <b>↻ Live query</b> (computed from the event log on each load), <b>⚡ Pre-materialized</b> (read from a prebuilt table), or <b>⚠ Live (not built)</b> (the fast path is enabled but the table is not ready, so the live query is running meanwhile). The chart footer shows the server-side query time, for example "123 ms". Chapter&nbsp;12 covers the pre-materialized path.</p>
+
+<h3 id="gs-navigate">Moving around</h3>
+
+<ol class="steps">
+<li>Scroll or pinch to zoom; drag the background to pan.</li>
+<li><b>Double-click</b> the background to fit the whole graph to the window. The <b>⤢</b> button does the same, and the <b>±</b> buttons zoom in precise steps.</li>
+<li>Drag a node to reposition it. Positions snap to a 20&nbsp;pt grid and are saved <b>per project and per chart view</b>. Dragging a group box moves all its members together.</li>
+<li>Press <b>↺</b> to discard your custom positions and return to the automatic layout.</li>
+</ol>
+
+<p>Click any node to open its small action card: <b>Require in journeys</b> (adds the step to Include Steps and reloads), <b>Exclude from journeys</b> (the mirror), <b>Show Notes (n)</b> — where <i>n</i> is how many notes it already holds — and <b>Show description</b>, which displays the step's full DESCRIPTION when it differs from the name.</p>
+
+<h2 id="gs-tour">4.9 A guided tour of the screen</h2>
+
+<h3 id="gs-sidebar">The sidebar</h3>
+
+<p>The sidebar runs from a brand header at the top, through six accordion sections, to your identity footer and the theme bar. Only one section is open at a time — opening one collapses the others. On start-up, Connections is open.</p>
+
+<table>
+<thead><tr><th>Section</th><th>What it does</th><th>Visibility</th></tr></thead>
+<tbody>
+<tr><td>Connections</td><td>Pick the database you work against. Header shows a count when there is at least one.</td><td>Everyone</td></tr>
+<tr><td>Projects</td><td>Pick the project inside that database.</td><td>Everyone</td></tr>
+<tr><td>Metrics</td><td>Choose the transition metric: <b># Count</b> (default), <b>⏱ Avg Time</b>, <b>⌄ Min Time</b>, <b>⌃ Max Time</b>, <b>〰 Std Dev</b>.</td><td>Hidden in Individual Journey</td></tr>
+<tr><td>Filters</td><td>Date, Include Steps, Exclude Steps, Num Steps, Journey Time, Journey Score and Meta 1–3, plus Reset, Save Preset… and Apply.</td><td>Everyone</td></tr>
+<tr><td>Sampling</td><td>Create up to three shared sample sets and choose the data source for the A and B charts.</td><td>Power and Administrator only</td></tr>
+<tr><td>Configuration</td><td>Step groups, font sizes, KPI order, the Step Editor, display toggles, default date window and the LLM prompt.</td><td>Everyone</td></tr>
+</tbody>
+</table>
+
+<figure data-fig="app-04-metrics"><figcaption>The Metrics section. Each chart view remembers its own metric selection independently.</figcaption></figure>
+
+<p>Below the sections, the <b>identity footer</b> shows 👤 followed by your display name and your role in parentheses — <b>Admin</b>, <b>Power user</b>, <b>Developer</b> or <b>User</b> — plus the buttons <b>🔒 Two-factor</b>, <b>🔑 Passkeys</b> (each shown only when available to you) and <b>⏻ Sign out</b>. The footer is hidden entirely when sign-in is not required.</p>
+
+<p>At the very bottom sits the theme bar: <b>🎨 Theme</b> with three buttons — <b>System</b> (◐), <b>Light</b> (☀) and <b>Dark</b> (☾) — and a <b>Hide sidebar</b> button (⇤). When the sidebar is hidden, a <b>Show sidebar</b> button (▤) appears in the chart header.</p>
+
+<h3 id="gs-kpi">The KPI strip</h3>
+
+<p>The KPI strip sits above the canvas and appears only once a chart has loaded data. It is hidden on launch, after disconnecting, and on any view that has not yet loaded. Tap the chevron handle to collapse it — the journey counts then appear inline in the handle bar.</p>
+
+<table>
+<thead><tr><th>Tile</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>Total Journeys</td><td>Distinct journeys in the project with <b>no</b> filters applied. It does not change when you adjust filters.</td></tr>
+<tr><td>Filtered Journeys</td><td>Distinct journeys matching all current filters — the population the map draws.</td></tr>
+<tr><td>Shortest / Avg / Longest Journey</td><td>Fastest, mean and slowest journey duration in the filtered set, first event to last.</td></tr>
+<tr><td>Std Dev</td><td>Standard deviation of journey durations. Low means most journeys take a similar time.</td></tr>
+<tr><td>Graph Value</td><td>Sum of (step score × visit count) over every scored node on the map.</td></tr>
+<tr><td>Process Goodness</td><td>Composite quality score for the whole process. Hidden when no step has a SCORE.</td></tr>
+<tr><td>Process Similarity</td><td>A/B Comparison only — floats between the two panels.</td></tr>
+<tr><td>Active Sample</td><td>Which data source the chart is reading.</td></tr>
+</tbody>
+</table>
+
+<p>All tiles are on by default. Reorder them by dragging, and switch individual tiles off, in <b>Configuration → KPIs</b>.</p>
+
+<h3 id="gs-views">The ☰ view menu</h3>
+
+<p>The <b>☰</b> menu in the top-right corner of the main area switches between the ten views. A checkmark marks the active one, and the title capsule shows it on a second line so your context is always visible.</p>
+
+<table>
+<thead><tr><th>View</th><th>Purpose</th><th>Chapter</th></tr></thead>
+<tbody>
+<tr><td>A-Chart</td><td>The primary process map.</td><td>5</td></tr>
+<tr><td>B-Chart</td><td>An independent second map with its own filter set. It starts empty — apply filters and tap <b>Apply</b>, or use <b>Load</b> on its empty state.</td><td>5</td></tr>
+<tr><td>A/B Comparison</td><td>Both maps side by side, with a shared-viewport valve and a Process Similarity badge.</td><td>7</td></tr>
+<tr><td>Individual Journey</td><td>The full step sequence of one case, replayed by a moving dot.</td><td>8</td></tr>
+<tr><td>AI supported Documentation</td><td>An LLM-written report over the current A-Chart transition table.</td><td>13</td></tr>
+<tr><td>Statistics</td><td>Journey variants, duration histogram, step traffic and a transition heat map.</td><td>9</td></tr>
+<tr><td>Conformance Check</td><td>Target norms per edge and a gap analysis. <i>Power and Administrator only.</i></td><td>10</td></tr>
+<tr><td>Happy Path</td><td>An ideal step sequence scored against reality. <i>Power and Administrator only.</i></td><td>10</td></tr>
+<tr><td>Notes</td><td>Every note on the project, with its own filter bar.</td><td>11</td></tr>
+<tr><td>Simulation</td><td>Synthetic event logs from a calibrated Markov model. <i>Power and Administrator only.</i></td><td>14</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> Conformance Check, Happy Path and Simulation do not appear in the ☰ menu at all for Regular users. If you expect them and cannot see them, check the role shown in your sidebar footer.</div>
+
+<h3 id="gs-help">The help panel</h3>
+
+<p>Press <b>⌘/</b> (or <b>Ctrl+/</b>) at any time to open or close the in-application help. The panel floats above the workspace: drag it by its title bar to move it, and resize it from the bottom-right corner. Its table of contents mirrors this manual, with an Administration sub-menu for administrators and an Integration console sub-menu for developers.</p>
+
+<figure data-fig="app-19-help"><figcaption>The floating help panel, opened with ⌘/ or Ctrl+/.</figcaption></figure>
+
+<h2 id="gs-firstfilter">4.10 Your first filter</h2>
+
+<p>Filters work at <b>journey level</b>: a journey either qualifies in full or not at all. Nothing is applied automatically — you set the filters, then press <b>Apply</b>.</p>
+
+<ol class="steps">
+<li>Open the <b>Filters</b> section. The <b>Date</b> sub-section is expanded by default; all others start collapsed.</li>
+<li>Adjust <b>From</b> and <b>To</b>, or drag the two thumbs of the date slider above the map. Both thumbs respond to the arrow keys once focused.</li>
+<li>Expand <b>Include Steps</b> and select one or two steps. Any step already chosen for <b>Exclude Steps</b> is disabled here, and vice versa — a step can never be both.</li>
+<li>Click <b>Apply</b>. The map reloads, and <b>Filtered Journeys</b> in the KPI strip updates while <b>Total Journeys</b> stays where it was.</li>
+<li>Happy with the result? Click <b>🔖 Save Preset…</b>, name it, and click <b>Save</b>. Leave the name blank and it is auto-named "Preset N".</li>
+<li>To start over, click <b>↺ Reset</b> — it restores the project defaults and reapplies immediately.</li>
+</ol>
+
+<figure data-fig="app-05-filters"><figcaption>The Filters section. Active sub-sections carry a badge with the current value and a ⊗ button that clears just that filter.</figcaption></figure>
+
+<div class="note"><strong>Note</strong> A preset is a snapshot taken at the moment you save it — later filter changes do not update it. Presets are stored per user and per project, survive a change of browser, and are included in backups. Deleting one from the sidebar list happens immediately, with no confirmation dialog.</div>
+
+<div class="tip"><strong>Tip</strong> Each chart view keeps its own filter settings and its own metric selection, so exploring in the B-Chart never disturbs your A-Chart.</div>
+
+<h2 id="gs-signout">4.11 Ending the session</h2>
+
+<p>Click <b>⏻ Sign out</b> in the sidebar footer to end the session; this also releases your database connection. If your administrator has configured an idle timeout, the application signs you out on its own after that many idle minutes and the sign-in panel then reports <i>"You were signed out due to inactivity."</i> Nothing is lost: your settings, presets, layouts and notes are all stored server-side and return with you.</p>
+
+<h2 id="gs-next">4.12 Where to go next</h2>
+
+<dl>
+<dt>Chapter 5 — The Process Map</dt>
+<dd>Metrics and colour scales, groups, layout, node context actions and the colour-legend wizard.</dd>
+<dt>Chapter 6 — Filters and Presets</dt>
+<dd>Every filter dimension in detail, including meta attributes and the score range.</dd>
+<dt>Chapter 9 — Statistics</dt>
+<dd>Variants, duration histograms and the journeys-over-time chart.</dd>
+<dt>Chapter 11 — Notes</dt>
+<dd>Annotating nodes and edges, importance levels, threads and sharing.</dd>
+<dt>Chapter 12 — Administration</dt>
+<dd>Users and roles, TLS, directory sign-in, licensing, logging, backups — and pre-materialized transitions.</dd>
+</dl>
+
+</section>

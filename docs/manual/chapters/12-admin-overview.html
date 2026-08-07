@@ -1,0 +1,366 @@
+<section class="chapter" id="ch-admin-overview" data-title="Administration: Overview, App Control and TLS" data-num="12">
+
+<h1><span class="chnum">12</span> Administration: Overview, App Control and TLS</h1>
+
+<p class="chintro">This chapter introduces the administration interface — the separate web surface from which the whole installation is configured — and then covers its first two tabs in full. You learn how to reach the panel and sign in, how its top bar and tab strip are laid out, what the profile menu does and why the default-password banner must be dealt with on day one. The <b>App Control</b> tab is then described in detail: installing and removing the licence, reading the licence status banner, understanding Demo Mode and the one-time grace countdown, and restarting the servers. The <b>TLS / SSL</b> tab follows: the three connection modes, generating a self-signed certificate, uploading a certificate of your own, activating one, and the fact that a single restart re-binds all three browser surfaces at once. The chapter is written for administrators; nothing described here is reachable by other users.</p>
+
+<div class="role">Requires: <b>Administrator</b> — every task in this chapter</div>
+
+<h2 id="admin-reaching">12.1 Reaching the administration interface</h2>
+
+<p>The administration interface is not a page inside the main application. It is a separate server, on its own port, with its own sign-in and its own session cookie. This separation is deliberate: it lets you keep the admin panel off the network path that ordinary users take, and it means an ordinary application session can never be escalated into an administrative one.</p>
+
+<table>
+<thead><tr><th>Surface</th><th>HTTP port</th><th>HTTPS port</th><th>Environment variables</th></tr></thead>
+<tbody>
+<tr><td>Main application (the GUI)</td><td>8080</td><td>8443</td><td><code>PMW_FRONTEND_PORT</code> / <code>PMW_FRONTEND_HTTPS_PORT</code></td></tr>
+<tr><td>Administration interface</td><td>8090</td><td>8453</td><td><code>PMW_ADMIN_PORT</code> / <code>PMW_ADMIN_HTTPS_PORT</code></td></tr>
+<tr><td>Integration console</td><td>8100</td><td>8463</td><td><code>PMW_INTEGRATION_PORT</code> / <code>PMW_INTEGRATION_HTTPS_PORT</code></td></tr>
+</tbody>
+</table>
+
+<p>The integration console defaults to the admin ports plus ten. Which of the two port columns is live depends on the TLS mode described in section 12.6.</p>
+
+<h3 id="admin-signin">12.1.1 Signing in</h3>
+
+<ol class="steps">
+<li>Open <code>http://&lt;server&gt;:8090/</code> (or <code>https://&lt;server&gt;:8453/</code> when TLS is required) in a browser. Visiting <code>/</code> without a session redirects you to <code>/login</code>.</li>
+<li>Type your <b>Username</b>. The <b>Sign in</b> button stays disabled until the username field is non-empty.</li>
+<li>Type your <b>Password</b> and press <b>Sign in</b>. The button shows a spinner while the request is in flight.</li>
+<li>If your account has two-factor authentication enrolled, the panel switches to the code step: enter the six-digit code (or one of your recovery codes) in <b>Authentication code</b> and press <b>Verify</b>.</li>
+<li>The dashboard opens on the <b>App Control</b> tab.</li>
+</ol>
+
+<p>The sign-in page mirrors the main application's panel exactly; the only difference is the second title line, which reads <b>Administration</b>. Where a directory server is configured, a green or red LED with <em>Directory server available</em> / <em>Directory server unavailable</em> appears below the form; it is a cached probe and never blocks the page. A <b>🔑 Sign with Passkey</b> button is shown only when the browser supports WebAuthn <em>and</em> you reached the panel by a real host name — passkeys cannot be bound to a bare IP address.</p>
+
+<figure data-fig="admin-01-overview"><figcaption>The administration dashboard: top bar, tab strip and the App Control tab.</figcaption></figure>
+
+<div class="note"><strong>Note</strong> Only administrators may sign in here. A correct password belonging to a non-administrator produces exactly the same message as a wrong password — <em>"Invalid credentials, or the account is not an administrator."</em> — so the page never reveals whether an account exists. Directory (LDAP) accounts can sign in only if <b>Also allow directory sign-in to this admin interface</b> is enabled in the Directory tab <em>and</em> the account has been promoted to administrator locally. Local administrator accounts always work; they are the break-glass path.</div>
+
+<div class="note"><strong>Note</strong> Admin and application sessions are not interchangeable. The admin cookie is <code>pmw_admin</code>; it is bound to the admin surface and is rejected by the application and by the integration console, and vice versa. Signing in on one surface does not sign you in on the others. Conversely, <b>Log out</b> invalidates <em>every</em> outstanding session of that user on all three surfaces, not just the cookie in the current browser.</div>
+
+<p>Sign-in attempts are throttled per source IP address. After repeated failures the endpoint answers HTTP 429 with <em>"Too many failed attempts. Try again in about N seconds."</em> An unauthenticated <code>GET /health</code> is always open and returns <code>{"status": "ok"}</code>; use it for load-balancer probes.</p>
+
+<h3 id="admin-default-password">12.1.2 The default-password warning</h3>
+
+<p>The first start of a fresh installation seeds a built-in local administrator with the username <b>Administrator</b> and the password <b>Administrator</b> (both overridable at first start with <code>PMW_DEFAULT_ADMIN_USER</code> and <code>PMW_DEFAULT_ADMIN_PASSWORD</code>). While that default password is still in place, a persistent banner sits at the top of the dashboard:</p>
+
+<pre><code>⚠️ The Administrator account is still using its default password.
+   Change it now in 👤 Profile (top right).</code></pre>
+
+<div class="warn"><strong>Warning</strong> Change this password before the server is reachable by anyone else. The banner disappears permanently as soon as the built-in Administrator's password is changed. Note also that the built-in Administrator is never automatically locked by the failed-sign-in threshold — it is the break-glass account — so a weak password on it is not protected by lockout, only by the per-IP throttle.</div>
+
+<h2 id="admin-layout">12.2 Dashboard layout</h2>
+
+<h3 id="admin-topbar">12.2.1 The top bar</h3>
+
+<p>The top bar is present on every tab and holds four items:</p>
+
+<dl>
+<dt>Theme control</dt><dd>A segmented control with <b>◐ System</b>, <b>☀ Light</b> and <b>☾ Dark</b>. The choice is stored per browser and applied before the first paint, so there is no flash of the wrong theme. It affects only your own browser, not other administrators.</dd>
+<dt>Signed in as &lt;username&gt;</dt><dd>The identity the current session belongs to.</dd>
+<dt>❔ Help</dt><dd>Opens an overlay with the built-in topics: Admin Interface, TLS / SSL, Users &amp; Sign-in, Database Connections, Rebuild from a script (API), Directory (LDAP), Logging, Backup &amp; Restore, Customize, and License &amp; Demo Mode.</dd>
+<dt>👤 Profile</dt><dd>Your own account's security settings — see section 12.3.</dd>
+<dt>Log out</dt><dd>Ends the session and returns to the sign-in page. It bumps your session epoch server-side, which also ends your application and integration sessions.</dd>
+</dl>
+
+<h3 id="admin-tabs">12.2.2 The tab strip</h3>
+
+<p>The tabs always appear in this order, with <b>App Control</b> selected when the dashboard opens:</p>
+
+<table>
+<thead><tr><th>#</th><th>Tab</th><th>What it configures</th><th>Covered in</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><b>App Control</b></td><td>Restart, licence, admin idle sign-out, display timezone</td><td>This chapter</td></tr>
+<tr><td>2</td><td><b>TLS / SSL</b></td><td>Connection mode and certificates</td><td>This chapter</td></tr>
+<tr><td>3</td><td><b>Users</b></td><td>Accounts, roles, sign-in policy, passkeys, two-factor</td><td>Chapter 13</td></tr>
+<tr><td>4</td><td><b>Database Connections</b></td><td>Database and LLM servers, user assignment, projects</td><td>Chapter 14</td></tr>
+<tr><td>5</td><td><b>Directory (LDAP)</b></td><td>Directory sign-in, service account, search filters</td><td>Chapter 15</td></tr>
+<tr><td>6</td><td><b>Logging</b></td><td>Severity, rotation, the log viewer and exports</td><td>Chapter 16</td></tr>
+<tr><td>7</td><td><b>Backup</b></td><td>Manual and scheduled backups, restore</td><td>Chapter 17</td></tr>
+<tr><td>8</td><td><b>Customize</b></td><td>Sign-in page background and branding</td><td>Chapter 18</td></tr>
+<tr><td>9</td><td><b>Integration</b></td><td>Enabling the integration console</td><td>Chapter 19</td></tr>
+</tbody>
+</table>
+
+<div class="tip"><strong>Tip</strong> The Help overlay's own "Admin Interface" topic lists the tabs but omits <b>Integration</b>. The tab is nevertheless present and functional; use the table above as the authoritative list.</div>
+
+<p>Every action you take in this panel is written to the shared structured log, together with your username and client IP. Destructive actions — deletions, restores, clearing the log, generating or revoking tokens — are deliberately recorded at <b>WARN</b> severity so that they stand out when the log is filtered.</p>
+
+<h2 id="admin-profile">12.3 The Profile overlay</h2>
+
+<p>The <b>👤 Profile</b> button in the top bar opens an overlay covering your <em>own</em> administrator account. Its introduction reads: <em>"Your own admin account — password, passkeys and two-factor. These protect both this admin interface and the main app."</em> It has three sections.</p>
+
+<h3 id="admin-profile-password">12.3.1 Changing your password</h3>
+
+<ol class="steps">
+<li>Open <b>👤 Profile</b> in the top bar.</li>
+<li>Type the new password in <b>New password</b> and repeat it in <b>Confirm</b>.</li>
+<li>Press <b>Change password</b>.</li>
+</ol>
+
+<p>An empty field is rejected with <em>"Enter a new password."</em> and a mismatch with <em>"The passwords don't match."</em> On success every <em>other</em> session of your account — application, integration console and any other browser on the admin panel — is invalidated immediately; your current session is re-issued in the same response, so you are not signed out of the page you are working in. The log records <em>"changed their password — other sessions invalidated"</em>.</p>
+
+<h3 id="admin-profile-passkeys">12.3.2 Passkeys and two-factor</h3>
+
+<p>The remaining two sections let you register passkeys (Touch ID, Windows Hello, a security key) and set up TOTP two-factor authentication for your own account. Both are permissions that must first be granted to your account in the <b>Users</b> tab; until then the overlay states <em>"Passkeys are not enabled for your account — enable them in the Users tab first."</em> or <em>"Two-factor is not enabled for your account — enable it in the Users tab first."</em> The same credential works on all three surfaces of the host. These features are described in full in Chapter 13; the mechanics are identical whether you manage them here or in the application.</p>
+
+<div class="note"><strong>Note</strong> Passkeys require a secure context (HTTPS, or localhost) and a real host name. If you reach the panel by IP address, the passkey controls hide themselves and the overlay explains: <em>"Passkeys need a hostname, not an IP address. Reach this panel by its name over HTTPS — e.g. its '.local' name — instead of its IP to add or use one."</em></div>
+
+<h2 id="admin-appcontrol">12.4 The App Control tab</h2>
+
+<p>App Control is the operational tab. It contains four cards, in this order:</p>
+
+<table>
+<thead><tr><th>Card</th><th>Purpose</th><th>Takes effect</th></tr></thead>
+<tbody>
+<tr><td><b>App Control</b></td><td>Restart the running servers (section 12.5)</td><td>Immediately, on demand</td></tr>
+<tr><td><b>License</b></td><td>Install or remove the licence (section 12.4.1)</td><td>Within a few seconds; no restart</td></tr>
+<tr><td><b>Admin session</b></td><td>Idle auto sign-out for <em>this</em> panel, 0–1440 minutes</td><td>Immediately (see Chapter 13)</td></tr>
+<tr><td><b>Timezone</b></td><td>Display timezone for all admin timestamps and the backup schedule</td><td>Immediately (see Chapter 16)</td></tr>
+</tbody>
+</table>
+
+<p>The <b>Admin session</b> and <b>Timezone</b> cards are covered where their effects are visible — idle sign-out alongside the application's own idle policy in Chapter 13, and the display timezone alongside the log viewer and backup scheduler in Chapters 16 and 17. The rest of this section deals with licensing; the restart button follows in section 12.5.</p>
+
+<figure data-fig="admin-02-app-control"><figcaption>App Control: the restart button, the licence status banner, the admin idle sign-out and the display timezone.</figcaption></figure>
+
+<h3 id="admin-license">12.4.1 Licensing</h3>
+
+<p>The compute backend — the component that runs the mining queries — requires a valid licence. The card explains it plainly: <em>"The compute backend requires a valid license. Without one it runs for a short grace period and then stops. Upload the <code>license.json</code> you were issued to apply it."</em></p>
+
+<p>A licence is a small JSON document signed with an Ed25519 key by the vendor. The signature is verified before anything is stored, so a hand-edited expiry date or a file from another installation is refused outright. The installed file lives at <code>data/license.json</code>.</p>
+
+<h4>Licence states</h4>
+
+<p>The status banner loads with <em>"Checking license…"</em> and then settles into one of three colours:</p>
+
+<table>
+<thead><tr><th>Colour</th><th>State</th><th>Banner text</th></tr></thead>
+<tbody>
+<tr><td>Green</td><td>Valid</td><td><em>"Licensed to '&lt;name&gt;', valid until &lt;date&gt;."</em> with the sub-line <em>"Licensed to &lt;name&gt; · expires &lt;date&gt; · issued &lt;date&gt;"</em></td></tr>
+<tr><td>Orange</td><td>Expired</td><td><em>"License for '&lt;name&gt;' expired on &lt;date&gt;."</em></td></tr>
+<tr><td>Red</td><td>Missing or invalid</td><td><em>"No license installed."</em>, <em>"License signature is not valid."</em>, <em>"License file is not valid JSON."</em>, <em>"License file is missing 'license' or 'signature'."</em>, <em>"License signature is malformed."</em>, <em>"License has no valid expiry date."</em>, or <em>"License file could not be read: …"</em></td></tr>
+</tbody>
+</table>
+
+<h4>Installing a licence</h4>
+
+<ol class="steps">
+<li>Open the <b>App Control</b> tab and find the <b>License</b> card.</li>
+<li>In <b>Upload license</b>, choose the <code>license.json</code> file you were issued. The file input accepts <code>.json</code> only.</li>
+<li>Press <b>Upload license</b>.</li>
+<li>Wait for the confirmation <em>"License installed. The backend applies it within a few seconds."</em> The status banner turns green and shows the licensee and expiry date.</li>
+</ol>
+
+<p>No restart is needed: the backend polls for the licence file and picks up a new one within seconds. If the compute backend has already stopped because the grace period expired, uploading a valid licence here is still possible — see section 12.4.2.</p>
+
+<table>
+<thead><tr><th>Upload error</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>HTTP 400 with the specific reason from the table above</td><td>The file is not a valid, correctly signed licence. Nothing is stored.</td></tr>
+<tr><td>HTTP 413 <em>"License file is too large."</em></td><td>The encoded file exceeds 100,000 base64 characters. A genuine licence is far smaller.</td></tr>
+<tr><td><em>"Invalid file content."</em></td><td>The upload could not be decoded at all.</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> A rejected upload never replaces the licence you already have. The signature is checked first, and only a verified file is written to disk.</div>
+
+<h4>Removing a licence</h4>
+
+<ol class="steps">
+<li>In the <b>License</b> card, press <b>Delete license</b>.</li>
+<li>Confirm the dialog: <em>"Delete the installed license? — The compute backend drops to Demo Mode and stops after the grace period unless a new license is applied."</em></li>
+<li>The result is either <em>"License removed — the backend is now in Demo Mode."</em> or, if there was nothing to remove, <em>"No license was installed."</em></li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> Deleting the licence does <em>not</em> hand you a fresh grace period. The demo window is granted once per installation and is not restored by removing and re-adding a licence. If the window has already been spent, the compute backend stops as soon as the licence is gone.</div>
+
+<h3 id="admin-demo">12.4.2 Demo Mode and the grace countdown</h3>
+
+<p>An installation with no valid licence runs in <b>Demo Mode</b>. The first unlicensed run stamps a deadline into the marker file <code>data/demo_grace.json</code>; the window is <b>30 minutes</b> by default and is configured at deployment time with <code>PMW_LICENSE_GRACE_SECS</code>. The stamp is written once per installation and is never rewritten.</p>
+
+<p>While the window is open, users of the main application see an orange banner on the sign-in panel — <em>"<b>Demo Mode</b> — remaining time: N min"</em>, or <em>"<b>No License installed</b>"</em> when the window has been spent. The banner refreshes every 30 seconds, so the countdown visibly ticks down.</p>
+
+<p>Uploading a valid licence at any point during the window cancels the shutdown; the banner disappears at the users' next refresh.</p>
+
+<h4>What happens when the grace period expires</h4>
+
+<p>When the deadline passes, the <b>compute backend stops</b>. The main application can no longer run queries; API calls that reach for the backend fail, and users see <em>"The compute backend is not reachable. Start it with ./run.sh or check PMW_BACKEND_URL."</em> (HTTP 502).</p>
+
+<div class="note"><strong>Note</strong> The administration interface is deliberately unaffected. It keeps running after the backend has stopped so that a licence can always be uploaded — you never have to reach a terminal to recover an installation whose demo window has expired. Upload the licence in the <b>License</b> card as usual, then restart the app server (section 12.5) if the backend does not come back on its own.</div>
+
+<table>
+<thead><tr><th>Situation</th><th>Compute backend</th><th>Admin interface</th><th>Action</th></tr></thead>
+<tbody>
+<tr><td>Valid licence installed</td><td>Runs</td><td>Runs</td><td>None</td></tr>
+<tr><td>No licence, grace window open</td><td>Runs; countdown shown to users</td><td>Runs</td><td>Upload the licence before the window closes</td></tr>
+<tr><td>No licence, grace window spent</td><td>Stopped</td><td>Runs</td><td>Upload a valid licence here, then restart</td></tr>
+<tr><td>Licence expired</td><td>Treated as unlicensed</td><td>Runs</td><td>Obtain and upload a renewed licence</td></tr>
+</tbody>
+</table>
+
+<h2 id="admin-restart">12.5 Restarting the app server</h2>
+
+<p>The <b>App Control</b> card at the top of the tab carries the caption <em>"Operational controls for the running servers."</em> and a single primary button, <b>↻ Restart app server</b> (tooltip: <em>"Rebind the app + admin listeners with the current TLS settings"</em>). Its side note explains the purpose: <em>"Rebinds the main application and this admin interface in place with the current TLS mode &amp; active certificate — no terminal needed."</em></p>
+
+<p>A permanent information banner sits beside it:</p>
+
+<pre><code>TLS mode and certificate changes (in the TLS / SSL tab) take effect on
+restart. This restarts the app, the integration console and the admin
+interface (they share the certificate), so this page may briefly drop —
+and if you changed the mode, the admin moves between HTTP :8090 and
+HTTPS :8453; reconnect there if it stops responding.</code></pre>
+
+<ol class="steps">
+<li>Make the changes you want to apply — typically a TLS mode or certificate change, or enabling the integration console.</li>
+<li>Return to the <b>App Control</b> tab and press <b>↻ Restart app server</b>.</li>
+<li>Confirm the dialog: <em>"Restart now? — The app AND this admin interface rebind their HTTP/HTTPS listeners with the current TLS settings. Anyone using the app will briefly disconnect, and if you changed the TLS mode this admin page may move between :8090 (HTTP) and :8453 (HTTPS)."</em></li>
+<li>The page reports <em>"Restart signalled. Listeners rebind with the current TLS plan; reconnect on the new address if this page stops responding."</em> and a toast shows <em>"Restarting (app pid N, admin pid M)…"</em></li>
+<li>If the panel stops responding, reload it on the address the new TLS mode implies — <code>http://&lt;host&gt;:8090/</code> for Off, <code>https://&lt;host&gt;:8453/</code> when HTTPS is in play.</li>
+</ol>
+
+<p>Internally the restart signals the launchers in sequence: first the application, then the integration console (best effort — it may not be running), then the admin panel's own launcher. Because the admin server tears itself down last, the HTTP response can occasionally race the teardown; a missing response after a confirmed restart is not an error.</p>
+
+<div class="warn"><strong>Warning</strong> One button restarts three servers. Everyone using the main application is briefly disconnected, and any long-running query in flight is lost. Restart during a maintenance window where possible.</div>
+
+<table>
+<thead><tr><th>Status</th><th>Message</th><th>What to do</th></tr></thead>
+<tbody>
+<tr><td>409</td><td><em>"The app server is not managed by the launcher (no PID file). Start it with <code>./run.sh</code>, then try again."</em></td><td>The application was started outside the launcher; restart it the way it was started.</td></tr>
+<tr><td>409</td><td><em>"The app server process is not running."</em></td><td>Start the application with <code>./run.sh</code>.</td></tr>
+<tr><td>500</td><td><em>"Invalid PID file."</em></td><td>The launcher state is corrupt; restart the installation from the shell.</td></tr>
+<tr><td>500</td><td><em>"Could not signal the app server: &lt;os error&gt;"</em></td><td>The operating system refused the signal — usually a permissions problem.</td></tr>
+</tbody>
+</table>
+
+<h2 id="admin-tls">12.6 The TLS / SSL tab</h2>
+
+<p>This tab decides how the browser surfaces accept connections and which certificate they present. It holds two cards: the mode selector at the top and the certificate store below it.</p>
+
+<figure data-fig="admin-03-tls-ssl"><figcaption>TLS / SSL: the three connection modes, the resulting endpoint plan and the certificate store.</figcaption></figure>
+
+<h3 id="admin-tls-modes">12.6.1 The three modes</h3>
+
+<p>The card is captioned <em>"Choose how the main application (the GUI server) accepts connections."</em> and offers a segmented control with three positions. The currently stored mode is highlighted.</p>
+
+<table>
+<thead><tr><th>Mode</th><th>HTTP endpoint</th><th>HTTPS endpoint</th><th>Use it when</th></tr></thead>
+<tbody>
+<tr><td><b>Off (HTTP only)</b></td><td><code>http://&lt;host&gt;:8080/</code></td><td>disabled</td><td>The server sits behind a reverse proxy that terminates TLS, or on an isolated evaluation network.</td></tr>
+<tr><td><b>Optional (HTTP + HTTPS)</b></td><td><code>http://&lt;host&gt;:8080/</code></td><td><code>https://&lt;host&gt;:8443/</code></td><td>You are migrating to HTTPS and want both addresses live during the transition.</td></tr>
+<tr><td><b>Required (HTTPS only)</b></td><td>disabled</td><td><code>https://&lt;host&gt;:8443/</code></td><td>Normal production. Also the prerequisite for passkeys away from localhost.</td></tr>
+</tbody>
+</table>
+
+<p>After you load or save the mode, the card prints the resulting <b>endpoint plan</b>: an <em>HTTP endpoint</em> row and an <em>HTTPS endpoint</em> row, each showing either a clickable URL or the word <em>disabled</em>.</p>
+
+<ol class="steps">
+<li>Open the <b>TLS / SSL</b> tab.</li>
+<li>Select <b>Off (HTTP only)</b>, <b>Optional (HTTP + HTTPS)</b> or <b>Required (HTTPS only)</b>.</li>
+<li>Press <b>Save mode</b>. The toast confirms <em>"TLS mode saved — restart in App Control to apply"</em>.</li>
+<li>Check the endpoint plan and, if the mode needs HTTPS, make sure a certificate is marked <b>active</b> (section 12.6.2).</li>
+<li>Go to <b>App Control</b> and press <b>↻ Restart app server</b>.</li>
+<li>Reconnect on the address shown in the endpoint plan.</li>
+</ol>
+
+<p>If the selected mode needs a certificate and none is active, the card warns: <em>"No active certificate — HTTPS cannot start. Generate or upload one and activate it below."</em></p>
+
+<div class="warn"><strong>Warning</strong> If a mode that requires HTTPS is saved while no certificate is active, every server <b>falls back to HTTP</b> on the next restart, so that nothing becomes unreachable. This is a safety net, not a configuration: the installation is then serving in clear text despite being set to <em>Required</em>. Always confirm that a certificate is active before you restart, and confirm the address afterwards.</div>
+
+<div class="note"><strong>Note</strong> The mode and the active certificate are shared. The main application, this administration interface and the integration console all follow the same setting and present the same certificate. There is no way to run the panel over HTTPS while leaving the application on HTTP. The card's footer says so: <em>"Mode &amp; certificate changes take effect after a restart — use <b>↻ Restart app server</b> in the <b>App Control</b> tab."</em></div>
+
+<h3 id="admin-tls-certs">12.6.2 The certificate store</h3>
+
+<p>The <b>Certificates</b> card lists every certificate known to the installation. When it is empty it reads <em>"No certificates yet. Generate or upload one below."</em></p>
+
+<table>
+<thead><tr><th>Column</th><th>Contents</th></tr></thead>
+<tbody>
+<tr><td><b>Name</b></td><td>The name you gave the certificate. The one currently in use carries a green <b>active</b> pill.</td></tr>
+<tr><td><b>Subject</b></td><td>The subject read from the certificate itself.</td></tr>
+<tr><td><b>Type</b></td><td><em>Self-signed</em> or <em>CA-signed</em>.</td></tr>
+<tr><td><b>Expires</b></td><td>The not-after date.</td></tr>
+<tr><td>Actions</td><td><b>Activate</b> (hidden on the row that is already active), <b>Download</b>, <b>Delete</b>.</td></tr>
+</tbody>
+</table>
+
+<p><b>Download</b> saves the certificate in PEM form as <code>&lt;Name&gt;.crt</code>, with spaces in the name replaced by underscores — useful for distributing a self-signed certificate to client trust stores. <b>Delete</b> asks <code>Delete certificate "&lt;name&gt;"?</code> and is recorded in the log at WARN severity.</p>
+
+<div class="tip"><strong>Tip</strong> Keep the active certificate valid. An expired certificate does not degrade gracefully — HTTPS clients simply refuse to connect. The <b>Expires</b> column is the one to check during routine maintenance.</div>
+
+<h3 id="admin-tls-generate">12.6.3 Generating a self-signed certificate</h3>
+
+<p>The left half of the card creates a certificate on the server. This is the fastest route to working HTTPS on an internal network, at the cost of a trust warning in browsers that have not been given the certificate.</p>
+
+<table>
+<thead><tr><th>Field</th><th>Default</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><b>Name</b></td><td>—</td><td>How the certificate is listed. Placeholder: <em>e.g. Internal 2026</em>.</td></tr>
+<tr><td><b>Common name / host</b></td><td>—</td><td>The host name clients will use. Placeholder: <em>processmining.example.com</em>.</td></tr>
+<tr><td><b>Additional SANs</b></td><td>—</td><td>Comma-separated extra DNS names and IP addresses. Placeholder: <em>localhost, 127.0.0.1</em>.</td></tr>
+<tr><td><b>Valid for (days)</b></td><td><b>825</b></td><td>Minimum 1, maximum 3650.</td></tr>
+<tr><td><b>Key size</b></td><td><b>2048</b></td><td>2048, 3072 or 4096 bits.</td></tr>
+<tr><td><b>Activate after generating</b></td><td>off</td><td>Tick to make the new certificate active at once.</td></tr>
+</tbody>
+</table>
+
+<ol class="steps">
+<li>Fill in <b>Name</b> and <b>Common name / host</b>.</li>
+<li>Add any further names or addresses under <b>Additional SANs</b>, separated by commas. Include every name and IP by which the server is actually reached, otherwise browsers report a name mismatch.</li>
+<li>Adjust <b>Valid for (days)</b> and <b>Key size</b> if your policy demands it.</li>
+<li>Tick <b>Activate after generating</b> if this certificate should be used immediately.</li>
+<li>Press <b>Generate</b>. The toast confirms <em>"Certificate generated"</em> and the certificate appears in the table.</li>
+<li>Restart from <b>App Control</b> to put it into service.</li>
+</ol>
+
+<div class="tip"><strong>Tip</strong> For passkeys to work, clients must reach the server by a host name over HTTPS — never by IP. Put that host name in <b>Common name / host</b> and add its aliases (for example the <code>.local</code> name) to <b>Additional SANs</b>.</div>
+
+<h3 id="admin-tls-upload">12.6.4 Uploading your own certificate</h3>
+
+<p>The right half of the card takes a certificate issued elsewhere — by a corporate CA or a public one.</p>
+
+<ol class="steps">
+<li>Enter a <b>Name</b> for the entry (placeholder: <em>e.g. Corporate CA</em>).</li>
+<li>Paste the full certificate chain into <b>Certificate (PEM)</b>.</li>
+<li>Paste the matching key into <b>Private key (PEM, unencrypted)</b>.</li>
+<li>Tick <b>Activate after uploading</b> if it should become the active certificate.</li>
+<li>Press <b>Upload</b>. The toast confirms <em>"Certificate uploaded"</em>.</li>
+<li>Restart from <b>App Control</b> to put it into service.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> The private key must be <b>unencrypted</b> PEM — the server has no way to prompt for a passphrase at start-up. Decrypt the key before pasting it, and treat the clipboard and any intermediate file accordingly.</div>
+
+<p>Each of the two PEM fields accepts at most 200,000 characters; anything larger is rejected. Validation errors raised while parsing the certificate or key are surfaced verbatim as the toast text.</p>
+
+<h3 id="admin-tls-activate">12.6.5 Activating a certificate</h3>
+
+<ol class="steps">
+<li>In the certificate table, press <b>Activate</b> on the row you want to use. The green <b>active</b> pill moves to that row.</li>
+<li>Go to the <b>App Control</b> tab and press <b>↻ Restart app server</b>.</li>
+<li>Reconnect and confirm in the browser that the expected certificate is being presented.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> Activation only marks the certificate as the one to use. Nothing changes on the wire until the restart — the running listeners keep the certificate they were bound with. The same is true of the TLS mode.</div>
+
+<p>Generation, upload and activation are logged at INFO severity under the operation <code>tls</code>; deletion is logged at WARN. You can therefore reconstruct the certificate history of an installation from the Logging tab by filtering on that operation.</p>
+
+<h2 id="admin-tls-checklist">12.7 Putting it together: enabling HTTPS from scratch</h2>
+
+<p>The following sequence takes a fresh installation from plain HTTP to HTTPS on all three surfaces.</p>
+
+<ol class="steps">
+<li>Sign in to the admin panel at <code>http://&lt;host&gt;:8090/</code>.</li>
+<li>Open <b>👤 Profile</b> and change the built-in Administrator's password. The default-password banner disappears.</li>
+<li>Open <b>App Control</b> and install the licence you were issued; check that the status banner turns green.</li>
+<li>Open <b>TLS / SSL</b> and generate a self-signed certificate — or upload your CA-issued one — with <b>Activate after generating</b> / <b>Activate after uploading</b> ticked.</li>
+<li>Verify that the certificate row shows the green <b>active</b> pill.</li>
+<li>Set the mode to <b>Required (HTTPS only)</b> and press <b>Save mode</b>. Confirm that the endpoint plan shows the HTTPS URL and that the HTTP row reads <em>disabled</em>, and that no "No active certificate" warning is displayed.</li>
+<li>Open <b>App Control</b> and press <b>↻ Restart app server</b>, confirming the dialog.</li>
+<li>Reconnect on <code>https://&lt;host&gt;:8453/</code>. Tell users the application has moved to <code>https://&lt;host&gt;:8443/</code>, and — if the integration console is enabled — its users to <code>https://&lt;host&gt;:8463/</code>.</li>
+<li>If a self-signed certificate was used, download it from the certificate table and distribute it to the client trust stores.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> If the admin panel does not answer on <code>https://&lt;host&gt;:8453/</code> after the restart, try <code>http://&lt;host&gt;:8090/</code>. Answering there means the HTTPS fall-back was taken because no certificate was active; return to the TLS / SSL tab, activate one and restart again.</div>
+
+</section>

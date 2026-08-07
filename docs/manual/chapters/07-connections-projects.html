@@ -1,0 +1,373 @@
+<section class="chapter" id="ch-connections-projects" data-title="Connections and Projects" data-num="7">
+  <h1><span class="chnum">7</span> Connections and Projects</h1>
+
+  <p class="chintro">A <em>connection</em> is the app's definition of one Exasol database, one schema inside it, and — optionally — one LLM server. Everything you analyse comes out of a connection, so the Connections section of the sidebar is where every session begins. This chapter explains how to connect and disconnect, how to read the status indicators, and, for users who are allowed to manage connections, how to create and edit a connection definition field by field, test it, provision its schema, load ready-made demo data into it, and delete projects from it. If you only ever pick a connection from a list that someone else prepared for you, sections 7.1 to 7.3 are all you need; the remainder requires the Power user, Developer or Administrator role.</p>
+
+  <h2 id="ch7-section">The Connections section</h2>
+
+  <p>Connections is the first accordion section of the sidebar and the one that is open when the app starts. Its header shows the number of connections available to you in parentheses — for example <b>Connections (3)</b> — and the count is omitted when it is zero. Opening any other sidebar section collapses this one; only one section is open at a time.</p>
+
+  <figure data-fig="app-08-connections"><figcaption>The Connections section of the sidebar, with one connected database and its status dots.</figcaption></figure>
+
+  <h3 id="ch7-header-controls">Header controls</h3>
+
+  <table>
+    <thead><tr><th>Control</th><th>Tooltip</th><th>Who sees it</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td>＋</td><td>New connection</td><td>Power user, Developer, Administrator</td><td>Refreshes the list of connections you may manage, then opens the Connection Editor in <b>New Connection</b> mode.</td></tr>
+      <tr><td>↻</td><td>Refresh connections</td><td>Everyone</td><td>Re-fetches the list of connections assigned to you and the current connection status.</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="ch7-cards">Reading a connection card</h3>
+
+  <p>Cards are sorted alphabetically by name. The list scrolls when it grows beyond roughly 300 pixels. Each card carries:</p>
+
+  <dl>
+    <dt>Database glyph (⛁)</dt><dd>Green when this card is the connection you are currently connected to, accent-coloured otherwise.</dd>
+    <dt>Name</dt><dd>The connection's display name; shown as <b>(unnamed)</b> if it has none.</dd>
+    <dt>Comment</dt><dd>The optional description line, when one was entered.</dd>
+    <dt>Database: host:port</dt><dd>The database endpoint. The host reads <b>(no host)</b> when it is empty.</dd>
+    <dt>LLM: &lt;URL&gt;</dt><dd>Shown only when the connection has an LLM server configured; falls back to <b>(configured)</b> when the URL cannot be shown.</dd>
+  </dl>
+
+  <p><b>Status dots</b> appear on the right of the <em>active</em> card only — that is, the card you are connected to or last attempted:</p>
+
+  <table>
+    <thead><tr><th>Dot</th><th>Colour</th><th>Tooltip</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="2">Database</td><td>Green</td><td>Connected</td><td>A live Exasol session is open for you.</td></tr>
+      <tr><td>Orange</td><td>Not connected</td><td>No session is open — connect, or the last attempt failed.</td></tr>
+      <tr><td rowspan="2">LLM</td><td>Blue</td><td>LLM reachable</td><td>The LLM server answered the reachability probe.</td></tr>
+      <tr><td>Orange</td><td>LLM not reachable</td><td>The probe failed, timed out, or the server returned a 5xx status.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note"><strong>Note</strong> The LLM dot is shown only for connections that have an LLM server URL. Connections without one simply have no LLM indicator, and the AI supported Documentation view has nothing to talk to.</div>
+
+  <p>A <b>✎ Edit</b> button (tooltip “Edit connection”) appears on a card only if you may manage that particular connection: a power user or developer sees the pencil on the connections they own, an administrator sees it on all of them. Clicking it opens the editor without connecting.</p>
+
+  <h3 id="ch7-empty">Empty states and errors</h3>
+
+  <p>When the list is empty the message depends on your role:</p>
+
+  <ul>
+    <li>Connection managers see <i>“No connections yet. Use ＋ above to create one and assign users.”</i></li>
+    <li>Everyone else sees <i>“No connections assigned to you. Ask an administrator to grant access.”</i></li>
+  </ul>
+
+  <p>The most recent connection error is printed in red beneath the list, or inside the empty state. A failed connect additionally raises an alert titled <b>Connection Failed</b> carrying the error text and the buttons <b>Retry</b> and <b>Cancel</b>; Retry re-attempts the same connection. Unexpected API failures raise the same title with a single <b>OK</b> button.</p>
+
+  <h2 id="ch7-connect">Connecting and disconnecting</h2>
+
+  <ol class="steps">
+    <li>Open the <b>Connections</b> section in the sidebar.</li>
+    <li>Click the card of the database you want to work with. There is no separate “Connect” button — the card <em>is</em> the button.</li>
+    <li>Wait for the database dot to turn green. The sidebar then opens the <b>Projects</b> section automatically and loads the project list.</li>
+    <li>To disconnect, click the card you are connected to. To switch databases, click a different card: the app disconnects from the current one first, then connects to the new one.</li>
+  </ol>
+
+  <div class="warn"><strong>Warning</strong> Disconnecting clears the whole session state — the selected project, all filters, and the loaded graphs. It does <em>not</em> sign you out of the application; your identity, saved presets and personal settings are untouched.</div>
+
+  <p>Each signed-in user gets their own database session. Two users never share a live connection, so one person's queries and results can never leak into another's. Because the Exasol driver is synchronous, all of <em>your</em> queries are serialised: two long-running queries you start yourself queue behind one another, while queries from different users run in parallel.</p>
+
+  <h3 id="ch7-connect-errors">Connection error messages</h3>
+
+  <p>When a connect fails, the app deliberately shows guidance rather than driver internals — database codes, internal host names and SQL-state fragments go to the server log instead, under the operation <code>db-connect</code>.</p>
+
+  <table>
+    <thead><tr><th>Message</th><th>Usual cause</th></tr></thead>
+    <tbody>
+      <tr><td>Authentication failed — check your username and password.</td><td>Wrong database credentials.</td></tr>
+      <tr><td>The database rejected the request.</td><td>An Exasol query error during login.</td></tr>
+      <tr><td>Connection timed out. Verify the host address, port, and network connectivity.</td><td>The 15-second connect timeout elapsed.</td></tr>
+      <tr><td>Connection refused. No server is accepting connections at this host and port.</td><td>Wrong port, or the database is down.</td></tr>
+      <tr><td>TLS certificate error. Try 'Skip verification' or configure a fingerprint in the server's security settings.</td><td>The server certificate was not accepted under the connection's certificate mode.</td></tr>
+      <tr><td>Host not found. Check the hostname spelling and your DNS / network connectivity.</td><td>Name resolution failed.</td></tr>
+      <tr><td>Connection failed. Check the host, port, and credentials.</td><td>Fallback for anything else.</td></tr>
+      <tr><td>This connection is not available to you.</td><td>The connection is no longer assigned to you (HTTP 403).</td></tr>
+      <tr><td>Connection not found.</td><td>The connection was deleted (HTTP 404).</td></tr>
+      <tr><td>This connection changed during sign-in. Please reconnect.</td><td>An administrator edited or deleted the connection while your session was being opened; the half-open session was dropped for safety.</td></tr>
+      <tr><td>Not connected to a database.</td><td>A data request was made with no live session (HTTP 409).</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note"><strong>Note</strong> Users who may manage connections see richer text when they use <b>Test</b> in the Connection Editor: the same categories with the raw driver detail appended, and Exasol query errors rendered as “[code] message”. That extra detail is deliberately withheld from the ordinary connect path.</div>
+
+  <h2 id="ch7-roles">Who may manage connections</h2>
+
+  <div class="role">Requires: <b>Power user</b>, <b>Developer</b> or <b>Administrator</b> to create or edit connections. Every role may use the connections assigned to them.</div>
+
+  <table>
+    <thead><tr><th>Capability</th><th>User</th><th>Power user</th><th>Developer</th><th>Administrator</th></tr></thead>
+    <tbody>
+      <tr><td>See and connect to assigned connections</td><td>✔</td><td>✔</td><td>✔</td><td>✔</td></tr>
+      <tr><td>＋ New connection / ✎ Edit</td><td>—</td><td>✔ own only</td><td>✔ own only</td><td>✔ all</td></tr>
+      <tr><td>Test, provision, generate demo content</td><td>—</td><td>✔ own only</td><td>✔ own only</td><td>✔ all</td></tr>
+      <tr><td>List and delete projects in a connection</td><td>—</td><td>✔ own only</td><td>✔ own only</td><td>✔ all</td></tr>
+      <tr><td>Sampling section in the sidebar</td><td>—</td><td>✔</td><td>—</td><td>✔</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="ch7-ownership">Ownership versus assignment</h3>
+
+  <p>The two concepts are independent and it is worth keeping them apart:</p>
+
+  <dl>
+    <dt>Ownership</dt><dd>The user who created the connection becomes its <b>owner</b>. Ownership decides who may <em>manage</em> the definition — edit it, delete it, test it, provision it, generate demo data into it, and delete projects from it. A power user or developer owns only what they created; an administrator manages every connection regardless of owner.</dd>
+    <dt>Assignment</dt><dd>The list of users who may <em>use</em> the connection, ticked in the editor's <b>Assigned users</b> list. Assignment decides whose sidebar the connection appears in. It grants no management rights whatsoever.</dd>
+  </dl>
+
+  <p>When you create a connection you are made its owner and are auto-assigned to it, even if you leave your own name unticked in the Assigned users list — otherwise you could build a connection you are unable to open.</p>
+
+  <p>The backend enforces both gates independently and will answer with these messages verbatim: <i>“You are not allowed to manage connections.”</i>, <i>“You cannot edit this connection.”</i>, <i>“You cannot delete this connection.”</i>, <i>“You cannot manage this connection.”</i>, <i>“You cannot re-assign this connection.”</i> and <i>“Connection not found.”</i></p>
+
+  <h2 id="ch7-editor">The Connection Editor</h2>
+
+  <div class="role">Requires: <b>Power user</b>, <b>Developer</b> or <b>Administrator</b> (and ownership of the connection, unless you are an administrator)</div>
+
+  <p>The editor is a wide modal sheet marked with the ⛁ icon and titled either <b>New Connection</b> or <b>Edit Connection</b>. Pressing <kbd>Esc</kbd>, clicking <b>✕</b>, or clicking outside the sheet closes it <em>without saving</em>. It has two or three tabs: <b>Database / LLM Details</b>, <b>Demo Content</b>, and — only when editing an existing, already-saved connection — <b>Projects</b>.</p>
+
+  <figure data-fig="app-09-connection-editor"><figcaption>The Connection Editor, Database / LLM Details tab.</figcaption></figure>
+
+  <p>The footer is visible from every tab and holds <b>Test</b>, the test result text, <b>Delete</b> (edit mode only, red), <b>Cancel</b> and <b>Save</b>. Save validates that a name has been entered; otherwise <i>“Name is required.”</i> appears in red at the top of the sheet. Any error the backend returns is shown in the same place.</p>
+
+  <div class="warn"><strong>Warning</strong> Saving any change to a connection immediately disconnects <em>every</em> user currently connected through it; they must reconnect against the new definition. The same applies when you change its assignments or delete it. This is intentional: a revoked assignment has to take effect at once, not at the end of somebody's session.</div>
+
+  <h3 id="ch7-details-tab">Database / LLM Details tab</h3>
+
+  <table>
+    <thead><tr><th>Field</th><th>Default</th><th>Purpose and behaviour</th></tr></thead>
+    <tbody>
+      <tr><td>Name</td><td>empty</td><td>Required. The display name every assigned user sees in their Connections list.</td></tr>
+      <tr><td>Comment</td><td>empty</td><td>Optional description line printed under the name on the card.</td></tr>
+      <tr><td>Host</td><td>empty</td><td>Exasol host name or address.</td></tr>
+      <tr><td>Port</td><td>8563</td><td>Numeric. 8563 is the Exasol default.</td></tr>
+      <tr><td>Username</td><td>empty</td><td>Database login name.</td></tr>
+      <tr><td>Schema</td><td>empty</td><td>The schema holding the process-mining tables. Optional for merely connecting, but <em>required</em> for provisioning, demo generation and the Projects tab.</td></tr>
+      <tr><td>Password</td><td>empty</td><td>Write-only secret — see below.</td></tr>
+      <tr><td>Use TLS</td><td>off</td><td>Enables encryption and reveals the three certificate fields.</td></tr>
+      <tr><td>Certificate mode</td><td>Verify (system trust store)</td><td>Also “Pin fingerprint” and “Accept any (insecure)”.</td></tr>
+      <tr><td>Fingerprint (SHA-256)</td><td>empty, placeholder “optional”</td><td>Used with the pin mode.</td></tr>
+      <tr><td>Minimum RSA key size</td><td>2048</td><td>Numeric, in bits. Stored and carried through every operation, but see the note below.</td></tr>
+      <tr><td>Server URL (LLM)</td><td>empty, placeholder “https://…”</td><td>Leave empty for no LLM; the app then hides all LLM indicators for this connection.</td></tr>
+      <tr><td>Model (LLM)</td><td>empty</td><td>The model name to request.</td></tr>
+      <tr><td>API key (LLM)</td><td>empty</td><td>Write-only secret — see below.</td></tr>
+      <tr><td>Assigned users</td><td>none ticked</td><td>Scrollable checkbox list of every enabled user account. Empty state: “No users available.”</td></tr>
+    </tbody>
+  </table>
+
+  <h4 id="ch7-secrets">Write-only secrets</h4>
+
+  <p>The <b>Password</b> and <b>API key</b> fields never reveal what is stored. When a secret exists the placeholder reads <b>“•••••• (unchanged)”</b>. The rules are the same for both fields:</p>
+
+  <ul>
+    <li>Leave the field untouched and the stored secret is kept.</li>
+    <li>Type a value and it replaces the stored secret.</li>
+    <li>Deliberately clear the field to empty and the stored secret is <em>erased</em>.</li>
+  </ul>
+
+  <div class="warn"><strong>Warning</strong> <b>Test</b>, <b>Create schema &amp; tables</b> and demo generation all authenticate with the password <em>typed into the sheet</em>, never with the stored one. On a saved connection with a blank password field, the database test runs with an empty password and normally reports an authentication failure even though the saved connection itself works perfectly. Re-enter the password before using any of those three buttons.</div>
+
+  <h3 id="ch7-tls">TLS and certificate modes</h3>
+
+  <p>With <b>Use TLS</b> unticked, the database link is not encrypted at all. Ticking it reveals the certificate settings:</p>
+
+  <table>
+    <thead><tr><th>Certificate mode</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td>Verify (system trust store)</td><td>Default. The server certificate must validate against the system trust store, and the host name must match.</td></tr>
+      <tr><td>Pin fingerprint</td><td>The driver pins the server certificate to the SHA-256 fingerprint you enter. Colons are stripped, and the remainder must be pure hexadecimal, 16 to 128 characters long.</td></tr>
+      <tr><td>Accept any (insecure)</td><td>Disables certificate verification <em>and</em> host name checking. For laboratory and self-signed setups only.</td></tr>
+    </tbody>
+  </table>
+
+  <p>Mode handling fails closed. Any stored value the app does not recognise — a typo, a legacy record, restored data — is treated as <b>Verify</b>, never as “no verification”. In the same spirit, selecting <b>Pin fingerprint</b> without a valid fingerprint refuses to connect rather than silently falling back:</p>
+
+  <pre><code>This connection is set to pin a certificate fingerprint, but the
+fingerprint is missing or not hexadecimal. Enter the server's SHA-256
+fingerprint, or change the certificate mode.</code></pre>
+
+  <div class="note"><strong>Note</strong> <b>Minimum RSA key size</b> is stored with the connection and carried through connect, test, provisioning, demo generation and rebuilds for compatibility with connection records created by the macOS edition, but the web backend does not currently enforce it. Do not rely on it as an active security control.</div>
+
+  <h3 id="ch7-llm">The LLM section</h3>
+
+  <p>The LLM section is optional. When a <b>Server URL</b> is set, the app probes it at connect time and during every test by requesting <code>GET &lt;serverURL&gt;/models</code>, sending <code>Authorization: Bearer &lt;API key&gt;</code> when a key is stored, with a 5-second timeout. The server counts as reachable unless the request errors or answers with HTTP 500 or above — a 4xx still means a server is there. The user-visible failure text is always <i>“LLM server not reachable.”</i>; the underlying cause is logged under the operation <code>llm-test</code>.</p>
+
+  <p>Because the URL is user-supplied it passes an SSRF guard before any request is made. Only <code>http://</code> and <code>https://</code> are accepted, the host must resolve, and every resolved address is checked; link-local and cloud-metadata addresses (such as 169.254.169.254), multicast, reserved and unspecified addresses are always refused. Loopback and private RFC 1918 addresses are permitted by default, because local model servers are a first-class use case. The outbound connection is pinned to the vetted address and redirects are disabled. A refusal is not shown as an error — the LLM simply reports as unreachable, and the reason is logged.</p>
+
+  <h2 id="ch7-test">Testing a connection</h2>
+
+  <ol class="steps">
+    <li>Open the connection in the editor and go to the <b>Database / LLM Details</b> tab.</li>
+    <li>Re-enter the database <b>Password</b> (and the LLM <b>API key</b>, if you want the LLM half of the test to be authenticated).</li>
+    <li>Click <b>Test</b> in the footer.</li>
+    <li>Read the result text beside the button.</li>
+  </ol>
+
+  <p>The result is colour-coded: <b>green</b> when everything tested succeeded, <b>orange</b> when one of two components failed, <b>red</b> when everything failed. The database half reads <i>“Database OK”</i> or <i>“Database: &lt;error&gt;”</i>. When an LLM URL is configured, the LLM half is appended after a “ · ” separator and reads <i>“LLM OK (N models)”</i> — the model count is omitted when it is zero — or <i>“LLM: &lt;error&gt;”</i>.</p>
+
+  <div class="tip"><strong>Tip</strong> The test opens a throwaway database session and closes it again immediately. It never touches your own live session or anybody else's, so it is safe to run at any time — including while other users are working through the same connection.</div>
+
+  <h2 id="ch7-provision">Creating the schema and tables</h2>
+
+  <div class="role">Requires: a database account permitted to <b>CREATE SCHEMA</b> and <b>CREATE TABLE</b></div>
+
+  <p>The boxed panel on the Database / LLM Details tab holds the <b>Create schema &amp; tables</b> button and this explanation:</p>
+
+  <blockquote><p>Creates the “&lt;schema&gt;” schema and the process-mining tables (PROJECTS, JOURNEYS, STEPS, METAS, NOTES) if they don't exist. This needs a database account permitted to CREATE SCHEMA and CREATE TABLE — only your database administrator can grant those rights; the app cannot. Uses the credentials entered above.</p></blockquote>
+
+  <ol class="steps">
+    <li>Enter <b>Host</b>, <b>Port</b>, <b>Username</b>, <b>Password</b> and <b>Schema</b>. The button stays disabled while the Schema field is blank or an operation is already running.</li>
+    <li>Click <b>Create schema &amp; tables</b>.</li>
+    <li>On success a green line appears to the right of the button: <i>“Created: &lt;list&gt;”</i>, naming the schema and each table that was created.</li>
+    <li>On failure a red error line appears, with the fallback text <i>“Could not create the schema.”</i></li>
+  </ol>
+
+  <p>Provisioning connects <em>without</em> opening a schema (the target may not exist yet), then issues <code>CREATE SCHEMA IF NOT EXISTS</code>, <code>OPEN SCHEMA</code>, and the table definitions in the order PROJECTS, JOURNEYS, STEPS, METAS, NOTES. Everything uses <code>IF NOT EXISTS</code>, so the operation is idempotent and re-running it never disturbs existing data. If a step fails part-way, the reported list still names everything that was created <em>before</em> the failure, so you can see how far it got. A blank schema name produces <i>“A schema name is required.”</i></p>
+
+  <div class="note"><strong>Note</strong> The schema identifier is quoted safely, so mixed-case and special-character names work — but remember that a quoted identifier is case-sensitive in Exasol. Type the schema name exactly as it must exist.</div>
+
+  <div class="warn"><strong>Warning</strong> Because provisioning uses <code>IF NOT EXISTS</code>, it never alters a table that is already there. If JOURNEYS already existed before the app saw it, the performance layout the app would have declared (<code>DISTRIBUTE BY EVENT_ID</code>, <code>PARTITION BY EVENT_TIME</code>) is not applied. A database administrator must apply it manually with <code>ALTER TABLE JOURNEYS DISTRIBUTE BY EVENT_ID;</code> and <code>ALTER TABLE JOURNEYS PARTITION BY EVENT_TIME;</code></div>
+
+  <h2 id="ch7-demo">Generating demo content</h2>
+
+  <div class="role">Requires: a database account permitted to <b>CREATE SCHEMA</b>, <b>CREATE TABLE</b> and <b>INSERT</b></div>
+
+  <p>The <b>Demo Content</b> tab loads a complete, realistic dataset into the connection's schema so that you can explore every feature of the app without waiting for a customer extract. It creates the schema and tables if they are missing, then writes the journeys. It uses the credentials on the Database / LLM Details tab — including the typed password.</p>
+
+  <p>Three datasets are offered, grouped under the headings <b>Retail</b>, <b>Finance/Insurance</b> and <b>Transportation</b>:</p>
+
+  <table>
+    <thead><tr><th>Dataset</th><th>Project</th><th>What it contains</th><th>Meta attributes</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>📚 Online Bookstore</td><td>BOOKSTORE</td>
+        <td>Order lifecycle: login → browse → basket → checkout → payment → fulfilment → delivery, with a returns flow (about 5%) and a deliberately flaky bank-transfer path (35% failure per processing attempt, with a retry loop). 24 steps in the groups Customer Interaction, Purchase Process, Payment, Fulfilment and Returns; scores from −10 for Payment Failed and Return Initiated up to +15 for Delivered.</td>
+        <td>Payment Method / Customer Segment / Order Value</td>
+      </tr>
+      <tr>
+        <td>💶🪙 Online Credit Application</td><td>CREDIT</td>
+        <td>Bank or affiliate intake → application check with a rework loop of at most two iterations → credit assessment → score-band decision (below 75% auto-reject, 75–90% agent review with a 50% rejection rate, above 90% auto-accept). Sums over 10,000 EUR need Senior Agent Approval, which declines 5%. Accepted applications end in payment, which takes up to about seven days — larger sums are slower, the affiliate channel faster.</td>
+        <td>Applied Credit Sum / Income Class / Channel</td>
+      </tr>
+      <tr>
+        <td>✈️ Flight Booking &amp; Management</td><td>FLIGHTS</td>
+        <td>Star Alliance-style booking: login → search (with a modify loop of at most two iterations) → select → book → payment → confirm. 80% are new bookings, of which half are interline itineraries that query a partner airline's system; the remaining 20% only manage an existing booking (seat reservation or ancillary services), and 60% of those pay. Payment methods: Credit Card, SEPA, Apple Pay, Google Pay, Advance Payment.</td>
+        <td>Journey Type / Airline / Payment Method</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <ol class="steps">
+    <li>Open the connection in the editor, re-enter the database <b>Password</b> on the Database / LLM Details tab, then switch to <b>Demo Content</b>.</li>
+    <li>Check the <b>Schema</b> field in the dataset panel. It is the <em>same value</em> as the Schema field on the details tab — editing it in any demo panel changes the connection's schema draft everywhere.</li>
+    <li>Set <b>Journeys</b>. The default is 500; the field accepts 1 to 20,000 and is typed rather than stepped.</li>
+    <li>Click <b>Generate</b>. The button reads “Generating…” with a spinner while it runs and is disabled while busy, while the schema is blank, or while the journey count is below 1.</li>
+    <li>Read the result line: green for success, with the fallback text <i>“Created N journeys.”</i>, or red for failure, with the fallback <i>“Could not generate demo content.”</i> The full success message is <code>Created N journeys for "&lt;title&gt;" in &lt;SCHEMA&gt;.JOURNEYS</code>.</li>
+    <li>Connect to the database and open the new project from the <b>Projects</b> section.</li>
+  </ol>
+
+  <p>Event times are spread randomly across 1 January 2024 08:00 to 31 December 2024 22:00, so the generated data always falls in a fixed, predictable window. Each EVENT_ID is the MD5 hash of a synthetic key — <code>ORD-000001</code>, <code>ORD-000002</code>, … for the bookstore, <code>CRA-000001</code>… for credit applications, and <code>FLT-000001</code>… for flights — which is why event identifiers look like long hexadecimal strings in the Individual Journey view and in its autocomplete suggestions.</p>
+
+  <table>
+    <thead><tr><th>What generation touches</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td>Schema and the five tables</td><td>Created if missing; existing objects untouched.</td></tr>
+      <tr><td>PROJECTS and METAS rows of this dataset</td><td>Deleted and re-inserted.</td></tr>
+      <tr><td>JOURNEYS rows of this dataset's project</td><td>All deleted and re-inserted — <em>including any sample sets</em> built from them.</td></tr>
+      <tr><td>STEPS rows</td><td>Only added where missing, so colours, shapes, scores, groups and step notes you customised in the Step editor survive a regeneration.</td></tr>
+      <tr><td>Other projects in the schema</td><td>Not touched at all.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="warn"><strong>Warning</strong> The journey count is hard-capped at 20,000 on the server and a larger request is clamped <em>silently</em> — ask for 50,000 and you get exactly 20,000 with a success message. Rows are inserted in batches of 200 journeys per statement.</div>
+
+  <p>Other error messages you may see: <i>“Unknown demo dataset '&lt;x&gt;'.”</i>, <i>“A schema name is required.”</i> and <i>“Enter how many journeys to generate.”</i> (when the count is below 1), plus the ordinary connection errors listed in section 7.2.</p>
+
+  <div class="note"><strong>Note</strong> If the connection uses pre-materialised transitions, generated data does <em>not</em> rebuild the TRANSITIONS_RAW table. Until an administrator rebuilds it, the chart header shows the pill <b>⚠ Live (not built)</b> and the map is computed live. That is a performance matter only — the results are identical.</div>
+
+  <h2 id="ch7-projects-tab">Managing the projects in a connection</h2>
+
+  <div class="role">Requires: <b>Power user</b>, <b>Developer</b> or <b>Administrator</b>, plus ownership of this connection (administrators may manage all)</div>
+
+  <p>The <b>Projects</b> tab exists only when you are editing a connection that has already been saved; a brand-new, unsaved connection has no Projects tab. It reads the schema with the connection's <em>stored</em> credentials — this is the one operation in the editor that does not need you to retype the password.</p>
+
+  <p>The tab's description reads: <i>“Projects stored in the “&lt;schema&gt;” schema, with their journey and event counts. Deleting a project clears its rows from every table (PROJECTS, JOURNEYS, STEPS, METAS, NOTES, TRANSITIONS_RAW) — this cannot be undone.”</i></p>
+
+  <p>The list loads automatically the first time you open the tab and can be reloaded with <b>↻ Refresh</b>. While loading it shows “Loading projects…” with a spinner; when the schema holds nothing it shows <i>“No projects found in this schema.”</i>; on failure it shows the backend message in red, or the fallback <i>“Could not read the projects for this connection.”</i></p>
+
+  <p>Each row shows the project <b>title</b> — with the raw project ID printed underneath when the two differ — then “<b>N journeys</b>”, “<b>N events</b>”, and a red <b>Delete</b> button.</p>
+
+  <div class="note"><strong>Note</strong> The counts consider ORIGINAL data only; sample sets are excluded. “Journeys” is the number of distinct EVENT_IDs and “events” is the number of rows. A project is listed if it appears in <em>either</em> PROJECTS or JOURNEYS, so orphaned rows on one side are still visible. A project with no title displays its PROJECT_ID instead. Missing tables are tolerated: before provisioning you get an empty list rather than an error.</div>
+
+  <h3 id="ch7-delete-project">Deleting a project</h3>
+
+  <ol class="steps">
+    <li>Open the connection in the editor and switch to the <b>Projects</b> tab.</li>
+    <li>Confirm the counts on the row — they are your last sanity check on which project you are about to erase.</li>
+    <li>Click <b>Delete</b> on that row.</li>
+    <li>Read the confirmation dialog <b>Delete project?</b>: <i>“&lt;title&gt;” (N journeys, M events) will be cleared from PROJECTS, JOURNEYS, STEPS, METAS, NOTES and TRANSITIONS_RAW in this schema. This cannot be undone.</i></li>
+    <li>Click <b>Delete project</b> to proceed, or <b>Cancel</b> to abandon. A failure shows the backend message or <i>“Could not delete the project.”</i></li>
+  </ol>
+
+  <p>The deletion runs one <code>DELETE … WHERE PROJECT_ID = '&lt;id&gt;'</code> per table, children before parents, in this order:</p>
+
+  <table>
+    <thead><tr><th>Order</th><th>Table</th><th>What is removed</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>JOURNEYS</td><td>Every event row of the project — <em>including every sample set</em>, because no SAMPLE_SET filter is applied.</td></tr>
+      <tr><td>2</td><td>STEPS</td><td>All step presentation and scoring rows: colours, scores, shapes, groups, step notes.</td></tr>
+      <tr><td>3</td><td>METAS</td><td>The project's meta-attribute titles.</td></tr>
+      <tr><td>4</td><td>NOTES</td><td>Every note attached to a node or edge of the project, from every author.</td></tr>
+      <tr><td>5</td><td>TRANSITIONS_RAW</td><td>The pre-materialised transition pairs, when that optional table exists.</td></tr>
+      <tr><td>6</td><td>PROJECTS</td><td>The project row itself.</td></tr>
+    </tbody>
+  </table>
+
+  <p>Tables that do not exist are skipped rather than treated as errors — NOTES may never have been created, and TRANSITIONS_RAW is optional — and the response reports exactly which tables were actually cleared, together with the project's pre-deletion counts. Blank inputs are refused with <i>“A schema name is required.”</i> or <i>“A project id is required.”</i>, and a permission failure with <i>“You cannot manage this connection.”</i> or <i>“Connection not found.”</i></p>
+
+  <div class="warn"><strong>Warning</strong> Project deletion is permanent. There is no undo, no recycle bin and no automatic backup, and it takes every note written about that process with it. If the notes matter, export or copy them first. Every deletion is written to the administration audit log, recording who deleted which project from which connection.</div>
+
+  <h2 id="ch7-assignments">Assigning users to a connection</h2>
+
+  <div class="role">Requires: <b>Power user</b>, <b>Developer</b> or <b>Administrator</b> (owner of the connection, or any administrator)</div>
+
+  <ol class="steps">
+    <li>Open the connection with <b>✎ Edit connection</b>, or create a new one with <b>＋</b>.</li>
+    <li>Scroll to the <b>Assigned users</b> section at the foot of the Database / LLM Details tab.</li>
+    <li>Tick every user who should see and use this connection. The list contains every enabled account; if there are none it reads “No users available.”</li>
+    <li>Click <b>Save</b>.</li>
+  </ol>
+
+  <p>Assignment changes take effect immediately, in both directions. A newly ticked user finds the connection in their sidebar on their next refresh. A user you untick is disconnected on the spot: their live session is dropped and the connection disappears from their list. Attempting to reconnect to it produces <i>“This connection is not available to you.”</i></p>
+
+  <div class="tip"><strong>Tip</strong> Because saving an edit kicks everyone off the connection, batch your changes. Adjust the endpoint, the LLM settings and the assignment list in one editing session and save once, rather than saving after each individual change.</div>
+
+  <h2 id="ch7-delete-connection">Deleting a connection</h2>
+
+  <ol class="steps">
+    <li>Open the connection with <b>✎ Edit connection</b>.</li>
+    <li>Click the red <b>Delete</b> button in the sheet footer.</li>
+    <li>Read the confirmation <b>Delete connection?</b>: <i>“&lt;name&gt;” will be removed for all assigned users. This cannot be undone.</i></li>
+    <li>Click <b>Delete</b> to confirm, or <b>Cancel</b>. A backend failure shows “Delete failed.”</li>
+  </ol>
+
+  <p>Deleting a connection first drops every live session on it, then removes the definition — including its stored secrets and, where one exists, its scripted-rebuild token and materialisation status.</p>
+
+  <div class="note"><strong>Note</strong> Deleting a connection removes the app's <em>definition</em> of the database. It does not touch the database itself: the schema, its tables and all their data remain exactly as they were. To erase data you must delete the projects first, from the Projects tab described above.</div>
+
+  <h2 id="ch7-summary">Summary of destructive operations</h2>
+
+  <table>
+    <thead><tr><th>Operation</th><th>Confirmation?</th><th>Reversible?</th><th>Scope</th></tr></thead>
+    <tbody>
+      <tr><td>Disconnect</td><td>No</td><td>Yes — reconnect</td><td>Clears your session state only.</td></tr>
+      <tr><td>Save an edited connection</td><td>No</td><td>n/a</td><td>Disconnects all its users.</td></tr>
+      <tr><td>Un-assign a user</td><td>No</td><td>Yes — re-assign</td><td>Drops that user's live session at once.</td></tr>
+      <tr><td>Generate demo content</td><td>No</td><td>No</td><td>Replaces that dataset's project, its journeys and its samples; keeps customised STEPS rows.</td></tr>
+      <tr><td>Delete a project</td><td>Yes</td><td>No</td><td>Clears six tables, including all notes and all samples.</td></tr>
+      <tr><td>Delete a connection</td><td>Yes</td><td>No</td><td>Removes the definition for all users; database contents untouched.</td></tr>
+    </tbody>
+  </table>
+</section>

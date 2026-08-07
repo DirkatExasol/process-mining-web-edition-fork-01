@@ -1,0 +1,263 @@
+<section class="chapter" id="ch-ai-notes" data-title="AI Documentation and Notes" data-num="11">
+<h1><span class="chnum">11</span> AI Documentation and Notes</h1>
+
+<p class="chintro">This chapter covers the two views that turn a process map into written record: <b>AI supported Documentation</b>, which sends the current A-Chart transition table to a language model and renders the answer as a structured report, and <b>Notes</b>, the annotation layer that lets you attach threaded, prioritised comments to individual steps and transitions. Both are available to every signed-in user; neither requires the power or administrator role. Read the AI section if you produce process documentation for others, and the Notes section if you work with colleagues on the same database — notes are stored in the database itself, not in your browser, so they travel with the data.</p>
+
+<h2 id="ai-overview">AI supported Documentation</h2>
+
+<p>The <b>AI supported Documentation</b> view (🧠 in the <b>☰ Switch view</b> menu) produces a written analysis of your process. It sends the <b>current A-Chart transition table</b> together with your <b>prompt template</b> to the OpenAI-compatible model server configured on the active connection, and renders the model's answer as a Markdown report with numbered chapters. Locally computed material — journey paths, happy-path conformance, the conformance gap analysis and your notes — is appended to that report afterwards.</p>
+
+<div class="note"><strong>Note</strong> The view <b>always analyses the A-Chart dataset and the A-Chart filters</b>, no matter which view you were in when you switched to it. If you want the report to describe a particular segment, set that segment up in the A-Chart first, tap <b>Apply</b>, and then switch to AI supported Documentation. The B-Chart, samples and simulation slots are never used as the source.</div>
+
+<figure data-fig="app-13-ai-supported-documentation"><figcaption>The AI supported Documentation view: the three pre-run notice cards summarise the A-Chart filter context and the locally computed material that will be appended to the report.</figcaption></figure>
+
+<h3 id="ai-what-is-sent">What is sent to the language model</h3>
+
+<p>Only two things leave the deployment: the <b>transition table of the currently loaded A-Chart</b> (the aggregated directly-follows pairs behind the map you can see) and the <b>prompt template</b> stored for this project. They are posted to the base URL configured on the active connection.</p>
+
+<p>Everything else in the report is computed on your own servers and is <b>never sent to the model</b>:</p>
+
+<table>
+<thead><tr><th>Report material</th><th>Origin</th><th>Sent to the LLM?</th></tr></thead>
+<tbody>
+<tr><td>Transition table of the A-Chart</td><td>Exasol query behind the current map</td><td>Yes</td></tr>
+<tr><td>Prompt template</td><td>Stored per project (sidebar Configuration)</td><td>Yes</td></tr>
+<tr><td>Journey Paths chapter</td><td>Computed locally</td><td>No</td></tr>
+<tr><td>Happy Path Conformance chapter</td><td>Computed locally</td><td>No</td></tr>
+<tr><td>Conformance Check – Gap Analysis chapter</td><td>Computed locally</td><td>No</td></tr>
+<tr><td>User Comments chapter (project notes)</td><td>NOTES table in your Exasol database</td><td>No</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> If the connection points at a <b>cloud</b> model endpoint, the transition table — step names and their aggregated counts and durations — leaves your network and is processed by that provider. Step names frequently carry business meaning. Where that matters, ask your administrator to attach a <b>locally hosted</b> OpenAI-compatible server (Ollama, llama.cpp, vLLM or LM Studio all work) so that nothing crosses the network boundary. Individual journeys, event IDs and meta values are never part of the payload — only the aggregated transition table is.</div>
+
+<div class="warn"><strong>Warning</strong> AI models can produce results that are incorrect, incomplete or misleading. <b>Verify every finding independently</b> before acting on it or circulating the report.</div>
+
+<h3 id="ai-requirements">Requirements</h3>
+
+<p>The feature is only usable when the connection you are currently connected to has a model server attached and that server answers.</p>
+
+<dl>
+<dt>An LLM server on the active connection</dt><dd>A connection bundles one Exasol database with an <b>optional</b> OpenAI-compatible LLM server (base URL, model, optional API key). When one is attached, the connection card in the sidebar shows an <b>LLM</b> line in addition to the <b>Database</b> line.</dd>
+<dt>The blue reachability dot</dt><dd>The active connection card carries up to two status dots. The <b>first</b> dot is the database state — <b>green</b> when connected, <b>orange</b> while connecting or after a failure. The <b>second</b> dot appears only when an LLM server is attached: <b>blue</b> means the model server is reachable, <b>orange</b> means it is not. The AI run button stays disabled until that second dot is <b>blue</b>.</dd>
+<dt>A selected project</dt><dd>Without one the view shows 🗺 <b>No Project Selected</b>.</dd>
+</dl>
+
+<div class="role">Requires: <b>any signed-in user</b>. The LLM base URL, model and API key are configured by an administrator (or, for their own connections, by a power user) — you cannot set them from this view. API keys are encrypted at rest and are never sent to the browser.</div>
+
+<figure data-fig="app-08-connections"><figcaption>Connection cards in the sidebar. The second status dot is blue when the attached model server is reachable — the precondition for running an AI analysis.</figcaption></figure>
+
+<h3 id="ai-prerun">The pre-run screen</h3>
+
+<p>Before the first run the view shows a large 🧠 glyph and three notice cards that tell you exactly what the report will be based on. Read them: two of the three warn you when material is missing.</p>
+
+<table>
+<thead><tr><th>Card</th><th>Content</th></tr></thead>
+<tbody>
+<tr><td><b>⛃ A-Chart filters in use</b></td><td>A one-line summary of the dataset: <code>&lt;from&gt; – &lt;to&gt; · N journeys · include: … · exclude: … · &lt;meta values&gt;</code>. This same summary is repeated in the report header and on the report toolbar.</td></tr>
+<tr><td><b>🪧 Happy Path Conformance</b></td><td>Warning-orange when nothing is defined: <i>"No Happy Paths defined — conformance data will not be included. Create one in the Happy Path view to enrich the analysis."</i> Otherwise <i>"N path(s) will be evaluated: &lt;names&gt;"</i>.</td></tr>
+<tr><td><b>🛡️ Conformance Check</b></td><td>Warning when no norms exist: <i>"No norms defined — gap analysis will not be included. Open Conformance Check and click edges in Edit mode to define target values."</i> Otherwise <i>"N norm(s) across M metric(s) — gap analysis will be appended to the report."</i></td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> The two warning cards are not errors — the report runs perfectly well without happy paths or norms, it is simply thinner. Note also that <b>Happy Path and Conformance Check are power/admin-only views</b>. As a regular user you can read a report enriched with them, but you cannot create the underlying paths or norms yourself; ask a power user or administrator to define them once, after which every user's report includes them.</div>
+
+<h3 id="ai-running">Running an analysis</h3>
+
+<ol class="steps">
+<li>Connect to a connection that has an LLM server attached, and confirm the <b>second status dot on the connection card is blue</b>.</li>
+<li>Open the <b>A-Chart</b>, set the date window, included/excluded steps and meta filters you want the report to describe, and tap <b>Apply</b>.</li>
+<li>Open the <b>☰ Switch view</b> menu in the top-right corner and choose <b>AI supported Documentation</b> (🧠).</li>
+<li>Check the three notice cards. If the Happy Path or Conformance Check card warns that material is missing and you want it included, define it first and come back.</li>
+<li>Tap the <b>🧠 AI supported Documentation</b> run button. While the model works, the view shows a spinner, the text <b>"AI is analyzing"</b> and the filter summary.</li>
+<li>When the answer arrives the report replaces the pre-run screen.</li>
+</ol>
+
+<p>If the run fails, the view shows ⚠️ <b>Analysis Failed</b> with the error message returned by the server and a <b>↻ Try Again</b> button. Try Again is itself disabled while the LLM is unreachable, so a failure caused by the model server going away leaves you with a greyed-out button rather than a retry loop.</p>
+
+<h3 id="ai-report">Reading the generated report</h3>
+
+<p>The report renders as Markdown. Its chapters are numbered dynamically, so the numbering shifts depending on which optional material exists:</p>
+
+<ol class="steps">
+<li><b>Header</b> — the project title, the line <i>AI-Supported Process Documentation</i>, the filter summary as a block quote, and <i>Generated: &lt;date time&gt;</i>.</li>
+<li><b>1. AI Analysis</b> — the model's answer, exactly as returned.</li>
+<li><b>Journey Paths</b>, <b>Happy Path Conformance</b> and <b>Conformance Check – Gap Analysis</b> — optional chapters, present only when the corresponding material exists, numbered in sequence.</li>
+<li><b>User Comments</b> — a table of every note on the project, in chronological order, with the columns <b>Element</b>, <b>Type</b>, <b>User</b>, <b>Note</b> and <b>Date</b>. This is where the annotation layer described in the second half of this chapter enters the printed record.</li>
+<li><b>Analysis Parameters</b> — the model id and the prompt template used, block-quoted, so a reader can tell how the analysis was obtained.</li>
+</ol>
+
+<p>The report toolbar carries the filter summary and three controls:</p>
+
+<dl>
+<dt>Show prompt</dt><dd>Opens the sheet <b>"Prompt sent to the LLM"</b> containing the exact prompt text that was transmitted. Use it when you need to reproduce or audit a result.</dd>
+<dt>⎙ Print / PDF</dt><dd>Prints <b>just the report</b> — not the surrounding application — through the browser's own print dialogue. Choose "Save as PDF" there to file the report.</dd>
+<dt>↻ Re-run</dt><dd>Runs the analysis again with the current filters and prompt. Disabled while the LLM server is unreachable.</dd>
+</dl>
+
+<div class="note"><strong>Note</strong> Markdown support in the report is deliberately restricted. Headings, bold, italic, inline code, fenced code blocks, bullet and ordered lists, block quotes, horizontal rules and pipe tables all render. Links are limited to <code>http</code>, <code>https</code>, <code>mailto</code> and relative targets — any other scheme is neutralised — and raw HTML is sanitised, so scripts and event handlers in a model's answer are stripped before display. Images and nested lists are not rendered.</div>
+
+<h3 id="ai-prompt">Configuring the prompt</h3>
+
+<p>The prompt template is the instruction the model receives alongside the transition table. It is edited from the sidebar under <b>Configuration → LLM Prompt</b> and is <b>stored per project</b>, so different processes can carry different documentation styles. The template is held server-side against your user account, which means it follows you to another browser or machine, and it is included in <b>Backup &amp; Restore</b> alongside presets, happy paths, norms and node layouts.</p>
+
+<ol class="steps">
+<li>Select the project whose prompt you want to change.</li>
+<li>Open the sidebar and expand the <b>Configuration</b> section.</li>
+<li>Open the <b>LLM Prompt</b> editor and adjust the template.</li>
+<li>Switch to <b>AI supported Documentation</b> and tap <b>↻ Re-run</b> — or the run button, on a first run — to apply it.</li>
+<li>Confirm with <b>Show prompt</b> that the text sent matches what you intended. The template is also reproduced in the report's <b>Analysis Parameters</b> chapter.</li>
+</ol>
+
+<figure data-fig="app-07-configuration"><figcaption>The sidebar Configuration section, which holds the per-project LLM prompt template editor alongside display options, KPIs and the step editor.</figcaption></figure>
+
+<h3 id="ai-troubleshooting">Troubleshooting a blank or failing report</h3>
+
+<table>
+<thead><tr><th>Symptom</th><th>Cause and fix</th></tr></thead>
+<tbody>
+<tr><td>The run button is greyed out and an orange note reads <i>"⚠ LLM server not reachable. Check your connection profile."</i></td><td>The connection has an LLM server attached but it does not answer. Confirm the second status dot is orange rather than blue, then ask your administrator to check the base URL, model name and API key — those live only in the administrator's configuration and cannot be corrected from the app.</td></tr>
+<tr><td>The report stays blank and no run button appears at all.</td><td>The active connection has <b>no</b> LLM server attached — the card shows only a <b>Database</b> line and a single status dot. Ask an administrator (or the power user who owns the connection) to attach an OpenAI-compatible server.</td></tr>
+<tr><td>⚠️ <b>Analysis Failed</b> with an error message.</td><td>The model server was reached but rejected or aborted the request. The message comes from the server itself; read it, then use <b>↻ Try Again</b>.</td></tr>
+<tr><td>🗺 <b>No Project Selected</b>.</td><td>Choose a project in the sidebar first.</td></tr>
+<tr><td>The report describes the wrong data.</td><td>The view uses the A-Chart's dataset and filters, never the view you came from. Re-filter the A-Chart, tap <b>Apply</b>, then <b>↻ Re-run</b>.</td></tr>
+<tr><td>Happy-path or gap-analysis chapters are missing.</td><td>No happy paths or no norms are defined for this project — the pre-run cards say so explicitly. Both are defined from the power/admin-only Happy Path and Conformance Check views.</td></tr>
+</tbody>
+</table>
+
+<h2 id="notes-overview">Notes</h2>
+
+<p>Notes are annotations attached to the process map. Click a step or a transition, add an observation, and it stays with that element — visible to you on every later visit, and to your colleagues when you share it. Each note is a <b>thread</b>: other users add comments underneath, and the note is closed by marking it resolved rather than deleted.</p>
+
+<p>Notes are stored in a <b>NOTES table in your Exasol database</b>, created automatically on first use if the connecting database user holds CREATE TABLE rights. Because they live in the database rather than the browser, notes travel with the data and are visible to every user of that database — subject to the shared flag on each note — regardless of which machine wrote them.</p>
+
+<div class="note"><strong>Note</strong> A note always attaches to a <b>node</b> (a process step) or an <b>edge</b> (a transition between two steps). There is no free-standing note; the <b>Notes</b> view is the project-wide collection of every note recorded against that project's nodes and edges, and it is that collection which is appended to the AI report as the <b>User Comments</b> chapter.</div>
+
+<h3 id="notes-authorship">Who a note belongs to</h3>
+
+<p>The author of a note is the <b>signed-in application user</b> — not the shared database login used by the connection. For directory (LDAP) accounts the author is shown by real name, taken from the directory's <code>cn</code> attribute. Every note also records who last contributed to the thread and, importantly, the <b>complete filter context at the moment of creation</b> — the date window, the included and excluded steps and the meta values then in force — so an observation such as "this loop is unusually heavy" remains interpretable months later when the map is filtered differently.</p>
+
+<h3 id="notes-create">Creating a note on a node or a transition</h3>
+
+<ol class="steps">
+<li>On any process map — A-Chart, B-Chart, either A/B panel, Individual Journey, Happy Path's left pane, Conformance Check or a simulation flow — click the <b>node</b> or the <b>edge</b> you want to annotate. Edge labels are clickable, and the edge line itself carries a wide invisible hit area, so you do not have to hit the stroke exactly.</li>
+<li>In the context popover choose <b>✎ Show Notes (N)</b>, where N is how many notes the element already carries.</li>
+<li>If N is zero, the <b>note editor</b> opens directly on a new note. If N is one or more, a list sheet titled <b>Notes — &lt;target&gt;</b> opens showing each existing note as a card, with <b>＋ New note</b> and <b>Close</b>. One node or edge can carry several independent notes.</li>
+<li>Fill in <b>Title (optional)…</b> and <b>Your note…</b>. The title is optional; the body is not — <b>Save</b> stays disabled for a new note until the text is non-empty.</li>
+<li>Optionally set an <b>Importance</b> level and tick <b>Share with other users of this database</b>.</li>
+<li>Tap <b>Save</b>.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> Simulation output is read-only, and its context popovers hide the <b>✓ Require in journeys</b> and <b>⊖ Exclude from journeys</b> actions — but <b>Show Notes</b> and <b>Show description</b> remain available, so you can still annotate a simulated map.</div>
+
+<h3 id="notes-editor">The note editor</h3>
+
+<p>The editor opens as a sheet titled <b>New Note</b> or <b>Note</b> (🗒). Its header names the target: <b>⬭</b> followed by the step name for a node, or <b>↝</b> followed by <code>from → to</code> for a transition, together with the importance badge and a <b>✓ Resolved</b> marker when applicable.</p>
+
+<table>
+<thead><tr><th>Control</th><th>Purpose</th><th>Who may use it</th></tr></thead>
+<tbody>
+<tr><td><b>Title (optional)…</b> / <b>Your note…</b></td><td>Title and body of a new note.</td><td>The creator</td></tr>
+<tr><td><b>Notes &amp; comments so far</b></td><td>Read-only history box on an existing note, newest contribution on top.</td><td>Everyone who can see the note</td></tr>
+<tr><td><b>Comment title (optional)…</b> / <b>Add a note or comment…</b></td><td>Appends a comment to the thread. The comment's title becomes the note's displayed heading.</td><td>Everyone who can see the note</td></tr>
+<tr><td><b>Mark this note / issue as resolved</b></td><td>Closes the note; a green <b>✓ Resolved</b> pill then appears in the list.</td><td>Everyone who can see the note</td></tr>
+<tr><td><b>Importance</b> — • Normal, ℹ Info, ★ Important, ⚠ Urgent</td><td>Priority badge. The label reads <i>"Importance (set by the author)"</i>; the buttons are disabled for everyone else.</td><td>Author only</td></tr>
+<tr><td><b>Share with other users of this database</b></td><td>Makes the note visible to other users of the same database.</td><td>Author only</td></tr>
+<tr><td><b>Delete</b></td><td>Removes the note and its whole thread.</td><td>Author only, existing notes only</td></tr>
+<tr><td><b>Cancel</b> / <b>Close</b> · <b>Save</b></td><td>Discard or commit. <b>Save</b> is disabled until something has actually changed.</td><td>Everyone</td></tr>
+</tbody>
+</table>
+
+<p>Below the controls a meta block records <b>Filter context: &lt;snapshot summary&gt;</b>, <b>Created &lt;date&gt; by &lt;name&gt;</b> and <b>Last activity &lt;date&gt; by &lt;name&gt;</b>.</p>
+
+<h3 id="notes-threads">Threaded comments and resolving</h3>
+
+<p>Opening an existing note shows the full thread read-only at the top and an <b>Add a comment</b> box beneath it. Anyone who can see the note — the author, and every other user when the note is shared — may add a comment; it is placed at the top of the thread and recorded with that person's name and the time. Giving each comment a short title is worthwhile, because the <b>most recent title becomes the note's heading</b> wherever the note is displayed, separately from the body.</p>
+
+<p>Resolving is deliberately open to everyone who can see a note rather than restricted to its author: the person who fixes an issue is often not the person who spotted it. Changing importance, changing sharing and deleting are restricted to the author, so a colleague cannot silently downgrade or remove someone else's observation.</p>
+
+<h3 id="notes-importance">Importance levels</h3>
+
+<table>
+<thead><tr><th>Level</th><th>Badge</th><th>Colour</th></tr></thead>
+<tbody>
+<tr><td><b>Normal</b> (default)</td><td>•</td><td>Muted</td></tr>
+<tr><td><b>Info</b></td><td>ℹ</td><td>Blue</td></tr>
+<tr><td><b>Important</b></td><td>★</td><td>Orange</td></tr>
+<tr><td><b>Urgent</b></td><td>⚠</td><td>Red</td></tr>
+</tbody>
+</table>
+
+<h3 id="notes-delete">Deleting a note</h3>
+
+<div class="role">Requires: <b>the note's author</b>. No role grants deletion of another user's note — not even Administrator, from within this view.</div>
+
+<ol class="steps">
+<li>Open the note in the editor.</li>
+<li>Tap <b>Delete</b> in the footer.</li>
+<li>Confirm on the sheet <b>"Delete this note?"</b>, which warns: <i>"This removes the note and its whole comment thread from the database for everyone who can see it."</i></li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> Deletion removes the entire thread — every comment other people contributed — from the database, for everyone. If the point is that the issue is closed rather than that the record was a mistake, tick <b>Mark this note / issue as resolved</b> instead and leave the history in place.</div>
+
+<h3 id="notes-view">The Notes overview</h3>
+
+<p>Choose <b>Notes</b> (🗒) from the <b>☰ Switch view</b> menu to see every note on the project in one list, <b>independent of the current chart filters</b>. Switching into this view — as into the A-Chart, B-Chart, A/B Comparison or AI supported Documentation — also reloads the notes list from the database.</p>
+
+<p>With no notes yet, the view shows 🗒 <b>No Notes</b> — <i>"Click a node or an edge on the process map and choose "Show Notes" to add one."</i></p>
+
+<figure data-fig="app-17-notes"><figcaption>The Notes view: importance KPI tiles across the top, search and filter rows, and grouped note cards with pagination.</figcaption></figure>
+
+<p>A KPI strip runs across the top: <b>Total Notes</b> 🗒, then one coloured tile per importance level (Normal •, Info ℹ, Important ★, Urgent ⚠), then <b>Resolved</b> ✓ in green. The per-importance tiles respect every active filter <b>except the importance filter itself</b>, so selecting one level still lets you see how the remaining notes are distributed.</p>
+
+<h4 id="notes-filters">Search, filters and paging</h4>
+
+<p>The first row holds a 🔍 search box (placeholder <b>Filter notes</b>) which matches against note text, title and target name, an <b>⊗</b> to clear it, the count <b>"N of M"</b>, and <b>↻ Reload</b>. The second row holds the filters, all defaulting to <b>All</b>:</p>
+
+<table>
+<thead><tr><th>Control</th><th>Options</th><th>Default</th></tr></thead>
+<tbody>
+<tr><td><b>Type</b></td><td>All / Node / Edge</td><td>All</td></tr>
+<tr><td><b>Importance</b></td><td>All / Normal / Info / Important / Urgent</td><td>All</td></tr>
+<tr><td><b>Status</b></td><td>All / Unresolved / Resolved</td><td>All</td></tr>
+<tr><td><b>User</b></td><td>All, plus one entry per distinct author (by real name)</td><td>All</td></tr>
+<tr><td><b>Time</b></td><td>Any time / Last 7 days / Last 30 days / Last 90 days</td><td>Any time</td></tr>
+<tr><td><b>Sort</b></td><td>Newest first / Oldest first</td><td>Newest first</td></tr>
+<tr><td><b>Group by importance</b></td><td>On / off — groups the list from Urgent down to Normal under coloured headers such as "⚠ Urgent (N)"</td><td>On</td></tr>
+<tr><td><b>Per page</b></td><td>5 / 10 / 20</td><td>5</td></tr>
+</tbody>
+</table>
+
+<p>Each card shows the target icon and name, the importance badge, a <b>✓ Resolved</b> pill where applicable, a 👥 icon for shared notes (tooltip <i>"Shared with other users"</i>), the author, the creation date, the title (or "—" when there is none), the note text and the filter-context line. Clicking a card opens the editor. When the filters exclude everything the list reads <b>"No notes match the current filters."</b></p>
+
+<p>The footer pages the result: <b>‹ Prev</b> · <b>Page X of Y</b> · <b>Next ›</b> · <b>first–last of N</b>. Changing any filter or the sort order resets you to page 1 — worth knowing if you are working through a long list and adjust a filter halfway.</p>
+
+<div class="tip"><strong>Tip</strong> Set <b>Status</b> to <b>Unresolved</b> and <b>Sort</b> to <b>Oldest first</b> to work a backlog from the bottom up, or filter <b>Importance</b> to <b>Urgent</b> before a review meeting. Combined with the <b>User</b> filter this gives you "everything &lt;colleague&gt; flagged and nobody has closed".</div>
+
+<h3 id="notes-badges">Note badges on the map</h3>
+
+<p>Annotated elements are marked directly on the process map so you can see at a glance where the commentary is:</p>
+
+<dl>
+<dt>Yellow ✎ badge on a node</dt><dd>The step carries at least one note. Tooltip: <i>"This node has notes"</i>.</dd>
+<dt>Yellow ✎ bubble beside an edge label</dt><dd>The transition carries at least one note. Tooltip: <i>"This transition has notes"</i>.</dd>
+</dl>
+
+<p>Node badges are drawn as part of the node-annotation layer controlled by <b>Show node notes</b> in <b>Configuration → Display options</b>, which also governs the shortened step description under the node name. The badges scale with the flowchart font settings — <code>graph.node.scale</code> for nodes and <code>graph.edge.scale</code> for the bubbles on edges — so raising the node or edge font size in Configuration makes them easier to spot on a dense map.</p>
+
+<h3 id="notes-troubleshooting">Troubleshooting notes</h3>
+
+<table>
+<thead><tr><th>Symptom</th><th>Cause and fix</th></tr></thead>
+<tbody>
+<tr><td>Alert <b>Note Not Synced</b> — <i>"Note could not be written to the database: &lt;error&gt;"</i> (or <i>"…could not be updated: …"</i>)</td><td>The write to the NOTES table failed. The connecting database user needs <b>CREATE TABLE</b> the first time a note is written on a schema, and <b>INSERT / DELETE on NOTES</b> thereafter. Only your database administrator can grant those — the application cannot.</td></tr>
+<tr><td>A colleague cannot see your note.</td><td>The note is not shared. Open it and tick <b>Share with other users of this database</b> — only you, as the author, can do this.</td></tr>
+<tr><td>The importance buttons are greyed out.</td><td>You are not the author. Importance and sharing are author-only; you can still comment and resolve.</td></tr>
+<tr><td>A note you expected is missing from the list.</td><td>Check the <b>Status</b>, <b>Importance</b>, <b>User</b> and <b>Time</b> filters and the search box, then tap <b>↻ Reload</b>. The list is independent of the chart filters, so a chart filter is never the reason.</td></tr>
+<tr><td>The yellow badges do not appear on the map.</td><td><b>Show node notes</b> is turned off in <b>Configuration → Display options</b>.</td></tr>
+</tbody>
+</table>
+
+<div class="tip"><strong>Tip</strong> The two halves of this chapter are designed to work together. Notes recorded against nodes and edges are collected automatically into the <b>User Comments</b> chapter of every AI report, in chronological order and identified by author. Annotating as you analyse therefore builds the human commentary for the next report at no extra cost — and because notes carry the filter context in which they were written, that commentary stays readable even when the report is generated from a different window.</div>
+
+</section>

@@ -1,0 +1,354 @@
+<section class="chapter" id="ch-source-types" data-title="Source Types: Teaching the System to Read a Log" data-num="17">
+<h1><span class="chnum">17</span> Source Types: Teaching the System to Read a Log</h1>
+
+<p class="chintro">A <em>source type</em> is the parser you hand to the integration console: a pasted example line plus a set of named regular expressions that pull the case id, the process step, the event time and up to three business attributes out of every line of a log. This chapter explains the concept, walks through all three steps of the source-type wizard, documents every field role and the database column it ends up in, covers regex authoring with the live highlighter, timestamp format analysis, META business titles, the Step tab and the automatic STEPS rows, field locking and cascade rename, and helper fields that are deliberately never written to the database. It closes with a complete worked example on an Apache access log. It is written for developers and administrators who prepare data sources; ordinary users never see these screens.</p>
+
+<div class="role">Requires: <b>Developer</b> or <b>Administrator</b> — source types live in the integration console (HTTP :8100, HTTPS :8463). Sign-in is always required on this surface, and power users and plain users are refused, both at the console login and at every <code>/api/integration/*</code> endpoint (&ldquo;You need the Developer role to use the integration features.&rdquo;).</div>
+
+<h2 id="st-concept">17.1 What a source type is</h2>
+
+<p>The integration console separates <em>where</em> data comes from (a <b>source</b> — chapter 18) from <em>how it is read</em> (a <b>source type</b>). One source type can be linked to many sources, and a source without a linked source type cannot be run at all.</p>
+
+<p>A source type consists of exactly four things:</p>
+
+<dl>
+<dt>A name</dt><dd>1&ndash;120 characters, shown in the sidebar and in the source wizard's <b>Source type</b> dropdown.</dd>
+<dt>A sample line</dt><dd>One representative line pasted from the log, up to 20,000 characters. It is stored with the source type and is the canvas on which you map every field; it is never imported.</dd>
+<dt>An extraction spec</dt><dd>An ordered list of fields, each with a name, a role, a regex and — for timestamps — an inferred parse format.</dd>
+<dt>Optional compound step rules</dt><dd>Rules that build the step name from more than one field. Up to 200 rules.</dd>
+</dl>
+
+<p>Source types are owned per user: you see and edit only your own. Everything you build here is applied line by line at import time — the extractor compiles each regex once per run and runs it against every line of the file.</p>
+
+<div class="note"><strong>Note</strong> There is no auto-detection in the wizard flow. Every field is defined manually, either by highlighting a segment of the sample and letting the console generalise it into a regex, or by typing the regex yourself. The hint on step 1 says so explicitly: &ldquo;On the next step you'll map each field yourself — highlight a segment and assign it, or type its regex. Every field is defined manually.&rdquo;</div>
+
+<h2 id="st-section">17.2 The Source types section</h2>
+
+<p>The sidebar's third accordion section is <b>Source types</b>, with a count in parentheses once at least one exists. Each entry is a badge showing a 🧩 icon, the name, and a sub-line reading &ldquo;<i>n</i> field(s)&rdquo; or &ldquo;no fields yet&rdquo;. About three badges are visible at a time; the list scrolls beyond that. When you have none, the section reads &ldquo;No source types yet. Use ＋ to define one.&rdquo;</p>
+
+<figure data-fig="integ-04b-source-type-step2"><figcaption>The source-type wizard, step 2: each field is mapped to a role (id, step, timestamp, meta or helper) with its own regular expression. The highlighter shows what each expression captures against the sample line.</figcaption></figure>
+
+<ol class="steps">
+<li>Sign in to the integration console and open the <b>Source types</b> section in the sidebar. Only one accordion section is open at a time; clicking an open header closes it.</li>
+<li>Click <b>＋</b> (&ldquo;Add a source type&rdquo;) to create one, or click anywhere on an existing badge (&ldquo;Edit source type&rdquo;) to reopen it.</li>
+<li>To delete, click the <b>✕</b> on the badge. The confirmation dialog is titled <b>Delete source type</b> and reads &ldquo;Delete the source type &ldquo;&lt;name&gt;&rdquo;? Sources that reference it will need a new one.&rdquo; Confirm with <b>Delete source type</b>.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> Deleting a source type does <strong>not</strong> cascade. Sources that referenced it keep a dangling link: their Run dialog shows &ldquo;This source has no source type linked — edit it and pick one so the lines can be parsed.&rdquo; and the <b>▷ Run extraction</b> button is disabled until you pick a replacement. Watchdog polls record the checkpoint error &ldquo;The source has no source type linked.&rdquo;</div>
+
+<h2 id="st-wizard">17.3 The wizard at a glance</h2>
+
+<p>The wizard opens as a sheet titled <b>New source type</b> or <b>Edit source type</b> with the 🧩 icon. It has three steps and a footer that always shows <b>Step N of 3</b>, <b>Cancel</b>, <b>Back</b> (from step 2 onwards), <b>Next</b> (disabled on step 1 until a name is entered) and, on step 3, <b>Create source type</b> or <b>Save changes</b> (&ldquo;Saving…&rdquo; while the save is in flight).</p>
+
+<table>
+<thead><tr><th>Step</th><th>What you do</th></tr></thead>
+<tbody>
+<tr><td>1 — Basics</td><td>Name the source type and paste one example log entry.</td></tr>
+<tr><td>2 — Field mapping</td><td>Map every field on the sample, review the live matches, add compound step rules.</td></tr>
+<tr><td>3 — Review</td><td>Check the highlighted sample, the field list, the compound summary and the example JOURNEYS record, then save.</td></tr>
+</tbody>
+</table>
+
+<p>Saving re-validates the name. If it is blank, the wizard returns you to step 1 with the error &ldquo;A name is required.&rdquo;</p>
+
+<h2 id="st-step1">17.4 Step 1 — Basics</h2>
+
+<ol class="steps">
+<li>Type a <b>Name</b> (the field is autofocused; placeholder &ldquo;e.g. Apache access log, App JSON log&rdquo;). Use the log format's own name rather than the system it came from, because one source type is normally reused across several files.</li>
+<li>Paste one line into <b>Paste an example log entry</b>, a seven-row monospace text area (placeholder <code>2026-08-03T14:05:09Z INFO OrderReceived case_id=abc-123 …</code>).</li>
+<li>Click <b>Next</b>.</li>
+</ol>
+
+<div class="tip"><strong>Tip</strong> Take the sample from the file you actually intend to import, not from documentation. The quickest way is to open the source wizard's file preview (chapter 18), which shows the first lines of the real file, and copy a line from there. Pick a line that carries <em>every</em> field you want to map — an example with an empty referrer or a missing user, for instance, will leave you unable to highlight those segments.</div>
+
+<h2 id="st-step2">17.5 Step 2 — Field mapping</h2>
+
+<p>Step 2 is where the work happens. The instruction line reads &ldquo;Select a segment below, pick a tab, then map it&rdquo;.</p>
+
+<h3 id="st-highlighter">17.5.1 The highlighted sample</h3>
+
+<p>The sample line is rendered in a monospace, selectable box. Every field's regex is run against it continuously — entirely in the browser — and each match is painted as a tinted mark in that field's <em>role</em> colour at 32&nbsp;% alpha. Overlaps resolve first-come: a field earlier in the list claims its span first, so if two regexes fight over the same characters only the earlier one is highlighted. If you left the sample empty, the box reads &ldquo;Paste a sample on the previous step.&rdquo;</p>
+
+<p>The highlighter is the fastest way to see whether a regex is doing what you think. A pattern that is too greedy is immediately obvious as a wash of colour across half the line.</p>
+
+<h3 id="st-roles">17.5.2 Role tabs and what each role becomes</h3>
+
+<p>Below the sample are five role tabs, in order <b>Timestamp · Step · Id · Metas · Helper</b>. Each shows a coloured dot and, when fields of that role exist, a count in parentheses.</p>
+
+<table>
+<thead><tr><th>Tab</th><th>Stored role</th><th>Colour</th><th>Label / name</th><th>Where it lands in the database</th></tr></thead>
+<tbody>
+<tr><td>Timestamp</td><td><code>timestamp</code></td><td>Accent blue</td><td>Fixed label <code>EVENT_TIME</code></td><td><code>JOURNEYS.EVENT_TIME</code>, a real TIMESTAMP normalised to <code>YYYY-MM-DD HH:MM:SS</code>.</td></tr>
+<tr><td>Step</td><td><code>step</code></td><td>Green</td><td>Fixed label <code>STEP</code></td><td><code>JOURNEYS.STEP</code>, possibly replaced by a compound rule. Every new step name also gets a row in <code>STEPS</code>.</td></tr>
+<tr><td>Id</td><td><code>id</code></td><td>Purple</td><td>Fixed label <code>EVENT_ID</code></td><td><code>JOURNEYS.EVENT_ID</code>, stored as the hex <b>MD5 digest</b> of the captured value.</td></tr>
+<tr><td>Metas</td><td><code>meta</code></td><td>Orange</td><td>Editable name (default <code>meta_1</code>, <code>meta_2</code>, …)</td><td>The first three meta fields, in field order, become <code>META_1</code>, <code>META_2</code>, <code>META_3</code>. A fourth is silently unused.</td></tr>
+<tr><td>Helper</td><td><code>aux</code></td><td>Teal</td><td>Editable name (default <code>helper_1</code>, …)</td><td><strong>No column at all.</strong> Extracted per line and offered to compound rules only.</td></tr>
+</tbody>
+</table>
+
+<p>Two columns of <code>JOURNEYS</code> are never yours to set: <code>STEP_ID</code> is always NULL (it is filled at load time in the main application) and <code>SAMPLE_SET</code> is always the literal string <code>ORIGINAL</code>. <code>PROJECT_ID</code> comes from the run, not from the source type.</p>
+
+<div class="warn"><strong>Warning</strong> Only the <strong>first</strong> field of each single-instance role is used at import time. If you define two timestamp, id or step fields, the second one is ignored — it still paints the sample, which makes the mistake easy to miss. Likewise only the first three meta fields are written.</div>
+
+<div class="note"><strong>Note</strong> <code>EVENT_ID</code> is pseudonymised unconditionally and is not configurable. The captured id — which is often a login or a user name — is hashed with MD5 before it reaches the database. The same raw id always produces the same digest, so journeys still correlate correctly, but the original value cannot be recovered from the database. The wizard's record preview shows the original value with the column note &ldquo;original — stored as MD5&rdquo; so you can check that you captured the right thing.</div>
+
+<h3 id="st-use-selection">17.5.3 Mapping a segment with the highlighter</h3>
+
+<ol class="steps">
+<li>Select the tab for the role you want to create — the buttons below the tabs are tinted in the active role's colour so you can see which role you are about to assign.</li>
+<li>Select the segment in the sample box with the mouse. Select exactly the value, without surrounding punctuation.</li>
+<li>Click <b>🎯 Use selection</b>. The console sends the selection's offsets to the backend, which generalises the text into a regex and returns it together with the value it captures. A new field of the active role appears with that regex already filled in.</li>
+<li>If nothing is selected the console refuses with &ldquo;Select a piece of the sample above first.&rdquo;</li>
+</ol>
+
+<p>The generalisation is deliberately simple and predictable:</p>
+
+<table>
+<thead><tr><th>In the selection</th><th>Becomes</th></tr></thead>
+<tbody>
+<tr><td>A run of <i>n</i> digits</td><td><code>\d{n}</code>, or <code>\d+</code> when the run is longer than 8 digits</td></tr>
+<tr><td>A run of letters</td><td><code>[A-Za-z]+</code></td></tr>
+<tr><td>A run of whitespace</td><td><code>\s+</code></td></tr>
+<tr><td>Punctuation</td><td>Kept as an escaped literal</td></tr>
+<tr><td>The character(s) immediately before the selection (when not a space)</td><td>Up to 8 characters of escaped literal context, prepended <em>outside</em> the capture group to anchor the match</td></tr>
+</tbody>
+</table>
+
+<p>Every generated regex has exactly one capturing group and uses a syntax subset valid in both Python and JavaScript — no named groups, no back-references — so the pattern the browser previews is byte-for-byte the pattern the extractor runs.</p>
+
+<h3 id="st-add-field">17.5.4 Writing a regex by hand</h3>
+
+<p><b>＋ Add field</b> adds a blank field of the active role so you can type the pattern yourself. Each field row sits on a grey chip and contains, from left to right: the role label (for timestamp, step and id) or an editable name box (for meta and helper), a monospace regex input with the placeholder &ldquo;regex (one capture group = the value)&rdquo;, and a remove button.</p>
+
+<p>Three conventions matter:</p>
+
+<ul>
+<li>Matching uses <em>search</em>, not a full-line match — the pattern may match anywhere on the line.</li>
+<li>If the pattern has capture groups, <b>group 1</b> is the value. If it has none, the whole match is the value.</li>
+<li>A regex that fails to compile is treated as &ldquo;never matches&rdquo;. At import time it does not raise an error; it just quietly contributes nothing, which is why the live feedback in the wizard matters.</li>
+</ul>
+
+<p>The empty state of a tab reads &ldquo;No &lt;role&gt; yet — select a segment above and map it, or add a field.&rdquo;</p>
+
+<h3 id="st-feedback">17.5.5 Live match feedback</h3>
+
+<p>Under every regex input, the console tests the pattern against the sample as you type. All regex testing on this screen runs client-side.</p>
+
+<table>
+<thead><tr><th>Message</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>Green <b>✓ matches: &lt;value&gt;</b></td><td>The pattern matched; this is the value that would be extracted.</td></tr>
+<tr><td>Red <b>⚠ invalid regex</b></td><td>The pattern does not compile. Fix it — an invalid pattern never matches anything.</td></tr>
+<tr><td>Grey <b>• no match in the sample</b></td><td>The pattern compiles but finds nothing on this line.</td></tr>
+<tr><td>Grey <b>• enter a regex</b></td><td>The field has no pattern yet.</td></tr>
+</tbody>
+</table>
+
+<h3 id="st-timestamp">17.5.6 Timestamp format analysis</h3>
+
+<p>Whenever a timestamp field matches the sample, the captured value is sent to the backend for analysis. The row then shows either:</p>
+
+<ul>
+<li>Green <b>🕒 &lt;YYYY-MM-DD HH:MM:SS&gt; · format &lt;fmt&gt;</b> — the value was recognised, and the inferred parse format is stored on the field automatically so that every line is later parsed the same way; or</li>
+<li>Orange <b>⚠ couldn't recognise the date — stored as extracted</b> — the value could not be parsed.</li>
+</ul>
+
+<p>The normalisation target is always <code>YYYY-MM-DD HH:MM:SS</code>. Runs of whitespace inside the value are collapsed before parsing. The analyser recognises a wide range of shapes:</p>
+
+<table>
+<thead><tr><th>Family</th><th>Examples</th></tr></thead>
+<tbody>
+<tr><td>ISO-8601</td><td>With fractional seconds, <code>Z</code>, or <code>±HH:MM</code> / <code>±HHMM</code> offsets</td></tr>
+<tr><td>Numeric dates</td><td><code>YYYY/MM/DD</code>, <code>YYYY.MM.DD</code>, <code>DD.MM.YYYY</code>, <code>DD/MM/YYYY</code>, <code>DD-MM-YYYY</code>, <code>MM/DD/YYYY</code>, <code>MM-DD-YYYY</code></td></tr>
+<tr><td>Spelled-out months</td><td>&ldquo;03 Aug 2026&rdquo;, &ldquo;Aug 3, 2026&rdquo;</td></tr>
+<tr><td>Clock variants</td><td>12-hour clocks with AM/PM</td></tr>
+<tr><td>Log conventions</td><td>Apache/NCSA common log (<code>03/Aug/2026:14:05:09 +0000</code>), RFC-2822, C <code>asctime</code>, syslog (<code>Aug  3 14:05:09</code>)</td></tr>
+<tr><td>Unix epochs</td><td>Exactly 10 digits (seconds), 13 (milliseconds) or 16 (microseconds), interpreted as UTC</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> Two ambiguities are resolved by policy, and you must verify the result in the wizard. First, purely numeric dates such as <code>08/03/2026</code> are read <strong>day-first</strong> (European) by default; month-first (US) is preferred only when the value also carries a 12-hour AM/PM clock. If your log is American and uses a 24-hour clock, check the green preview line before saving. Second, <strong>syslog timestamps carry no year</strong> and are filled with the current UTC year — importing an old yearless log, particularly around New Year, mis-years the events.</div>
+
+<div class="note"><strong>Note</strong> The timestamp is not optional. A source cannot be run at all if its source type has no timestamp field: the run is refused with &ldquo;The source type has no timestamp field.&rdquo; And at import time a line only becomes an event if <em>all three</em> of id, step and timestamp were captured <em>and</em> the timestamp normalised successfully. Everything else counts as a skipped line.</div>
+
+<h3 id="st-meta-titles">17.5.7 META business titles</h3>
+
+<p>Meta fields carry a second input beside the regex, with the placeholder &ldquo;Business name (e.g. Book ID) — shown in the app&rdquo;. This is the human-readable title for the attribute. It is written to <code>METAS.META_1_TITLE</code>, <code>META_2_TITLE</code> and <code>META_3_TITLE</code> for the project, and it is what analysts see as the attribute name in the main application. It also appears as the column note in the wizard's record preview.</p>
+
+<p>The field name itself (<code>meta_1</code>, <code>status_code</code>, whatever you type) is internal: it identifies the field in compound rule conditions. The title is external. Give a meta field a short technical name and a proper business title.</p>
+
+<div class="warn"><strong>Warning</strong> The <code>METAS</code> row is <strong>create-once</strong>. It is written only when at least one meta field has a title configured, and only if the project has no row yet. Editing titles later does <em>not</em> rewrite an existing <code>METAS</code> row — the analyst keeps seeing the old names. Settle the titles before the first import into a project, or clear the project and re-import.</div>
+
+<h3 id="st-helpers">17.5.8 Helper fields, and why they exist</h3>
+
+<p>Helper fields (role <code>aux</code>) are extracted from every line exactly like any other field, and then thrown away. They are written to no column whatsoever. Their sole purpose is to give compound step rules something to match on.</p>
+
+<p>The reasoning is the scarcity of META columns: a journey row has exactly three. An HTTP status code, a result code or a log level is usually needed only to decide <em>what the step is called</em>, not as a business attribute worth reporting on. Putting such a value in a helper field keeps all three META columns free for genuine business attributes. The wizard states this in the compound-steps explainer: &ldquo;Values needed only for matching can be extracted as helper fields, which are never written to the database, so your META columns stay free for business attributes.&rdquo;</p>
+
+<p>Helper names are shown in teal, and their tooltip reads &ldquo;Compound rules reference a helper by this name&rdquo; — a reminder that the name, not a hidden identifier, is the link between the field and the rules.</p>
+
+<h3 id="st-locking">17.5.9 Field locking and cascade rename</h3>
+
+<p>Compound rules reference fields <strong>by name</strong>. Two consequences follow, and the wizard implements both.</p>
+
+<p><b>Locking.</b> When a field is referenced by at least one compound rule, its <b>✕</b> remove button is replaced by an orange <b>🔒</b> lock. The lock is not clickable (the cursor shows &ldquo;not allowed&rdquo;) and its tooltip reads: &ldquo;Used by N compound step rule(s) (&lt;rule steps&gt;). Remove the field from those rules first — deleting it now would stop them matching. Renaming is safe: the rules follow the new name.&rdquo; An orange caption under the row repeats the message: &ldquo;🔒 Used by N compound rule(s): &lt;steps&gt; — remove it there before deleting this field. Renaming is safe.&rdquo; Deletion is additionally blocked in code, so no path through the interface can orphan a rule.</p>
+
+<p><b>Cascade rename.</b> Renaming a referenced field automatically rewrites every rule condition to the new name. This is why renaming is safe while deleting is not: after a rename the rules still point at a field that exists, whereas after a deletion they would point at nothing and would silently stop matching — the worst kind of failure, because the import would still succeed and simply produce the wrong step names.</p>
+
+<ol class="steps">
+<li>To rename a meta or helper field, type the new name in its name box. Any compound rule conditions naming it are updated as you type.</li>
+<li>To delete a locked field, open each rule listed in the lock's tooltip, remove or re-point the condition that names the field, close the rule editor with <b>Done</b>, and return to the field row — the ✕ is back.</li>
+</ol>
+
+<h2 id="st-steps">17.6 The Step tab and the STEPS table</h2>
+
+<p>The <b>Step</b> tab holds the plain step field and, below it, the <b>Compound steps</b> section — marked &ldquo;optional&rdquo;, with a count when rules exist and a <b>＋ Add rule</b> button. Compound rules always produce a STEP value, which is why they live on this tab and nowhere else.</p>
+
+<p>The behaviour in one paragraph: rules are evaluated in order and the <strong>first fully-matching rule wins</strong>; all conditions of a rule must hold; if no rule matches, the plain step field's captured value is used unchanged. Rules are therefore strictly additive — they can only relabel an event that the plain step field already produced. Under the rule list the wizard evaluates them live against the sample and reports either &ldquo;✓ For the sample line the step becomes &ldquo;&lt;step&gt;&rdquo;.&rdquo; or &ldquo;• No rule matches the sample line — the plain STEP value would be used.&rdquo; The full rule editor, its operators and the helper-field panel are covered in chapter 18.</p>
+
+<p>Whatever step name comes out — plain or compound — is also used to populate the <code>STEPS</code> table in the target schema. After the events of a run have been pushed, the extractor creates a <code>STEPS</code> row for every step name it saw that has no <code>(PROJECT_ID, STEP)</code> row yet:</p>
+
+<table>
+<thead><tr><th>Column</th><th>Value assigned automatically</th></tr></thead>
+<tbody>
+<tr><td>DESCRIPTION</td><td>Empty.</td></tr>
+<tr><td>Background colour</td><td>Picked deterministically from a fixed ten-colour palette by hashing the step name, so the same step name always gets the same colour — across projects and across runs.</td></tr>
+<tr><td>Foreground colour</td><td><code>#ffffff</code>.</td></tr>
+<tr><td>SCORE</td><td><code>0</code>, so automatically created steps appear but do not skew scoring.</td></tr>
+<tr><td>Shape</td><td>Picked deterministically from <code>stadium</code>, <code>round</code>, <code>hex</code>, <code>circle</code>, using an independent seed so that shape and colour do not correlate.</td></tr>
+<tr><td>END_OF_PROCESS</td><td><code>false</code>.</td></tr>
+<tr><td>BELONGS_TO</td><td>NULL.</td></tr>
+</tbody>
+</table>
+
+<p>The run log records this as &ldquo;created &lt;n&gt; new step(s): &lt;names&gt;&rdquo;, and the count appears in the run's result detail. Existing rows are never touched, so any styling an analyst applied in the main application survives every later import.</p>
+
+<div class="tip"><strong>Tip</strong> Because step names drive both the process map and the automatic STEPS rows, keep them stable. A regex that captures a request path including its query string, for instance, produces a new step — and a new STEPS row — for every distinct query, which turns the process map into confetti. Strip variable parts in the regex.</div>
+
+<h2 id="st-preview">17.7 The Example JOURNEYS record</h2>
+
+<p>As soon as at least one field exists, steps 2 and 3 show a one-row table labelled <b>Example JOURNEYS record</b>. It is the single most useful control in the wizard: it shows exactly what the current spec would write for the pasted sample line. Empty values render as &ldquo;—&rdquo;.</p>
+
+<table>
+<thead><tr><th>Column</th><th>Shows</th></tr></thead>
+<tbody>
+<tr><td>PROJECT_ID</td><td>Muted &ldquo;(set when the source runs)&rdquo; — it comes from the Run dialog or the watchdog configuration.</td></tr>
+<tr><td>EVENT_ID</td><td>The extracted id, with the column note &ldquo;original — stored as MD5&rdquo;.</td></tr>
+<tr><td>STEP</td><td>The step value. A matching compound rule wins over the plain step field; the column note then reads &ldquo;compound&rdquo;.</td></tr>
+<tr><td>STEP_ID</td><td>Empty and muted — always NULL at import.</td></tr>
+<tr><td>EVENT_TIME</td><td>The normalised timestamp, or the raw extracted value if the format was not recognised.</td></tr>
+<tr><td>META_1 … META_3</td><td>The first three meta fields in order; the column note is each meta's business title, or its name if no title is set.</td></tr>
+<tr><td>SAMPLE_SET</td><td>Muted &ldquo;ORIGINAL&rdquo; — always this literal.</td></tr>
+</tbody>
+</table>
+
+<h2 id="st-step3">17.8 Step 3 — Review and save</h2>
+
+<p>The review step repeats the highlighted sample under the heading <b>Preview</b>, the name, and a list of every field showing its role dot, role label, name, regex and — for timestamps — &ldquo;→ &lt;format&gt;&rdquo;. Below that, a <b>Compound steps</b> summary renders each rule as <code>&lt;step&gt; ← field is "value" and …</code>, followed by the Example JOURNEYS record. With nothing defined it reads &ldquo;No extraction fields defined.&rdquo;</p>
+
+<ol class="steps">
+<li>Read the field list top to bottom and confirm that each role appears exactly as often as you intend — one timestamp, one id, one step, at most three metas.</li>
+<li>Check the timestamp's inferred format.</li>
+<li>Check the Example JOURNEYS record against what you expect the row to look like.</li>
+<li>Click <b>Create source type</b> (or <b>Save changes</b>).</li>
+</ol>
+
+<p>Only <strong>complete</strong> compound rules are stored: a rule needs a non-blank resulting step and at least one condition naming a field. Incomplete rules are dropped by the wizard and, independently, by the backend — so a half-built rule left over from an interrupted editing session can never relabel events at import time. Conditions with a blank field name are dropped, and an unrecognised operator falls back to <code>is</code>. In the same spirit, a field saved with an unrecognised role silently becomes a meta field.</p>
+
+<h2 id="st-linking">17.9 Linking a source type to a source</h2>
+
+<p>A source type does nothing on its own. To use it, open a source (or create one) and pick it from the <b>Source type</b> dropdown on step 2 of the source wizard, whose help text reads &ldquo;The parser applied to each line when this source runs.&rdquo; The default is &ldquo;— none —&rdquo;. If you have not defined any yet, the dropdown is replaced by &ldquo;No source types yet — define one in the Source types section first.&rdquo;</p>
+
+<figure data-fig="integ-02-sources"><figcaption>The Sources section: each source links to exactly one source type, which supplies its parser.</figcaption></figure>
+
+<div class="tip"><strong>Tip</strong> Editing a source type takes effect on the <em>next</em> run of every source that links to it; nothing already imported changes. If a first import produced wrong step names, fix the regexes here, delete the project in the destination schema (Connection editor → Projects tab), reset the source's checkpoint, and import again.</div>
+
+<h2 id="st-apache">17.10 Worked example: an Apache access log</h2>
+
+<p>The bundled example logs are seeded into the sandbox directory on first start, so this example can be followed end to end on a fresh installation. Assume the file contains combined-format lines like this one:</p>
+
+<pre><code>10.0.4.12 - jbrown [03/Aug/2026:14:05:09 +0000] "POST /shop/login HTTP/1.1" 200 1043 "https://shop.example.com/" "Mozilla/5.0"</code></pre>
+
+<p>Six fields make this a usable process log. Paste the line on step 1 as the sample, then build the following on step 2 — highlighting the value and clicking <b>🎯 Use selection</b> gets you most of the way, after which you tidy the generated pattern by hand so it survives lines that differ from the sample.</p>
+
+<table>
+<thead><tr><th>Tab</th><th>Name</th><th>Regex</th><th>Captures</th></tr></thead>
+<tbody>
+<tr><td>Timestamp</td><td><code>EVENT_TIME</code></td><td><code>\[([^\]]+)\]</code></td><td><code>03/Aug/2026:14:05:09 +0000</code></td></tr>
+<tr><td>Id</td><td><code>EVENT_ID</code></td><td><code>^\S+ \S+ (\S+)</code></td><td><code>jbrown</code></td></tr>
+<tr><td>Step</td><td><code>STEP</code></td><td><code>"(?:GET|POST|PUT|DELETE|HEAD|PATCH) ([^ ?"]+)</code></td><td><code>/shop/login</code></td></tr>
+<tr><td>Metas</td><td><code>method</code> — title &ldquo;HTTP method&rdquo;</td><td><code>"([A-Z]+) /</code></td><td><code>POST</code></td></tr>
+<tr><td>Metas</td><td><code>bytes</code> — title &ldquo;Response size (bytes)&rdquo;</td><td><code>" \d{3} (\d+)</code></td><td><code>1043</code></td></tr>
+<tr><td>Metas</td><td><code>client_ip</code> — title &ldquo;Client IP&rdquo;</td><td><code>^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})</code></td><td><code>10.0.4.12</code></td></tr>
+<tr><td>Helper</td><td><code>status</code></td><td><code>" (\d{3}) </code></td><td><code>200</code></td></tr>
+</tbody>
+</table>
+
+<p>Four things in that table are worth dwelling on.</p>
+
+<p><b>The timestamp.</b> <code>\[([^\]]+)\]</code> takes everything between the square brackets. The analyser recognises the Apache/NCSA common-log shape, the row turns green — <b>🕒 2026-08-03 14:05:09 · format …</b> — and the parse format is stored on the field. Note that the bracketed value is the only place on the line where the date lives, so the anchor is safe.</p>
+
+<p><b>The case id.</b> The third whitespace-separated token of a combined-format line is the authenticated user. Using it as the case id means one journey per user. That value is a login, which is precisely why <code>EVENT_ID</code> is MD5-hashed before it is written — the analysts see stable, correlated journeys without the database ever holding the user names. If the log has no authenticated user (a <code>-</code> in that position) the id capture still succeeds and produces a single journey for all anonymous traffic; in that case use a session cookie or a request-id header instead.</p>
+
+<p><b>The step.</b> The regex captures the request path but deliberately stops at a space, a <code>?</code> or a quote, so the query string never becomes part of the step name. Without the <code>?</code> in the character class, <code>/shop/search?q=hammer</code> and <code>/shop/search?q=nails</code> would be two different steps and two different <code>STEPS</code> rows.</p>
+
+<p><b>The helper.</b> The HTTP status is a matching value, not a business attribute — the analyst wants to see &ldquo;login failed&rdquo; on the map, not a column of numbers. Extracting it as a <b>helper</b> keeps all three META columns available for method, response size and client IP, and writes nothing extra to the database. On the Step tab, two compound rules then turn the pair (path, status) into a meaningful activity:</p>
+
+<pre><code>Rule 1   Step becomes "login successful"
+         when  STEP    is           /shop/login
+         and   status  is           200
+
+Rule 2   Step becomes "login failed"
+         when  STEP    is           /shop/login
+         and   status  starts with  5</code></pre>
+
+<p>Rule order matters — the first fully matching rule wins — and a line whose path is not <code>/shop/login</code> matches neither rule, so its plain step value (<code>/shop/checkout</code>, say) is used unchanged. Comparisons are case-insensitive and trimmed on both sides. The green <b>✓</b> on a rule badge tells you it matches the pasted sample; because the sample carries status 200, the wizard reports &ldquo;✓ For the sample line the step becomes &ldquo;login successful&rdquo;.&rdquo; and the record preview's STEP column gains the note &ldquo;compound&rdquo;.</p>
+
+<p>The resulting JOURNEYS row for the sample line is:</p>
+
+<pre><code>PROJECT_ID  (set when the source runs)
+EVENT_ID    jbrown            → stored as MD5
+STEP        login successful  → compound
+STEP_ID     (NULL)
+EVENT_TIME  2026-08-03 14:05:09
+META_1      POST              → "HTTP method"
+META_2      1043              → "Response size (bytes)"
+META_3      10.0.4.12         → "Client IP"
+SAMPLE_SET  ORIGINAL</code></pre>
+
+<h2 id="st-limits">17.11 Limits, and what actually happens at import time</h2>
+
+<table>
+<thead><tr><th>Item</th><th>Limit</th></tr></thead>
+<tbody>
+<tr><td>Source type name</td><td>1&ndash;120 characters, required</td></tr>
+<tr><td>Sample line</td><td>≤ 20,000 characters</td></tr>
+<tr><td>Field name</td><td>1&ndash;60 characters, required</td></tr>
+<tr><td>Field regex</td><td>≤ 2,000 characters</td></tr>
+<tr><td>Timestamp format token</td><td>≤ 120 characters (stored only when non-empty)</td></tr>
+<tr><td>META business title</td><td>≤ 200 characters (stored only when non-empty after trimming)</td></tr>
+<tr><td>Compound rules</td><td>≤ 200 per source type; resulting step ≤ 500 characters; condition field ≤ 60, value ≤ 500 characters</td></tr>
+<tr><td>Line length at import</td><td>Every line is truncated to its first <b>2,000 characters</b> before any regex runs</td></tr>
+<tr><td>Per-match time</td><td>0.25 seconds wall-clock (when the optional <code>regex</code> module is installed)</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> The 2,000-character line cap applies before matching, so a regex aimed at content beyond that point never matches — a long JSON line with the interesting attribute at the end is a classic trap. Blank lines are always skipped. And a regex that backtracks catastrophically does not fail the run: the match times out after 0.25 seconds and the line is counted as <em>skipped</em>. A source type with a pathological pattern therefore shows up as a large &ldquo;Events skipped&rdquo; count and a slow import rather than as an error.</div>
+
+<h2 id="st-trouble">17.12 Troubleshooting</h2>
+
+<table>
+<thead><tr><th>Symptom</th><th>Cause and remedy</th></tr></thead>
+<tbody>
+<tr><td>Run refused with &ldquo;The source type has no timestamp field.&rdquo;</td><td>Add a field on the Timestamp tab. It is the one mandatory role.</td></tr>
+<tr><td>Run refused with &ldquo;Link a source type to this source first.&rdquo;</td><td>The source has no <code>sourceTypeId</code>, or it points at a deleted source type. Edit the source and pick one.</td></tr>
+<tr><td>Run finishes with &ldquo;⚠ … No line matched — check the linked source type's regexes fit this file's format&rdquo;</td><td>Lines were read but nothing was extracted. Copy a real line from the source's file preview into the sample and re-check every field's match feedback.</td></tr>
+<tr><td>A high &ldquo;Events skipped&rdquo; KPI (the tile turns orange above zero)</td><td>Lines were read but failed the id/step/timestamp gate, or a regex timed out. Usually the timestamp: check the inferred format, and check that the values on other lines look like the sample's.</td></tr>
+<tr><td>Dates come out a month off</td><td>Day-first versus month-first ambiguity. Verify the green timestamp preview in the wizard; a US log with a 24-hour clock is read day-first.</td></tr>
+<tr><td>A meta column is empty even though the field matches</td><td>It is the fourth or later meta field. Only the first three are written; reorder or remove one.</td></tr>
+<tr><td>The analyst sees the wrong attribute names</td><td>The <code>METAS</code> row was created on the first import and is never updated. Clear the project and import again.</td></tr>
+<tr><td>A field cannot be deleted (🔒)</td><td>A compound rule references it. Remove the condition in the rule first; renaming, by contrast, is always safe.</td></tr>
+</tbody>
+</table>
+
+</section>
