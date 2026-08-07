@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 
 vi.mock('../api', () => ({
   api: {
@@ -21,6 +21,7 @@ import { api } from '../api'
 import { useStore } from '../store'
 import { RunSourceDialog } from './RunSourceDialog'
 import type { Source } from '../types'
+import { renderSettled, resetStoreOutsideRender } from '../test/renderSettled'
 
 const SOURCE: Source = {
   id: 's1', owner: 'dev', name: 'Access log', kind: 'file',
@@ -28,8 +29,12 @@ const SOURCE: Source = {
 }
 
 afterEach(() => {
+  // Unmount before resetting the store: the dialog subscribes to it, and resetting while
+  // mounted would re-render it outside act(). See resetStoreOutsideRender.
+  resetStoreOutsideRender(() =>
+    useStore.setState({ connections: [], connection: { isConnected: false, activeProfileId: null } as never }),
+  )
   vi.clearAllMocks()
-  useStore.setState({ connections: [], connection: { isConnected: false, activeProfileId: null } as never })
 })
 
 describe('RunSourceDialog', () => {
@@ -38,7 +43,7 @@ describe('RunSourceDialog', () => {
       connections: [{ id: 'c1', name: 'Prod DB' }] as never,
       connection: { isConnected: true, activeProfileId: 'c1' } as never,
     })
-    render(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
+    await renderSettled(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
 
     fireEvent.change(screen.getByPlaceholderText(/RETAIL-DEMO/i), { target: { value: 'P1' } })
     fireEvent.click(screen.getByRole('button', { name: /Run extraction/i }))
@@ -53,7 +58,7 @@ describe('RunSourceDialog', () => {
       connections: [{ id: 'c1', name: 'Prod DB' }, { id: 'c2', name: 'Staging DB' }] as never,
       connection: { isConnected: false, activeProfileId: null } as never,
     })
-    render(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
+    await renderSettled(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
 
     fireEvent.change(screen.getByLabelText(/Destination connection/i), { target: { value: 'c2' } })
     fireEvent.change(screen.getByPlaceholderText(/RETAIL-DEMO/i), { target: { value: 'P1' } })
@@ -67,7 +72,7 @@ describe('RunSourceDialog', () => {
       connections: [{ id: 'c1', name: 'Prod DB' }] as never,
       connection: { isConnected: true, activeProfileId: 'c1' } as never,
     })
-    render(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
+    await renderSettled(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
 
     await waitFor(() => expect(api.destinationProjects).toHaveBeenCalledWith('c1'))
     const select = await screen.findByLabelText('Project')
@@ -88,7 +93,7 @@ describe('RunSourceDialog', () => {
       connections: [{ id: 'c1', name: 'Prod DB' }] as never,
       connection: { isConnected: true, activeProfileId: 'c1' } as never,
     })
-    render(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
+    await renderSettled(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
 
     await waitFor(() => expect(screen.getByText(/connection refused/)).toBeTruthy())
     fireEvent.change(screen.getByPlaceholderText(/RETAIL-DEMO/i), { target: { value: 'P1' } })
@@ -101,7 +106,7 @@ describe('RunSourceDialog', () => {
       connections: [{ id: 'c1', name: 'Prod DB' }] as never,
       connection: { isConnected: true, activeProfileId: 'c1' } as never,
     })
-    render(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
+    await renderSettled(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
 
     const toggle = screen.getByRole('checkbox', { name: /Delta upload/i }) as HTMLInputElement
     expect(toggle.checked).toBe(true)
@@ -122,7 +127,7 @@ describe('RunSourceDialog', () => {
       connections: [{ id: 'c1', name: 'Prod DB' }] as never,
       connection: { isConnected: true, activeProfileId: 'c1' } as never,
     })
-    render(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
+    await renderSettled(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
 
     await waitFor(() => expect(screen.getByText(/40 records imported/)).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: /Reset checkpoint/i }))
@@ -138,7 +143,7 @@ describe('RunSourceDialog', () => {
       connections: [{ id: 'c1', name: 'Prod DB' }] as never,
       connection: { isConnected: true, activeProfileId: 'c1' } as never,
     })
-    render(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
+    await renderSettled(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
 
     fireEvent.change(screen.getByPlaceholderText(/RETAIL-DEMO/i), { target: { value: 'P1' } })
     fireEvent.click(screen.getByRole('button', { name: /Run extraction/i }))
@@ -158,7 +163,7 @@ describe('RunSourceDialog', () => {
       // remembered destination wins.
       connection: { isConnected: true, activeProfileId: 'c1' } as never,
     })
-    render(<RunSourceDialog source={REMEMBERED} onClose={() => {}} onDone={() => {}} />)
+    await renderSettled(<RunSourceDialog source={REMEMBERED} onClose={() => {}} onDone={() => {}} />)
 
     await waitFor(() => expect(api.destinationProjects).toHaveBeenCalledWith('c2'))
     await waitFor(() =>
@@ -178,7 +183,7 @@ describe('RunSourceDialog', () => {
       connections: [{ id: 'c1', name: 'Prod DB' }] as never,
       connection: { isConnected: true, activeProfileId: 'c1' } as never,
     })
-    render(<RunSourceDialog source={REMEMBERED} onClose={() => {}} onDone={() => {}} />)
+    await renderSettled(<RunSourceDialog source={REMEMBERED} onClose={() => {}} onDone={() => {}} />)
 
     await waitFor(() => expect(api.destinationProjects).toHaveBeenCalledWith('c1'))
     // The remembered project belongs to the revoked connection, so it is not restored.
@@ -197,19 +202,19 @@ describe('RunSourceDialog', () => {
       connections: [{ id: 'c1', name: 'Prod DB' }] as never,
       connection: { isConnected: true, activeProfileId: 'c1' } as never,
     })
-    render(<RunSourceDialog source={REMEMBERED} onClose={() => {}} onDone={() => {}} />)
+    await renderSettled(<RunSourceDialog source={REMEMBERED} onClose={() => {}} onDone={() => {}} />)
 
     await waitFor(() =>
       expect((screen.getByPlaceholderText(/RETAIL-DEMO/i) as HTMLInputElement).value).toBe('RETAIL'),
     )
   })
 
-  it('blocks running when no connection is available', () => {
+  it('blocks running when no connection is available', async () => {
     useStore.setState({
       connections: [] as never,
       connection: { isConnected: false, activeProfileId: null } as never,
     })
-    render(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
+    await renderSettled(<RunSourceDialog source={SOURCE} onClose={() => {}} onDone={() => {}} />)
     expect(screen.getByText(/No connections are assigned to you/i)).toBeTruthy()
     expect((screen.getByRole('button', { name: /Run extraction/i }) as HTMLButtonElement).disabled).toBe(true)
   })

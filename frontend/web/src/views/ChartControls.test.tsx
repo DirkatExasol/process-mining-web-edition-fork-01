@@ -1,11 +1,19 @@
 /** ChartControls — the filter-preset picker with its inline manage/delete menu. */
 
-import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { ChartControls } from './ChartControls'
 import { useStore } from '../store'
 import { readSetting, writeSetting } from '../settings'
 import type { FilterGroup } from '../types'
+
+// One test flips the shared slider.mode setting. Restore it after unmounting: writeSetting
+// notifies useSyncExternalStore subscribers, so resetting while ChartControls is still
+// mounted would re-render it outside act().
+afterEach(() => {
+  cleanup()
+  writeSetting('slider.mode', 'Range')
+})
 
 const group = (id: string, name: string): FilterGroup => ({
   id,
@@ -127,6 +135,5 @@ describe('ChartControls date-slider mode', () => {
     const slider = container.querySelector('.metric-bar-slider') as HTMLElement
     fireEvent.click(within(slider).getByText('Day'))
     expect(readSetting('slider.mode')).toBe('Day')
-    writeSetting('slider.mode', 'Range') // reset shared setting for other tests
   })
 })

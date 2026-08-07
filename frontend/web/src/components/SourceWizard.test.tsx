@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 
 vi.mock('../api', () => ({
   api: {
@@ -16,13 +16,14 @@ vi.mock('../api', () => ({
 
 import { api } from '../api'
 import { SourceWizard } from './SourceWizard'
+import { renderSettled } from '../test/renderSettled'
 
 afterEach(() => vi.clearAllMocks())
 
 describe('SourceWizard', () => {
   it('creates a File source with its config', async () => {
     const onSaved = vi.fn()
-    render(<SourceWizard onClose={() => {}} onSaved={onSaved} />)
+    await renderSettled(<SourceWizard onClose={() => {}} onSaved={onSaved} />)
 
     // Step 1: File is preselected → Next
     fireEvent.click(screen.getByRole('button', { name: /^Next$/ }))
@@ -46,8 +47,8 @@ describe('SourceWizard', () => {
     expect(onSaved).toHaveBeenCalled()
   })
 
-  it('lists future kinds as coming soon', () => {
-    render(<SourceWizard onClose={() => {}} onSaved={() => {}} />)
+  it('lists future kinds as coming soon', async () => {
+    await renderSettled(<SourceWizard onClose={() => {}} onSaved={() => {}} />)
     expect(screen.getAllByText(/coming soon/i).length).toBeGreaterThan(0)
   })
 })

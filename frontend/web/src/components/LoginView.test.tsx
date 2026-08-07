@@ -2,7 +2,7 @@
  *  only when a directory is configured and reflects its reachability. */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 vi.mock('../api', () => ({
   ApiError: class ApiError extends Error {},
@@ -37,9 +37,11 @@ import { LoginView } from './LoginView'
 const login = api.login as unknown as ReturnType<typeof vi.fn>
 const verifyMfa = api.verifyMfa as unknown as ReturnType<typeof vi.fn>
 
-// Some tests leave a two-factor step pending on the shared store; reset it so the
-// next test starts on the username/password form.
-afterEach(() => useStore.getState().cancelMfa())
+// Some tests leave a two-factor step pending on the shared store; reset it so the next
+// test starts on the username/password form. Wrap it in act(): cancelMfa() mutates the
+// store, which synchronously re-renders the still-mounted LoginView (it subscribes via
+// useStore), and that update must be wrapped or React logs a spurious act(...) warning.
+afterEach(() => act(() => useStore.getState().cancelMfa()))
 
 const directoryStatus = api.directoryStatus as unknown as ReturnType<typeof vi.fn>
 const licenseStatus = api.licenseStatus as unknown as ReturnType<typeof vi.fn>
@@ -61,10 +63,35 @@ licenseStatus.mockResolvedValue({
   image: '',
 })
 
+// LoginView fires three independent effects on mount (loginAppearance, directoryStatus,
+// licenseStatus), each resolving into a setState. A test that only awaits one of them
+// would let the other two update state outside act(), which React flags. Render inside an
+// async act() so all three settle before the test proceeds — no "not wrapped in act(...)".
+const loginAppearance = api.loginAppearance as unknown as ReturnType<typeof vi.fn>
+
+// LoginView fires three fire-and-forget mount effects (loginAppearance, directoryStatus,
+// licenseStatus), each resolving a promise into a setState. Render inside act() and, still
+// inside it, await the exact promises those effects returned — each effect's
+// `.then(setState)` is registered before this await, so it resolves first and lands while
+// act is active. Rendering outside act would let those resolutions escape at the first
+// `await`, before act engages, which is what logs "update … not wrapped in act(...)".
+async function renderLogin(onSignedIn: () => void = () => {}) {
+  let result: ReturnType<typeof render>
+  await act(async () => {
+    result = render(<LoginView onSignedIn={onSignedIn} />)
+    await Promise.allSettled(
+      [loginAppearance, directoryStatus, licenseStatus].flatMap((m) =>
+        m.mock.results.map((r) => r.value),
+      ),
+    )
+  })
+  return result!
+}
+
 describe('LoginView directory indicator', () => {
   it('shows a green "available" indicator when the directory is reachable', async () => {
     directoryStatus.mockResolvedValue({ configured: true, available: true })
-    render(<LoginView onSignedIn={() => {}} />)
+    await renderLogin()
     const label = await screen.findByText('Directory server available')
     // The label sits next to an LED dot (its previous sibling).
     const dot = label.previousElementSibling as HTMLElement
@@ -74,7 +101,7 @@ describe('LoginView directory indicator', () => {
 
   it('shows a red "unavailable" indicator when the directory does not answer', async () => {
     directoryStatus.mockResolvedValue({ configured: true, available: false })
-    render(<LoginView onSignedIn={() => {}} />)
+    await renderLogin()
     const label = await screen.findByText('Directory server unavailable')
     const dot = label.previousElementSibling as HTMLElement
     expect(dot.style.background).toContain('var(--red)')
@@ -82,7 +109,7 @@ describe('LoginView directory indicator', () => {
 
   it('renders nothing when no directory is configured', async () => {
     directoryStatus.mockResolvedValue({ configured: false, available: false })
-    render(<LoginView onSignedIn={() => {}} />)
+    await renderLogin()
     // Give the effect a chance to resolve, then assert the indicator is absent.
     await waitFor(() => expect(directoryStatus).toHaveBeenCalled())
     expect(screen.queryByText(/Directory server/)).toBeNull()
@@ -97,7 +124,7 @@ describe('LoginView demo-mode label', () => {
       demoMode: true,
       remainingSeconds: 25 * 60 + 5, // 25m05s → rounds up to 26 min
     })
-    render(<LoginView onSignedIn={() => {}} />)
+    await renderLogin()
     await screen.findByText(/Demo Mode/)
     expect(screen.getByText(/remaining time: 26 min/)).toBeTruthy()
   })
@@ -109,7 +136,7 @@ describe('LoginView demo-mode label', () => {
       demoMode: true,
       remainingSeconds: 0,
     })
-    render(<LoginView onSignedIn={() => {}} />)
+    await renderLogin()
     await screen.findByText('No License installed')
     expect(screen.queryByText(/Demo Mode/)).toBeNull()
     expect(screen.queryByText(/remaining time/)).toBeNull()
@@ -122,7 +149,7 @@ describe('LoginView demo-mode label', () => {
       demoMode: true,
       remainingSeconds: null,
     })
-    render(<LoginView onSignedIn={() => {}} />)
+    await renderLogin()
     await screen.findByText('No License installed')
   })
 
@@ -133,7 +160,7 @@ describe('LoginView demo-mode label', () => {
       demoMode: false,
       remainingSeconds: null,
     })
-    render(<LoginView onSignedIn={() => {}} />)
+    await renderLogin()
     await waitFor(() => expect(licenseStatus).toHaveBeenCalled())
     expect(screen.queryByText(/Demo Mode/)).toBeNull()
   })
@@ -144,7 +171,7 @@ describe('LoginView passkey button', () => {
     // passkeysUsable() is false for both an unsupported browser and a bare-IP host.
     usable.mockReturnValue(false)
     directoryStatus.mockResolvedValue({ configured: false, available: false })
-    render(<LoginView onSignedIn={() => {}} />)
+    await renderLogin()
     await waitFor(() => expect(directoryStatus).toHaveBeenCalled())
     expect(screen.queryByText(/Sign with Passkey/)).toBeNull()
     usable.mockReturnValue(true) // restore for later tests
@@ -153,7 +180,7 @@ describe('LoginView passkey button', () => {
   it('stays disabled until a username is entered', async () => {
     usable.mockReturnValue(true)
     directoryStatus.mockResolvedValue({ configured: false, available: false })
-    render(<LoginView onSignedIn={() => {}} />)
+    await renderLogin()
     const btn = (await screen.findByText(/Sign with Passkey/)).closest('button')!
     expect(btn.disabled).toBe(true)
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'alice' } })
@@ -172,7 +199,7 @@ describe('LoginView passkey button', () => {
       passkeyAllowed: true,
     })
     const onSignedIn = vi.fn()
-    render(<LoginView onSignedIn={onSignedIn} />)
+    await renderLogin(onSignedIn)
     const btn = (await screen.findByText(/Sign with Passkey/)).closest('button')!
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'alice' } })
     fireEvent.click(btn)
@@ -185,7 +212,7 @@ describe('LoginView passkey button', () => {
     directoryStatus.mockResolvedValue({ configured: false, available: false })
     authPasskey.mockRejectedValue(new Error('Passkey sign-in failed.'))
     const onSignedIn = vi.fn()
-    render(<LoginView onSignedIn={onSignedIn} />)
+    await renderLogin(onSignedIn)
     const btn = (await screen.findByText(/Sign with Passkey/)).closest('button')!
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'alice' } })
     fireEvent.click(btn)
@@ -210,7 +237,7 @@ describe('LoginView two-factor step', () => {
     directoryStatus.mockResolvedValue({ configured: false, available: false })
     login.mockResolvedValue({ mfaRequired: true, username: 'alice' })
     const onSignedIn = vi.fn()
-    render(<LoginView onSignedIn={onSignedIn} />)
+    await renderLogin(onSignedIn)
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'alice' } })
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw' } })
     fireEvent.click(screen.getByRole('button', { name: /Sign in/ }))
@@ -225,7 +252,7 @@ describe('LoginView two-factor step', () => {
     login.mockResolvedValue({ mfaRequired: true, username: 'alice' })
     verifyMfa.mockResolvedValue(user)
     const onSignedIn = vi.fn()
-    render(<LoginView onSignedIn={onSignedIn} />)
+    await renderLogin(onSignedIn)
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'alice' } })
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw' } })
     fireEvent.click(screen.getByRole('button', { name: /Sign in/ }))
@@ -239,7 +266,7 @@ describe('LoginView two-factor step', () => {
   it('lets the user go back to the password form', async () => {
     directoryStatus.mockResolvedValue({ configured: false, available: false })
     login.mockResolvedValue({ mfaRequired: true, username: 'alice' })
-    render(<LoginView onSignedIn={() => {}} />)
+    await renderLogin()
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'alice' } })
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw' } })
     fireEvent.click(screen.getByRole('button', { name: /Sign in/ }))
@@ -274,7 +301,7 @@ describe('LoginView forced 2FA enrolment', () => {
       recoveryCodes: ['aaaa-bbbb', 'cccc-dddd'],
     })
     const onSignedIn = vi.fn()
-    render(<LoginView onSignedIn={onSignedIn} />)
+    await renderLogin(onSignedIn)
 
     // Password step → the server says 2FA must be set up first.
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'alice' } })

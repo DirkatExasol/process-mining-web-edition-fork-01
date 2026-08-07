@@ -1,8 +1,9 @@
 /** Happy Path editor — the series-parallel node model: add steps, add a split
  *  (branches that rejoin), and confirm the recursive editor renders it. */
-import { beforeEach, describe, expect, it } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { act, cleanup, fireEvent, screen } from '@testing-library/react'
 import { HappyPathView } from './HappyPathView'
+import { renderSettled } from '../test/renderSettled'
 import { useStore } from '../store'
 import { stepNode } from '../graph/happyPath'
 import { readSetting, writeSetting } from '../settings'
@@ -12,7 +13,18 @@ beforeEach(() => {
   writeSetting('happyPath.editorWidth', 460) // reset the in-memory settings cache too
 })
 
-function setup(nodes = [stepNode('A'), stepNode('B')]) {
+afterEach(async () => {
+  // HappyPathView's mount/update effect kicks off store.refreshHappyPathConformance()
+  // (async). In these synchronous tests it resolves after the test body — flush it inside
+  // act() so its trailing setState is wrapped, then unmount. Without this React logs
+  // "update … not wrapped in act(...)".
+  await act(async () => {
+    await new Promise((r) => setTimeout(r))
+  })
+  cleanup()
+})
+
+async function setup(nodes = [stepNode('A'), stepNode('B')]) {
   useStore.setState({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     selectedProject: { projectId: 'p', title: 'Proj' } as any,
@@ -25,14 +37,22 @@ function setup(nodes = [stepNode('A'), stepNode('B')]) {
     processGraph: { steps: { A: {}, B: {}, C: {}, D: {}, E: {} }, transitions: [] } as any,
     journeyCount: 100,
     isLoading: false,
+    // The view's mount/update effect fires this async action whenever a project + paths
+    // are present. These tests exercise the editor, not conformance, so stub it to a
+    // no-op — otherwise its trailing setState lands outside act() and React warns.
+    refreshHappyPathConformance: async () => {},
   })
-  render(<HappyPathView />)
+  await renderSettled(<HappyPathView />)
   fireEvent.click(screen.getByRole('button', { name: /Edit Path/ })) // enter edit mode
+  // Let any mount/update async settle inside act before the test interacts.
+  await act(async () => {
+    await new Promise((r) => setTimeout(r))
+  })
 }
 
 describe('HappyPathView editor', () => {
-  it('adds a split (rejoinable branches) into the sequence', () => {
-    setup()
+  it('adds a split (rejoinable branches) into the sequence', async () => {
+    await setup()
     // Both trunk steps render as editable rows.
     expect(screen.getByText('A')).toBeInTheDocument()
     expect(screen.getByText('B')).toBeInTheDocument()
@@ -49,9 +69,9 @@ describe('HappyPathView editor', () => {
     expect(path.nodes[2].branches).toHaveLength(2)
   })
 
-  it('supports nesting: a split can be added inside a branch', () => {
+  it('supports nesting: a split can be added inside a branch', async () => {
     // Seed a path that already has a split, then split inside branch 1.
-    setup([
+    await setup([
       stepNode('A'),
       { id: 'S1', step: '', label: '', branches: [[stepNode('B')], [stepNode('C')]] },
     ])
@@ -65,8 +85,8 @@ describe('HappyPathView editor', () => {
     expect(branch0.some((n) => n.branches.length > 0)).toBe(true) // a nested split exists
   })
 
-  it('names the rejoin point of a split that has a continuation', () => {
-    setup([
+  it('names the rejoin point of a split that has a continuation', async () => {
+    await setup([
       stepNode('A'),
       { id: 'S1', step: '', label: '', branches: [[stepNode('B')], [stepNode('C')]] },
       stepNode('D'), // continuation → the split rejoins before D, so it can be named
@@ -78,8 +98,8 @@ describe('HappyPathView editor', () => {
     expect(useStore.getState().happyPaths[0].nodes[1].rejoinLabel).toBe('Approved')
   })
 
-  it('hides the rejoin control when a split is terminal (no continuation)', () => {
-    setup([
+  it('hides the rejoin control when a split is terminal (no continuation)', async () => {
+    await setup([
       stepNode('A'),
       { id: 'S1', step: '', label: '', branches: [[stepNode('B')], [stepNode('C')]] },
     ])
@@ -87,12 +107,16 @@ describe('HappyPathView editor', () => {
   })
 
   // jsdom's PointerEvent doesn't carry clientX; dispatch a MouseEvent under the
-  // pointer type name (React's handler reads clientX from the native event).
+  // pointer type name (React's handler reads clientX from the native event). Wrap the
+  // raw dispatch in act(): unlike fireEvent, dispatchEvent doesn't, so the handler's
+  // setState (drag width) would otherwise update outside act and warn.
   const pointer = (el: Element, type: string, clientX: number) =>
-    el.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX }))
+    act(() => {
+      el.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX }))
+    })
 
-  it('resizes the ideal-path pane by dragging the handle and persists the width', () => {
-    setup()
+  it('resizes the ideal-path pane by dragging the handle and persists the width', async () => {
+    await setup()
     const handle = screen.getByRole('separator', { name: /Resize the ideal-path/i })
     // Drag the handle 100px to the left → the right pane widens 460 → 560.
     pointer(handle, 'pointerdown', 500)
@@ -101,8 +125,8 @@ describe('HappyPathView editor', () => {
     expect(readSetting<number>('happyPath.editorWidth', 460)).toBe(560)
   })
 
-  it('double-clicking the handle resets the pane width', () => {
-    setup()
+  it('double-clicking the handle resets the pane width', async () => {
+    await setup()
     const handle = screen.getByRole('separator', { name: /Resize the ideal-path/i })
     pointer(handle, 'pointerdown', 500)
     pointer(handle, 'pointermove', 300)

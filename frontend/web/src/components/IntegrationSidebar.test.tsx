@@ -4,7 +4,7 @@
  *  on merely being assigned the connection. */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 
 vi.mock('../api', () => ({
   api: {
@@ -19,6 +19,7 @@ vi.mock('../api', () => ({
 
 import { useStore } from '../store'
 import { IntegrationSidebar } from './IntegrationSidebar'
+import { renderSettled, resetStoreOutsideRender } from '../test/renderSettled'
 
 const ASSIGNED = {
   id: 'c1', name: 'Prod DB', comment: '', host: 'db', port: 8563,
@@ -39,44 +40,46 @@ function setUser(over: Record<string, unknown>) {
 }
 
 afterEach(() => {
+  // Unmount before resetting the store, so setUser() can't re-render the still-mounted
+  // sidebar outside act().
+  resetStoreOutsideRender(() => setUser({}))
   vi.clearAllMocks()
-  setUser({})
 })
 
 describe('IntegrationSidebar connections', () => {
   it('lets a developer create a connection from the console', async () => {
     setUser({ authIsDeveloper: true })
-    render(<IntegrationSidebar />)
+    await renderSettled(<IntegrationSidebar />)
 
     fireEvent.click(screen.getByTitle('New connection'))
     // The shared editor opens in "new" mode.
     await waitFor(() => expect(screen.getByText(/New connection/i)).toBeTruthy())
   })
 
-  it('offers ✎ only for a connection the developer owns', () => {
+  it('offers ✎ only for a connection the developer owns', async () => {
     // Assigned but owned by someone else → no edit affordance.
     setUser({ authIsDeveloper: true, manageableConnections: [] })
-    const { unmount } = render(<IntegrationSidebar />)
+    const { unmount } = await renderSettled(<IntegrationSidebar />)
     expect(screen.queryByTitle('Edit connection')).toBeNull()
     unmount()
 
     setUser({ authIsDeveloper: true, manageableConnections: [OWNED] as never })
-    render(<IntegrationSidebar />)
+    await renderSettled(<IntegrationSidebar />)
     expect(screen.getByTitle('Edit connection')).toBeTruthy()
   })
 
-  it('editing does not also connect/disconnect the card underneath', () => {
+  it('editing does not also connect/disconnect the card underneath', async () => {
     setUser({ authIsDeveloper: true, manageableConnections: [OWNED] as never })
-    render(<IntegrationSidebar />)
+    await renderSettled(<IntegrationSidebar />)
 
     fireEvent.click(screen.getByTitle('Edit connection'))
     // The card's own click handler would have started a connect.
     expect(useStore.getState().connection.activeProfileId).toBeNull()
   })
 
-  it('hides connection management from a user without the capability', () => {
+  it('hides connection management from a user without the capability', async () => {
     setUser({}) // no role flags
-    render(<IntegrationSidebar />)
+    await renderSettled(<IntegrationSidebar />)
     expect(screen.queryByTitle('New connection')).toBeNull()
     expect(screen.queryByTitle('Edit connection')).toBeNull()
   })

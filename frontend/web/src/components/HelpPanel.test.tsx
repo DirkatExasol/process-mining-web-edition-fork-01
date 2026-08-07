@@ -1,10 +1,15 @@
 /** Help panel search — filters the table of contents to matching sections,
  *  navigates to a hit, and highlights matches in the rendered chapter. */
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { HelpPanel } from './HelpPanel'
 import { useStore } from '../store'
+import { resetStoreOutsideRender } from '../test/renderSettled'
+
+// Some tests flip authIsAdmin. Reset it after unmounting, so restoring the default can't
+// re-render a still-mounted HelpPanel outside act().
+afterEach(() => resetStoreOutsideRender(() => useStore.setState({ authIsAdmin: false })))
 
 describe('HelpPanel search', () => {
   it('shows the full table of contents until a query is entered', () => {
@@ -108,6 +113,5 @@ describe('HelpPanel Administration group (admin-only)', () => {
     expect(screen.getByRole('button', { name: /Directory \(LDAP\)/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Logging/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Customize/ })).toBeInTheDocument()
-    useStore.setState({ authIsAdmin: false }) // reset shared store for other tests
   })
 })
