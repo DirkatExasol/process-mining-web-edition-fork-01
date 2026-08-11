@@ -983,6 +983,34 @@ class ProcessRepository:
             "meta3": clean_str(row[4]),
         }
 
+    async def load_journey_sequence(
+        self, project_id: str, event_id: str
+    ) -> list[dict[str, Any]]:
+        """The journey's events in time order — ``[{step, eventTime}, …]``.
+
+        This is the raw ordered trace (the same ordering the journey graph is built from:
+        EVENT_TIME then STEP_ID), so the swimlane view can lay each event out
+        sequentially. A revisited step simply appears again — loops are unrolled by
+        construction — which is exactly what a strictly-sequential lane layout needs.
+        """
+        result = await self.db.execute(
+            f"""
+            SELECT STEP, EVENT_TIME
+            FROM JOURNEYS
+            WHERE PROJECT_ID = '{esc(project_id)}'
+            AND {self.active_sample_set.sql_fragment()}
+            AND EVENT_ID = '{esc(event_id)}'
+            ORDER BY EVENT_TIME, STEP_ID
+            """
+        )
+        out: list[dict[str, Any]] = []
+        for row in result.rows:
+            step = row[0]
+            when = parse_date(row[1])
+            if isinstance(step, str) and when is not None:
+                out.append({"step": step, "eventTime": when})
+        return out
+
     async def load_journey_graph(self, project_id: str, event_id: str) -> ProcessGraph:
         safe_pid, safe_eid = esc(project_id), esc(event_id)
         frag = self.active_sample_set.sql_fragment()

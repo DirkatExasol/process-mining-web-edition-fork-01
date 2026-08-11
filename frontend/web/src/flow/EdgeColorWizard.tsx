@@ -20,6 +20,8 @@ import { TRANSITION_METRICS, type TransitionMetric } from '../types'
 
 const METRIC_ICONS: Record<TransitionMetric, string> = {
   Count: '#',
+  Percentage: '%',
+  'Journey %': '%',
   'Avg Time': '⏱',
   'Min Time': '⌄',
   'Max Time': '⌃',

@@ -27,6 +27,8 @@
 <thead><tr><th>Chip</th><th>Meaning on an edge</th><th>Label format</th></tr></thead>
 <tbody>
 <tr><td><b># Count</b> (default)</td><td>Number of times the transition was traversed across the filtered journeys.</td><td>Compact count, e.g. "1.2k", "3.4M"</td></tr>
+<tr><td><b>% Percentage</b></td><td>The share of journeys <em>leaving the source node</em> that take this edge — the branching probability at that step. Every node's outgoing edges sum to <b>100 %</b> (a node with a single outgoing edge shows 100 %).</td><td>Percent, e.g. "70%" / "3.5%"</td></tr>
+<tr><td><b>% Journey %</b></td><td>The share of <em>all filtered journeys</em> that traverse this edge (edge count ÷ total filtered journeys). The denominator is the whole map rather than the source node, so it shows how common an edge is overall. A value can exceed 100 % for an edge a single journey repeats.</td><td>Percent, e.g. "50%" / "0.4%"</td></tr>
 <tr><td><b>⏱ Avg Time</b></td><td>Mean elapsed time between the two steps.</td><td>"Ns", "Nm", "N.nh", "N.nd"</td></tr>
 <tr><td><b>⌄ Min Time</b></td><td>Shortest observed elapsed time for that transition.</td><td>as above</td></tr>
 <tr><td><b>⌃ Max Time</b></td><td>Longest observed elapsed time.</td><td>as above</td></tr>
@@ -41,7 +43,7 @@
 <p>The chosen metric drives three visual channels at once:</p>
 
 <dl>
-<dt>Thickness</dt><dd>Edge width runs from 3 px to 22 px, scaled linearly against the largest value among the visible edges. The arrowhead scales with the width.</dd>
+<dt>Thickness</dt><dd>Edge width runs from 3 px to 22 px, scaled linearly against the largest value among the visible edges (for <b>Percentage</b> and <b>Journey %</b> the scale is a fixed 0–100 %). The arrowhead scales with the width.</dd>
 <dt>Opacity</dt><dd>Alpha runs from 0.3 to 0.8 on the same linear scale, so weak transitions recede.</dd>
 <dt>Colour</dt><dd>When <b>Colorise edges by weight</b> is on (see §8.5.6) the edge is tinted along the gradient configured for that metric; otherwise it is grey.</dd>
 </dl>
@@ -52,6 +54,8 @@
 <thead><tr><th>Metric</th><th>Default schema</th><th>Gradient</th></tr></thead>
 <tbody>
 <tr><td>Count</td><td>Green (high is good)</td><td>red → green</td></tr>
+<tr><td>Percentage</td><td>Green (high is good)</td><td>red → green</td></tr>
+<tr><td>Journey %</td><td>Green (high is good)</td><td>red → green</td></tr>
 <tr><td>Avg Time</td><td>Orange scale</td><td>light → dark orange</td></tr>
 <tr><td>Min Time</td><td>Blue scale</td><td>light → dark blue</td></tr>
 <tr><td>Max Time</td><td>Red (low is good)</td><td>green → red</td></tr>

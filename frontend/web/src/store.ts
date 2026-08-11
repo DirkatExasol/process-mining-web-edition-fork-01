@@ -31,6 +31,7 @@ import {
   type HappyPath,
   type ConnectionProjectDeleteResult,
   type ConnectionProjectsResult,
+  type JourneyEvent,
   type JourneyPath,
   type LegacyHappyPath,
   type ManagedConnection,
@@ -194,6 +195,10 @@ export interface AppState {
   journeyMeta2: string | null
   journeyMeta3: string | null
   journeyCount: number | null
+  // The loaded journey's raw ordered trace, for the sequential swimlane view.
+  journeySequence: JourneyEvent[]
+  // Individual-Journey canvas toggle: false = flowchart (default), true = swimlane.
+  journeySwimlane: boolean
   durations: DurationStats
   transitionMetric: TransitionMetric
   processGoodnessScore: number | null
@@ -349,6 +354,7 @@ export interface AppActions {
 
   fetchEventIdSuggestions: () => Promise<void>
   loadIndividualJourney: () => Promise<void>
+  setJourneySwimlane: (on: boolean) => void
 
   handleNodeAction: (node: string, action: 'include' | 'exclude') => void
   updateStep: (
@@ -510,6 +516,8 @@ const INITIAL_STATE: AppState = {
   journeyMeta2: null,
   journeyMeta3: null,
   journeyCount: null,
+  journeySequence: [],
+  journeySwimlane: false,
   durations: EMPTY_DURATIONS,
   transitionMetric: 'Count',
   processGoodnessScore: null,
@@ -1805,6 +1813,7 @@ export const useStore = create<Store>((set, get) => {
         set({
           lastQueriedEventId: result.queriedEventId,
           processGraph: result.processGraph,
+          journeySequence: result.sequence ?? [],
           journeyCount: result.journeyCount,
           journeyDate: result.startDate,
           journeyEndDate: result.endDate,
@@ -1820,6 +1829,8 @@ export const useStore = create<Store>((set, get) => {
         set({ isLoading: false })
       }
     },
+
+    setJourneySwimlane: (on: boolean) => set({ journeySwimlane: on }),
 
     // ── node actions & step editor ────────────────────────────────────────
 

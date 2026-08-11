@@ -479,6 +479,8 @@ function ProjectsList({ onSelected }: { onSelected: () => void }) {
 
 const METRIC_ICONS: Record<TransitionMetric, string> = {
   Count: '#',
+  Percentage: '%',
+  'Journey %': '%',
   'Avg Time': '⏱',
   'Min Time': '⌄',
   'Max Time': '⌃',

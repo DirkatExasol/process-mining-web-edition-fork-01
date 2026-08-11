@@ -322,7 +322,7 @@
 
   <figure data-fig="app-12-individual-journey"><figcaption>Individual Journey: a single case drawn step by step, with event times on the nodes and the journey KPI tiles above.</figcaption></figure>
 
-  <p>Individual Journey draws exactly one case. Instead of an aggregated map you see that journey's steps in the order they occurred, with the clock time of each event on the node and an animated dot travelling the path.</p>
+  <p>Individual Journey draws exactly one case. Instead of an aggregated map you see that journey's steps in the order they occurred, with the clock time of each event on the node.</p>
 
   <h3 id="ch9-journey-load">Finding a journey</h3>
 
@@ -343,7 +343,6 @@
 
   <ul>
     <li>Each node shows the event <b>time</b> as <code>HH:MM:SS</code> beneath the step name, in place of the usual description line.</li>
-    <li>A single blue dot with a white outline travels along the edges in chronological order, hopping from edge to edge at 0.8&nbsp;seconds per edge and looping endlessly. This is the playback of the case, not a metric.</li>
     <li>Node positions are stored per event ID (chart mode key <code>ij_&lt;eventId&gt;</code>), so rearranging one journey does not disturb another.</li>
   </ul>
 
@@ -361,6 +360,19 @@
   </table>
 
   <p>The meta tiles are what let you recognise the case in business terms — customer, order number, region, or whatever the project's meta fields have been configured to hold.</p>
+
+  <h3 id="ch9-journey-swimlane">Flowchart or swimlane</h3>
+
+  <p>A small switch floats over the canvas, top-centre, toggling between two layouts of the <em>same</em> journey. It is the only place this choice lives — it is on the canvas, not in the left panel — and it applies only to Individual Journey (the aggregated views, where loops carry meaning, always use the flowchart).</p>
+
+  <ul>
+    <li><b>🕸 Flowchart</b> (default) — the directed-follows graph described above. Because it aggregates the case into unique nodes, a revisited step is drawn as a <em>loop</em> back to the same node.</li>
+    <li><b>🏊 Swimlane</b> — the journey re-formatted as a <strong>strictly sequential</strong> layout: one column per event, left to right in time order. A revisited step simply appears again in a later column, so the view has <strong>no loops at all</strong> — the loop is "unrolled" into repeated, sequential nodes.</li>
+  </ul>
+
+  <p>In the swimlane, each horizontal <b>lane is a node group</b> (a step's <em>belongs-to</em> group), tinted with that group's colour, and a step sits in its group's lane — so a diagonal edge is the visual signal that the process moved from one group to another. A <b>header row above the top lane</b> carries each event's date and time, and every <b>edge is labelled with the time taken from that node to the next</b> (the elapsed time between the two consecutive events). The swimlane pans and zooms like the flowchart and fits itself to the window when opened.</p>
+
+  <div class="note"><strong>Note</strong> The swimlane deliberately has no per-node menu — it is a read-only, at-a-glance timeline of one case. Its columns are evenly spaced by <em>occurrence order</em>, not by real elapsed time; the actual gaps are the edge labels, and the absolute clock times are the header row.</div>
 
   <h3 id="ch9-journey-states">Individual Journey states</h3>
 

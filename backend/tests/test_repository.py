@@ -543,6 +543,24 @@ def test_event_id_suggestions_limit_is_clamped():
     assert f"LIMIT {_MAX_SUGGESTIONS}" in mgr.executed[-1]
 
 
+def test_journey_sequence_is_time_ordered_and_shaped():
+    import asyncio as _aio
+
+    rows = [
+        ["login", datetime(2026, 1, 1, 8, 0, 0)],
+        ["search", datetime(2026, 1, 1, 8, 1, 0)],
+        ["login", datetime(2026, 1, 1, 8, 5, 0)],  # a revisit — kept, not collapsed
+    ]
+    r, mgr = _cap_repo(rows=rows)
+    seq = _aio.run(r.load_journey_sequence("proj", "abc123"))
+    # Ordered by EVENT_TIME then STEP_ID — the ordering the graph is built from.
+    assert "ORDER BY EVENT_TIME, STEP_ID" in mgr.executed[-1]
+    assert "EVENT_ID = 'abc123'" in mgr.executed[-1]
+    # The raw trace is returned as {step, eventTime}; the loop (login twice) is preserved.
+    assert [e["step"] for e in seq] == ["login", "search", "login"]
+    assert all(set(e) == {"step", "eventTime"} for e in seq)
+
+
 def test_friendly_error_hides_raw_driver_text_without_detail():
     """The client-facing (detail=False) message carries no raw driver text; the
     verbose form (used by power/admin probes) still does."""

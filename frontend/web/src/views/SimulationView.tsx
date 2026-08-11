@@ -385,6 +385,7 @@ function SimulationResults({
           projectId={projectId}
           chartMode={`sim_${slot}`}
           metric={store.transitionMetric}
+          journeyTotal={result.totalJourneys}
         />
       )}
 

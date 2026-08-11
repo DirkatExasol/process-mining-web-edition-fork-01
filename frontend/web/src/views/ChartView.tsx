@@ -131,6 +131,7 @@ export function ChartView({
           projectId={store.selectedProject.projectId}
           chartMode={side === 'a' ? 'A-Chart' : 'B-Chart'}
           metric={store.transitionMetric}
+          journeyTotal={store.journeyCount ?? 0}
           isLoading={store.isLoading}
           syncState={syncState}
           notice={simulationFilterNotice(

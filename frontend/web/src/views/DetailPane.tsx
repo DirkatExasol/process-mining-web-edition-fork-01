@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { JourneyKpiStrip, KpiStrip } from '../components/KpiStrip'
 import { Chevron, Unavailable } from '../components/ui'
 import { FlowChart } from '../flow/FlowChart'
+import { SwimlaneChart } from '../flow/SwimlaneChart'
 import { useSetting } from '../settings'
 import { useStore } from '../store'
 import { DETAIL_VIEW_MODES, VIEW_MODE_ICONS, type DetailViewMode } from '../types'
@@ -263,18 +264,48 @@ function IndividualJourneyView() {
     )
   }
 
+  const swim = store.journeySwimlane
   return (
-    <FlowChart
-      key={store.lastQueriedEventId}
-      graph={store.processGraph}
-      projectId={store.selectedProject.projectId}
-      chartMode={`ij_${store.eventIdFilter}`}
-      // A single journey traverses each transition once, so Count is meaningless
-      // here — always show the average transition time. The sidebar Metrics
-      // selector is hidden for this mode (see Sidebar).
-      metric="Avg Time"
-      // Play a dot along the edges in the order the steps occurred.
-      animateJourney
-    />
+    <div className="col" style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+      {/* In-canvas view switch (flowchart ↔ swimlane) — not in the left panel. */}
+      <div className="swim-toggle seg-toggle" role="tablist" aria-label="Journey view">
+        <button
+          className={`seg${swim ? '' : ' sel'}`}
+          role="tab"
+          aria-selected={!swim}
+          onClick={() => store.setJourneySwimlane(false)}
+          title="Directed-follows flowchart (loops shown)"
+        >
+          🕸 Flowchart
+        </button>
+        <button
+          className={`seg${swim ? ' sel' : ''}`}
+          role="tab"
+          aria-selected={swim}
+          onClick={() => store.setJourneySwimlane(true)}
+          title="Sequential swimlane, one lane per node group (loops unrolled)"
+        >
+          🏊 Swimlane
+        </button>
+      </div>
+      {swim ? (
+        <SwimlaneChart
+          key={`sw_${store.lastQueriedEventId}`}
+          sequence={store.journeySequence}
+          graph={store.processGraph}
+        />
+      ) : (
+        <FlowChart
+          key={store.lastQueriedEventId}
+          graph={store.processGraph}
+          projectId={store.selectedProject.projectId}
+          chartMode={`ij_${store.eventIdFilter}`}
+          // A single journey traverses each transition once, so Count is meaningless
+          // here — always show the average transition time. The sidebar Metrics
+          // selector is hidden for this mode (see Sidebar).
+          metric="Avg Time"
+        />
+      )}
+    </div>
   )
 }

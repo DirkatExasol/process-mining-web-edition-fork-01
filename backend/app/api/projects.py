@@ -321,9 +321,12 @@ async def journey(
     r = repo(sampleSet)
     graph = await r.load_journey_graph(project_id, resolved)
     info = await r.load_journey_info(project_id, resolved)
+    sequence = await r.load_journey_sequence(project_id, resolved)
     return {
         "queriedEventId": resolved,
         "processGraph": graph.model_dump(by_alias=True),
+        # The raw ordered trace (loops unrolled), for the sequential swimlane view.
+        "sequence": sequence,
         "journeyCount": 0 if not graph.transitions else 1,
         **{k: v for k, v in info.items()},
     }

@@ -292,6 +292,7 @@ function ABPanel({
           projectId={store.selectedProject?.projectId ?? ''}
           chartMode={label}
           metric={metric}
+          journeyTotal={(side === 'a' ? store.abJourneyCountA : store.abJourneyCountB) ?? 0}
           isLoading={loading}
           syncState={syncState}
           notice={simulationFilterNotice(

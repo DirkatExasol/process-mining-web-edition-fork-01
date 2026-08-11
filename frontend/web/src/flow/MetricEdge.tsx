@@ -7,10 +7,12 @@ import {
   rgba,
   type EdgeColorSchema,
 } from '../graph/colors'
-import { formatCount, formatDuration } from '../graph/format'
+import { formatCount, formatDuration, formatPercent } from '../graph/format'
 import {
   isTimeBased,
+  journeyPercentage,
   metricValue,
+  outgoingPercentage,
   type ProcessTransition,
   type TransitionMetric,
 } from '../types'
@@ -29,19 +31,15 @@ export interface MetricEdgeData extends Record<string, unknown> {
   normIsMinimum: boolean
   /** Total occurrences leaving the source node — count norms are percentages. */
   outgoingTotal: number
+  /** Total filtered journeys — the denominator for the 'Journey %' metric. */
+  journeyTotal: number
   hasNote: boolean
   nodeH: number
   edgeScale: number
-  /** Individual Journey playback: animate a dot along this edge in turn. */
-  flowActive?: boolean
-  flowIndex?: number
-  flowTotal?: number
   onEdgeClick?: (transition: ProcessTransition, screen: { x: number; y: number }) => void
 }
 
 const SECONDARY = '#8E8E93'
-const FLOW_COLOR = '#0A84FF'
-const FLOW_SECS_PER_EDGE = 0.8 // one edge's dot travel time; total loop = N × this
 
 /**
  * SMIL keyframes for a single dot that traverses `total` edges one after
@@ -50,6 +48,9 @@ const FLOW_SECS_PER_EDGE = 0.8 // one edge's dot travel time; total loop = N × 
  * motion keyPoints/keyTimes (progress 0→1 along the path) and the opacity
  * on/off schedule (discrete). All edges share the same `dur`, so they stay in
  * lock-step and the dot appears to hop from edge to edge in order.
+ *
+ * Retained only for the integration console's live import-run playback
+ * (IntegrationPipeline); the main app's Individual Journey no longer animates.
  */
 export function flowKeyframes(index: number, total: number) {
   const a = index / total
@@ -128,18 +129,17 @@ function MetricEdgeComponent({
     showCompliance,
     normIsMinimum,
     outgoingTotal,
+    journeyTotal,
     hasNote,
     nodeH,
     edgeScale,
-    flowActive,
-    flowIndex,
-    flowTotal,
     onEdgeClick,
   } = d
   const eScale = edgeScale || 1
 
   const isSelfLoop = transition.fromStep === transition.toStep
-  const isCountPct = normMetric === 'Count'
+  // Both the legacy Count norm and the new Percentage metric are outgoing-share percentages.
+  const isCountPct = normMetric === 'Count' || normMetric === 'Percentage'
 
   let lineWidth: number
   let lineAlpha: number
@@ -189,19 +189,30 @@ function MetricEdgeComponent({
               : formatCount(Math.round(normValue))
     }
   } else {
-    const value = metricValue(transition, metric) ?? transition.occurrences
+    // Two share metrics: 'Percentage' = outgoing branching share (each node's edges sum to
+    // 100 %); 'Journey %' = share of all filtered journeys. Every other metric reads off
+    // the transition.
+    const isPct = metric === 'Percentage' || metric === 'Journey %'
+    const value =
+      metric === 'Percentage'
+        ? outgoingPercentage(transition, outgoingTotal)
+        : metric === 'Journey %'
+          ? journeyPercentage(transition, journeyTotal)
+          : (metricValue(transition, metric) ?? transition.occurrences)
     const ratio = Math.max(0, Math.min(1, value / Math.max(maxValue, 1)))
     lineWidth = 3 + ratio * 19
     lineAlpha = 0.3 + ratio * 0.5
     const gradient = EDGE_SCHEMA_GRADIENTS[schema]
     lineColor =
       colorize && gradient ? interpolate(gradient.low, gradient.high, ratio) : SECONDARY
-    labelText = isTimeBased(metric)
-      ? (() => {
-          const v = metricValue(transition, metric)
-          return v == null ? '—' : formatDuration(v)
-        })()
-      : formatCount(transition.occurrences)
+    labelText = isPct
+      ? formatPercent(value)
+      : isTimeBased(metric)
+        ? (() => {
+            const v = metricValue(transition, metric)
+            return v == null ? '—' : formatDuration(v)
+          })()
+        : formatCount(transition.occurrences)
   }
 
   const stroke = rgba(lineColor, lineAlpha)
@@ -278,37 +289,6 @@ function MetricEdgeComponent({
           onEdgeClick?.(transition, { x: event.clientX, y: event.clientY })
         }
       />
-
-      {/* Individual Journey playback: a dot travels this edge during its slot in
-          the shared loop, so a single marker hops edge-to-edge in time order. */}
-      {flowActive &&
-        flowTotal != null &&
-        flowTotal > 0 &&
-        (() => {
-          const total = flowTotal * FLOW_SECS_PER_EDGE
-          const kf = flowKeyframes(flowIndex ?? 0, flowTotal)
-          const r = Math.max(4, Math.round(3 * eScale))
-          return (
-            <circle r={r} fill={FLOW_COLOR} stroke="#fff" strokeWidth={1.5} opacity={0}>
-              <animateMotion
-                dur={`${total}s`}
-                repeatCount="indefinite"
-                calcMode="linear"
-                keyPoints={kf.keyPoints}
-                keyTimes={kf.keyTimes}
-                path={path}
-              />
-              <animate
-                attributeName="opacity"
-                dur={`${total}s`}
-                repeatCount="indefinite"
-                calcMode="discrete"
-                keyTimes={kf.opacityTimes}
-                values={kf.opacityValues}
-              />
-            </circle>
-          )
-        })()}
 
       <EdgeLabelRenderer>
         <div

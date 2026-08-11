@@ -134,6 +134,11 @@ internal to the container.
 3. Open **Projects** and pick one. Explore the ten views from the **☰** menu:
    A-Chart, B-Chart, A/B Comparison, Individual Journey, AI Documentation,
    Statistics, Conformance Check, Happy Path, Notes and Simulation.
+   *Individual Journey* has an in-canvas switch (top-centre) between the **flowchart**
+   (loops drawn as back-edges) and a **swimlane** — the journey laid out strictly
+   left-to-right, one column per event, with a lane per node group (group-coloured), a
+   date/time header row, and each edge labelled with the time to the next node. Loops are
+   unrolled into repeated sequential nodes; the swimlane is single-journey only.
 
 > If the sign-in panel shows a **Demo Mode** banner, no license is installed yet.
 > The app runs for a limited grace period; an administrator applies a license in

@@ -102,9 +102,8 @@ export interface FlowChartProps {
   /** Read-only source (a simulation): hide the interactive filter actions
    *  (Require / Exclude) from the node context menu. */
   readOnly?: boolean
-  /** Individual Journey: animate a dot travelling the edges one after another,
-   *  in the chronological order the steps occurred. */
-  animateJourney?: boolean
+  /** Total filtered journeys — the denominator for the 'Journey %' edge metric. */
+  journeyTotal?: number
 }
 
 interface MenuState {
@@ -134,7 +133,7 @@ function FlowChartInner(props: FlowChartProps) {
     showCompliance = false,
     normIsMinimum = false,
     onEdgeTap,
-    animateJourney = false,
+    journeyTotal = 0,
   } = props
 
   const flow = useReactFlow()
@@ -559,20 +558,6 @@ function FlowChartInner(props: FlowChartProps) {
       (t) => positionedIds.has(t.fromStep) && positionedIds.has(t.toStep),
     )
 
-    // Individual Journey playback: rank the edges by the source step's event
-    // time so a single dot travels them in the order they occurred.
-    const flowTotal = animateJourney ? visible.length : 0
-    const flowOrder = new Map<string, number>()
-    if (animateJourney) {
-      ;[...visible]
-        .sort((a, b) => {
-          const ta = graph.steps[a.fromStep]?.eventTime ?? ''
-          const tb = graph.steps[b.fromStep]?.eventTime ?? ''
-          return ta < tb ? -1 : ta > tb ? 1 : 0
-        })
-        .forEach((t, i) => flowOrder.set(`${t.fromStep}->${t.toStep}`, i))
-    }
-
     return visible.map((t) => {
       const id = `${t.fromStep}->${t.toStep}`
       return {
@@ -593,12 +578,10 @@ function FlowChartInner(props: FlowChartProps) {
             showCompliance,
             normIsMinimum,
             outgoingTotal: outgoing.get(t.fromStep) ?? 0,
+            journeyTotal,
             hasNote: noteEdges.has(id),
             nodeH,
             edgeScale: edgeScale || 1,
-            flowActive: animateJourney,
-            flowIndex: flowOrder.get(id) ?? 0,
-            flowTotal,
             onEdgeClick:
               onEdgeTap ??
               (onEdgeNote
@@ -615,11 +598,10 @@ function FlowChartInner(props: FlowChartProps) {
       })
   }, [
     activeSchema,
-    animateJourney,
     colorizeByWeight,
     drawGraph,
     edgeScale,
-    graph.steps,
+    journeyTotal,
     metric,
     nodeH,
     normIsMinimum,

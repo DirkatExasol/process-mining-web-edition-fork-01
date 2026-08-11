@@ -516,9 +516,14 @@ const chartViews: HelpTopic = {
       heading: 'Individual Journey',
       body: [
         p('Shows the complete step sequence for a single journey identified by EVENT_ID. The Filters section becomes an Event ID field: type a source identifier (e.g. ORD-000001) or a raw 32-character hash and press Return. Any input that is not already a hash is MD5-hashed automatically before querying, so you never compute a hash by hand.'),
-        tip('A live suggestion dropdown appears as you type. Each EVENT_ID keeps its own saved node layout.'),
-        tip('Transitions are labelled with the average transition time. The sidebar metric picker is hidden in this view, since a single journey visits each step once — Count would carry no information.'),
-        tip('A moving dot replays the journey: it travels the transitions one after another in the chronological order the steps occurred, then loops.'),
+        p('A switch floating over the canvas (top-centre) toggles between two layouts of the same journey:'),
+        ul(
+          'Flowchart — the directed-follows graph, where a revisited step is drawn as a loop back to the same node.',
+          'Swimlane — the journey laid out strictly left-to-right, one column per event in time order, with a lane per node group (coloured by the group). A revisited step simply appears again further right, so there are no loops. A header row above the top lane shows each event’s date/time, and every edge shows the time taken from one node to the next.',
+        ),
+        tip('The swimlane is only for a single journey — it is never used for the aggregated views, where loops are meaningful.'),
+        tip('A live suggestion dropdown appears as you type. Each EVENT_ID keeps its own saved node layout (flowchart).'),
+        tip('In the flowchart, transitions are labelled with the average transition time. The sidebar metric picker is hidden in this view, since a single journey visits each step once — Count would carry no information.'),
       ],
     },
     {
@@ -544,6 +549,8 @@ const filters: HelpTopic = {
       body: [
         p('The Metrics section controls which value drives the thickness, opacity, colour and label of each transition arrow.'),
         def('Count', 'Number of times this transition occurred. The default, always available.'),
+        def('Percentage', 'The share of journeys leaving the source node that take this edge — the branching probability at each step. Every node’s outgoing edges add up to 100 %.'),
+        def('Journey %', 'The share of all filtered journeys that traverse this edge (edge count ÷ total filtered journeys). Unlike Percentage, the denominator is the whole map, so it shows how common an edge is overall; a value can exceed 100 % for an edge a journey repeats.'),
         def('Avg Time', 'Average elapsed time between the two steps, shown as a readable duration (4m, 1.2h, 3.5d).'),
         def('Min / Max Time', 'Shortest / longest observed elapsed time for this transition.'),
         def('Std Dev', 'Standard deviation of elapsed times — higher values indicate inconsistent transition durations.'),
@@ -612,14 +619,14 @@ const processMap: HelpTopic = {
     {
       heading: 'Reading the map',
       body: [
-        p('Each node is a distinct process step. Arrows show transitions; thickness and opacity reflect the selected transition metric relative to the highest value on the map. The label shows the value for the active metric — a plain number for Count, or a readable duration for time-based metrics.'),
+        p('Each node is a distinct process step. Arrows show transitions; thickness and opacity reflect the selected transition metric relative to the highest value on the map (for Percentage and Journey % the scale is a fixed 0–100 %). The label shows the value for the active metric — a plain number for Count, a percentage for Percentage / Journey %, or a readable duration for time-based metrics.'),
       ],
     },
     {
       heading: 'Connection colouring',
       body: [
         p('When “Colorise edges by weight” is on, each arrow is tinted using the colour scale configured for the active metric, from the low-end colour (few / short) to the high-end colour (many / long). Thickness always encodes the value independently of colour.'),
-        def('Per-metric scales', 'Each of the five metrics has its own scale. Defaults: Count → green, Avg Time → orange, Min Time → blue, Max Time → red, Std Dev → purple.'),
+        def('Per-metric scales', 'Each metric has its own scale. Defaults: Count → green, Percentage → green, Journey % → green, Avg Time → orange, Min Time → blue, Max Time → red, Std Dev → purple.'),
         tip('Click the colour legend in the bottom-right corner of the map to open the wizard and pick a scale for each metric, with a live preview. “Reset to defaults” restores the built-in scales.'),
       ],
     },
@@ -1551,7 +1558,7 @@ const integrationMonitoring: HelpTopic = {
     {
       heading: 'Live activity & colours',
       body: [
-        p('While an import runs, a dot travels the active path node-to-node, the way an individual journey animates in the main app. Connections are coloured by their most recent run:'),
+        p('While an import runs, a dot travels the active path node-to-node to show progress. Connections are coloured by their most recent run:'),
         ul('Blue — idle or completed.', 'Green — currently running.', 'Red — the last run on that path failed.'),
       ],
     },

@@ -252,6 +252,7 @@ export function HappyPathView() {
               projectId={store.selectedProject.projectId}
               chartMode="HappyPath"
               metric={store.transitionMetric}
+              journeyTotal={store.journeyCount ?? 0}
               isLoading={store.isLoading}
               onNodeAction={(node, action) => store.handleNodeAction(node, action)}
               notes={store.projectNotes}

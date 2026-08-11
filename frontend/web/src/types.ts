@@ -111,6 +111,13 @@ export interface JourneyPath {
   totalScore: number
 }
 
+/** One event of a single journey, in time order — the raw trace the swimlane view lays
+ *  out sequentially (a revisited step appears again; loops are unrolled by construction). */
+export interface JourneyEvent {
+  step: string
+  eventTime: string
+}
+
 export interface DurationBucket {
   label: string
   count: number
@@ -130,6 +137,8 @@ export interface DurationStats {
 
 export const TRANSITION_METRICS = [
   'Count',
+  'Percentage',
+  'Journey %',
   'Avg Time',
   'Min Time',
   'Max Time',
@@ -137,10 +146,22 @@ export const TRANSITION_METRICS = [
 ] as const
 export type TransitionMetric = (typeof TRANSITION_METRICS)[number]
 
-export function isTimeBased(metric: TransitionMetric): boolean {
-  return metric !== 'Count'
+/** The two share metrics: 'Percentage' is the branching share of a node's OUTGOING
+ *  journeys (each node's out-edges sum to 100 %); 'Journey %' is the share of ALL filtered
+ *  journeys that traverse the edge. Both are 0–100 (Journey % can exceed 100 for an edge a
+ *  journey repeats). Neither is time-based, and neither reads off a single transition. */
+export function isPercentMetric(metric: TransitionMetric): boolean {
+  return metric === 'Percentage' || metric === 'Journey %'
 }
 
+export function isTimeBased(metric: TransitionMetric): boolean {
+  return metric !== 'Count' && !isPercentMetric(metric)
+}
+
+/** 'Percentage' is the share of journeys leaving a node that take this edge — a value
+ *  relative to the SOURCE node's total outgoing occurrences, so it can't be read from a
+ *  single transition. Callers that render it (the edge, conformance) compute it from the
+ *  source's outgoing total; here it is null so the plain single-transition path skips it. */
 export function metricValue(
   t: ProcessTransition,
   metric: TransitionMetric,
@@ -148,6 +169,9 @@ export function metricValue(
   switch (metric) {
     case 'Count':
       return t.occurrences
+    case 'Percentage':
+    case 'Journey %':
+      return null
     case 'Avg Time':
       return t.avgSecs
     case 'Min Time':
@@ -163,12 +187,26 @@ export function maxMetricValue(
   graph: ProcessGraph,
   metric: TransitionMetric,
 ): number {
+  // Percentages are drawn on a fixed 0–100 scale.
+  if (isPercentMetric(metric)) return 100
   let max = -Infinity
   for (const t of graph.transitions) {
     const v = metricValue(t, metric)
     if (v != null && v > max) max = v
   }
   return max === -Infinity ? 1 : max
+}
+
+/** The share (0–100) of the source node's outgoing journeys that take this transition.
+ *  ``outgoingTotal`` is the sum of occurrences of every edge leaving ``t.fromStep``. */
+export function outgoingPercentage(t: ProcessTransition, outgoingTotal: number): number {
+  return outgoingTotal > 0 ? (t.occurrences / outgoingTotal) * 100 : 0
+}
+
+/** The share of ALL filtered journeys that traverse this transition. ``journeyTotal`` is
+ *  the filtered journey count; the result can exceed 100 % for an edge a journey repeats. */
+export function journeyPercentage(t: ProcessTransition, journeyTotal: number): number {
+  return journeyTotal > 0 ? (t.occurrences / journeyTotal) * 100 : 0
 }
 
 export const SAMPLE_SETS = ['ORIGINAL', 'SAMPLE_1', 'SAMPLE_2', 'SAMPLE_3'] as const

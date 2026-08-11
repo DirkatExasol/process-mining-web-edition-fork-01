@@ -114,6 +114,10 @@ export function defaultSchemaFor(metric: TransitionMetric): EdgeColorSchema {
   switch (metric) {
     case 'Count':
       return 'greenHigh'
+    case 'Percentage':
+      return 'greenHigh'
+    case 'Journey %':
+      return 'greenHigh'
     case 'Avg Time':
       return 'orangeScale'
     case 'Min Time':

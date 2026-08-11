@@ -1060,6 +1060,121 @@ textarea.text-input {
   display: none;
 }
 
+/* ── Individual-Journey swimlane view ─────────────────────────────────────── */
+.swim-lane {
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--separator);
+}
+.swim-lane.header {
+  border-bottom: 2px solid var(--separator);
+}
+.swim-lane-label {
+  position: sticky;
+  left: 8px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-elevated) 78%, transparent);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.swim-lane.header .swim-lane-label {
+  background: none;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+}
+.swim-step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  padding: 0 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  box-sizing: border-box;
+}
+.swim-step-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.15;
+}
+.swim-time {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 96px;
+  pointer-events: none;
+}
+.swim-time-clock {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
+.swim-time-date {
+  font-size: 9px;
+  color: var(--tertiary);
+}
+.swim-grid {
+  width: 1px;
+  background: var(--separator);
+  pointer-events: none;
+}
+/* The swimlane's canvas toggle floats over the chart, top-centre. */
+.swim-toggle {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+}
+/* A small segmented control (two mutually-exclusive tabs). */
+.seg-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--material);
+  border: 1px solid var(--separator-soft);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-md);
+}
+.seg-toggle .seg {
+  border: none;
+  background: transparent;
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.seg-toggle .seg:hover {
+  color: var(--primary);
+}
+.seg-toggle .seg.sel {
+  background: var(--bg-elevated);
+  color: var(--primary);
+  box-shadow: var(--shadow-sm);
+}
+
 .react-flow__node {
   cursor: grab;
 }

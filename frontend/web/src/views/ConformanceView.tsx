@@ -12,6 +12,7 @@ import { useSetting } from '../settings'
 import { useStore } from '../store'
 import {
   TRANSITION_METRICS,
+  isPercentMetric,
   isTimeBased,
   metricValue,
   type ProcessTransition,
@@ -20,6 +21,8 @@ import {
 
 const METRIC_ICONS: Record<TransitionMetric, string> = {
   Count: '#',
+  Percentage: '%',
+  'Journey %': '%',
   'Avg Time': '⏱',
   'Min Time': '⌄',
   'Max Time': '⌃',
@@ -103,15 +106,21 @@ export function ConformanceView() {
   }
 
   const actualFor = (t: ProcessTransition): number => {
-    if (metric === 'Count') {
+    // Count and Percentage are both the outgoing branching share of the source node.
+    if (metric === 'Count' || metric === 'Percentage') {
       const total = outgoing[t.fromStep] ?? 1
       return (t.occurrences / total) * 100
+    }
+    // Journey % is the share of all filtered journeys.
+    if (metric === 'Journey %') {
+      const total = store.journeyCount ?? 1
+      return (t.occurrences / (total || 1)) * 100
     }
     return metricValue(t, metric) ?? t.occurrences
   }
 
   const formatValue = (value: number): string => {
-    if (metric === 'Count') return `${value.toFixed(1)}%`
+    if (metric === 'Count' || isPercentMetric(metric)) return `${value.toFixed(1)}%`
     if (isTimeBased(metric)) return formatDuration(value)
     return String(Math.round(value))
   }
@@ -216,6 +225,7 @@ export function ConformanceView() {
         <div style={{ flex: 1, minWidth: 0, position: 'relative', display: 'flex' }}>
           <FlowChart
             graph={graph}
+            journeyTotal={store.journeyCount ?? 0}
             projectId={store.selectedProject.projectId}
             chartMode="Conformance"
             metric={metric}

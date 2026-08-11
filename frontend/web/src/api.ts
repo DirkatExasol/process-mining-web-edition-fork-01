@@ -10,6 +10,7 @@ import type {
   FilterSpec,
   GraphResult,
   HappyPath,
+  JourneyEvent,
   JourneyPath,
   ProcessGraph,
   ProcessNote,
@@ -285,6 +286,8 @@ export const api = {
     get<{
       queriedEventId: string
       processGraph: ProcessGraph
+      // The raw ordered trace (loops unrolled) for the sequential swimlane view.
+      sequence: JourneyEvent[]
       journeyCount: number
       startDate: string | null
       endDate: string | null

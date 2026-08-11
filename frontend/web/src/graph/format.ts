@@ -8,6 +8,12 @@ export function formatCount(n: number): string {
 }
 
 /** `FlowChartView.formatDuration` — edge labels. */
+/** A share as a percent label: whole-number at ≥10 %, one decimal below (so a small
+ *  journey share reads "3.5%" / "0.4%" rather than collapsing to "0%"). */
+export function formatPercent(value: number): string {
+  return value >= 10 ? `${Math.round(value)}%` : `${value.toFixed(1)}%`
+}
+
 export function formatDuration(secs: number): string {
   if (secs < 60) return `${Math.round(secs)}s`
   if (secs < 3600) return `${Math.round(secs / 60)}m`

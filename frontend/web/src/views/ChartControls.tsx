@@ -11,6 +11,8 @@ import { TRANSITION_METRICS, type FilterGroup, type SliderMode, type TransitionM
 
 const METRIC_ICONS: Record<TransitionMetric, string> = {
   Count: '#',
+  Percentage: '%',
+  'Journey %': '%',
   'Avg Time': '⏱',
   'Min Time': '⌄',
   'Max Time': '⌃',
