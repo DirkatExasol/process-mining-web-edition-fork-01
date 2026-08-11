@@ -21,7 +21,14 @@ from ..db.manager import current_db
 from ..integration import SqlIngestBackend, layer
 from ..integration.backends import DEFAULT_TRANSACTION_ROWS, clamp_transaction_rows
 from ..integration.extractors import FileExtractor
-from ..integration.files import FileAccessError, read_delta, read_preview
+from ..integration.files import (
+    DeltaReader,
+    FileAccessError,
+    detect_records,
+    list_source_files,
+    read_preview,
+    resolve_source_file,
+)
 from ..integration.compound import OPS as COMPOUND_OPS
 from ..integration.destinations import open_stored_connection
 from ..integration.parsing import ROLES, analyze_timestamp, detect_fields, regex_from_segment
@@ -334,6 +341,33 @@ def preview_source(body: PreviewBody) -> dict:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.get("/files")
+def list_files() -> list[dict]:
+    """The files available in the sandboxed sources directory, for the source-type
+    wizard's file picker. Empty in allow-any-path mode (no single root to enumerate)."""
+    return list_source_files()
+
+
+class RecordsBody(BaseModel):
+    path: str = Field(default="", max_length=4000)
+    # Optional explicit delimiter id (crlf/lf/cr/ff/rs/nul/blank); omitted = auto-detect.
+    delimiter: str = Field(default="", max_length=16)
+    limit: int = 5
+    encoding: str = Field(default="utf-8", max_length=40)
+
+
+@router.post("/files/records")
+def detect_file_records(body: RecordsBody) -> dict:
+    """Detect the record delimiter of a sandboxed file (or use the one given) and return
+    the first N records split on it, plus the candidate delimiters with their counts."""
+    try:
+        return detect_records(
+            body.path, body.delimiter or None, body.limit, body.encoding or "utf-8"
+        )
+    except FileAccessError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 class RunBody(BaseModel):
     projectId: str = Field(min_length=1, max_length=100)
     # The destination connection, picked in the Run dialog. Optional only for callers
@@ -452,9 +486,12 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
         raise HTTPException(status_code=400, detail="The source type has no timestamp field.")
 
     # ── destination ───────────────────────────────────────────────────────────
-    # The caller names the connection; we open it with its *stored* credentials, the
-    # same way the watchdog does. Falling back to the session's active connection
-    # keeps older clients working.
+    # Resolve the destination to a *stored* connection (the caller names it, or we fall
+    # back to the session's active one for older clients), then open a DEDICATED
+    # connection for the run — never the user's live session. Reusing the live handle
+    # would mean toggling its autocommit, and any missed restore would leave the shared
+    # session in manual-commit mode (stale reads + held locks). Opening our own, like the
+    # watchdog does, keeps the run's transaction fully isolated and disposable.
     mgr = current_db()
     conn_id = body.connectionId.strip()
     if conn_id:
@@ -466,60 +503,50 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
         conn = security_store.get_connection(conn_id, with_secrets=True)
         if conn is None:
             raise HTTPException(status_code=404, detail="Connection not found.")
-        schema = (conn.schema or "").strip()
-        if not schema:
-            raise HTTPException(
-                status_code=400, detail=f"“{conn.name}” has no target schema configured."
-            )
     else:
-        if not mgr.is_connected:
-            raise HTTPException(status_code=400, detail="Pick a destination connection first.")
         conn_id = mgr.active_profile_id or ""
-        conn = security_store.get_connection(conn_id, with_secrets=True) if conn_id else None
-        server = mgr.active_database_server
-        schema = (server.schema_ or "").strip() if server is not None else ""
-        if not schema:
+        if not conn_id:
+            raise HTTPException(status_code=400, detail="Pick a destination connection first.")
+        conn = security_store.get_connection(conn_id, with_secrets=True)
+        if conn is None:
             raise HTTPException(
-                status_code=400, detail="The active connection has no target schema."
+                status_code=400, detail="The active connection is not available for import."
             )
 
-    # Reuse the live session when it already points at exactly this database, otherwise
-    # open our own connection for the run (and close it again below).
-    opened = None
-    if mgr.is_connected and mgr.active_profile_id == conn_id:
-        # Insert inside real transactions: turn the driver's per-statement autocommit
-        # off so the layer's bracket (transactionRows) decides when work is durable.
-        live = mgr._conn
-        if live is not None:
-            live.set_autocommit(False)
-        backend = SqlIngestBackend(
-            run_sql=lambda sql: mgr._execute_sync(sql).rows,
-            commit=(lambda: live.commit()) if live is not None else None,
-            rollback=(lambda: live.rollback()) if live is not None else None,
+    schema = (conn.schema or "").strip()
+    if not schema:
+        raise HTTPException(
+            status_code=400, detail=f"“{conn.name}” has no target schema configured."
         )
-    else:
-        try:
-            opened, run_sql = await asyncio.to_thread(open_stored_connection, conn)
-        except Exception as exc:  # noqa: BLE001 — a bad destination is a 400, not a 500
-            raise HTTPException(
-                status_code=400,
-                detail=f"Could not connect to “{conn.name}”: {exc}",
-            )
-        backend = SqlIngestBackend(
-            run_sql=run_sql, commit=opened.commit, rollback=opened.rollback,
+
+    # Open our own connection for the run; it is closed again in the finally below.
+    try:
+        opened, run_sql = await asyncio.to_thread(open_stored_connection, conn)
+    except Exception as exc:  # noqa: BLE001 — a bad destination is a 400, not a 500
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not connect to “{conn.name}”: {exc}",
         )
+    backend = SqlIngestBackend(
+        run_sql=run_sql, commit=opened.commit, rollback=opened.rollback,
+    )
 
     # ── what to read ──────────────────────────────────────────────────────────
     # Every manual run is checkpointed, so re-running a source tops it up instead of
     # importing the file again. `delta=False` is the explicit "start over" and reads
-    # from byte 0. Either way the checkpoint is advanced to the end of what we read.
+    # from byte 0. The reader streams the WHOLE remainder of the file to EOF in bounded
+    # chunks (DeltaReader), so a large file imports in one run — not one 8 MB chunk per
+    # run — while never holding more than one chunk in memory. The checkpoint is advanced
+    # to the end of what we read once the rows are safely in.
     encoding = str(cfg.get("encoding") or "utf-8")
     checkpoint = security_store.get_source_checkpoint(source_id)
     prev_records = int(checkpoint["records"]) if checkpoint else 0
     prev_offset = int(checkpoint["byteOffset"]) if (checkpoint and body.delta) else 0
     prev_sig = str(checkpoint["signature"] or "") if (checkpoint and body.delta) else ""
+    # Validate the path/sandbox up front so a bad file fails fast with a clear 400
+    # (the streaming read otherwise only touches the file inside the layer run).
     try:
-        read = await asyncio.to_thread(read_delta, path, encoding, prev_offset, prev_sig)
+        await asyncio.to_thread(resolve_source_file, path)
     except FileAccessError as exc:
         if opened is not None:
             await asyncio.to_thread(opened.close)
@@ -527,10 +554,11 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
 
     # An empty file, or nothing appended since the checkpoint, is a normal outcome — the
     # run still happens (so it shows in the pipeline) and simply writes no rows.
+    reader = DeltaReader(path, encoding, prev_offset, prev_sig)
     extractor = FileExtractor(
         path=path, encoding=encoding,
         fields=fields, project_id=body.projectId.strip(),
-        lines=read["lines"],
+        line_stream=reader,
         compound=st.public().get("compound") or [],
     )
     project_id = body.projectId.strip()
@@ -538,8 +566,7 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
     target = f"{conn.name if conn is not None else schema}/{schema}"
     logx.usage(
         f"import started: {source.name!r} (source type {st.name!r}) → {target} "
-        f"project {project_id} — {'delta' if body.delta else 'full'}, "
-        f"{len(read['lines'])} line(s) to read",
+        f"project {project_id} — {'delta' if body.delta else 'full'} from offset {prev_offset}",
         request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
     )
     try:
@@ -567,21 +594,23 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
             await asyncio.to_thread(opened.close)
     # Advance the checkpoint only once the rows are safely in — a failed run leaves it
     # where it was, so the next attempt re-reads those lines rather than skipping them.
-    # (A full re-import restarts the counter; a delta run adds to it.)
+    # The reader drained the whole file, so end_offset is EOF. A full re-import (or a
+    # from-scratch re-read after rotation) restarts the counter; a delta run adds to it.
+    base_records = prev_records if (body.delta and not reader.rotated) else 0
     security_store.set_source_checkpoint(
-        source_id, byte_offset=read["new_offset"], size=read["size"],
-        signature=read["signature"],
-        records=(prev_records if body.delta else 0) + result.records,
+        source_id, byte_offset=reader.end_offset, size=reader.size,
+        signature=reader.signature,
+        records=base_records + result.records,
         last_error="",
     )
     _remember_last_run(source, user, connection_id=conn_id, project_id=project_id)
     logx.usage(
         f"import finished: {source.name!r} → {target} project {project_id} — "
-        f"{result.detail}",
+        f"{result.detail} ({reader.lines_read} line(s) read)",
         request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
     )
     detail = result.detail
-    if not read["lines"]:
+    if reader.lines_read == 0:
         detail = (
             "Nothing new to import — the file has not grown since the last import."
             if body.delta and checkpoint
@@ -589,7 +618,7 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
         )
     # `linesRead` separates the two ways a run can write nothing: no new lines at all
     # (normal for a delta run) versus lines that matched no regex (a real misconfiguration).
-    return {"records": result.records, "detail": detail, "linesRead": len(read["lines"])}
+    return {"records": result.records, "detail": detail, "linesRead": reader.lines_read}
 
 
 # ── example-log parsing (wizard helpers) ──────────────────────────────────────

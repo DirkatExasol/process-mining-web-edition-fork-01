@@ -54,6 +54,8 @@
 
 <figure data-fig="app-login"><figcaption>The shared login screen. On the integration console it carries the subtitle “Integration” under the logo.</figcaption></figure>
 
+<div class="note"><strong>Note — idle sign-out</strong> If your administrator has set an idle timeout (admin <b>Users</b> tab), the console signs you out after that many minutes of inactivity and returns you to this login screen with the notice “You were signed out due to inactivity”, exactly as the main application does. Because the console is always role-gated, idle sign-out applies here even when the global “require sign-in” setting is off.</div>
+
 <h3 id="integ-api-gate">Why the API re-checks your role</h3>
 
 <p>The console's own port is only the first line of defence. All integration endpoints live under <code>/api/integration</code> on the shared compute backend, and the application proxies <code>/api/*</code> for any enabled user. If the role were only checked at the console's front door, a power user could drive the whole data-source surface through the application's proxy instead. To close that, the role check is repeated <strong>server-side on the API router</strong>, so it covers every integration endpoint — including any added in a later release.</p>
@@ -260,7 +262,7 @@ watchdog: 14 new line(s) from /data/logs/access.log</code></pre>
 
 <h3 id="integ-pipeline-counts">Row counts</h3>
 
-<p>The <strong>Source</strong> and <strong>Connection</strong> nodes each carry a line reading <strong>▦ &lt;n&gt; rows imported</strong>. This is the cumulative total across every recorded run that touched that node — not the last run's figure. Reading across the chart therefore tells you how much each file has contributed and how much has landed in each destination database.</p>
+<p>The <strong>Source</strong> and <strong>Connection</strong> nodes each carry a line reading <strong>▦ &lt;n&gt; rows imported</strong>. This is the cumulative total across every recorded run that touched that node — not the last run's figure. Reading across the chart therefore tells you how much each file has contributed and how much has landed in each destination database. Each <strong>Source</strong> node also shows <strong>🕒 &lt;date, time&gt;</strong> — the moment of its <em>most recent</em> import, in your local time — so you can see at a glance when each file was last loaded.</p>
 
 <p>The hub itself shows either a live state — “Running”, with real progress once the totals are known and an indeterminate animation before that — or, between runs, <strong>&lt;total&gt; rows over &lt;n&gt; run(s)</strong>. With an empty history it simply reads “Idle”.</p>
 

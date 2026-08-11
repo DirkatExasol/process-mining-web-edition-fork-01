@@ -668,3 +668,26 @@ export interface SourceCheckpoint {
   updatedAt: string | null
   lastError: string | null
 }
+
+// A file in the sandboxed sources directory, for the source-type wizard's file picker.
+export interface IntegrationFile {
+  name: string // path relative to the sandbox root
+  size: number
+  modified: number // unix seconds
+}
+
+// A candidate record delimiter with how many times it separates records in the sample.
+export interface DelimiterCandidate {
+  id: string // crlf | lf | cr | ff | rs | nul | blank
+  label: string
+  count: number
+}
+
+// Result of detecting a file's record delimiter and splitting its head into records.
+export interface RecordDetection {
+  delimiter: string
+  candidates: DelimiterCandidate[]
+  records: string[]
+  truncated: boolean
+  encoding: string
+}

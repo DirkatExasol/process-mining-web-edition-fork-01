@@ -2548,7 +2548,7 @@ textarea.text-input {
 /* ── Integration console: pipeline canvas + status details ─────────────────── */
 .integration-console {
   width: 100%;
-  max-width: 900px;
+  max-width: 1240px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -2662,6 +2662,10 @@ textarea.text-input {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   transition: border-color 0.2s, box-shadow 0.2s, opacity 0.2s, background 0.2s;
   overflow: hidden;
+}
+/* The abstraction-layer hub is wider (matches LAYER_W in IntegrationPipeline.tsx). */
+.ipipe-node.wide {
+  width: 300px;
 }
 /* Dark mode: the same hue needs a touch more alpha to register against a dark canvas. */
 :root[data-theme='dark'] .ipipe-node {

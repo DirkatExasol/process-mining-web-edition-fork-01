@@ -1369,6 +1369,7 @@ const integrationConsole: HelpTopic = {
       heading: 'Getting there',
       body: [
         p('Open the console URL and sign in. The left panel holds three collapsible sections — Connections, Sources and Source types — plus the theme selector and your account footer, mirroring the main app. Clicking a connection connects to it, as in the main app, but an import does not depend on that: the Run dialog picks its own destination.'),
+        p('If an administrator has set an idle timeout, the console signs you out after that long without activity and returns you to the login screen — the same as the main application. Because the console is always role-gated, this applies even when the global “require sign-in” setting is off.'),
         p('Connections can be created and edited here, so you do not have to switch to the main app to set up the database you are about to import into. Use ＋ on the Connections header for a new one, or ✎ on a connection you own to edit it — host, port, credentials, TLS, target schema, an optional LLM server, and which users it is assigned to.'),
         warn('✎ appears only on connections you own — the ones you created. A connection an administrator created and assigned to you can be used for imports but not edited; ask an administrator to change it.'),
       ],
@@ -1385,7 +1386,8 @@ const integrationSources: HelpTopic = {
     {
       heading: 'Building a source type',
       body: [
-        p('Open the Source types section and click ＋. Paste one example log line, then map each field on the tabbed step: pick a role tab, then either highlight a piece of the line and press 🎯 Use selection to generate a regex, or press ＋ Add field and type the regex yourself. Every field is defined manually — there is no auto-detection, by design, so the extraction is always exactly what you intend.'),
+        p('Open the Source types section and click ＋. First give the type an example record. The quickest way is 📄 Choose a file…: it lists the files in the sandboxed sources directory, and when you pick one it auto-detects how the file separates records — LF (Unix), CRLF (Windows), CR, FF (form feed), a blank line for multi-line records, and so on — and previews the first five. The detected delimiter is shown in a dropdown you can override if the guess is wrong. Drag one of those records onto the box below it (or click it) to use it as the example; you can also just paste a line into the text box instead.'),
+        p('Then map each field on the tabbed step: pick a role tab, then either highlight a piece of the line and press 🎯 Use selection to generate a regex, or press ＋ Add field and type the regex yourself. Every field is defined manually — there is no auto-detection of fields, by design, so the extraction is always exactly what you intend.'),
         ul(
           'EVENT_TIME — the timestamp. It is analysed and normalised to YEAR-MONTH-DAY HOUR:MINUTE:SECOND.',
           'EVENT_ID — the case/journey key. It is stored MD5-hashed, so a raw login or user id never lands in the clear.',
@@ -1535,7 +1537,7 @@ const integrationMonitoring: HelpTopic = {
     {
       heading: 'The flowchart',
       body: [
-        p('Below the KPIs the imports are drawn as one flowchart: Source type → Source → Abstraction layer → Connection. Nodes are reused across runs — every distinct source type, source and destination is a single node, with the Abstraction layer as the hub in the middle. The Source and Destination nodes show the total number of rows imported.'),
+        p('Below the KPIs the imports are drawn as one flowchart: Source type → Source → Abstraction layer → Connection. Nodes are reused across runs — every distinct source type, source and destination is a single node, with the Abstraction layer as the hub in the middle. The Source and Destination nodes show the total number of rows imported, and each Source node also shows 🕒 with the date and time of its most recent import (in your local time), so you can see at a glance when each file was last loaded.'),
         p('Each stage is tinted in its own pastel colour (source types violet, sources blue, the layer by its state, destinations teal) so you can tell them apart at a glance; the stage currently running gets a deeper wash.'),
       ],
     },

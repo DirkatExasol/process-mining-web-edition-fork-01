@@ -62,6 +62,8 @@ interface PipeData {
   phase: Phase
   ports: Array<'l' | 'r'>
   rows?: number | null // imported row total shown on Source / Destination nodes
+  stamp?: string | null // "latest import" date/time, shown on the Source node
+  wide?: boolean // the abstraction-layer hub renders wider than the other nodes
   // Abstraction-layer hub only:
   stateLabel?: string
   progress?: { done: number; total: number } | null
@@ -75,6 +77,16 @@ const STATE_LABEL: Record<string, string> = {
 const phaseOf = (state: string): Phase =>
   state === 'running' ? 'active' : state === 'failed' ? 'error' : state === 'idle' ? 'idle' : 'done'
 
+/** A source's "latest import" timestamp as a compact local date + time (or null). */
+function fmtStamp(iso: string | null): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  return d.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  })
+}
+
 const accentFor = (p: Phase): string =>
   p === 'active' ? 'var(--accent)' : p === 'error' ? 'var(--red)' : p === 'done' ? 'var(--green)' : 'var(--secondary)'
 
@@ -82,7 +94,7 @@ function PipeNode({ data }: NodeProps) {
   const d = data as PipeData
   return (
     <div
-      className={`ipipe-node ${d.phase}`}
+      className={`ipipe-node ${d.phase}${d.wide ? ' wide' : ''}`}
       // The accent travels as a CSS variable rather than an inline background, so the
       // phase rules (.active/.done/.error) can still override the border and the tint
       // is defined once in the stylesheet.
@@ -102,6 +114,12 @@ function PipeNode({ data }: NodeProps) {
 
       {d.rows != null && (
         <div className="ipipe-rows">▦ {d.rows.toLocaleString()} rows imported</div>
+      )}
+
+      {d.stamp && (
+        <div className="ipipe-rows" title="Most recent import into this source">
+          🕒 {d.stamp}
+        </div>
       )}
 
       {d.stateLabel !== undefined && (
@@ -242,15 +260,24 @@ function saveLayout(user: string, layout: Layout): void {
 }
 
 const GAP = 118
-const COL_X = { type: 0, src: 235, layer: 470, conn: 705 }
 const NODE_W = 210
 const NODE_H = 112
+// The abstraction-layer hub is wider than the other nodes — it carries the run status and
+// progress bar, so it gets more room (matches `.ipipe-node.wide` in styles.css).
+const LAYER_W = 300
+// Column x-positions, spread so the wider hub never overlaps the destination column.
+const COL_X = { type: 0, src: 260, layer: 540, conn: 900 }
 // Declared size on every node so ReactFlow keeps each node's handle bounds when the
 // pipeline is rebuilt on each status poll (new object refs). Without it the nodes flip
 // to visibility:hidden mid-measure and their edges drop out — see FlowChart's note.
 const NODE_DIMS = {
   measured: { width: NODE_W, height: NODE_H },
   initialWidth: NODE_W,
+  initialHeight: NODE_H,
+}
+const LAYER_DIMS = {
+  measured: { width: LAYER_W, height: NODE_H },
+  initialWidth: LAYER_W,
   initialHeight: NODE_H,
 }
 
@@ -339,6 +366,7 @@ export function IntegrationPipeline({
     const push = (arr: string[], v: string) => { if (!arr.includes(v)) arr.push(v) }
 
     const srcRows = new Map<string, number>()
+    const srcLatest = new Map<string, string | null>() // source → newest run's timestamp
     const connRows = new Map<string, number>()
     const connSchema = new Map<string, string | null>()
     const nodePhase = new Map<string, Phase>() // node id → latest phase
@@ -365,6 +393,8 @@ export function IntegrationPipeline({
       srcRows.set(sName, (srcRows.get(sName) ?? 0) + rows)
       connRows.set(cName, (connRows.get(cName) ?? 0) + rows)
       connSchema.set(cName, r.schema)
+      // Loop is oldest → newest, so the last write is the most recent run for this source.
+      srcLatest.set(sName, r.finishedAt || r.startedAt || null)
 
       const ph = phaseOf(r.state)
       nodePhase.set(typeId(tName), ph)
@@ -440,16 +470,17 @@ export function IntegrationPipeline({
           icon: '🗂️', kicker: 'Source', title: name,
           subtitle: 'imported & extracted', accent: 'var(--accent)', phase: ph, ports: ['l', 'r'],
           rows: empty ? null : srcRows.get(name) ?? 0,
+          stamp: empty ? null : fmtStamp(srcLatest.get(name) ?? null),
         } satisfies PipeData,
       })
     })
 
     nodes.push({
-      id: 'layer', type: 'pipe', draggable: true, ...NODE_DIMS,
+      id: 'layer', type: 'pipe', draggable: true, ...LAYER_DIMS,
       position: overrides['layer'] ?? { x: COL_X.layer, y: centerY },
       data: {
         icon: '⚙️', kicker: 'Abstraction layer', title: 'Ingest & normalise',
-        accent: accentFor(layerPhase), phase: layerPhase, ports: ['l', 'r'],
+        accent: accentFor(layerPhase), phase: layerPhase, ports: ['l', 'r'], wide: true,
         stateLabel: running
           ? STATE_LABEL.running
           : empty

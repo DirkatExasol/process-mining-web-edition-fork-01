@@ -118,6 +118,8 @@ class FileExtractor:
         fields: list[dict],
         project_id: str,
         lines: list[str] | None = None,
+        line_stream=None,
+        line_total: int | None = None,
         compound: list[dict] | None = None,
     ) -> None:
         self._path = path
@@ -127,6 +129,11 @@ class FileExtractor:
         # extracted instead of reading the whole file — the caller has already read only
         # the newly-appended lines from the file's checkpoint offset.
         self._lines = lines
+        # Streaming delta mode (manual run): an iterable that yields all appended lines,
+        # draining the file to EOF in bounded chunks (see files.DeltaReader). Kept
+        # separate from ``lines`` so its length is never taken (it is a generator).
+        self._line_stream = line_stream
+        self._line_total = line_total
         # Compile the regexes once, split by role. Only the first field of each single
         # role is used; up to three meta fields map to META_1..3.
         self._ts = self._compiled(fields, "timestamp")
@@ -187,8 +194,16 @@ class FileExtractor:
         session.define_table("PROJECTS", _PROJECTS_COLUMNS, keys=["PROJECT_ID"])
         session.define_table("STEPS", _STEPS_COLUMNS, keys=["PROJECT_ID", "STEP"])
 
-        # Whole-file read, or just the newly-appended lines the watchdog handed us.
-        if self._lines is not None:
+        # Three read modes: a streaming delta drain (manual run), the exact lines the
+        # watchdog handed us, or a whole-file read.
+        if self._line_stream is not None:
+            source = self._line_stream
+            total = self._line_total or 0  # unknown up front → indeterminate progress
+            session.log(
+                f"reading appended lines from {self._path} → "
+                f"{session.schema}.JOURNEYS (project {self._project_id})"
+            )
+        elif self._lines is not None:
             source = self._lines
             total = len(self._lines)
             session.log(

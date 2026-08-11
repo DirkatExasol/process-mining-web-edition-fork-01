@@ -208,6 +208,8 @@
 
 <p>Each source has exactly one checkpoint, stored on the server. It is what makes “import only what is new” possible, and it is <b>shared between the manual delta run and the watchdog</b> — both advance the same offset, which is precisely what stops the two triggers importing a line twice between them.</p>
 
+<div class="note"><strong>Note — a manual run imports the whole file at once</strong> A manual <b>Run extraction</b> reads everything from the checkpoint to the end of the file in a single run, however large the file is (it is streamed in bounded chunks internally, so it is never loaded into memory whole). The watchdog is different: to keep each unattended poll cheap it reads at most one ~8&nbsp;MB chunk per poll and lets a large backlog drain over several polls. So if you point the watchdog at a huge pre-existing file it will catch up over a few polls, whereas a manual run finishes it in one.</div>
+
 <h3 id="s19-cp-stored">19.6.1 What is stored</h3>
 
 <table>

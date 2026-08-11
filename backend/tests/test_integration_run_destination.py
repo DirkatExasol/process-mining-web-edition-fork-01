@@ -119,6 +119,51 @@ def test_run_uses_the_picked_connection_without_an_active_session(env, monkeypat
     assert not any('"MINING"' in sql for sql in captured), captured
 
 
+def test_run_never_touches_the_live_session_connection(env, monkeypatch):
+    """Regression: a run into the connection the app is already connected to must open its
+    OWN connection, never toggle autocommit (or commit/rollback) on the shared live
+    session — doing so would leave it in manual-commit mode, causing stale reads and held
+    locks for the user's later app queries."""
+    config, store, integration_api, app = env
+    source, _prod, staging = _seed(config, store)
+
+    class _LiveConn:
+        def __init__(self):
+            self.autocommit_calls = []
+
+        def set_autocommit(self, value):
+            self.autocommit_calls.append(value)
+
+        def commit(self):
+            raise AssertionError("the live session connection must not be committed")
+
+        def rollback(self):
+            raise AssertionError("the live session connection must not be rolled back")
+
+    live = _LiveConn()
+
+    class _FakeMgr:
+        # Exactly the state the old code reused: connected to the very connection we run into.
+        is_connected = True
+        active_profile_id = staging.id
+        _conn = live
+
+    monkeypatch.setattr(integration_api, "current_db", lambda: _FakeMgr())
+
+    captured: list[str] = []
+    opened: list = []
+    _stub_open(integration_api, monkeypatch, captured, opened)
+
+    resp = _run(TestClient(app), source, staging)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["records"] == 1
+    # A dedicated connection was opened and used …
+    assert [c.name for c, _ in opened] == ["Staging"]
+    # … and the live session connection was never touched.
+    assert live.autocommit_calls == []
+
+
 def test_the_run_closes_the_connection_it_opened(env, monkeypatch):
     """A run must not leak the connection it opened — including when it fails."""
     config, store, integration_api, app = env
@@ -207,6 +252,45 @@ def test_a_manual_run_is_a_delta_upload_by_default(env, monkeypatch):
     third = _run(client, source, staging)
     assert third.json()["records"] == 1
     assert len(_inserts(captured)) == 1
+
+
+def test_a_large_file_is_imported_in_one_run(env, monkeypatch):
+    """A file bigger than the 8 MB per-read cap must import fully in ONE run — the manual
+    run drains the whole file, it does not stop after the first chunk and leave a backlog."""
+    config, store, integration_api, app = env
+    source, _prod, staging = _seed(config, store)
+
+    # Rewrite the source's file with enough lines to exceed the chunk cap.
+    import app.integration.files as files_mod
+    log = config.INTEGRATION_FILES_DIR / "access.log"
+    line = (
+        "10.0.0.1 - - [09/Jan/2015:19:12:14 +0000] 15233 "
+        '"GET /shop/view?userId={} HTTP/1.1" 200 8241 "-" "UA"\n'
+    )
+    # ~120 bytes/line; enough lines to clear 8 MB with headroom.
+    n = int(files_mod._MAX_CHUNK_BYTES / 110) + 5000
+    with log.open("w") as fh:
+        for i in range(n):
+            fh.write(line.format(20000000 + i))
+    assert log.stat().st_size > files_mod._MAX_CHUNK_BYTES  # genuinely over the cap
+
+    captured: list[str] = []
+    _stub_open(integration_api, monkeypatch, captured, [])
+
+    resp = _run(TestClient(app), source, staging)
+    assert resp.status_code == 200, resp.text
+    # Every line imported in this single run (all userIds are unique → all parse).
+    assert resp.json()["records"] == n
+    assert resp.json()["linesRead"] == n
+
+    # The checkpoint reached EOF, so a second run finds nothing new.
+    cp = TestClient(app).get(
+        f"/api/integration/sources/{source.id}/checkpoint", headers={"X-PMW-User": "dev"}
+    ).json()
+    assert cp["byteOffset"] == log.stat().st_size
+    captured.clear()
+    again = _run(TestClient(app), source, staging)
+    assert again.json()["records"] == 0 and again.json()["linesRead"] == 0
 
 
 def test_delta_off_re_reads_the_whole_file(env, monkeypatch):

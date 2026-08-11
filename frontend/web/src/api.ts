@@ -17,7 +17,9 @@ import type {
   ProjectBootstrap,
   ExtractionField,
   ExtractorInfo,
+  IntegrationFile,
   IntegrationStatus,
+  RecordDetection,
   SampleSet,
   Source,
   SourceCheckpoint,
@@ -205,6 +207,11 @@ export const api = {
   deleteSource: (id: string) => del<{ ok: boolean }>(`/api/integration/sources/${enc(id)}`),
   previewSource: (path: string, limit: number) =>
     post<{ lines: string[]; truncated: boolean }>('/api/integration/sources/preview', { path, limit }),
+  // Source-type wizard file picker: list the sandbox files, and detect a file's record
+  // delimiter (or split on an explicit one), returning the first N records.
+  listIntegrationFiles: () => get<IntegrationFile[]>('/api/integration/files'),
+  detectRecords: (path: string, delimiter = '', limit = 5) =>
+    post<RecordDetection>('/api/integration/files/records', { path, delimiter, limit }),
   // Projects already in a destination connection's schema (gated on assignment, unlike
   // the manager-only /api/connections/{id}/projects).
   destinationProjects: (connectionId: string) =>

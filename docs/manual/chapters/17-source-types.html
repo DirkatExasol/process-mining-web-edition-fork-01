@@ -55,11 +55,31 @@
 
 <ol class="steps">
 <li>Type a <b>Name</b> (the field is autofocused; placeholder &ldquo;e.g. Apache access log, App JSON log&rdquo;). Use the log format's own name rather than the system it came from, because one source type is normally reused across several files.</li>
-<li>Paste one line into <b>Paste an example log entry</b>, a seven-row monospace text area (placeholder <code>2026-08-03T14:05:09Z INFO OrderReceived case_id=abc-123 …</code>).</li>
+<li>Give the type an example record. Either load it from a file (recommended — see below) or paste one line into <b>…or paste an example log entry</b>, a five-row monospace text area (placeholder <code>2026-08-03T14:05:09Z INFO OrderReceived case_id=abc-123 …</code>).</li>
 <li>Click <b>Next</b>.</li>
 </ol>
 
-<div class="tip"><strong>Tip</strong> Take the sample from the file you actually intend to import, not from documentation. The quickest way is to open the source wizard's file preview (chapter 18), which shows the first lines of the real file, and copy a line from there. Pick a line that carries <em>every</em> field you want to map — an example with an empty referrer or a missing user, for instance, will leave you unable to highlight those segments.</div>
+<h3 id="st-filepicker">Loading an example from a file</h3>
+<p>Under <b>Load an example from a file</b>, press <b>📄 Choose a file…</b>. The wizard lists the files in the sandboxed sources directory (the same directory a File source reads from — chapter 19); nested files show their path relative to the root, and hidden dot-files are omitted. Pick one and the wizard reads the head of the file and works out how it separates records.</p>
+
+<p>The detected <b>record delimiter</b> appears in a dropdown, with the number of times each candidate was found. You can override the guess if it is wrong. The supported delimiters are:</p>
+<table>
+<thead><tr><th>Delimiter</th><th>Bytes</th><th>Typical source</th></tr></thead>
+<tbody>
+<tr><td>CRLF</td><td><code>\r\n</code></td><td>Windows line endings</td></tr>
+<tr><td>LF</td><td><code>\n</code></td><td>Unix newline (most logs)</td></tr>
+<tr><td>CR</td><td><code>\r</code></td><td>Classic Mac line ending</td></tr>
+<tr><td>FF</td><td><code>\f</code> (0x0C)</td><td>Form feed / page break</td></tr>
+<tr><td>RS</td><td>0x1E</td><td>ASCII record separator</td></tr>
+<tr><td>NUL</td><td>0x00</td><td>Null-delimited records</td></tr>
+<tr><td>Blank line</td><td><code>\n\n</code></td><td>Multi-line records (a stanza per record)</td></tr>
+</tbody>
+</table>
+<div class="note"><strong>Note</strong> Detection is heuristic: it counts each candidate in the first 256&nbsp;KB of the file and picks the most frequent, preferring CRLF over a bare LF (every CRLF also contains an LF). Changing the dropdown re-splits the same file on the delimiter you choose.</div>
+
+<p>The first five records are previewed as cards. <b>Click a record</b> — or drag it into the example box below — to choose it as the example the mapping step works from. The chosen card is highlighted and the record fills the example box, so the selection is always visible; there is no separate confirmation panel. Clicking is the same action as dragging, for keyboard and pointer users.</p>
+
+<div class="tip"><strong>Tip</strong> Pick a record that carries <em>every</em> field you want to map — an example with an empty referrer or a missing user, for instance, will leave you unable to highlight those segments.</div>
 
 <h2 id="st-step2">17.5 Step 2 — Field mapping</h2>
 

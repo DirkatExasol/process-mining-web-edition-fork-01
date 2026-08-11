@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react'
 import { HelpPanel } from './components/HelpPanel'
+import { IdleLogout } from './components/IdleLogout'
 import { IntegrationConsole } from './components/IntegrationConsole'
 import { IntegrationSidebar } from './components/IntegrationSidebar'
 import { LoginView } from './components/LoginView'
@@ -113,6 +114,10 @@ export function IntegrationApp() {
         </main>
       </div>
       {showHelp && <HelpPanel onClose={() => setShowHelp(false)} />}
+      {/* Auto sign-out on inactivity, then back to the login panel — same as the main
+          app. The console is always role-gated, so idle logout applies even when the
+          global "require login" setting is off (alwaysRequireAuth). */}
+      <IdleLogout alwaysRequireAuth />
     </>
   )
 }

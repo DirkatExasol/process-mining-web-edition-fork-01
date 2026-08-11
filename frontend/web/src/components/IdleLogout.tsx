@@ -1,10 +1,14 @@
 /** Auto sign-out on inactivity.
  *
- * When the admin has configured an idle timeout (Users page) and the app requires
+ * When the admin has configured an idle timeout (Users page) and the surface requires
  * sign-in, this watches for user activity and signs the user out after that many
  * idle minutes. It also pings the session endpoint on activity (throttled) so the
  * server's *sliding* session stays alive while the user is active but not making
- * API calls; a truly idle session expires on both sides. Renders nothing. */
+ * API calls; a truly idle session expires on both sides. Renders nothing.
+ *
+ * `alwaysRequireAuth` forces the "requires sign-in" side on regardless of the global
+ * `requireLogin` setting — used by the integration console, which is always role-gated
+ * even when the main app is open to anonymous access. */
 
 import { useEffect, useRef } from 'react'
 import { useStore } from '../store'
@@ -18,10 +22,10 @@ const ACTIVITY_EVENTS = [
   'wheel',
 ] as const
 
-export function IdleLogout() {
+export function IdleLogout({ alwaysRequireAuth = false }: { alwaysRequireAuth?: boolean } = {}) {
   const idleMins = useStore((s) => s.idleTimeoutMins)
   const enabled = useStore(
-    (s) => s.requireLogin && !!s.authUser && s.idleTimeoutMins > 0,
+    (s) => (alwaysRequireAuth || s.requireLogin) && !!s.authUser && s.idleTimeoutMins > 0,
   )
   const lastActivity = useRef(Date.now())
   const lastPing = useRef(0)

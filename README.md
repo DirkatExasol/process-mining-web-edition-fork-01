@@ -576,8 +576,13 @@ Nodes are **draggable** and the arrangement is **persisted per user** (also in
 
 The console lets a user build the pieces of an extraction:
 
-- A **source type** is a name + an extraction spec (a pasted example log + the
-  timestamp/step/id/meta regexes), built in the source-type wizard.
+- A **source type** is a name + an extraction spec (an example record + the
+  timestamp/step/id/meta regexes), built in the source-type wizard. The wizard's file
+  picker (`GET /api/integration/files`) lists the sandbox files; picking one calls `POST
+  /api/integration/files/records`, which **auto-detects the record delimiter** (LF, CRLF,
+  CR, FF, RS, NUL, or a blank line for multi-line records — overridable), splits the head
+  of the file on it, and returns the first five records. You drag one record (or click it)
+  to use it as the example the field-mapping step works from — or paste a line directly.
 - A **source** is a data origin with a generic `kind` + config. The only kind so far is
   **File**: a *path* (previewed in the wizard — the first N lines), an *encoding*, and the
   *source type* to parse it with.
@@ -598,14 +603,14 @@ status panel. Lines that don't yield a case id, step and time are skipped and co
 
 **The destination is named by the caller**, not taken from the browser session. The Run
 dialog offers every connection assigned to the developer; the backend re-checks that
-assignment and then opens the connection itself with its *stored* credentials
-(`integration/destinations.py`, shared with the watchdog), so there is no need to connect
-to it in the main app first — and a run can be triggered with no signed-in session at
-all. When the session already happens to be connected to exactly that connection, its
-live handle is reused instead of opening a second one; any connection opened for the run
-is closed again when it ends. Omitting `connectionId` falls back to the session's active
-connection. A connection the caller is not assigned to is a 404, whether or not its id is
-known.
+assignment and then opens a **dedicated** connection with the connection's *stored*
+credentials (`integration/destinations.py`, shared with the watchdog), so there is no need
+to connect to it in the main app first — and a run can be triggered with no signed-in
+session at all. The run always uses its own connection and closes it when it ends; it
+never touches the user's live session, so the run's transaction stays isolated and the
+shared session is never left in an odd commit state. Omitting `connectionId` falls back to
+the session's active connection (still opened fresh, not reused). A connection the caller
+is not assigned to is a 404, whether or not its id is known.
 
 **The destination is remembered per source.** After a successful run the endpoint writes
 `config.lastRun = {connectionId, projectId}` onto the source, and the Run dialog reopens on
@@ -617,15 +622,19 @@ has since been deleted stays in the new-project field instead of vanishing. Reco
 is best-effort — the rows are already committed by then, so a store failure is logged, not
 raised.
 
-**Every manual run is a delta upload** (`delta`, default `true`). The run reads only the
+**Every manual run is a delta upload** (`delta`, default `true`). The run reads all the
 bytes appended since this source's **checkpoint**, imports them, and advances the
 checkpoint once the rows are safely in — so pressing ▷ twice tops the project up instead
 of storing the file again. `delta: false` reads from byte 0 for a deliberate full
-re-import. The checkpoint is **one per source, shared with the watchdog**: a manual run
-and a poll advance the same offset, which is what stops the two triggers importing a line
-twice between them. Rotation is handled by `files.read_delta` — a file that shrank, or
-whose head changed without shrinking (replaced under the same name), is re-read from the
-start. An empty file, or one with nothing appended, is a normal outcome: the run happens,
+re-import. A manual run **drains the whole file to EOF in one go** (`files.DeltaReader`
+streams it in bounded chunks, so an arbitrarily large file imports in a single run without
+being held in memory); the watchdog, by contrast, reads at most one ~8 MB chunk per poll
+and lets a big backlog drain over successive polls. The checkpoint is **one per source,
+shared with the watchdog**: a manual run and a poll advance the same offset, which is what
+stops the two triggers importing a line twice between them. Rotation is handled by
+`files.read_delta`/`DeltaReader` — a file that shrank, or whose head changed without
+shrinking (replaced under the same name), is re-read from the start (a manual run then
+restarts the imported-row counter, since it is effectively a full re-read). An empty file, or one with nothing appended, is a normal outcome: the run happens,
 writes nothing, and reports `linesRead: 0` so the console can say "nothing new" rather
 than blaming the regexes. A **failed** run deliberately leaves the checkpoint untouched,
 so the next attempt re-reads those lines rather than skipping them. `POST

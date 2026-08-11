@@ -122,3 +122,69 @@ def test_allow_any_path_opt_in(tmp_path, monkeypatch):
     monkeypatch.delenv("PMW_INTEGRATION_ALLOW_ANY_PATH", raising=False)
     importlib.reload(config)
     importlib.reload(files_mod)
+
+
+# ── file listing + record-delimiter detection (source-type wizard) ────────────
+
+
+def test_list_source_files_enumerates_the_sandbox(files):
+    files_mod, config = files
+    (config.INTEGRATION_FILES_DIR / "a.log").write_text("x\n")
+    (config.INTEGRATION_FILES_DIR / ".hidden.log").write_text("secret\n")  # skipped
+    sub = config.INTEGRATION_FILES_DIR / "sub"
+    sub.mkdir()
+    (sub / "b.log").write_text("y\ny\n")
+
+    listed = files_mod.list_source_files()
+    names = [e["name"] for e in listed]
+    assert "a.log" in names
+    assert "sub/b.log" in names  # nested, path relative to the root
+    assert ".hidden.log" not in names  # dot-files skipped
+    entry = next(e for e in listed if e["name"] == "a.log")
+    assert entry["size"] == 2 and isinstance(entry["modified"], int)
+
+
+def test_detects_crlf_over_lf(files):
+    files_mod, config = files
+    (config.INTEGRATION_FILES_DIR / "win.log").write_text("one\r\ntwo\r\nthree\r\n")
+    out = files_mod.detect_records("win.log")
+    assert out["delimiter"] == "crlf"  # not "lf", though every CRLF contains an LF
+    assert out["records"][:3] == ["one", "two", "three"]
+
+
+def test_detects_form_feed_and_returns_five(files):
+    files_mod, config = files
+    (config.INTEGRATION_FILES_DIR / "ff.log").write_text(
+        "\x0c".join(f"page{i}" for i in range(1, 9))
+    )
+    out = files_mod.detect_records("ff.log", limit=5)
+    assert out["delimiter"] == "ff"
+    assert out["records"] == ["page1", "page2", "page3", "page4", "page5"]
+    assert out["truncated"] is True  # more than five records exist
+    assert "ff" in {c["id"] for c in out["candidates"]}
+
+
+def test_explicit_delimiter_overrides_detection(files):
+    files_mod, config = files
+    # An LF file, but ask for CR — should split on CR (one record, the whole thing).
+    (config.INTEGRATION_FILES_DIR / "u.log").write_text("a\nb\nc\n")
+    out = files_mod.detect_records("u.log", delimiter="cr")
+    assert out["delimiter"] == "cr"
+    assert out["records"] == ["a\nb\nc"]  # no CR present → single record (LF kept inside)
+
+
+def test_blank_line_delimiter_for_multiline_records(files):
+    files_mod, config = files
+    (config.INTEGRATION_FILES_DIR / "multi.log").write_text(
+        "line1\nline2\n\nlineA\nlineB\n\nlineX\nlineY\n"
+    )
+    out = files_mod.detect_records("multi.log", delimiter="blank")
+    assert out["delimiter"] == "blank"
+    assert out["records"][0] == "line1\nline2"
+    assert out["records"][1] == "lineA\nlineB"
+
+
+def test_detect_records_rejects_escape(files):
+    files_mod, _ = files
+    with pytest.raises(files_mod.FileAccessError):
+        files_mod.detect_records("../../etc/passwd")

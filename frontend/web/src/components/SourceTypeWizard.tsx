@@ -28,6 +28,7 @@ import {
   type SourceType,
 } from '../types' 
 import { Sheet } from './ui'
+import { SourceTypeFilePicker } from './SourceTypeFilePicker'
 
 // Tab order requested: Timestamp, Step, Id, Metas.
 const ROLE_TABS: FieldRole[] = ['timestamp', 'step', 'id', 'meta', 'aux']
@@ -212,19 +213,33 @@ export function SourceTypeWizard({
               autoFocus
             />
           </Field>
-          <Field label="Paste an example log entry">
+          <Field label="Load an example from a file">
+            <SourceTypeFilePicker selected={sample} onPick={setSample} />
+          </Field>
+          <Field label="…or paste an example log entry">
             <textarea
               className="text-input"
               value={sample}
               onChange={(e) => setSample(e.target.value)}
-              rows={7}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                // A record dragged from the file picker above lands here as the example.
+                const rec =
+                  e.dataTransfer.getData('application/x-pmw-record') ||
+                  e.dataTransfer.getData('text/plain')
+                if (rec) {
+                  e.preventDefault()
+                  setSample(rec)
+                }
+              }}
+              rows={5}
               placeholder="2026-08-03T14:05:09Z INFO OrderReceived case_id=abc-123 …"
               style={{ fontFamily: 'var(--mono, monospace)', fontSize: 12 }}
             />
           </Field>
           <span className="t-caption2 fg-tertiary">
-            On the next step you'll map each field yourself — highlight a segment and assign
-            it, or type its regex. Every field is defined manually.
+            Pick one record as the example. On the next step you'll map each field yourself —
+            highlight a segment and assign it, or type its regex. Every field is defined manually.
           </span>
         </>
       )}
