@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Small XML demo for the integration console's XML source type. Each <event> is one
+     record; map @user_id → Id, step → Step, event_time → Timestamp, and status/method/path
+     as Metas. Mirrors a handful of rows from apache_retail_demo.json / .log. -->
+<events>
+  <event user_id="20253471" status="200" method="POST">
+    <event_time>2015-01-09T19:12:06+00:00</event_time>
+    <step>login</step>
+    <path>/shop/login</path>
+    <client_ip>10.185.248.71</client_ip>
+  </event>
+  <event user_id="20253471" status="200" method="GET">
+    <event_time>2015-01-09T19:12:31+00:00</event_time>
+    <step>browse</step>
+    <path>/shop/category/fiction</path>
+    <client_ip>10.185.248.71</client_ip>
+  </event>
+  <event user_id="20253471" status="200" method="POST">
+    <event_time>2015-01-09T19:13:02+00:00</event_time>
+    <step>add_to_cart</step>
+    <path>/shop/cart/add</path>
+    <client_ip>10.185.248.71</client_ip>
+  </event>
+  <event user_id="44189320" status="200" method="POST">
+    <event_time>2015-01-09T19:12:09+00:00</event_time>
+    <step>login</step>
+    <path>/shop/login</path>
+    <client_ip>10.185.240.12</client_ip>
+  </event>
+  <event user_id="44189320" status="500" method="POST">
+    <event_time>2015-01-09T19:14:20+00:00</event_time>
+    <step>checkout</step>
+    <path>/shop/checkout</path>
+    <client_ip>10.185.240.12</client_ip>
+  </event>
+</events>

@@ -9,7 +9,9 @@ reading any absolute path the server process can access.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -219,6 +221,267 @@ def detect_records(
     }
 
 
+# ── format detection (text vs JSON vs XML) ───────────────────────────────────
+
+# The three source-type formats. "text" is unstructured (regex); "json"/"xml" are
+# semi-structured (path selectors). A "json" file may physically be a top-level array or
+# JSONL/NDJSON — that shape is sniffed at run time to pick the delta strategy.
+FORMAT_TEXT = "text"
+FORMAT_JSON = "json"
+FORMAT_XML = "xml"
+FORMATS = (FORMAT_TEXT, FORMAT_JSON, FORMAT_XML)
+
+# Whole-file structured parse (JSON array / XML) is held in memory at once, so it is
+# size-capped. JSONL and text stay streamed line-by-line and are not bound by this.
+_MAX_STRUCTURED_BYTES = 16 * 1024 * 1024
+
+
+def sniff_format(path: str, encoding: str = "utf-8") -> str:
+    """Guess a file's format from its first non-whitespace byte: ``{``/``[`` → JSON,
+    ``<`` → XML, anything else → text. Cheap; reads only the head."""
+    real = resolve_source_file(path)
+    with real.open("rb") as fh:
+        head = fh.read(4096)
+    for b in head:
+        ch = chr(b)
+        if ch.isspace():
+            continue
+        if ch in "{[":
+            return FORMAT_JSON
+        if ch == "<":
+            return FORMAT_XML
+        return FORMAT_TEXT
+    return FORMAT_TEXT
+
+
+def json_shape(path: str) -> str:
+    """Whether a JSON file is a top-level ``array``, a single ``object``, or ``jsonl``
+    (newline-separated objects). Drives the delta strategy: array → import-once,
+    jsonl → byte-offset delta."""
+    real = resolve_source_file(path)
+    with real.open("rb") as fh:
+        head = fh.read(_MAX_DETECT_BYTES)
+    text = head.decode("utf-8", errors="replace")
+    stripped = text.lstrip()
+    if stripped[:1] == "[":
+        return "array"
+    if stripped[:1] == "{":
+        # Two objects separated by a newline ⇒ JSONL; a single pretty-printed object is not.
+        body = stripped
+        # crude: a second "{" at the start of a later line signals NDJSON.
+        for line in body.splitlines()[1:]:
+            if line.lstrip()[:1] == "{":
+                return "jsonl"
+        return "object"
+    return "jsonl"
+
+
+def read_text_file(path: str, encoding: str = "utf-8", *, cap: int = _MAX_STRUCTURED_BYTES) -> str:
+    """Read a whole file as text, rejecting anything larger than ``cap`` (a structured
+    whole-file parse would otherwise load an unbounded document into memory)."""
+    real = resolve_source_file(path)
+    size = real.stat().st_size
+    if size > cap:
+        raise FileAccessError(
+            f"File is too large to parse as a single document "
+            f"({size // (1024 * 1024)} MB > {cap // (1024 * 1024)} MB cap)."
+        )
+    with real.open("r", encoding=encoding or "utf-8", errors="replace") as fh:
+        return fh.read()
+
+
+def _head_jsonl(path: str, encoding: str, limit: int) -> tuple[list, bool]:
+    """The first ``limit`` parseable JSON objects of a JSONL file, plus whether more
+    follow. Bounded: stops after ``limit`` records (and a sanity cap on lines scanned),
+    so a huge NDJSON file is never read whole just to preview it."""
+    real = resolve_source_file(path)
+    out: list = []
+    more = False
+    scanned = 0
+    with real.open("r", encoding=encoding or "utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            scanned += 1
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                continue
+            if len(out) >= limit:
+                # Is there any further non-blank content?
+                for rest in fh:
+                    if rest.strip():
+                        more = True
+                        break
+                break
+            if scanned > 10000:  # defensive: don't scan forever for `limit` good records
+                break
+    return out, more
+
+
+def detect_structure(path: str, encoding: str = "utf-8", limit: int = 5) -> dict:
+    """Detect a source file's format and return rendered sample records plus suggested
+    fields (with their path selectors) for the source-type wizard.
+
+    Returns ``{format, shape?, records, fields, recordPath?, ...}``. For **text** it
+    delegates to :func:`detect_records` (delimiter + line records) and adds
+    ``format="text"``. For **JSON**/**XML** it parses a bounded head, renders the first
+    ``limit`` records, and suggests fields by flattening the first record — pre-tagging
+    id / step / timestamp from the key/element names and values.
+    """
+    from . import structured
+
+    limit = max(1, min(int(limit or 5), _MAX_RECORDS))
+    fmt = sniff_format(path, encoding)
+    if fmt == FORMAT_TEXT:
+        base = detect_records(path, None, limit, encoding)
+        base["format"] = FORMAT_TEXT
+        base["fields"] = []
+        return base
+
+    if fmt == FORMAT_JSON:
+        shape = json_shape(path)
+        if shape == "jsonl":
+            # JSONL streams line by line, so detection reads only a bounded head — never
+            # the whole file (which may be far larger than the whole-file parse cap).
+            head, more = _head_jsonl(path, encoding, limit)
+        else:
+            # A top-level array/object must be parsed whole (bounded by the size cap).
+            text = read_text_file(path, encoding)
+            try:
+                records = list(structured.iter_json_from_text(text))
+            except ValueError as exc:
+                raise FileAccessError(str(exc))
+            head = records[:limit]
+            more = len(records) > len(head)
+        rendered = [json.dumps(r, indent=2, ensure_ascii=False, default=str) for r in head]
+        first = head[0] if head else {}
+        leaves = structured.flatten_json(first) if isinstance(first, (dict, list)) else []
+        fields = _suggest_structured_fields(leaves)
+        return {
+            "format": FORMAT_JSON,
+            "shape": shape,
+            "records": rendered,
+            "fields": fields,
+            "truncated": more,
+            "encoding": encoding or "utf-8",
+        }
+
+    # XML
+    from xml.etree.ElementTree import tostring
+
+    text = read_text_file(path, encoding)
+    try:
+        root = structured.parse_xml(text)
+    except ValueError as exc:
+        raise FileAccessError(str(exc))
+    record_path = structured.suggest_record_path(root)
+    records = structured.iter_xml_records(root, record_path)
+    head = records[:limit]
+    rendered = [tostring(el, encoding="unicode").strip() for el in head]
+    leaves = structured.flatten_xml(head[0]) if head else []
+    fields = _suggest_structured_fields(leaves)
+    return {
+        "format": FORMAT_XML,
+        "recordPath": record_path,
+        "records": rendered,
+        "fields": fields,
+        "truncated": len(records) > len(head),
+        "encoding": encoding or "utf-8",
+    }
+
+
+# Name hints that pre-tag a structured field's role from its key/element/attribute name.
+_ID_NAMES = {
+    "id", "uuid", "guid", "eventid", "caseid", "case", "case_id", "sessionid",
+    "session_id", "session", "userid", "user_id", "user", "customer", "customerid",
+    "order", "orderid", "order_id", "transaction", "transactionid", "trace", "traceid",
+}
+# Step names in two tiers: a STRONG name (an activity) always wins the step role over a
+# WEAK one (an outcome/qualifier such as a status), so a real ``<step>`` element beats a
+# ``status`` attribute that merely sits earlier in the record.
+_STEP_NAMES_STRONG = {
+    "step", "activity", "action", "event", "eventtype", "event_type",
+    "operation", "op", "stage", "phase", "task", "verb",
+}
+_STEP_NAMES_WEAK = {"type", "name", "status", "state", "method", "kind"}
+_STEP_NAMES = _STEP_NAMES_STRONG | _STEP_NAMES_WEAK
+_TIME_NAMES = {
+    "time", "timestamp", "date", "datetime", "ts", "created", "createdat", "created_at",
+    "occurred", "occurredat", "eventtime", "event_time", "when", "at",
+}
+
+
+def _leaf_name(path: str) -> str:
+    """The trailing segment of a JSON/XML path, as a safe field name."""
+    from .parsing import _safe_name
+
+    tail = re.split(r"[./]", path.replace("[", ".").replace("]", ""))[-1]
+    tail = tail.lstrip("@$")
+    return _safe_name(tail) or "field"
+
+
+def _suggest_structured_fields(leaves: list[tuple[str, object]]) -> list[dict]:
+    """Turn flattened ``(path, value)`` leaves into suggested ``{name, role, path,
+    sample}`` fields.
+
+    Assigns at most one timestamp / id / step by picking the *best* candidate across all
+    leaves (not merely the first): a strong step name beats a weak one, an id/time name
+    match beats none, and the timestamp falls back to any value that parses as a date. The
+    remaining leaves become meta, in document order (so the first three are META_1..3).
+    """
+    from .parsing import analyze_timestamp
+
+    used: set[int] = set()
+
+    def pick(*, name_tiers: tuple[set, ...] = (), value_ok=None) -> int | None:
+        # Try each name tier (strongest first) across all unused leaves, then the value
+        # test. First match within a tier wins (document order).
+        for tier in name_tiers:
+            for i, (path, _v) in enumerate(leaves):
+                if i not in used and _leaf_name(path).lower() in tier:
+                    return i
+        if value_ok is not None:
+            for i, (_p, value) in enumerate(leaves):
+                if i not in used and value_ok(value):
+                    return i
+        return None
+
+    role_of: dict[int, str] = {}
+    for role, idx in (
+        ("timestamp", pick(name_tiers=(_TIME_NAMES,),
+                            value_ok=lambda v: bool(analyze_timestamp(str(v)).get("format")))),
+        ("id", pick(name_tiers=(_ID_NAMES,))),
+        ("step", pick(name_tiers=(_STEP_NAMES_STRONG, _STEP_NAMES_WEAK))),
+    ):
+        if idx is not None:
+            role_of[idx] = role
+            used.add(idx)
+
+    used_names: set[str] = set()
+    fields: list[dict] = []
+    for i, (path, value) in enumerate(leaves):
+        raw = _leaf_name(path)
+        name = raw
+        n = 2
+        while name in used_names:
+            name = f"{raw}_{n}"
+            n += 1
+        used_names.add(name)
+        role = role_of.get(i, "meta")
+        field = {"name": name, "role": role, "path": path,
+                 "sample": "" if value is None else str(value)}
+        if role == "timestamp":
+            fmt = analyze_timestamp(str(value)).get("format")
+            if fmt:
+                field["format"] = fmt
+        fields.append(field)
+        if len(fields) >= 24:
+            break
+    return fields
+
+
 def read_preview(path: str, limit: int = 5) -> dict:
     """Return the first ``limit`` non-blank lines of a source file (each truncated),
     plus whether more lines follow. ``limit`` is clamped to 1..50."""
@@ -413,9 +676,12 @@ def seed_demo_files() -> None:
         examples = PROJECT_ROOT / "examples"
         if not examples.is_dir():
             return
-        for src in examples.glob("*.log"):
-            dst = INTEGRATION_FILES_DIR / src.name
-            if not dst.exists():
-                shutil.copy2(src, dst)
+        # Seed one file of every supported format (text/log, JSON, JSONL, XML) so all three
+        # source-type formats can be tried on a fresh install.
+        for pattern in ("*.log", "*.txt", "*.json", "*.jsonl", "*.xml"):
+            for src in examples.glob(pattern):
+                dst = INTEGRATION_FILES_DIR / src.name
+                if not dst.exists():
+                    shutil.copy2(src, dst)
     except Exception:  # noqa: BLE001 — seeding is a convenience, never fatal
         pass

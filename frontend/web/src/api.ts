@@ -26,6 +26,7 @@ import type {
   SourceInput,
   SourceType,
   SourceTypeInput,
+  StructureDetection,
   SamplingMethod,
   SimulationConfig,
   SimulationResult,
@@ -212,6 +213,10 @@ export const api = {
   listIntegrationFiles: () => get<IntegrationFile[]>('/api/integration/files'),
   detectRecords: (path: string, delimiter = '', limit = 5) =>
     post<RecordDetection>('/api/integration/files/records', { path, delimiter, limit }),
+  // Detect a file's data format (text / JSON / XML) and return rendered sample records
+  // plus suggested fields with their path selectors.
+  detectStructure: (path: string, limit = 5) =>
+    post<StructureDetection>('/api/integration/files/structure', { path, limit }),
   // Projects already in a destination connection's schema (gated on assignment, unlike
   // the manager-only /api/connections/{id}/projects).
   destinationProjects: (connectionId: string) =>

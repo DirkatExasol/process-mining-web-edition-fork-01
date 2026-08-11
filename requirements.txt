@@ -22,3 +22,7 @@ webauthn==3.0.0
 # enrolment QR as inline SVG (no PIL needed via the SVG image factory).
 pyotp==2.10.0
 qrcode==8.2
+
+# XXE-safe XML parsing for semi-structured (XML) integration source files — user
+# files are parsed only through defusedxml (no external entities, DTDs or billion-laughs).
+defusedxml==0.7.1

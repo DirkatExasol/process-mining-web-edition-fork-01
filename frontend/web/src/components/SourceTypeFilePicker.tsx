@@ -1,14 +1,16 @@
 /** Source-type wizard, step 1 helper: choose a file from the sandboxed sources
- *  directory, auto-detect its record delimiter (LF / CRLF / CR / FF / …), preview the
- *  first few records, and pick one to use as the example the mapping step works from.
+ *  directory, auto-detect its **data format** (Text / JSON / XML) and — for text — its
+ *  record delimiter (LF / CRLF / CR / FF / …), preview the first few records, and pick one
+ *  as the example the mapping step works from.
  *
- *  A record is picked by dragging its card onto the drop target (or clicking it — the
- *  same action, keyboard/pointer-friendly). The chosen record's text is handed back via
- *  `onPick`, which the wizard uses as its `sample`. */
+ *  A record is picked by dragging its card onto the example box (or clicking it — the same
+ *  action, keyboard/pointer-friendly). The chosen record's text and the detection (format,
+ *  suggested fields, XML record path) are handed back via `onPick`, which the wizard uses
+ *  to drive the mapping step. */
 
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import type { IntegrationFile, RecordDetection } from '../types'
+import type { DataFormat, IntegrationFile, StructureDetection } from '../types'
 
 function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -18,19 +20,21 @@ function humanSize(bytes: number): string {
 
 const DRAG_MIME = 'application/x-pmw-record'
 
+const FORMAT_BADGE: Record<DataFormat, string> = { text: 'Text', json: 'JSON', xml: 'XML' }
+
 export function SourceTypeFilePicker({
   selected,
   onPick,
 }: {
-  /** The record text currently chosen (shown in the drop target). */
+  /** The record text currently chosen (highlights its card). */
   selected: string
-  onPick: (record: string) => void
+  onPick: (record: string, detection: StructureDetection) => void
 }) {
   const [open, setOpen] = useState(false)
   const [files, setFiles] = useState<IntegrationFile[] | null>(null)
   const [filesError, setFilesError] = useState<string | null>(null)
   const [path, setPath] = useState('')
-  const [detection, setDetection] = useState<RecordDetection | null>(null)
+  const [structure, setStructure] = useState<StructureDetection | null>(null)
   const [detecting, setDetecting] = useState(false)
   const [detectError, setDetectError] = useState<string | null>(null)
 
@@ -51,13 +55,31 @@ export function SourceTypeFilePicker({
     }
   }, [open, files])
 
-  const detect = async (p: string, delimiter = '') => {
+  const detect = async (p: string) => {
     setDetecting(true)
     setDetectError(null)
     try {
-      setDetection(await api.detectRecords(p, delimiter, 5))
+      setStructure(await api.detectStructure(p, 5))
     } catch (e) {
-      setDetection(null)
+      setStructure(null)
+      setDetectError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDetecting(false)
+    }
+  }
+
+  // Text only: re-split on a different record delimiter.
+  const redetectDelimiter = async (delimiter: string) => {
+    setDetecting(true)
+    setDetectError(null)
+    try {
+      const rec = await api.detectRecords(path, delimiter, 5)
+      setStructure((s) =>
+        s
+          ? { ...s, delimiter: rec.delimiter, candidates: rec.candidates, records: rec.records, truncated: rec.truncated }
+          : s,
+      )
+    } catch (e) {
       setDetectError(e instanceof Error ? e.message : String(e))
     } finally {
       setDetecting(false)
@@ -69,6 +91,12 @@ export function SourceTypeFilePicker({
     setOpen(false)
     void detect(p)
   }
+
+  const pick = (rec: string) => {
+    if (structure) onPick(rec, structure)
+  }
+
+  const isText = structure?.format === 'text'
 
   return (
     <div className="col" style={{ gap: 8 }}>
@@ -82,6 +110,7 @@ export function SourceTypeFilePicker({
             {path}
           </span>
         )}
+        {structure && <span className="badge" style={{ fontSize: 11 }}>{FORMAT_BADGE[structure.format]}</span>}
         {detecting && <span className="t-caption2 fg-tertiary">Reading…</span>}
       </div>
 
@@ -93,7 +122,7 @@ export function SourceTypeFilePicker({
           {filesError && <div className="t-caption fg-red" style={{ padding: 6 }}>{filesError}</div>}
           {files && files.length === 0 && !filesError && (
             <div className="t-caption2 fg-tertiary" style={{ padding: 6 }}>
-              No files in the sources directory. Place log files there (the mounted
+              No files in the sources directory. Place log / JSON / XML files there (the mounted
               <code> integration_files</code> volume in Docker), or paste an example below.
             </div>
           )}
@@ -116,33 +145,44 @@ export function SourceTypeFilePicker({
 
       {detectError && <div className="t-caption fg-red">{detectError}</div>}
 
-      {detection && (
+      {structure && (
         <>
-          {/* Delimiter selector */}
-          <label className="col" style={{ gap: 4 }}>
-            <span className="t-caption fg-secondary">Record delimiter (auto-detected)</span>
-            <select
-              className="text-input"
-              value={detection.delimiter}
-              onChange={(e) => void detect(path, e.target.value)}
-              disabled={detecting}
-            >
-              {detection.candidates.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                  {c.count > 0 ? ` — ${c.count.toLocaleString()} found` : ''}
-                </option>
-              ))}
-            </select>
-          </label>
+          {/* Delimiter selector (text only) */}
+          {isText && structure.candidates && (
+            <label className="col" style={{ gap: 4 }}>
+              <span className="t-caption fg-secondary">Record delimiter (auto-detected)</span>
+              <select
+                className="text-input"
+                value={structure.delimiter}
+                onChange={(e) => void redetectDelimiter(e.target.value)}
+                disabled={detecting}
+              >
+                {structure.candidates.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                    {c.count > 0 ? ` — ${c.count.toLocaleString()} found` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {/* Structured hint */}
+          {!isText && (
+            <span className="t-caption2 fg-tertiary">
+              Detected {structure.format === 'json' ? `JSON (${structure.shape ?? 'array'})` : 'XML'}
+              {structure.recordPath ? ` · record element “${structure.recordPath}”` : ''}. Fields are
+              located by a path — the next step suggests them.
+            </span>
+          )}
 
           {/* Draggable record cards */}
           <span className="t-caption fg-secondary">
-            Click a record (or drag it into the example box below) to use it. The chosen
-            one is highlighted.
+            Click a record (or drag it into the example box below) to use it. The chosen one
+            is highlighted.
           </span>
           <div className="col" style={{ gap: 6 }}>
-            {detection.records.map((rec, i) => (
+            {structure.records.map((rec, i) => (
               <div
                 key={i}
                 role="button"
@@ -153,11 +193,11 @@ export function SourceTypeFilePicker({
                   e.dataTransfer.setData('text/plain', rec)
                   e.dataTransfer.effectAllowed = 'copy'
                 }}
-                onClick={() => onPick(rec)}
+                onClick={() => pick(rec)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
-                    onPick(rec)
+                    pick(rec)
                   }
                 }}
                 className={`card${selected === rec ? ' selected' : ''}`}
@@ -173,12 +213,12 @@ export function SourceTypeFilePicker({
                 <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1 }}>{rec}</span>
               </div>
             ))}
-            {detection.records.length === 0 && (
+            {structure.records.length === 0 && (
               <span className="t-caption2 fg-tertiary">
-                No records found with this delimiter — try another above.
+                No records found{isText ? ' with this delimiter — try another above.' : '.'}
               </span>
             )}
-            {detection.truncated && (
+            {structure.truncated && (
               <span className="t-caption2 fg-tertiary">Showing the first 5 records.</span>
             )}
           </div>

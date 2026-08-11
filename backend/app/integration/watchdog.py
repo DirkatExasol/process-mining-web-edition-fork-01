@@ -16,6 +16,7 @@ It reuses the same stored connection credentials the admin rebuild job uses.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import datetime, timezone
 
 from .. import log_events as logx
@@ -28,8 +29,16 @@ from .backends import (
 )
 from .destinations import open_stored_connection as _open_run_sql
 from .extractors import FileExtractor
-from .files import FileAccessError, read_delta
+from .files import (
+    FORMAT_JSON,
+    FORMAT_TEXT,
+    FileAccessError,
+    json_shape,
+    read_delta,
+    read_text_file,
+)
 from .layer import layer
+from .structured import iter_json_from_text, iter_xml_records, parse_xml
 
 
 def _now() -> datetime:
@@ -101,6 +110,9 @@ async def poll_source(source) -> None:
         _fail("The source has no source type linked.", offset=prev_offset, size=0, sig=prev_sig)
         return
     fields = st.public()["fields"]
+    fmt = st.public().get("format") or FORMAT_TEXT
+    record_path = st.public().get("recordPath") or ""
+    compound = st.public().get("compound") or []
     # Authorisation: the watchdog acts AS the source's owner, so the owner must be
     # assigned to the destination connection. Checked on every poll (not just at save
     # time) so revoking the assignment stops the watchdog immediately. Without this, any
@@ -121,30 +133,74 @@ async def poll_source(source) -> None:
               offset=prev_offset, size=0, sig=prev_sig)
         return
 
-    # ── read the newly-appended lines (rotation-aware) ────────────────────────
-    try:
-        res = await asyncio.to_thread(read_delta, path, encoding, prev_offset, prev_sig)
-    except FileAccessError as exc:
-        _fail(str(exc), offset=prev_offset, size=0, sig=prev_sig)
-        return
+    # ── decide the read strategy by data format ───────────────────────────────
+    # text / JSONL are line-oriented → byte-offset delta (rotation-aware). A JSON array
+    # or XML document is whole-file → import-once by content signature (an unchanged file
+    # imports nothing; a changed one re-imports whole).
+    if fmt == FORMAT_JSON:
+        try:
+            shape = await asyncio.to_thread(json_shape, path)
+        except FileAccessError as exc:
+            _fail(str(exc), offset=prev_offset, size=0, sig=prev_sig)
+            return
+    else:
+        shape = ""
+    use_byte_delta = fmt == FORMAT_TEXT or (fmt == FORMAT_JSON and shape == "jsonl")
 
-    if not res["lines"]:
-        # Nothing new — just record the current size/signature (and clear any old error).
-        store.set_source_checkpoint(
-            source.id, byte_offset=res["new_offset"], size=res["size"],
-            signature=res["signature"], records=prev_records, last_error="",
+    if use_byte_delta:
+        try:
+            res = await asyncio.to_thread(read_delta, path, encoding, prev_offset, prev_sig)
+        except FileAccessError as exc:
+            _fail(str(exc), offset=prev_offset, size=0, sig=prev_sig)
+            return
+        if not res["lines"]:
+            # Nothing new — just record the current size/signature (and clear any old error).
+            store.set_source_checkpoint(
+                source.id, byte_offset=res["new_offset"], size=res["size"],
+                signature=res["signature"], records=prev_records, last_error="",
+            )
+            return
+        extractor = FileExtractor(
+            path=path, encoding=encoding, fields=fields, project_id=project_id,
+            fmt=fmt, lines=res["lines"], compound=compound,
         )
-        return
+        new_offset, new_size, new_sig = res["new_offset"], res["size"], res["signature"]
+    else:
+        try:
+            text = await asyncio.to_thread(read_text_file, path, encoding)
+        except FileAccessError as exc:
+            _fail(str(exc), offset=prev_offset, size=0, sig=prev_sig)
+            return
+        size = len(text.encode("utf-8", errors="ignore"))
+        content_sig = hashlib.md5(text.encode("utf-8", errors="ignore")).hexdigest()
+        if checkpoint and prev_sig == content_sig and int(checkpoint.get("size") or 0) == size:
+            # Unchanged since the last import — nothing to do; just clear any old error.
+            store.set_source_checkpoint(
+                source.id, byte_offset=size, size=size, signature=content_sig,
+                records=prev_records, last_error="",
+            )
+            return
+        try:
+            if fmt == FORMAT_JSON:
+                records = list(iter_json_from_text(text))
+            else:
+                root = await asyncio.to_thread(parse_xml, text)
+                records = iter_xml_records(root, record_path)
+        except ValueError as exc:  # malformed / unsafe document
+            _fail(str(exc), offset=prev_offset, size=size, sig=content_sig)
+            return
+        extractor = FileExtractor(
+            path=path, encoding=encoding, fields=fields, project_id=project_id,
+            fmt=fmt, record_path=record_path, records=records, record_total=len(records),
+            compound=compound,
+        )
+        new_offset, new_size, new_sig = size, size, content_sig
 
-    # ── extract the new lines into the stored connection ──────────────────────
-    extractor = FileExtractor(
-        path=path, encoding=encoding, fields=fields, project_id=project_id,
-        lines=res["lines"], compound=st.public().get("compound") or [],
-    )
+    # ── extract into the stored connection ────────────────────────────────────
     try:
         raw, run_sql = await asyncio.to_thread(_open_run_sql, conn)
     except Exception as exc:  # noqa: BLE001 — connect failure is recorded, not fatal
-        _fail(f"Could not connect: {exc}", offset=prev_offset, size=res["size"], sig=res["signature"])
+        _fail(f"Could not connect: {exc}", offset=prev_offset, size=new_size, sig=new_sig)
         return
     try:
         result = await layer.run(
@@ -158,14 +214,16 @@ async def poll_source(source) -> None:
             transaction_rows=transaction_rows,
         )
     except Exception as exc:  # noqa: BLE001 — surfaced on the checkpoint; loop continues
-        _fail(f"Import failed: {exc}", offset=prev_offset, size=res["size"], sig=res["signature"])
+        _fail(f"Import failed: {exc}", offset=prev_offset, size=new_size, sig=new_sig)
         return
     finally:
         await asyncio.to_thread(raw.close)
 
+    # Byte-delta accumulates onto the running total; import-once replaces it (whole re-read).
+    total_records = prev_records + result.records if use_byte_delta else result.records
     store.set_source_checkpoint(
-        source.id, byte_offset=res["new_offset"], size=res["size"],
-        signature=res["signature"], records=prev_records + result.records, last_error="",
+        source.id, byte_offset=new_offset, size=new_size,
+        signature=new_sig, records=total_records, last_error="",
     )
     logx.usage(
         f"watchdog imported {result.records} new event(s) from {source.name!r} "

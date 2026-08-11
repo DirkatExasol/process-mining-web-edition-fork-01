@@ -263,6 +263,20 @@ def test_login_page_shows_inactivity_notice(pages):
     assert "Invalid credentials" in both
 
 
+def test_login_page_strips_the_inactivity_param_after_render(pages):
+    """The inactivity notice is one-time: a client script removes ?inactivity from the URL
+    after render, so a page refresh no longer shows it — matching the app/integration
+    panels, whose sign-out reason is an in-memory flag a reload clears."""
+    page = pages.login_page(inactivity=True)
+    # The notice still renders on the initial idle-logout redirect …
+    assert "You were signed out due to inactivity." in page
+    # … but the URL is cleaned so a refresh (a re-request of the URL) drops the notice.
+    assert "replaceState" in page
+    assert "p.delete('inactivity')" in page
+    # The stripping script ships on every login render (it is a no-op without the param).
+    assert "replaceState" in pages.login_page()
+
+
 def test_login_page_uses_the_app_master_design(pages):
     html = pages.login_page()
     assert "login-splash" in html  # the centred card, like the app's LoginView

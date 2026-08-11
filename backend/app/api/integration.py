@@ -10,6 +10,7 @@ user arrives in the trusted ``X-PMW-User`` header the proxy injects.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -22,15 +23,23 @@ from ..integration import SqlIngestBackend, layer
 from ..integration.backends import DEFAULT_TRANSACTION_ROWS, clamp_transaction_rows
 from ..integration.extractors import FileExtractor
 from ..integration.files import (
+    FORMAT_JSON,
+    FORMAT_TEXT,
+    FORMAT_XML,
+    FORMATS as FILE_FORMATS,
     DeltaReader,
     FileAccessError,
     detect_records,
+    detect_structure,
+    json_shape,
     list_source_files,
     read_preview,
+    read_text_file,
     resolve_source_file,
 )
 from ..integration.compound import OPS as COMPOUND_OPS
 from ..integration.destinations import open_stored_connection
+from ..integration.structured import iter_json_from_text, iter_xml_records, parse_xml
 from ..integration.parsing import ROLES, analyze_timestamp, detect_fields, regex_from_segment
 from ..store.security import store as security_store
 
@@ -139,7 +148,13 @@ def integration_extractors() -> list[dict]:
 class ExtractionField(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     role: str = "meta"
+    # Unstructured (text) sources capture a field with a regex; semi-structured
+    # (json/xml) sources locate it with a path selector. Exactly one is used per source
+    # type, chosen by SourceTypeBody.format.
     regex: str = Field(default="", max_length=2000)
+    path: str = Field(default="", max_length=1000)
+    # `format` here is the timestamp strptime pattern for a timestamp field — NOT the
+    # data format (that lives on SourceTypeBody).
     format: str = Field(default="", max_length=120)
     # Human-readable business name for a meta field (→ METAS.META_n_TITLE).
     title: str = Field(default="", max_length=200)
@@ -165,6 +180,11 @@ class SourceTypeBody(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     # The extraction spec captured by the wizard.
     sample: str = Field(default="", max_length=20000)
+    # Data format: "text" (unstructured, regex — the default), "json" or "xml"
+    # (semi-structured, path selectors).
+    format: str = Field(default="text", max_length=8)
+    # XML only: the repeating element that is one record (relative to the root).
+    recordPath: str = Field(default="", max_length=500)
     fields: list[ExtractionField] = Field(default_factory=list)
     # Optional compound-step rules. Absent/empty = the plain step field is used as-is.
     compound: list[CompoundRule] = Field(default_factory=list, max_length=200)
@@ -172,12 +192,16 @@ class SourceTypeBody(BaseModel):
 
 def _spec_config(body: SourceTypeBody) -> str:
     """Serialise the extraction spec (sample + fields) to the source type's config JSON.
-    Unknown roles fall back to 'meta'."""
+    Unknown roles fall back to 'meta'; an unknown format falls back to 'text'."""
+    fmt = body.format if body.format in FILE_FORMATS else "text"
+    structured = fmt in ("json", "xml")
     fields = [
         {
             "name": f.name.strip(),
             "role": f.role if f.role in ROLES else "meta",
-            "regex": f.regex,
+            # Keep the selector the format uses (path for json/xml, regex for text) — and
+            # drop the other so the stored spec is unambiguous.
+            **({"path": f.path} if structured else {"regex": f.regex}),
             **({"format": f.format} if f.format else {}),
             **({"title": f.title.strip()} if f.title.strip() else {}),
         }
@@ -202,7 +226,9 @@ def _spec_config(body: SourceTypeBody) -> str:
         for r in body.compound
         if r.step.strip() and any(c.field.strip() for c in r.when)
     ]
-    spec: dict = {"sample": body.sample, "fields": fields}
+    spec: dict = {"sample": body.sample, "format": fmt, "fields": fields}
+    if fmt == "xml" and body.recordPath.strip():
+        spec["recordPath"] = body.recordPath.strip()
     if compound:
         spec["compound"] = compound
     return json.dumps(spec)
@@ -364,6 +390,24 @@ def detect_file_records(body: RecordsBody) -> dict:
         return detect_records(
             body.path, body.delimiter or None, body.limit, body.encoding or "utf-8"
         )
+    except FileAccessError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class StructureBody(BaseModel):
+    path: str = Field(default="", max_length=4000)
+    limit: int = 5
+    encoding: str = Field(default="utf-8", max_length=40)
+
+
+@router.post("/files/structure")
+def detect_file_structure(body: StructureBody) -> dict:
+    """Detect a sandboxed file's data format (text / JSON / XML) and return rendered
+    sample records plus suggested fields with their path selectors, for the source-type
+    wizard. Text delegates to record-delimiter detection; JSON/XML parse a bounded head
+    (XML via defusedxml — XXE-safe) and flatten the first record to suggest paths."""
+    try:
+        return detect_structure(body.path, body.encoding or "utf-8", body.limit)
     except FileAccessError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -532,19 +576,25 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
     )
 
     # ── what to read ──────────────────────────────────────────────────────────
-    # Every manual run is checkpointed, so re-running a source tops it up instead of
-    # importing the file again. `delta=False` is the explicit "start over" and reads
-    # from byte 0. The reader streams the WHOLE remainder of the file to EOF in bounded
-    # chunks (DeltaReader), so a large file imports in one run — not one 8 MB chunk per
-    # run — while never holding more than one chunk in memory. The checkpoint is advanced
-    # to the end of what we read once the rows are safely in.
+    # The read strategy depends on the source type's data FORMAT:
+    #   • text / JSONL — byte-offset DELTA: re-running a source tops it up. The reader
+    #     streams the whole remainder of the file to EOF in bounded chunks (DeltaReader),
+    #     so a big file imports in one run while never holding more than a chunk at once.
+    #     `delta=False` is the explicit "start over" and reads from byte 0.
+    #   • JSON array / XML — whole-file, so it can't be byte-delta'd; instead it is
+    #     IMPORT-ONCE by content signature: an unchanged file re-imports nothing, a
+    #     changed one re-imports whole (`delta=False` forces the whole re-read either way).
     encoding = str(cfg.get("encoding") or "utf-8")
+    fmt = st.public().get("format") or FORMAT_TEXT
+    record_path = st.public().get("recordPath") or ""
     checkpoint = security_store.get_source_checkpoint(source_id)
     prev_records = int(checkpoint["records"]) if checkpoint else 0
-    prev_offset = int(checkpoint["byteOffset"]) if (checkpoint and body.delta) else 0
-    prev_sig = str(checkpoint["signature"] or "") if (checkpoint and body.delta) else ""
-    # Validate the path/sandbox up front so a bad file fails fast with a clear 400
-    # (the streaming read otherwise only touches the file inside the layer run).
+    project_id = body.projectId.strip()
+    transaction_rows = _transaction_rows(cfg)
+    target = f"{conn.name if conn is not None else schema}/{schema}"
+    compound = st.public().get("compound") or []
+
+    # Validate the path/sandbox up front so a bad file fails fast with a clear 400.
     try:
         await asyncio.to_thread(resolve_source_file, path)
     except FileAccessError as exc:
@@ -552,21 +602,82 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
             await asyncio.to_thread(opened.close)
         raise HTTPException(status_code=400, detail=str(exc))
 
-    # An empty file, or nothing appended since the checkpoint, is a normal outcome — the
-    # run still happens (so it shows in the pipeline) and simply writes no rows.
-    reader = DeltaReader(path, encoding, prev_offset, prev_sig)
-    extractor = FileExtractor(
-        path=path, encoding=encoding,
-        fields=fields, project_id=body.projectId.strip(),
-        line_stream=reader,
-        compound=st.public().get("compound") or [],
-    )
-    project_id = body.projectId.strip()
-    transaction_rows = _transaction_rows(cfg)
-    target = f"{conn.name if conn is not None else schema}/{schema}"
+    # JSON physically comes as a top-level array or as JSONL/NDJSON; only JSONL can be
+    # byte-delta'd (it is line-oriented). The array/object case joins XML on import-once.
+    shape = ""
+    if fmt == FORMAT_JSON:
+        try:
+            shape = await asyncio.to_thread(json_shape, path)
+        except FileAccessError as exc:
+            if opened is not None:
+                await asyncio.to_thread(opened.close)
+            raise HTTPException(status_code=400, detail=str(exc))
+    use_byte_delta = fmt == FORMAT_TEXT or (fmt == FORMAT_JSON and shape == "jsonl")
+
+    # These are filled by whichever branch runs, then used for the checkpoint + response.
+    reader: DeltaReader | None = None
+    content_sig = ""
+    read_count = 0
+    read_size = 0
+
+    if use_byte_delta:
+        prev_offset = int(checkpoint["byteOffset"]) if (checkpoint and body.delta) else 0
+        prev_sig = str(checkpoint["signature"] or "") if (checkpoint and body.delta) else ""
+        # An empty file, or nothing appended since the checkpoint, is a normal outcome —
+        # the run still happens (so it shows in the pipeline) and simply writes no rows.
+        reader = DeltaReader(path, encoding, prev_offset, prev_sig)
+        extractor = FileExtractor(
+            path=path, encoding=encoding, fields=fields, project_id=project_id,
+            fmt=fmt, line_stream=reader, compound=compound,
+        )
+    else:
+        # Whole-file structured read (JSON array/object or XML). Read + fingerprint the
+        # file; if it's unchanged since the last import (delta on), there is nothing to do.
+        try:
+            text = await asyncio.to_thread(read_text_file, path, encoding)
+        except FileAccessError as exc:  # oversize or unreadable
+            if opened is not None:
+                await asyncio.to_thread(opened.close)
+            raise HTTPException(status_code=400, detail=str(exc))
+        read_size = len(text.encode("utf-8", errors="ignore"))
+        content_sig = hashlib.md5(text.encode("utf-8", errors="ignore")).hexdigest()
+        unchanged = (
+            body.delta and checkpoint
+            and str(checkpoint.get("signature") or "") == content_sig
+            and int(checkpoint.get("size") or 0) == read_size
+        )
+        if unchanged:
+            if opened is not None:
+                await asyncio.to_thread(opened.close)
+            logx.usage(
+                f"import skipped: {source.name!r} → {target} project {project_id} — "
+                f"file unchanged since the last import",
+                request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
+            )
+            return {
+                "records": 0, "linesRead": 0,
+                "detail": "Nothing new to import — the file is unchanged since the last import.",
+            }
+        try:
+            if fmt == FORMAT_JSON:
+                records = list(iter_json_from_text(text))
+            else:
+                root = await asyncio.to_thread(parse_xml, text)
+                records = iter_xml_records(root, record_path)
+        except ValueError as exc:  # malformed / unsafe document
+            if opened is not None:
+                await asyncio.to_thread(opened.close)
+            raise HTTPException(status_code=400, detail=str(exc))
+        read_count = len(records)
+        extractor = FileExtractor(
+            path=path, encoding=encoding, fields=fields, project_id=project_id,
+            fmt=fmt, record_path=record_path, records=records, record_total=read_count,
+            compound=compound,
+        )
+
     logx.usage(
         f"import started: {source.name!r} (source type {st.name!r}) → {target} "
-        f"project {project_id} — {'delta' if body.delta else 'full'} from offset {prev_offset}",
+        f"project {project_id} — {'delta' if body.delta else 'full'} [{fmt}]",
         request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
     )
     try:
@@ -592,33 +703,43 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
     finally:
         if opened is not None:  # a connection we opened for this run only
             await asyncio.to_thread(opened.close)
+
     # Advance the checkpoint only once the rows are safely in — a failed run leaves it
-    # where it was, so the next attempt re-reads those lines rather than skipping them.
-    # The reader drained the whole file, so end_offset is EOF. A full re-import (or a
-    # from-scratch re-read after rotation) restarts the counter; a delta run adds to it.
-    base_records = prev_records if (body.delta and not reader.rotated) else 0
-    security_store.set_source_checkpoint(
-        source_id, byte_offset=reader.end_offset, size=reader.size,
-        signature=reader.signature,
-        records=base_records + result.records,
-        last_error="",
-    )
+    # where it was, so the next attempt re-reads rather than skipping.
+    if reader is not None:
+        # The reader drained the whole file, so end_offset is EOF. A full re-import (or a
+        # from-scratch re-read after rotation) restarts the counter; a delta run adds to it.
+        base_records = prev_records if (body.delta and not reader.rotated) else 0
+        security_store.set_source_checkpoint(
+            source_id, byte_offset=reader.end_offset, size=reader.size,
+            signature=reader.signature, records=base_records + result.records, last_error="",
+        )
+        lines_read = reader.lines_read
+    else:
+        # Import-once: the checkpoint is the file's content signature + size, so the next
+        # run recognises an unchanged file. A re-imported (changed) file replaces the count.
+        security_store.set_source_checkpoint(
+            source_id, byte_offset=read_size, size=read_size,
+            signature=content_sig, records=result.records, last_error="",
+        )
+        lines_read = read_count
+
     _remember_last_run(source, user, connection_id=conn_id, project_id=project_id)
     logx.usage(
         f"import finished: {source.name!r} → {target} project {project_id} — "
-        f"{result.detail} ({reader.lines_read} line(s) read)",
+        f"{result.detail} ({lines_read} record(s) read)",
         request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
     )
     detail = result.detail
-    if reader.lines_read == 0:
+    if lines_read == 0:
         detail = (
             "Nothing new to import — the file has not grown since the last import."
             if body.delta and checkpoint
             else "Nothing to import — the file is empty."
         )
-    # `linesRead` separates the two ways a run can write nothing: no new lines at all
-    # (normal for a delta run) versus lines that matched no regex (a real misconfiguration).
-    return {"records": result.records, "detail": detail, "linesRead": reader.lines_read}
+    # `linesRead` separates the two ways a run can write nothing: no new records at all
+    # (normal for a delta run) versus records that matched nothing (a real misconfiguration).
+    return {"records": result.records, "detail": detail, "linesRead": lines_read}
 
 
 # ── example-log parsing (wizard helpers) ──────────────────────────────────────

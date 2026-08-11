@@ -79,3 +79,41 @@ describe('a field used by a compound rule', () => {
     expect(within(row).getByLabelText(/Remove field/i)).toBeTruthy()
   })
 })
+
+/** Compound steps also work for a JSON source type: the rule matches on path-extracted
+ *  values and is preserved through a save (not stripped as it once was). */
+const JSON_EXISTING = {
+  id: 'st2', owner: 'dev', name: 'Events', createdAt: '', format: 'json',
+  sample: JSON.stringify({ caseId: 'c1', step: 'login', status: 200 }),
+  fields: [
+    { id: 'f1', name: 'caseId', role: 'id', regex: '', path: 'caseId' },
+    { id: 'f2', name: 'step', role: 'step', regex: '', path: 'step' },
+    { id: 'f3', name: 'status', role: 'aux', regex: '', path: 'status' },
+  ],
+  compound: [
+    { id: 'c1', step: 'login ok', when: [{ field: 'status', op: 'eq', value: '200' }] },
+  ],
+} as unknown as SourceType
+
+describe('compound steps for a JSON source type', () => {
+  it('shows the compound section and keeps the rule on save', async () => {
+    const { container } = render(
+      <SourceTypeWizard existing={JSON_EXISTING} onClose={() => {}} onSaved={() => {}} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /^Next$/ }))
+    // Scope to the role-tab bar — the compact path picker also has a "step" row button.
+    const tabs = container.querySelector('.sheet-tabs') as HTMLElement
+    fireEvent.click(within(tabs).getByRole('button', { name: /STEP/ }))
+    // The compound section is available for JSON, not just text.
+    expect(screen.getByText(/Compound steps/i)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Next$/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/i }))
+
+    await waitFor(() => expect(api.updateSourceType).toHaveBeenCalled())
+    const body = (api.updateSourceType as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect(body.format).toBe('json')
+    expect(body.compound[0]).toMatchObject({ step: 'login ok' })
+    expect(body.compound[0].when[0]).toMatchObject({ field: 'status', value: '200' })
+  })
+})

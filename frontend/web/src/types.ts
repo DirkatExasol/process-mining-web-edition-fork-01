@@ -581,13 +581,19 @@ export interface IntegrationStatus {
 /** "aux" is a helper field: extracted like the others but written to no column — it
  *  exists so a compound-step rule can match on a value (an HTTP status, a result code)
  *  that doesn't belong in META. */
-export type ExtractionRole = 'timestamp' | 'id' | 'step' | 'meta' | 'aux' 
+export type ExtractionRole = 'timestamp' | 'id' | 'step' | 'meta' | 'aux'
+
+// A source type's data format: unstructured text (regex per line) or semi-structured
+// JSON / XML (a path selector per field). Existing specs have no format → 'text'.
+export type DataFormat = 'text' | 'json' | 'xml'
 
 export interface ExtractionField {
   id?: string
   name: string
   role: ExtractionRole
+  // Text sources capture with `regex`; JSON/XML sources locate with `path`.
   regex: string
+  path?: string
   format?: string
   title?: string
 }
@@ -624,6 +630,8 @@ export interface SourceType {
   owner: string
   name: string
   sample: string
+  format?: DataFormat
+  recordPath?: string
   fields: ExtractionField[]
   compound?: CompoundRule[]
   createdAt: string
@@ -632,6 +640,8 @@ export interface SourceType {
 export interface SourceTypeInput {
   name: string
   sample: string
+  format?: DataFormat
+  recordPath?: string
   fields: ExtractionField[]
 }
 
@@ -690,4 +700,30 @@ export interface RecordDetection {
   records: string[]
   truncated: boolean
   encoding: string
+}
+
+// A field suggested by structure detection: its safe name, guessed role, path selector
+// and the value that path resolved to in the first record.
+export interface SuggestedField {
+  name: string
+  role: ExtractionRole
+  path: string
+  sample: string
+  format?: string
+}
+
+// Result of detecting a file's data format (text / JSON / XML). For JSON/XML the records
+// are rendered (pretty JSON / XML element) and `fields` carries path suggestions; for
+// text it also carries the RecordDetection delimiter fields.
+export interface StructureDetection {
+  format: DataFormat
+  shape?: 'array' | 'object' | 'jsonl'
+  recordPath?: string
+  records: string[]
+  fields: SuggestedField[]
+  truncated?: boolean
+  encoding?: string
+  // present only for text (delegates to RecordDetection)
+  delimiter?: string
+  candidates?: DelimiterCandidate[]
 }

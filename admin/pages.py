@@ -458,6 +458,17 @@ body {{ display: grid; place-items: center; min-height: 100vh; background: {body
 {form_block}
 </div>
 <script>
+// The inactivity notice is a one-time message: strip ?inactivity from the URL after
+// render so a refresh doesn't show it again. This mirrors the app/integration panels,
+// whose sign-out reason is an in-memory flag that a page reload clears.
+(function () {{
+  if (!window.history || !history.replaceState) return;
+  var p = new URLSearchParams(location.search);
+  if (!p.has('inactivity')) return;
+  p.delete('inactivity');
+  var q = p.toString();
+  history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + location.hash);
+}})();
 // Submit stays disabled until a username is entered — mirrors the app's LoginView.
 (function () {{
   var u = document.getElementById('u'), btn = document.getElementById('signin');

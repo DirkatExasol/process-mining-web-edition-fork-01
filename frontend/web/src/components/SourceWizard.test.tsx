@@ -32,7 +32,7 @@ describe('SourceWizard', () => {
     fireEvent.change(screen.getByPlaceholderText(/access log/i), {
       target: { value: 'Access log' },
     })
-    fireEvent.change(screen.getByPlaceholderText(/\/var\/log/i), {
+    fireEvent.change(screen.getByPlaceholderText(/export\.xml/i), {
       target: { value: '/data/logs/access.log' },
     })
     fireEvent.click(screen.getByRole('button', { name: /^Next$/ }))

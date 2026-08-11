@@ -1,14 +1,26 @@
 """Concrete extractors that plug into the abstraction layer.
 
-``FileExtractor`` is the first one: it reads a File source line by line, applies the
-linked source type's regexes to each line, and pushes the parsed events into the
-target schema's ``JOURNEYS`` table (normalising the timestamp), through the
-:class:`~.contract.IngestSession` it is handed.
+``FileExtractor`` is the first one: it reads a File source and pushes the parsed events
+into the target schema's ``JOURNEYS`` table (normalising the timestamp), through the
+:class:`~.contract.IngestSession` it is handed. It handles three data *formats*:
+
+* **text** (``.log``/``.txt`` …) — unstructured: each line is one record and every field
+  is captured with a **regex** (the original behaviour);
+* **json** — semi-structured: a top-level array *or* JSONL/NDJSON; each record is a JSON
+  object and every field is located by a **JSON path** (``user.id``);
+* **xml** — semi-structured: each record is a repeating element and every field is located
+  by an **XPath-subset** selector (``payload@id``).
+
+Whatever the format, each record yields a ``{field name → value}`` dict that the shared
+role/compound logic (:meth:`FileExtractor._row_from_values`) maps onto JOURNEYS columns —
+so id/step/timestamp/meta handling, MD5 pseudonymisation and compound steps are identical
+across formats.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import zlib
 from datetime import datetime
@@ -27,8 +39,9 @@ except ImportError:  # pragma: no cover
 
 from .compound import CompoundRules
 from .contract import ColumnType, ExtractResult, ExtractorInfo, IngestError, IngestSession
-from .files import count_lines, iter_lines
+from .files import FORMAT_JSON, FORMAT_TEXT, FORMAT_XML, count_lines, iter_lines
 from .parsing import TIMESTAMP_TARGET, analyze_timestamp
+from .structured import json_path, scalar, xml_value
 
 # The columns we populate (see backend/app/db/schema_ddl.py).
 _JOURNEYS_COLUMNS = {
@@ -106,7 +119,12 @@ def file_extractor_info() -> ExtractorInfo:
 
 class FileExtractor:
     """A configured run over one File source. ``fields`` is the source type's extraction
-    spec (a list of ``{name, role, regex}``); ``project_id`` fills JOURNEYS.PROJECT_ID."""
+    spec (a list of ``{name, role, regex|path}``); ``project_id`` fills JOURNEYS.PROJECT_ID.
+
+    ``fmt`` selects how a record's field values are located: ``"text"`` (regex per line),
+    ``"json"`` (JSON path per object) or ``"xml"`` (XPath-subset per element). The record
+    source varies with format and trigger — see :meth:`_raw_records`.
+    """
 
     info = file_extractor_info()
 
@@ -117,46 +135,69 @@ class FileExtractor:
         encoding: str,
         fields: list[dict],
         project_id: str,
+        fmt: str = FORMAT_TEXT,
+        record_path: str = "",
         lines: list[str] | None = None,
         line_stream=None,
         line_total: int | None = None,
+        records=None,
+        record_total: int | None = None,
         compound: list[dict] | None = None,
     ) -> None:
         self._path = path
         self._encoding = encoding or "utf-8"
         self._project_id = project_id
+        self._fmt = fmt if fmt in (FORMAT_TEXT, FORMAT_JSON, FORMAT_XML) else FORMAT_TEXT
+        self._record_path = record_path or ""
         # Incremental (watchdog) mode: when ``lines`` is given, those exact lines are
         # extracted instead of reading the whole file — the caller has already read only
-        # the newly-appended lines from the file's checkpoint offset.
+        # the newly-appended lines from the file's checkpoint offset. For a JSONL source
+        # each line is one JSON object; for text each line is one record.
         self._lines = lines
         # Streaming delta mode (manual run): an iterable that yields all appended lines,
         # draining the file to EOF in bounded chunks (see files.DeltaReader). Kept
         # separate from ``lines`` so its length is never taken (it is a generator).
         self._line_stream = line_stream
         self._line_total = line_total
-        # Compile the regexes once, split by role. Only the first field of each single
-        # role is used; up to three meta fields map to META_1..3.
-        self._ts = self._compiled(fields, "timestamp")
-        self._id = self._compiled(fields, "id")
-        self._step = self._compiled(fields, "step")
-        meta_fields = [f for f in fields if f.get("role") == "meta"][:3]
-        self._metas = [self._compile(f["regex"]) for f in meta_fields]
+        # Whole-file structured mode: an already-parsed iterable of records — JSON objects
+        # (a top-level array) or XML elements (the repeating record element).
+        self._records = records
+        self._record_total = record_total
+
+        # ── field → value locators, unified across formats ─────────────────────
+        # Every field yields a value by NAME, so id/step/timestamp/meta selection and
+        # compound rules all read one ``{name: value}`` dict regardless of format.
+        self._named: list[tuple[str, object]] = []
+        for f in fields:
+            name = str(f.get("name") or "").strip()
+            if not name:
+                continue
+            if self._fmt == FORMAT_TEXT:
+                locator = self._compile(f.get("regex", ""))
+            else:
+                locator = str(f.get("path") or "").strip()
+            self._named.append((name, locator))
+
+        def _first_name(role: str) -> str:
+            for f in fields:
+                if f.get("role") == role and str(f.get("name") or "").strip():
+                    return str(f["name"]).strip()
+            return ""
+
+        self._ts_name = _first_name("timestamp")
+        self._id_name = _first_name("id")
+        self._step_name = _first_name("step")
+        meta_fields = [
+            f for f in fields if f.get("role") == "meta" and str(f.get("name") or "").strip()
+        ][:3]
+        self._meta_names = [str(f["name"]).strip() for f in meta_fields]
         # Business names for META_1..3 — only the explicitly-given titles (a METAS row
         # is written only when at least one is set).
         self._meta_titles = [(f.get("title") or "").strip() for f in meta_fields]
         # Compound steps (optional): rules that derive the final STEP from several field
         # values. Every named field — including "aux" helper fields that are extracted
-        # but written to no column — is available to them, so compile them all by name.
+        # but written to no column — is available to them.
         self._compound = CompoundRules(compound)
-        self._named = (
-            [
-                (str(f.get("name") or "").strip(), self._compile(f.get("regex", "")))
-                for f in fields
-                if str(f.get("name") or "").strip()
-            ]
-            if self._compound
-            else []
-        )
         self._seen_steps: set[str] = set()
 
     @staticmethod
@@ -165,12 +206,6 @@ class FileExtractor:
             return _rx.compile(pattern)
         except Exception:  # noqa: BLE001 — any bad pattern simply yields no matches
             return None
-
-    def _compiled(self, fields: list[dict], role: str):
-        for f in fields:
-            if f.get("role") == role:
-                return self._compile(f.get("regex", ""))
-        return None
 
     @staticmethod
     def _capture(rx, line: str) -> str | None:
@@ -189,40 +224,95 @@ class FileExtractor:
             return None
         return m.group(1) if m.groups() else m.group(0)
 
+    def _values(self, record) -> dict[str, str | None]:
+        """The ``{field name → value}`` map for one record, by the configured format.
+
+        text: each field's regex is searched in the line. json: each field's path is
+        resolved in the object. xml: each field's selector is resolved in the element.
+        A record that isn't the shape the format expects (e.g. a non-object JSONL line)
+        yields an empty map, so it is counted as unparseable and skipped.
+        """
+        if self._fmt == FORMAT_TEXT:
+            return {name: self._capture(loc, record) for name, loc in self._named}
+        if self._fmt == FORMAT_JSON:
+            if not isinstance(record, dict):
+                return {}
+            return {name: scalar(json_path(record, loc)) for name, loc in self._named}
+        # XML
+        return {name: xml_value(record, loc) for name, loc in self._named}
+
+    def _line_source(self):
+        """The line iterable for a text/JSONL run: a streaming delta drain (manual run),
+        the exact lines the watchdog handed us, or a whole-file read."""
+        if self._line_stream is not None:
+            return self._line_stream, (self._line_total or 0)
+        if self._lines is not None:
+            return self._lines, len(self._lines)
+        return iter_lines(self._path, self._encoding), count_lines(self._path, self._encoding)
+
+    def _raw_records(self):
+        """Yield the run's raw records (and a total for the progress bar).
+
+        * text — the source lines (strings);
+        * json — either an already-parsed array/whole-file iterable of objects, or, in
+          byte-delta (JSONL) mode, one ``json.loads`` per appended line (unparseable
+          lines pass through as ``None`` so they're counted as skipped, never crash);
+        * xml — the repeating record elements handed in by the caller.
+        """
+        if self._fmt == FORMAT_XML:
+            records = self._records if self._records is not None else []
+            total = self._record_total
+            if total is None:
+                try:
+                    total = len(records)
+                except TypeError:
+                    total = 0
+            return records, total
+        if self._fmt == FORMAT_JSON and self._records is not None:
+            records = self._records
+            total = self._record_total
+            if total is None:
+                try:
+                    total = len(records)
+                except TypeError:
+                    total = 0
+            return records, total
+        source, total = self._line_source()
+        if self._fmt == FORMAT_JSON:
+            return self._json_lines(source), total
+        return source, total
+
+    @staticmethod
+    def _json_lines(lines):
+        """Parse each JSONL line into an object; unparseable lines yield ``None``."""
+        for line in lines:
+            text = line.strip() if isinstance(line, str) else line
+            if not text:
+                continue
+            try:
+                yield json.loads(text)
+            except (TypeError, ValueError):
+                yield None
+
     def run(self, session: IngestSession) -> ExtractResult:
         session.define_table("JOURNEYS", _JOURNEYS_COLUMNS, keys=["PROJECT_ID", "EVENT_ID", "STEP"])
         session.define_table("PROJECTS", _PROJECTS_COLUMNS, keys=["PROJECT_ID"])
         session.define_table("STEPS", _STEPS_COLUMNS, keys=["PROJECT_ID", "STEP"])
 
-        # Three read modes: a streaming delta drain (manual run), the exact lines the
-        # watchdog handed us, or a whole-file read.
-        if self._line_stream is not None:
-            source = self._line_stream
-            total = self._line_total or 0  # unknown up front → indeterminate progress
-            session.log(
-                f"reading appended lines from {self._path} → "
-                f"{session.schema}.JOURNEYS (project {self._project_id})"
-            )
-        elif self._lines is not None:
-            source = self._lines
-            total = len(self._lines)
-            session.log(
-                f"watchdog: {total} new line(s) from {self._path} → "
-                f"{session.schema}.JOURNEYS (project {self._project_id})"
-            )
-        else:
-            source = iter_lines(self._path, self._encoding)
-            total = count_lines(self._path, self._encoding)
-            session.log(f"reading {self._path} → {session.schema}.JOURNEYS (project {self._project_id})")
-        session.progress(0, total)
+        source, total = self._raw_records()
+        session.log(
+            f"reading {self._path} [{self._fmt}] → {session.schema}.JOURNEYS "
+            f"(project {self._project_id})"
+        )
+        session.progress(0, total or 0)
 
         batch: list[dict] = []
         written = 0
         skipped = 0
         processed = 0
-        for line in source:
+        for record in source:
             processed += 1
-            row = self._row(line)
+            row = self._row_from_values(self._values(record)) if record is not None else None
             if row is None:
                 skipped += 1
             else:
@@ -293,10 +383,16 @@ class FileExtractor:
         session.log(f"created {len(new)} new step(s): {', '.join(new)}")
         return len(new)
 
-    def _row(self, line: str) -> dict | None:
-        event_id = self._capture(self._id, line)
-        step = self._capture(self._step, line)
-        ts_raw = self._capture(self._ts, line)
+    def _row_from_values(self, values: dict[str, str | None]) -> dict | None:
+        """Map one record's extracted ``{name: value}`` onto a JOURNEYS row (or ``None``
+        when the record lacks the case id / step / timestamp a journey event needs).
+
+        Shared by every format — the only per-format work (regex vs JSON path vs XPath)
+        already happened in :meth:`_values`.
+        """
+        event_id = values.get(self._id_name) if self._id_name else None
+        step = values.get(self._step_name) if self._step_name else None
+        ts_raw = values.get(self._ts_name) if self._ts_name else None
         # A journey event needs at least a case id, a step and a time.
         if not (event_id and step and ts_raw):
             return None
@@ -307,10 +403,9 @@ class FileExtractor:
         # several fields at once (e.g. step "login" + status "200" → "login successful").
         # The plain step value stands whenever no rule matches, so rules are additive.
         if self._compound:
-            values = {name: v for name, rx in self._named if (v := self._capture(rx, line)) is not None}
             step = self._compound.derive(values) or step
         self._seen_steps.add(step)
-        metas = [self._capture(rx, line) for rx in self._metas]
+        metas = [values.get(n) for n in self._meta_names]
         metas += [None] * (3 - len(metas))
         return {
             "PROJECT_ID": self._project_id,

@@ -45,7 +45,8 @@
 <p>Every entry carries an <b>operation</b> (what part of the product wrote it) and, optionally, a <b>tag</b>. Tags are cross-cutting labels: they are independent of both severity and operation, and they exist so that you can pull one kind of activity out of a mixed log with a single click.</p>
 
 <dl>
-<dt>DATA</dt><dd>Data-load events.</dd>
+<dt>USER</dt><dd>Every deliberate <em>user action</em> — a successful state-changing request (create, update, delete, connect, run an import, change a setting…) made by a signed-in user, recorded at <b>USAGE</b>. Filter to <b>USER</b> for an audit trail of what users did. Reads and background polls are not actions and stay at <b>DEBUG</b>. These come from the compute backend, the single point every application and integration action passes through, so an action is logged once, not once per proxy.</dd>
+<dt>DATA</dt><dd>Data-load events. Because a data import is also a user action, its entries carry both <b>DATA</b> and <b>USER</b>.</dd>
 <dt>SQL</dt><dd>SQL traces. These belong to the DEBUG rung of the ladder, so they only appear when <b>Max level logged</b> is DEBUG.</dd>
 <dt>BACKUP/RESTORE</dt><dd>Every backup and restore action — exports, server-side runs, inspections, restores and their failures.</dd>
 </dl>

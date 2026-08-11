@@ -25,10 +25,27 @@ import {
   type CompoundCondition,
   type CompoundOp,
   type CompoundRule,
+  type DataFormat,
   type SourceType,
-} from '../types' 
+} from '../types'
+import { resolveFieldValue } from '../integration/structuredPaths'
 import { Sheet } from './ui'
 import { SourceTypeFilePicker } from './SourceTypeFilePicker'
+import { JsonPathPicker } from './JsonPathPicker'
+import { XmlPathPicker } from './XmlPathPicker'
+
+const FORMAT_LABEL: Record<DataFormat, string> = {
+  text: 'Text (regex)',
+  json: 'JSON (paths)',
+  xml: 'XML (paths)',
+}
+
+/** The value a field extracts from the sample — a regex match (text) or a path selector
+ *  result (json/xml). The single place the two mapping styles converge. */
+function valueOf(format: DataFormat, sample: string, field: ExtractionField): string {
+  if (format === 'text') return matchAll(sample, field.regex)?.[0]?.value ?? ''
+  return resolveFieldValue(format, sample, field.path ?? '') ?? ''
+}
 
 // Tab order requested: Timestamp, Step, Id, Metas.
 const ROLE_TABS: FieldRole[] = ['timestamp', 'step', 'id', 'meta', 'aux']
@@ -49,9 +66,13 @@ export function SourceTypeWizard({
   const [step, setStep] = useState(1)
   const [name, setName] = useState(existing?.name ?? '')
   const [sample, setSample] = useState(existing?.sample ?? '')
+  // Data format: text (regex per line) or the semi-structured json/xml (path per field).
+  const [format, setFormat] = useState<DataFormat>(existing?.format ?? 'text')
+  const [recordPath, setRecordPath] = useState(existing?.recordPath ?? '')
   const [fields, setFields] = useState<ExtractionField[]>(
     (existing?.fields ?? []).map((f) => ({ ...f, id: f.id ?? newFieldId() })),
   )
+  const structured = format !== 'text'
   // Compound steps (optional): rules that build the final STEP from several fields.
   const [compound, setCompound] = useState<CompoundRule[]>(
     (existing?.compound ?? []).map((r) => ({ ...r, id: r.id ?? newFieldId() })),
@@ -109,6 +130,70 @@ export function SourceTypeWizard({
       { id: newFieldId(), name: defaultName(activeRole, fs), role: activeRole, regex: '' },
     ])
 
+  // Structured mapping: clicking a leaf assigns its path to the active role. Single roles
+  // (timestamp/id/step) fill/replace their one field; meta/aux add another.
+  const assignPath = (path: string) => {
+    const single = activeRole !== 'meta' && activeRole !== 'aux'
+    if (single) {
+      const existing = fields.find((f) => f.role === activeRole)
+      if (existing) setField(existing.id!, { path })
+      else
+        setFields((fs) => [
+          ...fs,
+          { id: newFieldId(), name: activeRole, role: activeRole, regex: '', path },
+        ])
+    } else {
+      setFields((fs) => [
+        ...fs,
+        { id: newFieldId(), name: defaultName(activeRole, fs), role: activeRole, regex: '', path },
+      ])
+    }
+  }
+  const addBlankStructuredField = () =>
+    setFields((fs) => [
+      ...fs,
+      { id: newFieldId(), name: defaultName(activeRole, fs), role: activeRole, regex: '', path: '' },
+    ])
+
+  // The role a leaf path is already mapped to (for the picker's inline badges), so the
+  // whole mapping is visible in one list instead of scrolling between list and rows.
+  const mappedBy = (path: string) => {
+    const f = fields.find((x) => (x.path ?? '') !== '' && (x.path ?? '') === path)
+    if (!f) return null
+    const label = f.role === 'meta' ? 'Meta' : f.role === 'aux' ? 'Helper' : ROLE_LABEL[f.role]
+    return { label, color: ROLE_COLOR[f.role] }
+  }
+
+  // When a file is picked, its detected format drives the mapping style. Suggested fields
+  // pre-fill a new (empty) structured source type so the user starts from a mapping.
+  const onPickFile = (record: string, detection: import('../types').StructureDetection) => {
+    setSample(record)
+    setFormat(detection.format)
+    setRecordPath(detection.recordPath ?? '')
+    if (detection.format !== 'text' && fields.length === 0 && detection.fields.length > 0) {
+      // Pre-fill the confidently-guessed id/step/timestamp plus at most three metas (only
+      // META_1..3 are ever written), so the mapping starts compact — the user clicks more
+      // leaves in the picker to add any further fields rather than starting from a wall.
+      let metas = 0
+      const suggested = detection.fields.filter((f) => {
+        if (f.role !== 'meta') return true
+        metas += 1
+        return metas <= 3
+      })
+      setFields(
+        suggested.map((f) => ({
+          id: newFieldId(),
+          name: f.name,
+          role: f.role,
+          regex: '',
+          path: f.path,
+          format: f.format,
+          title: '',
+        })),
+      )
+    }
+  }
+
   const save = async () => {
     if (!name.trim()) {
       setError('A name is required.')
@@ -120,14 +205,18 @@ export function SourceTypeWizard({
     const body = {
       name: name.trim(),
       sample,
-      fields: fields.map(({ name, role, regex, format, title }) => ({
+      format,
+      recordPath: format === 'xml' ? recordPath.trim() : '',
+      fields: fields.map(({ name, role, regex, path, format: fieldFmt, title }) => ({
         name: name.trim() || role,
         role,
         regex,
-        format,
+        path,
+        format: fieldFmt,
         title,
       })),
-      // Only complete rules are sent; the backend drops incomplete ones anyway.
+      // Compound rules match on extracted field VALUES, so they apply to every format;
+      // only complete rules are sent (the backend drops incomplete ones anyway).
       compound: compound
         .filter((r) => r.step.trim() && r.when.some((c) => c.field.trim()))
         .map((r) => ({
@@ -151,7 +240,7 @@ export function SourceTypeWizard({
 
   // Normalised EVENT_TIME for the example JOURNEYS record (backend-parsed).
   const tsField = fields.find((f) => f.role === 'timestamp')
-  const tsValue = tsField ? matchAll(sample, tsField.regex)?.[0]?.value ?? '' : ''
+  const tsValue = tsField ? valueOf(format, sample, tsField) : ''
   const [normalizedTs, setNormalizedTs] = useState('')
   useEffect(() => {
     if (!tsValue) {
@@ -214,9 +303,28 @@ export function SourceTypeWizard({
             />
           </Field>
           <Field label="Load an example from a file">
-            <SourceTypeFilePicker selected={sample} onPick={setSample} />
+            <SourceTypeFilePicker selected={sample} onPick={onPickFile} />
           </Field>
-          <Field label="…or paste an example log entry">
+          <Field label="Data format">
+            <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <select
+                className="text-input"
+                value={format}
+                onChange={(e) => setFormat(e.target.value as DataFormat)}
+                style={{ width: 190, flex: 'none' }}
+              >
+                <option value="text">Text — unstructured (regex)</option>
+                <option value="json">JSON — array or JSONL (paths)</option>
+                <option value="xml">XML (paths)</option>
+              </select>
+              <span className="t-caption2 fg-tertiary">
+                {structured
+                  ? 'Fields are located by a path selector, not a regex.'
+                  : 'Each field is captured with a regular expression.'}
+              </span>
+            </div>
+          </Field>
+          <Field label={structured ? '…or paste one example record' : '…or paste an example log entry'}>
             <textarea
               className="text-input"
               value={sample}
@@ -233,31 +341,55 @@ export function SourceTypeWizard({
                 }
               }}
               rows={5}
-              placeholder="2026-08-03T14:05:09Z INFO OrderReceived case_id=abc-123 …"
+              placeholder={
+                structured
+                  ? format === 'xml'
+                    ? '<event id="c1"><step>login</step><ts>2026-08-03T14:05:09</ts></event>'
+                    : '{"caseId": "c1", "step": "login", "ts": "2026-08-03T14:05:09"}'
+                  : '2026-08-03T14:05:09Z INFO OrderReceived case_id=abc-123 …'
+              }
               style={{ fontFamily: 'var(--mono, monospace)', fontSize: 12 }}
             />
           </Field>
           <span className="t-caption2 fg-tertiary">
-            Pick one record as the example. On the next step you'll map each field yourself —
-            highlight a segment and assign it, or type its regex. Every field is defined manually.
+            {structured
+              ? 'Pick one record as the example. On the next step you map each field to a path — click a field in the record, or type its path.'
+              : "Pick one record as the example. On the next step you'll map each field yourself — highlight a segment and assign it, or type its regex."}
           </span>
         </>
       )}
 
       {step === 2 && (
         <>
-          <Field label="Select a segment below, pick a tab, then map it">
-            <div
-              ref={previewRef}
-              className="text-input"
-              style={{
-                fontFamily: 'var(--mono, monospace)', fontSize: 12, whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word', maxHeight: 150, overflow: 'auto', cursor: 'text', userSelect: 'text',
-              }}
-            >
-              <Highlighted highlights={highlights} />
-            </div>
-          </Field>
+          {structured ? (
+            <details className="iwiz-raw-record">
+              <summary className="t-caption fg-secondary" style={{ cursor: 'pointer' }}>
+                Raw example record
+              </summary>
+              <div
+                className="text-input"
+                style={{
+                  marginTop: 4, fontFamily: 'var(--mono, monospace)', fontSize: 12,
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 150, overflow: 'auto',
+                }}
+              >
+                {sample || <span className="fg-tertiary">Pick a record on the previous step.</span>}
+              </div>
+            </details>
+          ) : (
+            <Field label="Select a segment below, pick a tab, then map it">
+              <div
+                ref={previewRef}
+                className="text-input"
+                style={{
+                  fontFamily: 'var(--mono, monospace)', fontSize: 12, whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word', maxHeight: 150, overflow: 'auto', cursor: 'text', userSelect: 'text',
+                }}
+              >
+                <Highlighted highlights={highlights} />
+              </div>
+            </Field>
+          )}
 
           <div className="sheet-tabs">
             {ROLE_TABS.map((r) => {
@@ -277,39 +409,83 @@ export function SourceTypeWizard({
             })}
           </div>
 
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <button className="btn" style={{ color: ROLE_COLOR[activeRole] }} onClick={() => void useSelection()}>
-              🎯 Use selection
-            </button>
-            <button className="btn" onClick={addBlankField}>＋ Add field</button>
-          </div>
+          {structured ? (
+            <>
+              <div className="row" style={{ gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                <span className="t-caption fg-secondary">
+                  Click a field to map it to <strong style={{ color: ROLE_COLOR[activeRole] }}>
+                    {activeRole === 'meta' ? 'Metas' : ROLE_LABEL[activeRole]}
+                  </strong>.
+                </span>
+                <span className="spacer" />
+                <button className="btn small" onClick={addBlankStructuredField}>＋ Add field</button>
+              </div>
+              {format === 'xml' ? (
+                <XmlPathPicker
+                  sample={sample}
+                  recordPath={recordPath}
+                  onRecordPath={setRecordPath}
+                  onPick={assignPath}
+                  color={ROLE_COLOR[activeRole]}
+                  mappedBy={mappedBy}
+                />
+              ) : (
+                <JsonPathPicker
+                  sample={sample}
+                  onPick={assignPath}
+                  color={ROLE_COLOR[activeRole]}
+                  mappedBy={mappedBy}
+                />
+              )}
+            </>
+          ) : (
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button className="btn" style={{ color: ROLE_COLOR[activeRole] }} onClick={() => void useSelection()}>
+                🎯 Use selection
+              </button>
+              <button className="btn" onClick={addBlankField}>＋ Add field</button>
+            </div>
+          )}
 
           {roleFields.length === 0 ? (
             <span className="t-caption fg-tertiary">
-              No {activeRole === 'meta' ? 'meta fields' : ROLE_LABEL[activeRole].toLowerCase()} yet — select a segment
-              above and map it, or add a field.
+              No {activeRole === 'meta' ? 'meta fields' : ROLE_LABEL[activeRole].toLowerCase()} yet —{' '}
+              {structured ? 'click a field above, or add one.' : 'select a segment above and map it, or add a field.'}
             </span>
           ) : (
             <div className="col" style={{ gap: 8 }}>
-              {roleFields.map((f) => (
-                <FieldRow
-                  key={f.id}
-                  field={f}
-                  sample={sample}
-                  usedBy={rulesUsingField(compound, f.name)}
-                  onChange={(patch) => setField(f.id!, patch)}
-                  onRemove={() => removeField(f.id!)}
-                />
-              ))}
+              {roleFields.map((f) =>
+                structured ? (
+                  <StructuredFieldRow
+                    key={f.id}
+                    field={f}
+                    format={format}
+                    sample={sample}
+                    onChange={(patch) => setField(f.id!, patch)}
+                    onRemove={() => removeField(f.id!)}
+                  />
+                ) : (
+                  <FieldRow
+                    key={f.id}
+                    field={f}
+                    sample={sample}
+                    usedBy={rulesUsingField(compound, f.name)}
+                    onChange={(patch) => setField(f.id!, patch)}
+                    onRemove={() => removeField(f.id!)}
+                  />
+                ),
+              )}
             </div>
           )}
 
           {/* Compound steps belong to the STEP mapping — they only ever produce a
-              STEP value — so they live inside that tab rather than under all of them. */}
+              STEP value — so they live inside that tab rather than under all of them.
+              They match on extracted field VALUES, so they work for every format. */}
           {activeRole === 'step' && (
             <CompoundSection
               rules={compound}
               fields={fields}
+              format={format}
               sample={sample}
               onChange={setCompound}
               onFieldsChange={setFields}
@@ -319,6 +495,7 @@ export function SourceTypeWizard({
           {fields.length > 0 && (
             <JourneysRecordPreview
               fields={fields}
+              format={format}
               sample={sample}
               normalizedTs={normalizedTs}
               compound={compound}
@@ -337,10 +514,20 @@ export function SourceTypeWizard({
                 wordBreak: 'break-word', maxHeight: 130, overflow: 'auto',
               }}
             >
-              <Highlighted highlights={highlights} />
+              {structured ? (
+                sample || <span className="fg-tertiary">No example record.</span>
+              ) : (
+                <Highlighted highlights={highlights} />
+              )}
             </div>
           </Field>
-          <div className="t-caption fg-secondary">{name || '(unnamed)'}</div>
+          <div className="row" style={{ gap: 8, alignItems: 'baseline' }}>
+            <div className="t-caption fg-secondary">{name || '(unnamed)'}</div>
+            <span className="badge" style={{ fontSize: 11 }}>{FORMAT_LABEL[format]}</span>
+            {format === 'xml' && recordPath && (
+              <code className="t-caption2 fg-tertiary">record: {recordPath}</code>
+            )}
+          </div>
           <div className="col" style={{ gap: 6 }}>
             {fields.length === 0 && <span className="t-caption fg-tertiary">No extraction fields defined.</span>}
             {fields.map((f) => (
@@ -351,7 +538,7 @@ export function SourceTypeWizard({
                 </span>
                 <strong>{f.name}</strong>
                 <code className="t-caption2 fg-tertiary" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {f.regex}
+                  {structured ? f.path : f.regex}
                 </code>
                 {f.role === 'timestamp' && f.format && (
                   <span className="t-caption2 fg-tertiary">→ {f.format}</span>
@@ -380,6 +567,7 @@ export function SourceTypeWizard({
           {fields.length > 0 && (
             <JourneysRecordPreview
               fields={fields}
+              format={format}
               sample={sample}
               normalizedTs={normalizedTs}
               compound={compound}
@@ -402,19 +590,21 @@ export function SourceTypeWizard({
 function CompoundSection({
   rules,
   fields,
+  format,
   sample,
   onChange,
   onFieldsChange,
 }: {
   rules: CompoundRule[]
   fields: ExtractionField[]
+  format: DataFormat
   sample: string
   onChange: (next: CompoundRule[]) => void
   onFieldsChange: (updater: (fs: ExtractionField[]) => ExtractionField[]) => void
 }) {
   const [editing, setEditing] = useState<CompoundRule | null>(null)
 
-  const values = fieldValues(fields, sample)
+  const values = fieldValues(fields, format, sample)
   const derived = deriveCompoundStep(rules, values)
   const stepFieldName = fields.find((f) => f.role === 'step')?.name.trim() ?? ''
 
@@ -520,6 +710,7 @@ function CompoundSection({
         <CompoundRuleEditor
           rule={rules.find((r) => r.id === editing.id) ?? editing}
           fields={fields}
+          format={format}
           sample={sample}
           onChange={(next) => onChange(rules.map((r) => (r.id === next.id ? next : r)))}
           onFieldsChange={onFieldsChange}
@@ -536,6 +727,7 @@ function CompoundSection({
 function CompoundRuleEditor({
   rule,
   fields,
+  format,
   sample,
   onChange,
   onFieldsChange,
@@ -543,16 +735,19 @@ function CompoundRuleEditor({
 }: {
   rule: CompoundRule
   fields: ExtractionField[]
+  format: DataFormat
   sample: string
   onChange: (next: CompoundRule) => void
   onFieldsChange: (updater: (fs: ExtractionField[]) => ExtractionField[]) => void
   onClose: () => void
 }) {
+  const structured = format !== 'text'
   const [helperName, setHelperName] = useState('')
-  const [helperRegex, setHelperRegex] = useState('')
+  // The helper's selector — a regex for text, a path for JSON/XML.
+  const [helperSel, setHelperSel] = useState('')
 
   const named = fields.filter((f) => f.name.trim())
-  const values = fieldValues(fields, sample)
+  const values = fieldValues(fields, format, sample)
   const matches = deriveCompoundStep([rule], values) != null
 
   const setWhen = (i: number, patch: Partial<CompoundCondition>) => {
@@ -561,21 +756,29 @@ function CompoundRuleEditor({
     onChange({ ...rule, when })
   }
 
-  const helperResult = testPattern(sample, helperRegex)
-  const canAddHelper = Boolean(helperName.trim() && helperRegex.trim())
+  // Preview what the helper's selector extracts from the sample record.
+  const helperResult = structured
+    ? (() => {
+        const v = resolveFieldValue(format, sample, helperSel)
+        return { ok: v != null, value: v ?? '', error: false }
+      })()
+    : testPattern(sample, helperSel)
+  const canAddHelper = Boolean(helperName.trim() && helperSel.trim())
   const addHelper = () => {
     if (!canAddHelper) return
     const name = helperName.trim()
     onFieldsChange((fs) => [
       ...fs,
-      { id: newFieldId(), name, role: 'aux', regex: helperRegex.trim() },
+      structured
+        ? { id: newFieldId(), name, role: 'aux', regex: '', path: helperSel.trim() }
+        : { id: newFieldId(), name, role: 'aux', regex: helperSel.trim() },
     ])
     // Point the first empty condition at the field just created.
     const idx = rule.when.findIndex((c) => !c.field.trim())
     if (idx >= 0) setWhen(idx, { field: name })
     else onChange({ ...rule, when: [...rule.when, { field: name, op: 'eq', value: '' }] })
     setHelperName('')
-    setHelperRegex('')
+    setHelperSel('')
   }
 
   return (
@@ -705,24 +908,28 @@ function CompoundRuleEditor({
             />
             <input
               className="text-input"
-              value={helperRegex}
-              placeholder="regex with one capture group"
+              value={helperSel}
+              placeholder={
+                structured
+                  ? format === 'xml' ? 'path e.g. @status' : 'path e.g. status'
+                  : 'regex with one capture group'
+              }
               spellCheck={false}
-              onChange={(e) => setHelperRegex(e.target.value)}
+              onChange={(e) => setHelperSel(e.target.value)}
               style={{ flex: 1, minWidth: 0, fontFamily: 'var(--mono, monospace)', fontSize: 12 }}
             />
             <button className="btn" disabled={!canAddHelper} onClick={addHelper}>Add</button>
           </div>
-          {helperRegex.trim() && (
+          {helperSel.trim() && (
             <span
               className="t-caption2"
               style={{ color: helperResult.ok ? 'var(--green)' : 'var(--orange)' }}
             >
               {helperResult.ok
-                ? `✓ captures “${helperResult.value}” from the sample`
+                ? `✓ ${structured ? 'value' : 'captures'} “${helperResult.value}” from the sample`
                 : helperResult.error
                   ? '⚠ invalid regex'
-                  : '• no match in the sample line'}
+                  : structured ? '• no value at this path' : '• no match in the sample line'}
             </span>
           )}
         </div>
@@ -741,14 +948,19 @@ function rulesUsingField(rules: CompoundRule[], name: string): string[] {
     .map((r) => r.step.trim() || '(unnamed rule)')
 }
 
-/** What each named field captures from the sample — the values compound rules match on. */
-function fieldValues(fields: ExtractionField[], sample: string): Record<string, string> {
+/** What each named field extracts from the sample — the values compound rules match on.
+ *  Format-aware: a regex match for text, a path selector result for JSON/XML. */
+function fieldValues(
+  fields: ExtractionField[],
+  format: DataFormat,
+  sample: string,
+): Record<string, string> {
   const values: Record<string, string> = {}
   for (const f of fields) {
     const name = f.name.trim()
     if (!name) continue
-    const v = matchAll(sample, f.regex)?.[0]?.value
-    if (v != null) values[name] = v
+    const v = valueOf(format, sample, f)
+    if (v) values[name] = v
   }
   return values
 }
@@ -891,16 +1103,113 @@ function FieldRow({
   )
 }
 
+/** The structured (JSON/XML) counterpart of FieldRow: a field mapped by a PATH selector
+ *  rather than a regex. Shows the value the path resolves to in the sample record, and —
+ *  for a timestamp — its normalised form + inferred parse format (stored with the field). */
+function StructuredFieldRow({
+  field,
+  format,
+  sample,
+  onChange,
+  onRemove,
+}: {
+  field: ExtractionField
+  format: DataFormat
+  sample: string
+  onChange: (patch: Partial<ExtractionField>) => void
+  onRemove: () => void
+}) {
+  const value = field.path ? resolveFieldValue(format, sample, field.path) : null
+  const color = value != null ? 'var(--green)' : 'var(--secondary)'
+
+  const [ts, setTs] = useState<{ format: string; normalized: string } | null>(null)
+  const matchValue = field.role === 'timestamp' && value != null ? value : undefined
+  useEffect(() => {
+    if (!matchValue) {
+      setTs(null)
+      return
+    }
+    let alive = true
+    void api
+      .parseTimestamp(matchValue)
+      .then((info) => {
+        if (!alive) return
+        setTs(info)
+        if (info.format !== (field.format ?? '')) onChange({ format: info.format })
+      })
+      .catch(() => alive && setTs(null))
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchValue])
+
+  return (
+    <div className="col field-row" style={{ gap: 6, padding: 10, borderRadius: 10, background: 'var(--fill)' }}>
+      <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+        {field.role === 'meta' || field.role === 'aux' ? (
+          <input
+            className="text-input"
+            value={field.name}
+            onChange={(e) => onChange({ name: e.target.value })}
+            placeholder={field.role === 'aux' ? 'helper name' : 'field name'}
+            style={{ width: 130, flex: 'none', ...(field.role === 'aux' ? { color: ROLE_COLOR.aux } : {}) }}
+          />
+        ) : (
+          <span className="t-caption" style={{ fontWeight: 600, color: ROLE_COLOR[field.role], width: 96, flex: 'none' }}>
+            {ROLE_LABEL[field.role]}
+          </span>
+        )}
+        <input
+          className="text-input"
+          value={field.path ?? ''}
+          onChange={(e) => onChange({ path: e.target.value })}
+          placeholder={format === 'xml' ? 'path e.g. @id or user/name' : 'path e.g. user.id or items[0].sku'}
+          spellCheck={false}
+          style={{ flex: 1, minWidth: 0, fontFamily: 'var(--mono, monospace)', fontSize: 12 }}
+        />
+        <button className="icon-btn" title="Remove field" aria-label="Remove field" onClick={onRemove}>
+          ✕
+        </button>
+      </div>
+      {field.role === 'meta' && (
+        <input
+          className="text-input"
+          value={field.title ?? ''}
+          onChange={(e) => onChange({ title: e.target.value })}
+          placeholder="Business name (e.g. Book ID) — shown in the app"
+        />
+      )}
+      <span className="t-caption2" style={{ color }}>
+        {field.path
+          ? value != null
+            ? `✓ value: ${value}`
+            : '• no value at this path in the sample'
+          : '• enter a path'}
+      </span>
+      {field.role === 'timestamp' && value != null && ts && (
+        <span className="t-caption2" style={{ color: ts.normalized ? 'var(--green)' : 'var(--orange)' }}>
+          {ts.normalized
+            ? `🕒 ${ts.normalized}  ·  format ${ts.format}`
+            : '⚠ couldn’t recognise the date — stored as extracted'}
+        </span>
+      )}
+    </div>
+  )
+}
+
 /** A live preview of the JOURNEYS row the current spec would produce from the sample:
  *  id → EVENT_ID, step → STEP, timestamp → EVENT_TIME (normalised), the first three
  *  meta fields → META_1..3. PROJECT_ID / STEP_ID / SAMPLE_SET are filled at load time. */
 function JourneysRecordPreview({
   fields,
+  format,
   sample,
   normalizedTs,
   compound = [],
 }: {
   fields: ExtractionField[]
+  format: DataFormat
   sample: string
   normalizedTs: string
   compound?: CompoundRule[]
@@ -908,7 +1217,7 @@ function JourneysRecordPreview({
   const firstValue = (role: FieldRole): string => {
     const f = fields.find((x) => x.role === role)
     if (!f) return ''
-    return matchAll(sample, f.regex)?.[0]?.value ?? ''
+    return valueOf(format, sample, f)
   }
   // The STEP a real import would write: a matching compound rule wins over the plain
   // step field, so the preview reflects the rules as you build them.
@@ -916,8 +1225,8 @@ function JourneysRecordPreview({
   for (const f of fields) {
     const nm = f.name.trim()
     if (!nm) continue
-    const v = matchAll(sample, f.regex)?.[0]?.value
-    if (v != null) namedValues[nm] = v
+    const v = valueOf(format, sample, f)
+    if (v) namedValues[nm] = v
   }
   const compoundStep = deriveCompoundStep(compound, namedValues)
 
@@ -925,7 +1234,7 @@ function JourneysRecordPreview({
   const metaCell = (i: number) => {
     const f = metas[i]
     if (!f) return null
-    return { name: f.title || f.name, value: matchAll(sample, f.regex)?.[0]?.value ?? '' }
+    return { name: f.title || f.name, value: valueOf(format, sample, f) }
   }
 
   const rows: { col: string; note?: string; value: string; muted?: boolean }[] = [

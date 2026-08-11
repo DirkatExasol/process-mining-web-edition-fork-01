@@ -5,6 +5,8 @@
 
 <div class="role">Requires: <b>Developer</b> or <b>Administrator</b>. Compound steps are edited inside the source type wizard on the integration console (HTTP :8100, HTTPS :8463). Power users and plain users cannot sign in to that surface, and every <code>/api/integration/*</code> endpoint refuses them with &ldquo;You need the Developer role to use the integration features.&rdquo;</div>
 
+<div class="note"><strong>Note (all formats)</strong> The examples in this chapter use a text (regex) source type, but compound steps work for <b>every</b> data format. Rules match on the extracted field <em>values</em>, not on how they were extracted — so a JSON or XML source type carries rules in exactly the same way. The only difference is the selector: a helper field on a JSON/XML source type is a <em>path</em> (e.g. <code>status</code>, <code>@status</code>) rather than a regex, and the inline &ldquo;Add a helper field&rdquo; panel accepts a path there. Everywhere below, read &ldquo;the value the field captures&rdquo; as &ldquo;the value the field extracts&rdquo;.</div>
+
 <h2 id="cs-why">18.1 Why compound steps exist</h2>
 
 <p>Consider a single line from an Apache access log:</p>

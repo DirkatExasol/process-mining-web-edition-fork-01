@@ -325,7 +325,9 @@ def test_ldap_endpoints_require_admin(admin):
 def test_login_get_inactivity_shows_notice(admin):
     server, _ = admin
     client = TestClient(server.app)
-    assert "inactivity" not in client.get("/login").text
+    # A plain /login shows no inactivity NOTICE (the one-time-strip script always ships,
+    # so check for the notice text, not the bare word "inactivity").
+    assert "You were signed out due to inactivity." not in client.get("/login").text
     body = client.get("/login?inactivity=1").text
     assert "You were signed out due to inactivity." in body
 

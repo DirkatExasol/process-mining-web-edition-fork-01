@@ -66,6 +66,11 @@ TAG_SQL = "SQL"
 # each of their failure paths — so the whole custody trail of a backup file reads as one
 # filterable group.
 TAG_BACKUP = "BACKUP/RESTORE"
+# Every deliberate user action — a successful state-changing request (create/update/
+# delete/connect/run…) by a signed-in user — so the admin can filter the log down to
+# "what users did". Read requests and background polls are not actions (they stay at
+# DEBUG); a data import carries both DATA and, as a user action, this tag.
+TAG_USER = "USER"
 _MAX_TAG_CHARS = 24
 
 

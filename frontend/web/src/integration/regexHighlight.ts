@@ -11,7 +11,9 @@ export interface ExtractionField {
   id?: string
   name: string
   role: FieldRole
+  /** Text sources capture with `regex`; JSON/XML sources locate with `path`. */
   regex: string
+  path?: string
   format?: string
   /** Business name for a meta field (→ METAS.META_n_TITLE). */
   title?: string

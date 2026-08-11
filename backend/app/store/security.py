@@ -307,11 +307,17 @@ class SourceType:
         fields = spec.get("fields")
         # Optional compound-step rules (absent for a source type that doesn't use them).
         compound = spec.get("compound")
+        # Data format: "text" (regex, the default for pre-existing specs), or the
+        # semi-structured "json"/"xml" that locate fields by a path instead of a regex.
+        fmt = spec.get("format")
         return {
             "id": self.id,
             "owner": self.owner,
             "name": self.name,
             "sample": spec.get("sample", ""),
+            "format": fmt if fmt in ("text", "json", "xml") else "text",
+            # XML only: the repeating element that is one record (relative to the root).
+            "recordPath": spec.get("recordPath", ""),
             "fields": fields if isinstance(fields, list) else [],
             "compound": compound if isinstance(compound, list) else [],
             "createdAt": self.created_at,

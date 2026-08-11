@@ -48,7 +48,40 @@ describe('SourceTypeWizard', () => {
     const body = (api.createSourceType as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]
     expect(body.name).toBe('App JSON log')
     expect(body.sample).toBe('2026-08-03 INFO Started')
+    expect(body.format).toBe('text')
     expect(body.fields[0]).toMatchObject({ role: 'timestamp', regex: '(\\d{4}-\\d{2}-\\d{2})' })
+    expect(onSaved).toHaveBeenCalled()
+  })
+
+  it('maps a JSON source by path and posts format + path', async () => {
+    const onSaved = vi.fn()
+    render(<SourceTypeWizard onClose={() => {}} onSaved={onSaved} />)
+
+    fireEvent.change(screen.getByPlaceholderText(/Apache access log/i), {
+      target: { value: 'Events JSON' },
+    })
+    // Switch to JSON: the paste box now expects a record, and the mapping uses paths.
+    fireEvent.change(screen.getByDisplayValue('Text — unstructured (regex)'), {
+      target: { value: 'json' },
+    })
+    fireEvent.change(screen.getByPlaceholderText(/"caseId"/), {
+      target: { value: '{"caseId":"c1","ts":"2026-08-03"}' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Next$/ }))
+
+    // Step 2: the JSON leaves appear as clickable paths; click one to map it to Timestamp.
+    await waitFor(() => expect(screen.getByText('ts')).toBeTruthy())
+    fireEvent.click(screen.getByText('ts'))
+    // The mapped field shows the value the path resolves to.
+    await waitFor(() => expect(screen.getByText(/value: 2026-08-03/)).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: /^Next$/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Create source type/i }))
+
+    await waitFor(() => expect(api.createSourceType).toHaveBeenCalled())
+    const body = (api.createSourceType as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(body.format).toBe('json')
+    expect(body.fields[0]).toMatchObject({ role: 'timestamp', path: 'ts' })
     expect(onSaved).toHaveBeenCalled()
   })
 })

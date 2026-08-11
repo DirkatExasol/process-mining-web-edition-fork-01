@@ -183,7 +183,13 @@ app.add_middleware(
 
 # Log unhandled failures (5xx / crashes such as an oversized simulation) and 4xx
 # gate hits. The user comes from the trusted X-PMW-User header the GUI injects.
-logx.install_request_logging(app, lambda r: r.headers.get("x-pmw-user", ""))
+# The compute backend is the single choke point every app + integration /api/* action
+# flows through, so it logs successful mutating requests at USAGE with the USER tag —
+# a filterable audit trail of what users did (the browser proxies don't, to avoid
+# double-logging the same action).
+logx.install_request_logging(
+    app, lambda r: r.headers.get("x-pmw-user", ""), log_user_actions=True
+)
 
 app.include_router(connections.router)
 app.include_router(projects.router)

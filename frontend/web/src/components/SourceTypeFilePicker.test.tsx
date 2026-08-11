@@ -1,24 +1,44 @@
 /** SourceTypeFilePicker — the source-type wizard's file chooser: list sandbox files,
- *  detect the record delimiter, preview records, and pick one by click or drag-and-drop. */
+ *  detect the data format (text / JSON / XML) and — for text — the record delimiter,
+ *  preview records, and pick one by click or drag-and-drop. */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+
+const textStructure = {
+  format: 'text' as const,
+  delimiter: 'crlf',
+  candidates: [
+    { id: 'crlf', label: 'CRLF (\\r\\n) — Windows line ending', count: 4 },
+    { id: 'lf', label: 'LF (\\n) — Unix newline', count: 0 },
+  ],
+  records: ['rec one', 'rec two', 'rec three'],
+  fields: [],
+  truncated: true,
+  encoding: 'utf-8',
+}
+
+const jsonStructure = {
+  format: 'json' as const,
+  shape: 'array' as const,
+  records: ['{\n  "caseId": "c1"\n}'],
+  fields: [{ name: 'caseid', role: 'id' as const, path: 'caseId', sample: 'c1' }],
+  truncated: false,
+  encoding: 'utf-8',
+}
 
 vi.mock('../api', () => ({
   api: {
     listIntegrationFiles: vi.fn(async () => [
       { name: 'apache.log', size: 4863, modified: 0 },
-      { name: 'sub/app.log', size: 128, modified: 0 },
+      { name: 'events.json', size: 128, modified: 0 },
     ]),
+    detectStructure: vi.fn(async (path: string) =>
+      path === 'events.json' ? jsonStructure : textStructure,
+    ),
     detectRecords: vi.fn(async (_path: string, delimiter = '') => ({
+      ...textStructure,
       delimiter: delimiter || 'crlf',
-      candidates: [
-        { id: 'crlf', label: 'CRLF (\\r\\n) — Windows line ending', count: 4 },
-        { id: 'lf', label: 'LF (\\n) — Unix newline', count: 0 },
-      ],
-      records: ['rec one', 'rec two', 'rec three'],
-      truncated: true,
-      encoding: 'utf-8',
     })),
   },
 }))
@@ -28,19 +48,19 @@ import { SourceTypeFilePicker } from './SourceTypeFilePicker'
 
 afterEach(() => vi.clearAllMocks())
 
-function openAndPickFile() {
+function openAndPickFile(name = /apache\.log/i) {
   fireEvent.click(screen.getByRole('button', { name: /Choose a file/i }))
-  return screen.findByRole('button', { name: /apache\.log/i })
+  return screen.findByRole('button', { name })
 }
 
 describe('SourceTypeFilePicker', () => {
   it('lists sandbox files and detects records on selection', async () => {
     render(<SourceTypeFilePicker selected="" onPick={() => {}} />)
     const fileBtn = await openAndPickFile()
-    expect(screen.getByRole('button', { name: /sub\/app\.log/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /events\.json/i })).toBeTruthy()
 
     fireEvent.click(fileBtn)
-    await waitFor(() => expect(api.detectRecords).toHaveBeenCalledWith('apache.log', '', 5))
+    await waitFor(() => expect(api.detectStructure).toHaveBeenCalledWith('apache.log', 5))
     // The detected delimiter and the record previews appear.
     await waitFor(() => expect(screen.getByText(/CRLF/)).toBeTruthy())
     expect(screen.getByText('rec one')).toBeTruthy()
@@ -56,14 +76,26 @@ describe('SourceTypeFilePicker', () => {
     await waitFor(() => expect(api.detectRecords).toHaveBeenCalledWith('apache.log', 'lf', 5))
   })
 
-  it('picks a record by clicking it', async () => {
+  it('picks a record by clicking it, handing back the detection', async () => {
     const onPick = vi.fn()
     render(<SourceTypeFilePicker selected="" onPick={onPick} />)
     fireEvent.click(await openAndPickFile())
     const rec = await screen.findByText('rec two')
 
     fireEvent.click(rec)
-    expect(onPick).toHaveBeenCalledWith('rec two')
+    expect(onPick).toHaveBeenCalledWith('rec two', expect.objectContaining({ format: 'text' }))
+  })
+
+  it('detects a JSON file: no delimiter selector, records shown', async () => {
+    const onPick = vi.fn()
+    render(<SourceTypeFilePicker selected="" onPick={onPick} />)
+    fireEvent.click(await openAndPickFile(/events\.json/i))
+    await waitFor(() => expect(api.detectStructure).toHaveBeenCalledWith('events.json', 5))
+    // JSON: a format badge, no delimiter combobox.
+    await waitFor(() => expect(screen.getByText(/Detected JSON/i)).toBeTruthy())
+    expect(screen.queryByRole('combobox')).toBeNull()
+    fireEvent.click(screen.getByText(/"caseId": "c1"/))
+    expect(onPick).toHaveBeenCalledWith(expect.stringContaining('caseId'), expect.objectContaining({ format: 'json' }))
   })
 
   it('exposes the record on drag so it can be dropped into the example box', async () => {
@@ -71,9 +103,6 @@ describe('SourceTypeFilePicker', () => {
     fireEvent.click(await openAndPickFile())
     await screen.findByText('rec one')
 
-    // Dragging a card puts the record on the dataTransfer; the wizard's example textarea
-    // is the drop target (tested there). Here we just assert the card is draggable and
-    // carries the record.
     const store: Record<string, string> = {}
     const dataTransfer = {
       setData: (k: string, v: string) => { store[k] = v },
@@ -91,10 +120,7 @@ describe('SourceTypeFilePicker', () => {
     render(<SourceTypeFilePicker selected="rec two" onPick={() => {}} />)
     fireEvent.click(await openAndPickFile())
     await screen.findByText('rec one')
-    // No redundant drop box — selection is shown only by the highlighted card.
     expect(screen.queryByText(/Drop a record here/i)).toBeNull()
-    expect(screen.queryByText(/Record selected/i)).toBeNull()
-    // "rec two" appears exactly once — the highlighted card.
     expect(screen.getAllByText('rec two')).toHaveLength(1)
     const card = screen.getByText('rec two').closest('.card') as HTMLElement
     expect(card.className).toContain('selected')

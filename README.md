@@ -152,11 +152,17 @@ change the password on first use. It is organised into tabs: **App Control**
 **Logging.** A shared, structured log written by all servers. Each entry carries a
 timestamp, severity (INFO → USAGE → WARN → ERROR → DEBUG), client IP, user, an
 *operation* (which code path wrote it) and an optional **tag** — a coarser category
-grouping a whole activity across operations and severities. **Data imports are tagged
-`DATA`**: the start and result of every import, whether run by hand in the integration
-console or by a file-source watchdog, at **USAGE** on success and **WARN/ERROR** on
-failure. Filter by tag to see the complete import history. The exported `.log` line is
-`DATE -- TIME -- SEVERITY -- CLIENT-IP -- USER -- TAG -- text`.
+grouping a whole activity across operations and severities. Four tags ship: **`USER`** —
+every deliberate **user action** (a successful mutating `/api/*` request by a signed-in
+user, at **USAGE**); the compute backend logs these from its request middleware
+(`log_user_actions=True`), the single choke point every app/integration action flows
+through, so they're never double-logged by the proxies. **`DATA`** — data imports (start
++ result, hand-run or watchdog, USAGE on success / WARN/ERROR on failure); an import is
+also a user action, so it carries both `USER` and `DATA`. **`SQL`** — every entry quoting
+an executed statement (DEBUG traces + query errors). **`BACKUP/RESTORE`** — the whole
+custody trail of a backup file. Reads and background polls are not actions and stay at
+DEBUG. The exported `.log` line is `DATE -- TIME -- SEVERITY -- CLIENT-IP -- USER -- TAG
+-- text`.
 
 **TLS / SSL.** Generate a self-signed certificate (common name + SANs, validity,
 key size) or upload your own PEM cert + key, mark one *active*, then choose the
@@ -205,6 +211,14 @@ keys are encrypted at rest. Both the admin and app servers send hardening respon
 headers (`X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` against
 clickjacking, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
 and HSTS when TLS is on). The security store lives in `data/security.sqlite3`.
+
+**Idle sign-out.** An idle session is signed out after a configurable timeout (the app's
+is set in the admin *Users* tab, the admin interface's in its own *idle* control), landing
+back on the sign-in panel with a **one-time** *"You were signed out due to inactivity."*
+notice. The notice is transient on **all three** panels: the app and integration console
+(React SPAs) hold the reason as an in-memory flag that a reload clears, and the
+server-rendered admin panel strips `?inactivity` from the URL right after render — so a
+page **refresh** never re-shows the message.
 
 **Passkeys (WebAuthn).** Both the app and the admin interface accept **passkey**
 sign-in (Touch ID, Windows Hello, a hardware security key) as an *alternative* to
@@ -576,16 +590,26 @@ Nodes are **draggable** and the arrangement is **persisted per user** (also in
 
 The console lets a user build the pieces of an extraction:
 
-- A **source type** is a name + an extraction spec (an example record + the
-  timestamp/step/id/meta regexes), built in the source-type wizard. The wizard's file
-  picker (`GET /api/integration/files`) lists the sandbox files; picking one calls `POST
-  /api/integration/files/records`, which **auto-detects the record delimiter** (LF, CRLF,
-  CR, FF, RS, NUL, or a blank line for multi-line records — overridable), splits the head
-  of the file on it, and returns the first five records. You drag one record (or click it)
-  to use it as the example the field-mapping step works from — or paste a line directly.
+- A **source type** is a name + an extraction spec, built in the source-type wizard. It
+  carries a **data format** — `text`, `json` or `xml` — that decides how fields are
+  located:
+  - **text** (unstructured `.log`/`.txt`): each field is a **regex** applied per line. The
+    wizard's file picker calls `POST /api/integration/files/records`, which **auto-detects
+    the record delimiter** (LF, CRLF, CR, FF, RS, NUL, or a blank line for multi-line
+    records — overridable) and returns the first five records.
+  - **json** (a top-level array or JSONL/NDJSON): each field is a **JSON path**
+    (`user.id`, `items[0].sku`).
+  - **xml**: each record is a repeating element (the source type's `recordPath`) and each
+    field is an **XPath-subset** selector (`@id`, `payload/user@id`).
+
+  Picking a file calls `POST /api/integration/files/structure`, which sniffs the format,
+  renders the first records (pretty JSON / an XML element / a text line) and **suggests
+  fields with their path selectors** by flattening the first record. You click a suggested
+  path (or drag/paste a record) to map it. XML is parsed with **defusedxml** (XXE-safe);
+  a whole-file JSON-array/XML parse is size-capped.
 - A **source** is a data origin with a generic `kind` + config. The only kind so far is
-  **File**: a *path* (previewed in the wizard — the first N lines), an *encoding*, and the
-  *source type* to parse it with.
+  **File**: a *path* (previewed in the wizard), an *encoding*, and the *source type* to
+  parse it with — the file may be a log/text, JSON or XML file.
 - **File access is sandboxed.** By default a File source may only read from
   `PMW_INTEGRATION_FILES_DIR` (default `data/integration_files`, a mounted volume; the
   bundled `examples/*.log` are seeded there on first run). Path traversal and symlink
@@ -594,12 +618,15 @@ The console lets a user build the pieces of an extraction:
   reading arbitrary server files).
 
 **Running a File source** (`POST /api/integration/sources/{id}/run {projectId,
-connectionId}`) builds a `FileExtractor` and calls `AbstractionLayer.run`: it reads the
-file line by line, applies the source type's regexes, normalises the timestamp to a real
-`TIMESTAMP`, and pushes a `JOURNEYS` row per event (`PROJECT_ID`=the project id,
-`EVENT_ID`/`STEP`/`EVENT_TIME` + `META_1..3`, `SAMPLE_SET='ORIGINAL'`) into the **chosen
-connection's schema** via the `SqlIngestBackend`. Progress and the result appear in the
-status panel. Lines that don't yield a case id, step and time are skipped and counted.
+connectionId}`) builds a `FileExtractor` and calls `AbstractionLayer.run`. The extractor is
+**format-agnostic**: it turns each record into a `{field → value}` map — via regex (text),
+`json_path` (JSON), or `xml_value` (XML) — then feeds the shared role/compound/pseudonymise
+logic. It normalises the timestamp to a real `TIMESTAMP` and pushes a `JOURNEYS` row per
+event (`PROJECT_ID`=the project id, `EVENT_ID`/`STEP`/`EVENT_TIME` + `META_1..3`,
+`SAMPLE_SET='ORIGINAL'`) into the **chosen connection's schema** via the `SqlIngestBackend`.
+Records that don't yield a case id, step and time are skipped and counted. The resolvers
+live in `integration/structured.py` (JSON dot/bracket paths + an XPath subset; XML through
+**defusedxml**).
 
 **The destination is named by the caller**, not taken from the browser session. The Run
 dialog offers every connection assigned to the developer; the backend re-checks that
@@ -622,8 +649,15 @@ has since been deleted stays in the new-project field instead of vanishing. Reco
 is best-effort — the rows are already committed by then, so a store failure is logged, not
 raised.
 
-**Every manual run is a delta upload** (`delta`, default `true`). The run reads all the
-bytes appended since this source's **checkpoint**, imports them, and advances the
+**Delta strategy depends on the format.** Line-oriented sources (**text** and **JSONL**)
+use a **byte-offset delta**: the run reads the bytes appended since the checkpoint and tops
+the project up. Whole-document sources (**JSON array** and **XML**) can't be byte-delta'd,
+so they are **import-once by content signature**: an unchanged file re-imports nothing; a
+changed file re-imports the whole document (`delta: false` forces a whole re-read either
+way, and the pipeline never de-dups, so clear the project first if that would double rows).
+
+**Every line-oriented manual run is a delta upload** (`delta`, default `true`). The run
+reads all the bytes appended since this source's **checkpoint**, imports them, and advances the
 checkpoint once the rows are safely in — so pressing ▷ twice tops the project up instead
 of storing the file again. `delta: false` reads from byte 0 for a deliberate full
 re-import. A manual run **drains the whole file to EOF in one go** (`files.DeltaReader`

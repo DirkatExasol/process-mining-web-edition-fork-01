@@ -19,7 +19,10 @@ from __future__ import annotations
 from typing import Any
 
 from .store import logs as _logs
-from .store.logs import TAG_BACKUP, TAG_DATA, TAG_SQL  # noqa: F401 — re-exported
+from .store.logs import TAG_BACKUP, TAG_DATA, TAG_SQL, TAG_USER  # noqa: F401 — re-exported
+
+# HTTP methods that change state — a successful one is a "user action".
+_MUTATING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 def client_ip(request: Any) -> str:
@@ -86,13 +89,21 @@ def _operation_for(path: str) -> str:
     return "request"
 
 
-def install_request_logging(app: Any, resolve_user: Any) -> None:
+def install_request_logging(
+    app: Any, resolve_user: Any, *, log_user_actions: bool = False
+) -> None:
     """Add an HTTP middleware that logs every request outcome.
 
     Classification: 5xx → ERROR, 401/403 → WARN (unauthorised), other → DEBUG (a
     verbose per-request trace). Explicit login/logout/page events are logged by the
     handlers at USAGE so they survive the default level; this middleware adds the
     trace and the security-relevant WARN/ERROR entries.
+
+    ``log_user_actions``: when set, a **successful** (2xx) **mutating** request
+    (POST/PUT/PATCH/DELETE) is logged at USAGE with tag ``USER`` instead of the DEBUG
+    trace — a filterable audit trail of what users did. Enable it on the compute backend
+    only: it is the single choke point every app and integration ``/api/*`` action flows
+    through, so enabling it elsewhere (the proxies) would double-log the same action.
     """
 
     def _user(request: Any) -> str:
@@ -127,6 +138,20 @@ def install_request_logging(app: Any, resolve_user: Any) -> None:
                 request=request,
                 username=_user(request),
                 operation="unauthorised",
+            )
+        elif (
+            log_user_actions
+            and request.method in _MUTATING
+            and 200 <= status < 300
+        ):
+            # A successful state-changing request = a user action. Log it at USAGE with
+            # the USER tag (in place of the DEBUG trace) so it forms an audit trail.
+            usage(
+                line,
+                request=request,
+                username=_user(request),
+                operation=_operation_for(path),
+                tag=TAG_USER,
             )
         else:
             debug(

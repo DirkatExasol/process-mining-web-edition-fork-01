@@ -340,3 +340,76 @@ def test_sql_logs_carry_the_sql_tag(logstore):
     # Both statements are findable through the one tag.
     joined = " ".join(e["message"] for e in tagged)
     assert "SELECT 1 FROM DUAL" in joined and "SELECT bad FROM DUAL" in joined
+
+
+# ── user-action audit trail (USAGE + USER tag) ────────────────────────────────
+
+
+def _tiny_app_with_action_logging():
+    from fastapi import FastAPI, HTTPException
+
+    from app import log_events as logx
+
+    app = FastAPI()
+
+    @app.post("/api/thing")
+    def _create():
+        return {"ok": True}
+
+    @app.get("/api/thing")
+    def _read():
+        return {"ok": True}
+
+    @app.post("/api/bad")
+    def _bad():
+        raise HTTPException(status_code=400, detail="nope")
+
+    logx.install_request_logging(
+        app, lambda r: r.headers.get("x-pmw-user", ""), log_user_actions=True
+    )
+    return app
+
+
+def test_successful_mutating_request_is_logged_as_a_user_action(logstore):
+    from app.store.logs import TAG_USER
+
+    client = TestClient(_tiny_app_with_action_logging())
+    client.post("/api/thing", headers={"x-pmw-user": "alice"})
+
+    hits = logstore.query(tag=TAG_USER)
+    assert len(hits) == 1
+    assert hits[0]["severity"] == "USAGE"
+    assert hits[0]["user"] == "alice"
+    assert "POST /api/thing" in hits[0]["message"]
+
+
+def test_reads_and_failed_actions_are_not_tagged_user(logstore):
+    from app.store.logs import TAG_USER
+
+    client = TestClient(_tiny_app_with_action_logging())
+
+    # A GET is a read, not an action.
+    client.get("/api/thing", headers={"x-pmw-user": "alice"})
+    assert logstore.query(tag=TAG_USER) == []
+
+    # A mutating request that FAILS (4xx) is not a successful action.
+    client.post("/api/bad", headers={"x-pmw-user": "alice"})
+    assert logstore.query(tag=TAG_USER) == []
+
+
+def test_user_action_logging_is_off_by_default(logstore):
+    """Only the compute backend opts in; the browser proxies must not double-log."""
+    from fastapi import FastAPI
+
+    from app import log_events as logx
+    from app.store.logs import TAG_USER
+
+    app = FastAPI()
+
+    @app.post("/api/thing")
+    def _create():
+        return {"ok": True}
+
+    logx.install_request_logging(app, lambda r: r.headers.get("x-pmw-user", ""))
+    TestClient(app).post("/api/thing", headers={"x-pmw-user": "alice"})
+    assert logstore.query(tag=TAG_USER) == []
