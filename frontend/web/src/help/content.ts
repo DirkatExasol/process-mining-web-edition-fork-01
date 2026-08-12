@@ -519,7 +519,7 @@ const chartViews: HelpTopic = {
         p('A switch floating over the canvas (top-centre) toggles between two layouts of the same journey:'),
         ul(
           'Flowchart — the directed-follows graph, where a revisited step is drawn as a loop back to the same node.',
-          'Swimlane — the journey laid out strictly left-to-right, one column per event in time order, with a lane per node group (coloured by the group). A revisited step simply appears again further right, so there are no loops. A header row above the top lane shows each event’s date/time, and every edge shows the time taken from one node to the next.',
+          'Swimlane — the journey laid out strictly left-to-right, one column per event in time order, with a lane per node group (coloured by the group). A revisited step simply appears again further right, so there are no loops. A header row above the top lane shows each event’s date/time, and every edge shows the time taken from one node to the next. It pans and zooms, with a zoom cluster (out / in / fit / reset) in the lower-right corner like the flowchart.',
         ),
         tip('The swimlane is only for a single journey — it is never used for the aggregated views, where loops are meaningful.'),
         tip('A live suggestion dropdown appears as you type. Each EVENT_ID keeps its own saved node layout (flowchart).'),
