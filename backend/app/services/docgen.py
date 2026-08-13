@@ -11,12 +11,66 @@ import html
 from collections import defaultdict
 
 from ..models import (
+    NOTE_IMPORTANCE,
     HappyPath,
     JourneyPath,
     ProcessGraph,
+    ProcessNote,
     TransitionMetric,
+    normalize_importance,
 )
 from .analytics import happy_path_conformance, happy_path_routes
+
+_SEVERITY_LABEL = {
+    "URGENT": "🔴 Urgent",
+    "IMPORTANT": "🟠 Important",
+    "INFO": "🔵 Info",
+    "NORMAL": "⚪ Normal",
+}
+
+
+def notes_section(notes: list[ProcessNote]) -> str:
+    """HTML for the Notes chapter: two tables (Open / Resolved), each sorted by severity
+    (most severe first, then most recent). Returns '' when there are no notes."""
+    if not notes:
+        return ""
+
+    def esc(s: str) -> str:
+        return html.escape(s or "", quote=False)
+
+    def rank(n: ProcessNote) -> int:
+        return NOTE_IMPORTANCE.index(normalize_importance(n.importance))
+
+    def table(group: list[ProcessNote], empty_msg: str) -> str:
+        if not group:
+            return f'<p class="caption">{empty_msg}</p>'
+        rows = ""
+        for n in sorted(group, key=lambda x: (rank(x), x.createdAt), reverse=True):
+            elem = ("⬚ " if n.target.is_node else "→ ") + n.target.display_name
+            when = n.createdAt.strftime("%d %b %Y") if hasattr(n.createdAt, "strftime") else str(n.createdAt)
+            text = esc(n.text).replace("\n", "<br>")
+            rows += (
+                "<tr>"
+                f"<td>{esc(_SEVERITY_LABEL[normalize_importance(n.importance)])}</td>"
+                f"<td>{esc(elem)}</td>"
+                f"<td>{esc(n.title) or '—'}</td>"
+                f"<td>{text or '—'}</td>"
+                f"<td>{esc(n.authorName or n.username) or '—'}</td>"
+                f"<td>{esc(when)}</td>"
+                "</tr>"
+            )
+        return (
+            '<table class="ltable"><thead><tr>'
+            "<th>Severity</th><th>Element</th><th>Title</th><th>Note</th><th>Author</th><th>Date</th>"
+            f"</tr></thead><tbody>{rows}</tbody></table>"
+        )
+
+    open_notes = [n for n in notes if not n.resolved]
+    resolved_notes = [n for n in notes if n.resolved]
+    return (
+        f"<h3>Open ({len(open_notes)})</h3>{table(open_notes, 'No open notes.')}"
+        f"<h3>Resolved ({len(resolved_notes)})</h3>{table(resolved_notes, 'No resolved notes.')}"
+    )
 
 
 def _fmt_duration(secs: float) -> str:

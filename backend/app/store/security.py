@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from ..config import (
     ACTIVE_CERT_PATH,
     ACTIVE_KEY_PATH,
+    APP_VERSION,
     DEFAULT_ADMIN_PASSWORD,
     DEFAULT_ADMIN_USERNAME,
     SECURITY_DB_PATH,
@@ -1130,6 +1131,8 @@ class SecurityStore:
                 "type": bg_type,
                 "color": self._get_config("login_bg_color") or "",
                 "image": self._get_config("login_bg_image") or "",
+                # Release label shown on every sign-in panel (from the VERSION file).
+                "version": APP_VERSION,
             }
 
     def set_login_appearance(
@@ -1177,6 +1180,212 @@ class SecurityStore:
                 self._set_config("login_bg_image", image)
             self._conn.commit()
         return self.login_appearance()
+
+    # ── AI reporting (admin "Reporting" tab) ────────────────────────────────────
+    #
+    # The high-gloss AI report uses its OWN LLM (separate from the per-connection LLM the
+    # app queries for the interactive documentation), a small style theme, and a library of
+    # analysis prompts keyed by (connection, project). All admin-owned, stored here so the
+    # compute backend — which shares this security.sqlite3 — can read them when it builds a
+    # report. The report LLM key is encrypted at rest, like the connection LLM keys.
+
+    def report_config(self, *, with_secret: bool = False) -> dict:
+        """The report LLM, shared by all projects. Style & Sections are per (connection,
+        project) — see `report_style_for` / `set_report_style`. `with_secret` includes the
+        decrypted API key (backend use only); the admin channel never returns it."""
+        with self._lock:
+            key_enc = self._get_config("report_llm_key_enc") or ""
+            cfg = {
+                "llmUrl": self._get_config("report_llm_url") or "",
+                "llmModel": self._get_config("report_llm_model") or "",
+                "hasLlmKey": bool(key_enc),
+            }
+            if with_secret:
+                cfg["llmKey"] = decrypt_text(key_enc) if key_enc else ""
+            return cfg
+
+    def set_report_config(
+        self, *, llm_url: str = "", llm_model: str = "", llm_key: str | None = None
+    ) -> dict:
+        """Persist the report LLM. A `llm_key` of None leaves the stored key unchanged
+        (blank clears it)."""
+        with self._lock:
+            self._set_config("report_llm_url", (llm_url or "").strip())
+            self._set_config("report_llm_model", (llm_model or "").strip())
+            if llm_key is not None:
+                self._set_config(
+                    "report_llm_key_enc", encrypt_text(llm_key) if llm_key.strip() else ""
+                )
+            self._conn.commit()
+        return self.report_config()
+
+    # ── per-project report style ("Style & Sections") ──────────────────────────
+    # A service provider runs one environment for many customers, so the report look
+    # (accent, letterhead, logo, position, which sections to include) is stored PER
+    # (connection, project) — matching the analysis-prompt keying. A project with no
+    # style configured falls back to a plain built-in theme (see DEFAULT_REPORT_STYLE).
+
+    def _validate_style_bits(self, accent: str, logo: str | None) -> None:
+        if accent and not _HEX_COLOR_RE.match(accent):
+            raise ValueError("Accent must be a #rrggbb hex value")
+        if logo:
+            if len(logo) > _MAX_LOGIN_IMAGE_CHARS:
+                raise ValueError("Logo is too large (max ~3 MB)")
+            if not _DATA_IMAGE_RE.match(logo):
+                raise ValueError("Logo must be a PNG, JPEG, GIF, WebP or SVG data URL")
+
+    def _report_styles_raw(self) -> list[dict]:
+        with self._lock:
+            raw = self._get_config("report_styles")
+        try:
+            data = json.loads(raw) if raw else []
+        except json.JSONDecodeError:
+            data = []
+        return data if isinstance(data, list) else []
+
+    def report_styles(self) -> list[dict]:
+        """Every configured project style, one row per (connection, project). The heavy
+        logo data URI is omitted here (replaced by `hasLogo`) so the list stays small;
+        use `report_style_for` to fetch the full entry incl. the logo."""
+        out = []
+        for r in self._report_styles_raw():
+            out.append({
+                "connectionId": r.get("connectionId") or "",
+                "projectId": r.get("projectId") or "",
+                "accent": r.get("accent") or "#4a3aa7",
+                "orgName": r.get("orgName") or "",
+                "logoPos": "right" if r.get("logoPos") == "right" else "left",
+                "logoScale": self._clamp_logo_scale(r.get("logoScale", 1.0)),
+                "hasLogo": bool(r.get("logo")),
+                "includeSankey": r.get("includeSankey", True),
+                "includeHappyPath": r.get("includeHappyPath", True),
+                "includeConformance": r.get("includeConformance", True),
+            })
+        return out
+
+    @staticmethod
+    def _clamp_logo_scale(value: object) -> float:
+        """Logo size multiplier, clamped to [0.5, 2.0]; defaults to 1.0 on bad input."""
+        try:
+            return round(min(2.0, max(0.5, float(value))), 2)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 1.0
+
+    def report_style_for(self, connection_id: str, project_id: str) -> dict | None:
+        """The full style (incl. logo) for this (connection, project), or None when the
+        project has none configured."""
+        for r in self._report_styles_raw():
+            if r.get("connectionId") == connection_id and r.get("projectId") == project_id:
+                return {
+                    "accent": r.get("accent") or "#4a3aa7",
+                    "orgName": r.get("orgName") or "",
+                    "logo": r.get("logo") or "",
+                    "logoPos": "right" if r.get("logoPos") == "right" else "left",
+                    "logoScale": self._clamp_logo_scale(r.get("logoScale", 1.0)),
+                    "includeSankey": r.get("includeSankey", True),
+                    "includeHappyPath": r.get("includeHappyPath", True),
+                    "includeConformance": r.get("includeConformance", True),
+                }
+        return None
+
+    def set_report_style(
+        self,
+        connection_id: str,
+        project_id: str,
+        *,
+        accent: str = "",
+        org_name: str = "",
+        logo: str | None = None,
+        logo_pos: str = "left",
+        logo_scale: float = 1.0,
+        include_sankey: bool = True,
+        include_happy_path: bool = True,
+        include_conformance: bool = True,
+    ) -> list[dict]:
+        """Upsert the Style & Sections for one (connection, project). A `logo` of None
+        keeps that project's stored logo; "" clears it. Validates accent + logo."""
+        connection_id = (connection_id or "").strip()
+        project_id = (project_id or "").strip()
+        if not connection_id or not project_id:
+            raise ValueError("A connection and a project are required")
+        accent = (accent or "").strip()
+        if logo is not None:
+            logo = logo.strip()
+        self._validate_style_bits(accent, logo)
+        rows = self._report_styles_raw()
+        existing = next(
+            (r for r in rows
+             if r.get("connectionId") == connection_id and r.get("projectId") == project_id),
+            None,
+        )
+        entry = {
+            "connectionId": connection_id,
+            "projectId": project_id,
+            "accent": accent or "#4a3aa7",
+            "orgName": (org_name or "").strip()[:120],
+            "logo": logo if logo is not None else ((existing or {}).get("logo") or ""),
+            "logoPos": "right" if str(logo_pos).lower() == "right" else "left",
+            "logoScale": self._clamp_logo_scale(logo_scale),
+            "includeSankey": bool(include_sankey),
+            "includeHappyPath": bool(include_happy_path),
+            "includeConformance": bool(include_conformance),
+        }
+        rows = [r for r in rows
+                if not (r.get("connectionId") == connection_id and r.get("projectId") == project_id)]
+        rows.append(entry)
+        with self._lock:
+            self._set_config("report_styles", json.dumps(rows))
+            self._conn.commit()
+        return self.report_styles()
+
+    def delete_report_style(self, connection_id: str, project_id: str) -> list[dict]:
+        """Remove the style for one (connection, project); the project reverts to the
+        built-in default theme."""
+        rows = [
+            r for r in self._report_styles_raw()
+            if not (r.get("connectionId") == connection_id and r.get("projectId") == project_id)
+        ]
+        with self._lock:
+            self._set_config("report_styles", json.dumps(rows))
+            self._conn.commit()
+        return self.report_styles()
+
+    def report_prompts(self) -> list[dict]:
+        """The analysis-prompt library: [{connectionId, projectId, prompt}], each prompt
+        the instruction the report LLM follows for that (connection, project)."""
+        with self._lock:
+            raw = self._get_config("report_prompts")
+        try:
+            data = json.loads(raw) if raw else []
+        except json.JSONDecodeError:
+            data = []
+        return data if isinstance(data, list) else []
+
+    def set_report_prompt(self, connection_id: str, project_id: str, prompt: str) -> list[dict]:
+        """Upsert one (connection, project) → prompt mapping. An empty prompt removes it."""
+        connection_id = (connection_id or "").strip()
+        project_id = (project_id or "").strip()
+        prompt = (prompt or "").strip()
+        if not connection_id or not project_id:
+            raise ValueError("A connection and a project are required")
+        rows = [
+            r
+            for r in self.report_prompts()
+            if not (r.get("connectionId") == connection_id and r.get("projectId") == project_id)
+        ]
+        if prompt:
+            rows.append({"connectionId": connection_id, "projectId": project_id, "prompt": prompt[:8000]})
+        with self._lock:
+            self._set_config("report_prompts", json.dumps(rows))
+            self._conn.commit()
+        return rows
+
+    def report_prompt_for(self, connection_id: str, project_id: str) -> str | None:
+        """The stored analysis prompt for this (connection, project), or None."""
+        for r in self.report_prompts():
+            if r.get("connectionId") == connection_id and r.get("projectId") == project_id:
+                return r.get("prompt") or None
+        return None
 
     # ── users ─────────────────────────────────────────────────────────────────
 

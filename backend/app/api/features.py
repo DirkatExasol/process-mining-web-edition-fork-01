@@ -24,7 +24,7 @@ from ..models import (
     StepInfo,
     TransitionMetric,
 )
-from ..services import docgen, llm as llm_service, simulation
+from ..services import docgen, llm as llm_service, report as report_service, simulation
 from ..services.analytics import (
     happy_path_conformance,
     path_diverse_sample,
@@ -372,6 +372,15 @@ class DocumentationRequest(BaseModel):
     targetNorms: dict[str, dict[str, float]] = {}
     targetMetric: TransitionMetric = TransitionMetric.count
     happyPaths: list[HappyPath] = []
+    # The project's notes — rendered as a report chapter (open/resolved, by severity).
+    notes: list[ProcessNote] = []
+    # Identify the connection so the admin's per-(connection, project) report prompt is used.
+    connectionId: str = ""
+    # The Sankey the app already rendered — embedded verbatim (sanitised) in the report.
+    sankeySvg: str = ""
+    sankeyCaption: str = ""
+    # For the report letterhead ("Prepared for …").
+    preparedFor: str = ""
 
 
 @router.post("/projects/{project_id}/documentation")
@@ -379,17 +388,29 @@ async def documentation(
     project_id: str, request: DocumentationRequest
 ) -> dict[str, object]:
     require_connection()
-    server = current_db().active_llm_server
-    if server is None or not server.serverURL.strip():
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "No LLM server configured. Edit your connection to select an LLM "
-                "server, or add one in Settings."
-            ),
-        )
+
+    # The report uses its OWN admin-configured LLM if set; otherwise it falls back to the
+    # connection's LLM (the one the interactive app uses).
+    report_cfg = security_store.report_config(with_secret=True)
+    if report_cfg["llmUrl"].strip():
+        llm_url = report_cfg["llmUrl"]
+        llm_key = report_cfg.get("llmKey", "")
+        llm_model = report_cfg["llmModel"]
+    else:
+        server = current_db().active_llm_server
+        if server is None or not server.serverURL.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No LLM server configured for reports. Set one in the admin "
+                    "Reporting tab, or select an LLM on your connection."
+                ),
+            )
+        llm_url, llm_key, llm_model = server.serverURL, server.apiKey, server.model
 
     r = repo(request.filter.sampleSet)
+
+    # Python-computed sections — assembled AFTER the LLM, never sent to it.
     try:
         paths = await r.load_journey_paths(project_id, request.filter, 200)
     except TimeoutError:
@@ -398,12 +419,11 @@ async def documentation(
             operation="ai-doc",
         )
         paths = []
-    paths_html, paths_section = docgen.journey_paths_section(paths)
+    _paths_html, paths_section = docgen.journey_paths_section(paths)
 
     conformance_md = docgen.conformance_section(
         request.graph, request.targetNorms, request.targetMetric
     )
-
     try:
         variants = await r.load_journey_paths(project_id, request.filter, 500)
     except TimeoutError:
@@ -414,29 +434,114 @@ async def documentation(
         variants = []
     happy_md = docgen.happy_path_section(request.happyPaths, variants)
 
-    prompt = docgen.build_prompt(
-        request.projectTitle, request.promptTemplate, request.graph, paths_html
+    # The LLM sees ONLY the transition table plus the analysis instruction (the admin's
+    # per-(connection, project) prompt if defined, else the app's prompt template).
+    instruction = (
+        security_store.report_prompt_for(request.connectionId, project_id)
+        or request.promptTemplate
+        or DEFAULT_LLM_PROMPT
+    )
+    prompt = report_service.build_analysis_prompt(
+        request.projectTitle, instruction, docgen.transitions_table(request.graph)
     )
 
+    findings: dict | None = None
+    error = None
     try:
-        answer = await llm_service.chat(
-            server.serverURL, server.apiKey, server.model, prompt
-        )
-        error = None
+        answer = await llm_service.chat(llm_url, llm_key, llm_model, prompt)
+        findings = report_service.parse_findings(answer or "")
+        if findings is None:
+            # The model didn't return clean JSON — still show its prose as one section.
+            findings = {
+                "title": request.projectTitle or "Process Analysis",
+                "subtitle": "",
+                "executive_summary": [],
+                "sections": [{"heading": "Analysis", "body": answer or ""}],
+            }
     except llm_service.LLMError as exc:
-        answer, error = None, str(exc)
+        error = str(exc)
         logx.error(
             f"AI documentation LLM call failed (project {project_id}, "
-            f"model {server.model or '?'}): {exc}",
+            f"model {llm_model or '?'}): {exc}",
             operation="ai-doc",
         )
 
+    # Assemble the styled, self-contained report HTML (only when the analysis succeeded). Each
+    # topic is its own chapter — a big titled section that starts on a fresh page — and a
+    # table of contents links to them (on screen and in the printed PDF).
+    report_html = None
+    # Style & Sections are per (connection, project) so one environment can brand reports
+    # differently for each customer. A project with none configured uses the built-in theme.
+    style = security_store.report_style_for(request.connectionId, project_id) or {
+        "accent": "#4a3aa7",
+        "orgName": "",
+        "logo": "",
+        "logoPos": "left",
+        "logoScale": 1.0,
+        "includeSankey": True,
+        "includeHappyPath": True,
+        "includeConformance": True,
+    }
+    if findings is not None:
+        title, subtitle, exec_html, sections_html = report_service.findings_parts(findings)
+        chapters: list[dict] = []
+        if sections_html.strip():
+            chapters.append({"id": "analysis", "title": "Analysis", "html": sections_html})
+
+        svg = report_service.sanitize_svg(request.sankeySvg) if style.get("includeSankey", True) else ""
+        if svg:
+            cap = (
+                f'<p class="caption">{report_service.md_inline(request.sankeyCaption)}</p>'
+                if request.sankeyCaption
+                else ""
+            )
+            chapters.append(
+                {"id": "flow", "title": "Process flow", "html": f'<div class="diagram">{svg}</div>{cap}'}
+            )
+
+        if style.get("includeConformance", True) and conformance_md.strip():
+            chapters.append({
+                "id": "conformance",
+                "title": "Conformance – Gap Analysis",
+                "html": report_service.md_to_html(report_service.strip_leading_heading(conformance_md)),
+            })
+        if style.get("includeHappyPath", True) and happy_md.strip():
+            chapters.append({
+                "id": "happy",
+                "title": "Happy Path Conformance",
+                "html": report_service.md_to_html(report_service.strip_leading_heading(happy_md)),
+            })
+        if paths_section.strip():
+            chapters.append({
+                "id": "journeys",
+                "title": "Journey Paths",
+                "html": report_service.md_to_html(report_service.strip_leading_heading(paths_section)),
+            })
+        notes_html = docgen.notes_section(request.notes)
+        if notes_html:
+            chapters.append({"id": "notes", "title": "Notes", "html": notes_html})
+
+        report_html = report_service.render_report(
+            meta={
+                "user": request.preparedFor,
+                "source": "transition table underlying the process flow chart",
+                "generatedAt": datetime.now().strftime("%d %b %Y"),
+            },
+            style=style,
+            title=title,
+            subtitle=subtitle,
+            exec_summary_html=exec_html,
+            chapters=chapters,
+        )
+
     return {
-        "result": answer,
+        "reportHtml": report_html,
+        "findings": findings,
         "error": error,
         "prompt": prompt,
-        "model": server.model or None,
+        "model": llm_model or None,
         "generatedAt": datetime.now(),
+        # Kept for backward compatibility with the current client while it migrates.
         "journeyPathsSummary": paths_section,
         "conformanceSummary": conformance_md,
         "happyPathSummary": happy_md,

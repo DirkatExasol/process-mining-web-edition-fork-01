@@ -208,6 +208,11 @@ export function LoginView({
           <span className="t-title3">Process Mining Demonstrator</span>
           {subtitle && <span className="t-title3">{subtitle}</span>}
           <span className="t-caption fg-secondary">{caption}</span>
+          {appearance?.version && (
+            <span className="t-caption2 fg-secondary" style={{ marginTop: 2 }}>
+              {appearance.version}
+            </span>
+          )}
         </div>
 
         {demoSeconds !== null && (

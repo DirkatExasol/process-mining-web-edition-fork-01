@@ -1,12 +1,14 @@
-/** AI documentation print — the report must be portalled to <body> so it prints
- *  (the global print stylesheet hides #root). Guards against the "one empty
- *  page" regression where the button called window.print() directly. */
+/** AI documentation view — renders the server-assembled report HTML in an isolated iframe
+ *  and prints that frame (the same Chrome-print path that produced the reference report). */
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { AIDocumentationView } from './AIDocumentationView'
 import { useStore } from '../store'
 
-function seedAnalysisResult() {
+const REPORT_HTML =
+  '<!doctype html><html><body><h1>My Process</h1><p>The process is healthy and efficient.</p></body></html>'
+
+function seedReport() {
   useStore.setState({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     selectedProject: { projectId: 'p', title: 'My Process' } as any,
@@ -16,35 +18,48 @@ function seedAnalysisResult() {
     connection: { isLLMReachable: true } as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     llmAnalysis: {
-      result: 'The process is healthy and efficient.',
+      reportHtml: REPORT_HTML,
+      findings: null,
       prompt: 'analyse this',
       model: 'gpt-4o',
     } as any,
   })
 }
 
-describe('AIDocumentationView print', () => {
-  it('portals a print-only copy of the report to <body> when printing', () => {
-    // Run the rAF callback synchronously and stub the print dialog.
-    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
-      cb(0)
-      return 0
+describe('AIDocumentationView', () => {
+  it('renders the assembled report in an iframe and prints that frame', () => {
+    seedReport()
+    const { container } = render(<AIDocumentationView />)
+
+    const frame = container.querySelector('iframe.ai-report-frame') as HTMLIFrameElement
+    expect(frame).not.toBeNull()
+    expect(frame.getAttribute('srcdoc')).toContain('healthy and efficient')
+    // The frame is same-origin (so the host can print it) and allows its own scripts.
+    expect(frame.getAttribute('sandbox')).toBe('allow-same-origin allow-scripts allow-modals')
+
+    // "Save as PDF" prints the on-screen report frame directly (no blob: — a strict CSP can
+    // forbid blob: documents).
+    const printSpy = vi.fn()
+    Object.defineProperty(frame, 'contentWindow', {
+      configurable: true,
+      value: { focus: vi.fn(), print: printSpy },
     })
-    const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {})
-
-    seedAnalysisResult()
-    render(<AIDocumentationView />)
-
-    // Nothing portalled until the button is pressed.
-    expect(document.body.querySelector('.ai-print-doc')).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: /Print \/ PDF/ }))
-
+    fireEvent.click(screen.getByRole('button', { name: /Save as PDF/ }))
     expect(printSpy).toHaveBeenCalled()
-    const printDoc = document.body.querySelector('.ai-print-doc')
-    expect(printDoc).not.toBeNull()
-    // It contains the report — the project title and the analysis text.
-    expect(printDoc?.textContent).toContain('My Process')
-    expect(printDoc?.textContent).toContain('healthy and efficient')
+  })
+
+  it('shows the failure state when the analysis errored (no report)', () => {
+    useStore.setState({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      selectedProject: { projectId: 'p', title: 'My Process' } as any,
+      isLLMAnalyzing: false,
+      llmAnalysis: null,
+      llmAnalysisError: 'LLM unreachable',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      connection: { isLLMReachable: true } as any,
+    })
+    render(<AIDocumentationView />)
+    expect(screen.getByText('Analysis Failed')).toBeInTheDocument()
+    expect(screen.getByText('LLM unreachable')).toBeInTheDocument()
   })
 })

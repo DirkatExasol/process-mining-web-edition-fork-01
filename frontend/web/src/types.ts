@@ -546,11 +546,15 @@ export function simulationFilterNotice(source: ABDataSource): string | null {
 }
 
 export interface DocumentationResponse {
-  result: string | null
+  /** The full, self-contained styled HTML report (Python-assembled). Null on LLM error. */
+  reportHtml: string | null
+  /** The structured findings the analysis LLM returned (for reference/debug). */
+  findings: unknown | null
   error: string | null
   prompt: string
   model: string | null
   generatedAt: string
+  // Retained while the client migrates off the old client-side stitching.
   journeyPathsSummary: string
   conformanceSummary: string
   happyPathSummary: string

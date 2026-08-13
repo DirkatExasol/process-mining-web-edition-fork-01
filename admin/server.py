@@ -2251,6 +2251,192 @@ def api_save_customize_login(
     return appearance
 
 
+# ── Reporting (AI report LLM + style + per-connection/project prompts) ──────────
+
+
+class ReportConfigBody(BaseModel):
+    """The report LLM only — shared by all projects."""
+    llmUrl: str = ""
+    llmModel: str = ""
+    llmKey: str | None = None  # None → keep the stored key; "" → clear it
+
+
+class ReportStyleBody(BaseModel):
+    """Style & Sections for one (connection, project). `logo` None keeps the stored logo."""
+    connectionId: str
+    projectId: str
+    accent: str = ""
+    orgName: str = ""
+    logo: str | None = None
+    logoPos: str = "left"
+    logoScale: float = 1.0
+    includeSankey: bool = True
+    includeHappyPath: bool = True
+    includeConformance: bool = True
+
+
+@app.get("/api/reporting/config")
+def api_reporting_config(user: User = Depends(require_admin)):
+    return store.report_config()  # never leaks the key
+
+
+@app.post("/api/reporting/config")
+def api_save_reporting_config(body: ReportConfigBody, user: User = Depends(require_admin)):
+    cfg = store.set_report_config(
+        llm_url=body.llmUrl, llm_model=body.llmModel, llm_key=body.llmKey
+    )
+    logx.info(
+        f"admin {user.username} updated the report LLM",
+        username=user.username,
+        operation="reporting",
+    )
+    return cfg
+
+
+@app.get("/api/reporting/styles")
+def api_reporting_styles(user: User = Depends(require_admin)):
+    """Every configured project style (logo omitted — see /api/reporting/style)."""
+    return store.report_styles()
+
+
+@app.get("/api/reporting/style")
+def api_reporting_style(
+    connectionId: str, projectId: str, user: User = Depends(require_admin)
+):
+    """The full style (incl. logo) for one (connection, project), or null when unset."""
+    return store.report_style_for(connectionId, projectId)
+
+
+@app.post("/api/reporting/style")
+def api_save_reporting_style(body: ReportStyleBody, user: User = Depends(require_admin)):
+    try:
+        rows = store.set_report_style(
+            body.connectionId,
+            body.projectId,
+            accent=body.accent,
+            org_name=body.orgName,
+            logo=body.logo,
+            logo_pos=body.logoPos,
+            logo_scale=body.logoScale,
+            include_sankey=body.includeSankey,
+            include_happy_path=body.includeHappyPath,
+            include_conformance=body.includeConformance,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logx.info(
+        f"admin {user.username} updated report style for {body.connectionId}/{body.projectId}",
+        username=user.username,
+        operation="reporting",
+    )
+    return rows
+
+
+@app.delete("/api/reporting/style")
+def api_delete_reporting_style(
+    connectionId: str, projectId: str, user: User = Depends(require_admin)
+):
+    rows = store.delete_report_style(connectionId, projectId)
+    logx.info(
+        f"admin {user.username} removed report style for {connectionId}/{projectId}",
+        username=user.username,
+        operation="reporting",
+    )
+    return rows
+
+
+class ReportLLMTestBody(BaseModel):
+    llmUrl: str
+    llmKey: str = ""
+
+
+@app.post("/api/reporting/test-llm")
+async def api_reporting_test_llm(
+    body: ReportLLMTestBody, user: User = Depends(require_admin)
+):
+    from app.db.manager import check_llm_reachable
+    from app.models import LLMServer
+    from app.services import llm as llm_service
+
+    # A blank key means "use the stored one" — so Test works without re-typing the secret.
+    key = body.llmKey if body.llmKey.strip() else store.report_config(with_secret=True).get("llmKey", "")
+    error: str | None = None
+    models: list[str] = []
+    if body.llmUrl.strip():
+        llm = LLMServer(serverURL=body.llmUrl, apiKey=key)
+        if await check_llm_reachable(llm):
+            try:
+                models = await llm_service.list_models(body.llmUrl, key)
+            except Exception as exc:  # noqa: BLE001
+                error = str(exc)
+        else:
+            error = "LLM server not reachable."
+    else:
+        error = "Enter an LLM server URL first."
+    logx.info(
+        f"admin {user.username} tested the report LLM at {body.llmUrl} — "
+        f"{'ok' if not error else f'failed: {error}'}",
+        username=user.username,
+        operation="llm-test",
+    )
+    return {"error": error, "models": models}
+
+
+@app.get("/api/reporting/projects/{connection_id}")
+async def api_reporting_projects(connection_id: str, user: User = Depends(require_admin)):
+    """The projects in a connection's database, for the prompt-linking dropdown. Returns
+    {error, projects:[{projectId, title}]} — title for display, projectId for linkage."""
+    from app.db.schema_ddl import list_projects_with_counts
+
+    conn = store.get_connection(connection_id, with_secrets=True)
+    if conn is None:
+        raise HTTPException(status_code=404, detail="Unknown connection")
+    res = await list_projects_with_counts(
+        host=conn.host,
+        port=conn.port,
+        username=conn.username,
+        password=conn.password,
+        schema=conn.schema,
+        use_tls=conn.use_tls,
+        cert_mode=conn.cert_mode,
+        fingerprint=conn.fingerprint,
+        min_rsa_bits=conn.min_rsa_bits,
+    )
+    return {
+        "error": None if res.get("ok") else res.get("error"),
+        "projects": [
+            {"projectId": p["projectId"], "title": p.get("title") or p["projectId"]}
+            for p in res.get("projects", [])
+        ],
+    }
+
+
+@app.get("/api/reporting/prompts")
+def api_reporting_prompts(user: User = Depends(require_admin)):
+    return store.report_prompts()
+
+
+class ReportPromptBody(BaseModel):
+    connectionId: str
+    projectId: str
+    prompt: str = ""
+
+
+@app.post("/api/reporting/prompts")
+def api_save_reporting_prompt(body: ReportPromptBody, user: User = Depends(require_admin)):
+    try:
+        rows = store.set_report_prompt(body.connectionId, body.projectId, body.prompt)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logx.info(
+        f"admin {user.username} {'removed' if not body.prompt.strip() else 'saved'} a "
+        f"report prompt for connection {body.connectionId} / project {body.projectId}",
+        username=user.username,
+        operation="reporting",
+    )
+    return rows
+
+
 @app.get("/health")
 def health():
     return JSONResponse({"status": "ok"})

@@ -152,7 +152,11 @@ export function ChartView({
           </div>
 
           {sankey ? (
-            <SankeyChart graph={store.processGraph} />
+            <SankeyChart
+              graph={store.processGraph}
+              metric={store.transitionMetric}
+              journeyTotal={store.journeyCount ?? 0}
+            />
           ) : (
             <FlowChart
               graph={store.processGraph}

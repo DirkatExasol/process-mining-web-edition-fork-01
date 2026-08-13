@@ -780,13 +780,23 @@ def test_note_author_display_name_prefers_ldap_cn(security, monkeypatch):
 
 def test_login_appearance_default(security):
     store = security.store
-    assert store.login_appearance() == {"type": "default", "color": "", "image": ""}
+    appearance = store.login_appearance()
+    assert {k: appearance[k] for k in ("type", "color", "image")} == {
+        "type": "default",
+        "color": "",
+        "image": "",
+    }
+    assert appearance["version"]  # release label from the VERSION file
 
 
 def test_login_appearance_color_roundtrip(security):
     store = security.store
     saved = store.set_login_appearance(type="color", color="#1A2b3C")
-    assert saved == {"type": "color", "color": "#1A2b3C", "image": ""}
+    assert {k: saved[k] for k in ("type", "color", "image")} == {
+        "type": "color",
+        "color": "#1A2b3C",
+        "image": "",
+    }
     assert store.login_appearance()["color"] == "#1A2b3C"
 
 

@@ -7,6 +7,8 @@ export interface LoginAppearance {
   type: LoginBgType
   color: string
   image: string
+  /** Release label shown on the sign-in panels (from the top-level VERSION file). */
+  version?: string
 }
 
 const HEX = /^#[0-9a-fA-F]{6}$/

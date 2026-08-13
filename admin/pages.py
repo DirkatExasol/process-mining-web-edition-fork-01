@@ -9,6 +9,8 @@ from __future__ import annotations
 import base64
 import html
 
+from app.config import APP_VERSION
+
 # Animated brand mark (a discovered process graph with a flowing event dot),
 # shared by the sign-in page and the dashboard. Matches frontend/components/Logo.tsx.
 _LOGO_SVG = """<svg class="pm-logo" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -453,6 +455,7 @@ body {{ display: grid; place-items: center; min-height: 100vh; background: {body
     <span class="t-title3">Process Mining Demonstrator</span>
     <span class="t-title3">Administration</span>
     <span class="t-caption">{caption}</span>
+    <span class="t-caption2">{html.escape(APP_VERSION)}</span>
   </div>
   {notice}{err}
 {form_block}
@@ -656,6 +659,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <button data-tab="logging" onclick="selectTab('logging')">Logging</button>
     <button data-tab="backup" onclick="selectTab('backup')">Backup</button>
     <button data-tab="customize" onclick="selectTab('customize')">Customize</button>
+    <button data-tab="reporting" onclick="selectTab('reporting')">Reporting</button>
     <button data-tab="integration" onclick="selectTab('integration')">Integration</button>
   </div>
 
@@ -1205,6 +1209,92 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
   </div>
   </div><!-- /tab-customize -->
 
+  <div class="tabpanel" id="tab-reporting">
+  <div class="card">
+    <h2>AI Reporting</h2>
+    <p class="muted" style="margin-top:0">The high-gloss AI report analyses the transition table with a language model, then assembles the findings — plus the Sankey, Happy Path and Conformance sections — into a styled, printable document. These settings are separate from the per-connection LLM the app uses for the interactive documentation.</p>
+
+    <h2 style="font-size:14px; margin-top:18px">Report language model</h2>
+    <p class="subtle" style="margin-top:0">Leave the server URL blank to fall back to the LLM configured on the connection. OpenAI-compatible endpoint (a <code>/v1</code>-style base URL).</p>
+    <div class="col" style="gap:10px; max-width:560px; margin-top:10px">
+      <div class="field"><label>Server URL</label><input type="text" id="rep_llmUrl" placeholder="https://api.openai.com/v1"></div>
+      <div class="field"><label>Model</label><input type="text" id="rep_llmModel" placeholder="gpt-4o"></div>
+      <div class="field"><label>API key</label><input type="password" id="rep_llmKey" placeholder="leave blank to keep the stored key" autocomplete="new-password"></div>
+      <div class="row" style="gap:12px; align-items:center">
+        <button class="btn" onclick="testReportLLM()">Test</button>
+        <span id="rep_llmTest" class="subtle"></span>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:16px; align-items:center; gap:12px">
+      <button class="btn primary" onclick="saveReportLLM()">Save language model</button>
+      <span id="rep_result" class="subtle"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size:14px">Style &amp; sections <span class="subtle" style="font-weight:400">— per project</span></h2>
+    <p class="subtle" style="margin-top:0">The report look is configured <strong>per (connection, project)</strong>, so one environment can brand reports differently for each customer. Pick the connection, then the project; a project with no style of its own uses a plain default theme.</p>
+    <div class="row" style="gap:10px; flex-wrap:wrap; align-items:flex-end; margin-top:10px">
+      <div class="field" style="margin:0"><label>Connection</label><select id="rep_styleConn" style="min-width:220px" onchange="loadStyleProjects()"></select></div>
+      <div class="field" style="margin:0"><label>Project</label><select id="rep_styleProject" style="min-width:240px" onchange="loadReportStyle()"></select></div>
+      <span id="rep_styleProjStatus" class="subtle"></span>
+    </div>
+    <div class="col" style="gap:10px; max-width:560px; margin-top:12px">
+      <div class="row" style="gap:10px; align-items:center">
+        <label style="min-width:130px">Accent colour</label>
+        <input type="color" id="rep_accentPicker" value="#4a3aa7" style="width:48px; height:32px; padding:2px" onchange="$('rep_accentHex').value=$('rep_accentPicker').value">
+        <div class="field" style="margin:0"><input type="text" id="rep_accentHex" placeholder="#4a3aa7" style="width:120px" oninput="if(/^#[0-9a-fA-F]{6}$/.test(this.value))$('rep_accentPicker').value=this.value"></div>
+      </div>
+      <div class="field"><label>Organisation / letterhead (optional)</label><input type="text" id="rep_orgName" placeholder="e.g. ACME Airports" maxlength="120"></div>
+      <div class="field">
+        <label>Logo (PNG/JPG, optional) — shown on the first page</label>
+        <div class="row" style="gap:10px; align-items:center">
+          <input type="file" id="rep_logoFile" accept="image/png,image/jpeg,image/webp,image/svg+xml" onchange="pickReportLogo()">
+          <button class="btn" type="button" id="rep_logoClear" onclick="clearReportLogo()" style="display:none">Remove</button>
+        </div>
+        <img id="rep_logoPreview" alt="" style="display:none; max-height:48px; max-width:190px; margin-top:8px; border:1px solid var(--border); border-radius:6px; padding:4px; background:#fff">
+      </div>
+      <div class="row" style="gap:10px; align-items:center">
+        <label style="min-width:130px">Logo position</label>
+        <select id="rep_logoPos" style="width:150px"><option value="left">Left</option><option value="right">Right</option></select>
+      </div>
+      <div class="row" style="gap:10px; align-items:center">
+        <label style="min-width:130px">Logo size</label>
+        <input type="range" id="rep_logoScale" min="0.5" max="2" step="0.1" value="1" style="width:200px" oninput="$('rep_logoScaleVal').textContent = (+this.value).toFixed(1) + '×'; updateLogoPreviewScale()">
+        <span id="rep_logoScaleVal" class="subtle" style="min-width:36px">1.0×</span>
+      </div>
+      <div class="col" style="gap:6px; margin-top:4px">
+        <label class="row" style="font-size:14px; cursor:pointer"><input type="checkbox" id="rep_incSankey" style="width:auto" checked> Include the process flow (Sankey) diagram</label>
+        <label class="row" style="font-size:14px; cursor:pointer"><input type="checkbox" id="rep_incHappy" style="width:auto" checked> Include the Happy Path conformance section</label>
+        <label class="row" style="font-size:14px; cursor:pointer"><input type="checkbox" id="rep_incConf" style="width:auto" checked> Include the Conformance gap analysis</label>
+      </div>
+    </div>
+    <div class="row" style="margin-top:16px; align-items:center; gap:12px">
+      <button class="btn primary" onclick="saveReportStyle()">Save style</button>
+      <button class="btn danger" onclick="removeReportStyle()">Remove</button>
+      <span id="rep_styleResult" class="subtle"></span>
+    </div>
+    <div id="rep_styleList" style="margin-top:16px"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size:14px">Analysis prompts</h2>
+    <p class="subtle" style="margin-top:0">The instruction the report LLM follows, <strong>linked to a connection and a project</strong> — so each process gets tailored analysis. When no prompt is defined for a project, the app's own prompt template is used. Pick the connection, then the project (its projects are loaded from its database).</p>
+    <div class="row" style="gap:10px; flex-wrap:wrap; align-items:flex-end; margin-top:10px">
+      <div class="field" style="margin:0"><label>Connection</label><select id="rep_promptConn" style="min-width:220px" onchange="loadReportProjects()"></select></div>
+      <div class="field" style="margin:0"><label>Project</label><select id="rep_promptProject" style="min-width:240px"></select></div>
+      <span id="rep_projStatus" class="subtle"></span>
+    </div>
+    <div class="field" style="max-width:760px; margin-top:8px"><label>Prompt</label><textarea id="rep_promptText" rows="4" placeholder="e.g. Identify outliers, bottlenecks and any anomalies in the routing percentages; call out timing data that looks synthetic."></textarea></div>
+    <div class="row" style="gap:12px; align-items:center">
+      <button class="btn primary" onclick="saveReportPrompt()">Save prompt</button>
+      <span id="rep_promptResult" class="subtle"></span>
+    </div>
+    <div id="rep_promptList" style="margin-top:16px"></div>
+  </div>
+  </div><!-- /tab-reporting -->
+
   <div class="tabpanel" id="tab-integration">
   <div class="card">
     <h2>Integration console</h2>
@@ -1714,8 +1804,314 @@ function selectTab(name) {
   if (name === 'ldap') loadLdap().catch(e => toast(e.message, true));
   if (name === 'logging') loadLogs().catch(e => toast(e.message, true));
   if (name === 'customize') loadCustomize().catch(e => toast(e.message, true));
+  if (name === 'reporting') loadReporting().catch(e => toast(e.message, true));
   if (name === 'backup') loadSchedule().catch(e => toast(e.message, true));
   if (name === 'integration') loadIntegration().catch(e => toast(e.message, true));
+}
+
+// ── AI Reporting ─────────────────────────────────────────────────────────────
+let _reportPrompts = [];  // last-loaded prompt rows; Edit/Remove dispatch by index
+let _reportLogo = null;  // report logo staged for save: null = keep stored, '' = clear, data URI = new
+
+function showReportLogo(uri) {
+  const p = $('rep_logoPreview');
+  if (uri) { p.src = uri; p.style.display = 'block'; $('rep_logoClear').style.display = ''; updateLogoPreviewScale(); }
+  else { p.removeAttribute('src'); p.style.display = 'none'; $('rep_logoClear').style.display = 'none'; }
+}
+function clearReportLogo() { _reportLogo = ''; $('rep_logoFile').value = ''; showReportLogo(''); }
+function pickReportLogo() {
+  const f = $('rep_logoFile').files[0];
+  if (!f) return;
+  if (f.size > 30 * 1024 * 1024) { toast('Logo file is too large (max 30 MB)', true); $('rep_logoFile').value = ''; return; }
+  const setLogo = (uri) => { _reportLogo = uri; showReportLogo(uri); toast('Logo ready — click Save settings to store it'); };
+  // SVG stays vector; raster formats are drawn to a canvas and re-encoded small.
+  if (f.type === 'image/svg+xml' || /\.svg$/i.test(f.name || '')) {
+    const r = new FileReader();
+    r.onload = () => setLogo(r.result);
+    r.onerror = () => toast('Could not read the logo', true);
+    r.readAsDataURL(f);
+    return;
+  }
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    const MAX = 600;  // a logo prints crisply at a 600px long edge and stays tiny
+    const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    let uri = c.toDataURL('image/png');  // PNG keeps transparency + crisp edges
+    if (uri.length > 3000000) uri = c.toDataURL('image/jpeg', 0.85);  // last resort
+    setLogo(uri);
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); toast('Could not read the logo', true); };
+  img.src = url;
+}
+async function loadReporting() {
+  const [cfg, prompts, styles, conns] = await Promise.all([
+    api('/api/reporting/config'),
+    api('/api/reporting/prompts'),
+    api('/api/reporting/styles'),
+    api('/api/connections'),
+  ]);
+  $('rep_llmUrl').value = cfg.llmUrl || '';
+  $('rep_llmModel').value = cfg.llmModel || '';
+  $('rep_llmKey').value = '';
+  $('rep_llmKey').placeholder = cfg.hasLlmKey ? '•••••• (stored — leave blank to keep)' : 'API key';
+
+  const connOpts = conns.map(c => '<option value="' + esc(c.id) + '">' + esc(c.name || c.id) + '</option>').join('');
+  $('rep_promptConn').innerHTML = connOpts;
+  $('rep_styleConn').innerHTML = connOpts;
+  await Promise.all([loadReportProjects(), loadStyleProjects()]);
+  renderReportPrompts(prompts, conns);
+  renderReportStyles(styles, conns);
+}
+
+// Load the selected connection's projects into the project dropdown: the option text is
+// the project title (for the human), the option value is the project id (for linkage).
+async function loadReportProjects() {
+  const conn = $('rep_promptConn').value;
+  const sel = $('rep_promptProject');
+  if (!conn) { sel.innerHTML = ''; $('rep_projStatus').textContent = ''; return; }
+  sel.innerHTML = '<option value="">Loading…</option>';
+  $('rep_projStatus').textContent = '';
+  try {
+    const r = await api('/api/reporting/projects/' + encodeURIComponent(conn));
+    if (r.error) { sel.innerHTML = '<option value="">—</option>'; $('rep_projStatus').textContent = '⚠ ' + r.error; return; }
+    if (!r.projects.length) { sel.innerHTML = '<option value="">— no projects —</option>'; return; }
+    sel.innerHTML = r.projects
+      .map(p => '<option value="' + esc(p.projectId) + '">' + esc(p.title) + ' (' + esc(p.projectId) + ')</option>')
+      .join('');
+  } catch (e) {
+    sel.innerHTML = '<option value="">—</option>';
+    $('rep_projStatus').textContent = '⚠ ' + e.message;
+  }
+}
+
+function renderReportPrompts(prompts, conns) {
+  _reportPrompts = prompts;  // dispatch Edit/Remove by index — never inject values into HTML
+  const nameOf = {};
+  for (const c of conns) nameOf[c.id] = c.name || c.id;
+  if (!prompts.length) {
+    $('rep_promptList').innerHTML = '<p class="subtle">No analysis prompts yet — the app prompt template is used for every project.</p>';
+    return;
+  }
+  let html = '<table class="tbl"><thead><tr><th>Connection</th><th>Project</th><th>Prompt</th><th></th></tr></thead><tbody>';
+  prompts.forEach((p, i) => {
+    html += '<tr><td>' + esc(nameOf[p.connectionId] || p.connectionId) + '</td><td><code>' + esc(p.projectId) + '</code></td>'
+      + '<td class="subtle" style="max-width:420px">' + esc((p.prompt || '').slice(0, 160)) + ((p.prompt || '').length > 160 ? '…' : '') + '</td>'
+      + '<td style="text-align:right; white-space:nowrap">'
+      + '<button class="btn small" onclick="editReportPrompt(' + i + ')">Edit</button> '
+      + '<button class="btn small danger" onclick="deleteReportPrompt(' + i + ')">Remove</button>'
+      + '</td></tr>';
+  });
+  $('rep_promptList').innerHTML = html + '</tbody></table>';
+}
+
+async function editReportPrompt(i) {
+  const p = _reportPrompts[i];
+  if (!p) return;
+  $('rep_promptConn').value = p.connectionId;
+  await loadReportProjects();
+  const sel = $('rep_promptProject');
+  // Preserve the linked project even if it isn't in the fetched list (DB down / renamed).
+  if (![...sel.options].some(o => o.value === p.projectId)) {
+    sel.insertAdjacentHTML('afterbegin', '<option value="' + esc(p.projectId) + '">' + esc(p.projectId) + '</option>');
+  }
+  sel.value = p.projectId;
+  $('rep_promptText').value = p.prompt || '';
+  $('rep_promptText').focus();
+}
+
+async function saveReportLLM() {
+  const body = { llmUrl: $('rep_llmUrl').value.trim(), llmModel: $('rep_llmModel').value.trim() };
+  const key = $('rep_llmKey').value;
+  if (key.trim() !== '') body.llmKey = key;  // omit → keep the stored key
+  $('rep_result').textContent = '';
+  try {
+    await api('/api/reporting/config', { method: 'POST', body: JSON.stringify(body) });
+    $('rep_llmKey').value = '';
+    $('rep_result').textContent = 'Saved.';
+    toast('Report language model saved');
+    loadReporting().catch(() => {});
+  } catch (e) { toast(e.message, true); }
+}
+
+// ── per-project Style & Sections ────────────────────────────────────────────
+let _reportStyles = [];  // last-loaded style rows (logo omitted); Edit/Remove dispatch by index
+
+function fillStyleFields(s) {
+  s = s || {};
+  const accent = /^#[0-9a-fA-F]{6}$/.test(s.accent || '') ? s.accent : '#4a3aa7';
+  $('rep_accentHex').value = accent;
+  $('rep_accentPicker').value = accent;
+  $('rep_orgName').value = s.orgName || '';
+  _reportLogo = null;  // null → keep the project's stored logo unless picked/removed
+  $('rep_logoFile').value = '';
+  const scale = Math.min(2, Math.max(0.5, parseFloat(s.logoScale) || 1));
+  $('rep_logoScale').value = scale;
+  $('rep_logoScaleVal').textContent = scale.toFixed(1) + '×';
+  showReportLogo(s.logo || '');  // applies the scale via updateLogoPreviewScale
+  $('rep_logoPos').value = s.logoPos === 'right' ? 'right' : 'left';
+  $('rep_incSankey').checked = s.includeSankey !== false;
+  $('rep_incHappy').checked = s.includeHappyPath !== false;
+  $('rep_incConf').checked = s.includeConformance !== false;
+}
+
+// Scale the logo preview to match the slider, about the 48×190px base box (aspect kept).
+function updateLogoPreviewScale() {
+  const scale = Math.min(2, Math.max(0.5, parseFloat($('rep_logoScale').value) || 1));
+  const p = $('rep_logoPreview');
+  p.style.maxHeight = (48 * scale) + 'px';
+  p.style.maxWidth = (190 * scale) + 'px';
+}
+
+// Load the selected connection's projects into the style project dropdown, then load the
+// style for the first project (option text = title, value = project id).
+async function loadStyleProjects() {
+  const conn = $('rep_styleConn').value;
+  const sel = $('rep_styleProject');
+  if (!conn) { sel.innerHTML = ''; $('rep_styleProjStatus').textContent = ''; fillStyleFields(null); return; }
+  sel.innerHTML = '<option value="">Loading…</option>';
+  $('rep_styleProjStatus').textContent = '';
+  try {
+    const r = await api('/api/reporting/projects/' + encodeURIComponent(conn));
+    if (r.error) { sel.innerHTML = '<option value="">—</option>'; $('rep_styleProjStatus').textContent = '⚠ ' + r.error; fillStyleFields(null); return; }
+    if (!r.projects.length) { sel.innerHTML = '<option value="">— no projects —</option>'; fillStyleFields(null); return; }
+    sel.innerHTML = r.projects
+      .map(p => '<option value="' + esc(p.projectId) + '">' + esc(p.title) + ' (' + esc(p.projectId) + ')</option>')
+      .join('');
+  } catch (e) {
+    sel.innerHTML = '<option value="">—</option>';
+    $('rep_styleProjStatus').textContent = '⚠ ' + e.message;
+    fillStyleFields(null);
+    return;
+  }
+  await loadReportStyle();
+}
+
+async function loadReportStyle() {
+  const conn = $('rep_styleConn').value, proj = $('rep_styleProject').value;
+  if (!conn || !proj) { fillStyleFields(null); return; }
+  try {
+    const s = await api('/api/reporting/style?connectionId=' + encodeURIComponent(conn) + '&projectId=' + encodeURIComponent(proj));
+    fillStyleFields(s);  // null when the project has no style yet → default fields
+    $('rep_styleProjStatus').textContent = s ? '' : 'No style yet — showing defaults.';
+  } catch (e) { fillStyleFields(null); toast(e.message, true); }
+}
+
+async function saveReportStyle() {
+  const conn = $('rep_styleConn').value, proj = $('rep_styleProject').value;
+  if (!conn || !proj) { toast('Pick a connection and a project first', true); return; }
+  const body = {
+    connectionId: conn, projectId: proj,
+    accent: $('rep_accentHex').value.trim(),
+    orgName: $('rep_orgName').value.trim(),
+    logoPos: $('rep_logoPos').value === 'right' ? 'right' : 'left',
+    logoScale: Math.min(2, Math.max(0.5, parseFloat($('rep_logoScale').value) || 1)),
+    includeSankey: $('rep_incSankey').checked,
+    includeHappyPath: $('rep_incHappy').checked,
+    includeConformance: $('rep_incConf').checked,
+  };
+  if (_reportLogo !== null) body.logo = _reportLogo;  // null → keep stored; '' → clear; URI → new
+  $('rep_styleResult').textContent = '';
+  try {
+    await api('/api/reporting/style', { method: 'POST', body: JSON.stringify(body) });
+    $('rep_styleResult').textContent = 'Saved.';
+    toast('Report style saved for this project');
+    loadReporting().catch(() => {});
+  } catch (e) { toast(e.message, true); }
+}
+
+async function removeReportStyle() {
+  const conn = $('rep_styleConn').value, proj = $('rep_styleProject').value;
+  if (!conn || !proj) { toast('Pick a connection and a project first', true); return; }
+  await deleteStyle(conn, proj);
+}
+
+async function deleteReportStyleAt(i) {
+  const s = _reportStyles[i];
+  if (!s) return;
+  await deleteStyle(s.connectionId, s.projectId);
+}
+
+async function deleteStyle(conn, proj) {
+  try {
+    await api('/api/reporting/style?connectionId=' + encodeURIComponent(conn) + '&projectId=' + encodeURIComponent(proj), { method: 'DELETE' });
+    toast('Report style removed — this project uses the default theme');
+    loadReporting().catch(() => {});
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderReportStyles(styles, conns) {
+  _reportStyles = styles;
+  const nameOf = {};
+  for (const c of conns) nameOf[c.id] = c.name || c.id;
+  if (!styles.length) {
+    $('rep_styleList').innerHTML = '<p class="subtle">No project styles yet — every project uses the default theme.</p>';
+    return;
+  }
+  let html = '<table class="tbl"><thead><tr><th>Connection</th><th>Project</th><th>Accent</th><th>Logo</th><th>Sections</th><th></th></tr></thead><tbody>';
+  styles.forEach((s, i) => {
+    const secs = [s.includeSankey !== false ? 'Sankey' : '', s.includeHappyPath !== false ? 'Happy' : '', s.includeConformance !== false ? 'Conf' : ''].filter(Boolean).join(', ') || '—';
+    const swatch = '<span style="display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:middle;background:' + esc(s.accent || '#4a3aa7') + '"></span> ' + esc(s.accent || '');
+    html += '<tr><td>' + esc(nameOf[s.connectionId] || s.connectionId) + '</td><td><code>' + esc(s.projectId) + '</code></td>'
+      + '<td>' + swatch + '</td>'
+      + '<td>' + (s.hasLogo ? (esc(s.logoPos) + ' logo') : '—') + '</td>'
+      + '<td class="subtle">' + esc(secs) + '</td>'
+      + '<td style="text-align:right; white-space:nowrap">'
+      + '<button class="btn small" onclick="editReportStyle(' + i + ')">Edit</button> '
+      + '<button class="btn small danger" onclick="deleteReportStyleAt(' + i + ')">Remove</button>'
+      + '</td></tr>';
+  });
+  $('rep_styleList').innerHTML = html + '</tbody></table>';
+}
+
+async function editReportStyle(i) {
+  const s = _reportStyles[i];
+  if (!s) return;
+  $('rep_styleConn').value = s.connectionId;
+  await loadStyleProjects();
+  const sel = $('rep_styleProject');
+  // Keep the linked project even if the DB is down / it was renamed.
+  if (![...sel.options].some(o => o.value === s.projectId)) {
+    sel.insertAdjacentHTML('afterbegin', '<option value="' + esc(s.projectId) + '">' + esc(s.projectId) + '</option>');
+  }
+  sel.value = s.projectId;
+  await loadReportStyle();
+}
+
+async function testReportLLM() {
+  $('rep_llmTest').textContent = 'Testing…';
+  try {
+    const r = await api('/api/reporting/test-llm', { method: 'POST', body: JSON.stringify({ llmUrl: $('rep_llmUrl').value.trim(), llmKey: $('rep_llmKey').value }) });
+    $('rep_llmTest').textContent = r.error ? ('✗ ' + r.error) : ('✓ reachable' + (r.models && r.models.length ? ' — ' + r.models.length + ' models' : ''));
+  } catch (e) { $('rep_llmTest').textContent = '✗ ' + e.message; }
+}
+
+async function saveReportPrompt() {
+  const body = { connectionId: $('rep_promptConn').value, projectId: $('rep_promptProject').value.trim(), prompt: $('rep_promptText').value };
+  if (!body.connectionId || !body.projectId) { toast('Pick a connection and enter a project id', true); return; }
+  try {
+    await api('/api/reporting/prompts', { method: 'POST', body: JSON.stringify(body) });
+    $('rep_promptText').value = '';
+    $('rep_promptResult').textContent = 'Saved.';
+    toast('Report prompt saved');
+    loadReporting().catch(() => {});
+  } catch (e) { toast(e.message, true); }
+}
+
+async function deleteReportPrompt(i) {
+  const p = _reportPrompts[i];
+  if (!p) return;
+  try {
+    await api('/api/reporting/prompts', { method: 'POST', body: JSON.stringify({ connectionId: p.connectionId, projectId: p.projectId, prompt: '' }) });
+    toast('Report prompt removed');
+    loadReporting().catch(() => {});
+  } catch (e) { toast(e.message, true); }
 }
 
 // ── Integration console ─────────────────────────────────────────────────────

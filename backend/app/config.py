@@ -9,6 +9,26 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.environ.get("PMW_DATA_DIR", PROJECT_ROOT / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def _read_app_version() -> str:
+    """The build/release label shown on every sign-in panel. Freely editable in the
+    top-level ``VERSION`` file (one line); ``PMW_APP_VERSION`` overrides it, and a
+    built-in default applies when neither is present."""
+    env = os.environ.get("PMW_APP_VERSION")
+    if env and env.strip():
+        return env.strip()
+    version_file = Path(os.environ.get("PMW_APP_VERSION_FILE", PROJECT_ROOT / "VERSION"))
+    try:
+        text = version_file.read_text(encoding="utf-8").strip()
+        if text:
+            return text
+    except OSError:
+        pass
+    return "V0.95  - Milford Sound"
+
+
+APP_VERSION = _read_app_version()
+
 DB_PATH = DATA_DIR / "settings.sqlite3"
 SECRET_KEY_PATH = DATA_DIR / "secret.key"
 

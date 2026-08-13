@@ -652,7 +652,7 @@ const processMap: HelpTopic = {
         ),
         tip('The quality of the automatic layout depends on the “Optimise layout” toggle in Configuration — when on, crossing minimisation produces a cleaner arrangement on complex graphs.'),
         tip('Inspecting one step in a dense map: hover a node and hold still for the dwell time (one second by default). The node and its incoming and outgoing transitions light up while everything else fades back, so you can trace exactly what leads into and out of it. Move the pointer away (or click, pan or drag) to clear it. Set the delay — 1 s / 2 s / 3 s, or Off — with the “Highlight Trigger” control in Configuration → Steps. This spotlight is available on every process map except the Individual Journey, whose single trace is already sequential.'),
-        tip('A 🕸 Flowchart / 🌊 Sankey switch floats at the top of the A-Chart and B-Chart. The Sankey view shows the same data as a left-to-right flow — band width is proportional to journey volume. To keep it readable it collapses each cluster of steps that loop among one another into a single ↺ node (named after their shared step group when they have one); hover any band for exact counts, or hover a collapsed node to highlight it and see the full list of steps grouped inside plus their internal-loop total. Your choice of flowchart or Sankey is remembered per user.'),
+        tip('A 🕸 Flowchart / 🌊 Sankey switch floats at the top of the A-Chart and B-Chart. The Sankey view shows the same data as a left-to-right flow — band width follows the currently selected transition metric (Count, %, Journey %, Avg/Min/Max Time, Std Dev), so switching the metric re-weights the flows. To keep it readable it collapses each cluster of steps that loop among one another into a single ↺ node (named after their shared step group when they have one); hover any band for exact counts, or hover a collapsed node to highlight it and see the full list of steps grouped inside plus their internal-loop total. Your choice of flowchart or Sankey is remembered per user.'),
       ],
     },
     {
@@ -1226,18 +1226,19 @@ const aiDocumentation: HelpTopic = {
     {
       heading: 'How it works',
       body: [
-        p('The AI Documentation view sends the current A-Chart transition table, together with your prompt template, to the OpenAI-compatible endpoint configured on the active connection, and renders the answer as a structured Markdown report.'),
-        p('The report also includes sections computed locally and never sent to the model: the journey-paths table, happy-path conformance, the conformance gap analysis, and your notes. Before running, notice cards summarise the A-Chart filter context plus how many happy paths and norms will be included.'),
-        tip('Edit the prompt under Configuration → AI related → LLM Prompt; templates are stored per project. Use the browser’s Print / PDF to export the finished report.'),
+        p('The report is produced in two stages. First a language model does the analysis: it is sent ONLY the current A-Chart transition table and an instruction, and returns structured findings (title, executive summary, sections). Then the server assembles those findings — together with the process-flow Sankey and the locally-computed Happy Path and Conformance sections — into a polished, print-ready HTML report styled with your organisation’s accent and letterhead.'),
+        p('The Happy Path and Conformance sections, the Sankey and your notes are computed on your own servers and are never sent to the model — only the aggregated transition table is.'),
+        p('The report opens with a cover and executive summary, then a clickable table of contents; each topic (Analysis, Process flow, Conformance, Happy Path, Journey Paths, Notes) starts on its own page under a large title, and the links jump to it both on screen and in the exported PDF. The Notes chapter splits your project notes into Open and Resolved, each sorted by severity (most severe first).'),
+        tip('The report is shown in its own frame; use ⎙ Save as PDF (browser print) to export it. Your administrator configures the report’s language model, accent/letterhead and the per-connection/project analysis prompt in the admin Reporting tab — separate from the interactive LLM on the connection.'),
       ],
     },
     {
       heading: 'Requirements',
       body: [
         ul(
-          'The active connection must have an LLM server attached (base URL, model, optional API key).',
-          'The second status dot on the connection card must be blue — the model server is reachable.',
+          'A report language model — set in the admin Reporting tab; if none is set it falls back to the LLM attached to the active connection.',
           'Any OpenAI-compatible endpoint works: local servers (Ollama, llama.cpp, vLLM, LM Studio) or cloud APIs.',
+          'Happy Path and Conformance sections appear only when a power user/administrator has defined the underlying paths and norms.',
         ),
         warn('AI models can produce results that are incorrect, incomplete or misleading. Independently verify every finding before acting on it.'),
       ],

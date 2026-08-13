@@ -1165,7 +1165,12 @@ def test_customize_login_roundtrip(admin):
         "/api/customize/login", json={"type": "color", "color": "#0a84ff"}
     )
     assert resp.status_code == 200
-    assert resp.json() == {"type": "color", "color": "#0a84ff", "image": ""}
+    body = resp.json()
+    assert {k: body[k] for k in ("type", "color", "image")} == {
+        "type": "color",
+        "color": "#0a84ff",
+        "image": "",
+    }
     assert store.login_appearance()["type"] == "color"
 
 
@@ -1683,3 +1688,109 @@ def test_admin_login_mfa_setup_completes_and_signs_in(admin):
     assert ok.status_code == 200 and "Save your recovery codes" in ok.text
     assert server.COOKIE in client.cookies              # session issued
     assert store.get_user("padmin").mfa_enabled is True  # enrolled
+
+
+# ── AI Reporting tab ──────────────────────────────────────────────────────────
+
+
+def test_reporting_endpoints_require_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    assert client.get("/api/reporting/config").status_code == 401
+    assert client.post("/api/reporting/config", json={}).status_code == 401
+    assert client.get("/api/reporting/prompts").status_code == 401
+    assert client.post("/api/reporting/prompts", json={}).status_code == 401
+    assert client.get("/api/reporting/styles").status_code == 401
+    assert client.get("/api/reporting/style", params={"connectionId": "c", "projectId": "p"}).status_code == 401
+    assert client.post("/api/reporting/style", json={}).status_code == 401
+    assert client.get("/api/reporting/projects/c1").status_code == 401
+
+
+def test_reporting_projects_unknown_connection_is_404(admin):
+    server, _ = admin
+    client = _login(server)
+    assert client.get("/api/reporting/projects/nope").status_code == 404
+
+
+def test_reporting_config_roundtrip_never_leaks_key(admin):
+    server, store = admin
+    client = _login(server)
+
+    resp = client.post(
+        "/api/reporting/config",
+        json={"llmUrl": "https://api.openai.com/v1", "llmModel": "gpt-4o", "llmKey": "sk-secret"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["llmModel"] == "gpt-4o" and body["hasLlmKey"] is True
+    assert "llmKey" not in body  # the admin channel never returns the secret
+    # But the backend can read it (with_secret).
+    assert store.report_config(with_secret=True)["llmKey"] == "sk-secret"
+
+    # A follow-up save with no key keeps the stored one.
+    client.post("/api/reporting/config", json={"llmUrl": "https://x/v1", "llmModel": "m"})
+    assert store.report_config(with_secret=True)["llmKey"] == "sk-secret"
+
+
+def test_reporting_style_is_per_project(admin):
+    server, store = admin
+    client = _login(server)
+
+    assert client.get("/api/reporting/styles").json() == []
+    # No style yet for a project → null.
+    assert client.get(
+        "/api/reporting/style", params={"connectionId": "c1", "projectId": "APF"}
+    ).json() is None
+
+    r = client.post(
+        "/api/reporting/style",
+        json={"connectionId": "c1", "projectId": "APF", "accent": "#123456",
+              "orgName": "ACME Air", "includeHappyPath": False},
+    )
+    assert r.status_code == 200
+    rows = r.json()
+    assert rows[0]["connectionId"] == "c1" and rows[0]["accent"] == "#123456"
+    assert rows[0]["hasLogo"] is False and "logo" not in rows[0]  # list omits the payload
+
+    full = client.get(
+        "/api/reporting/style", params={"connectionId": "c1", "projectId": "APF"}
+    ).json()
+    assert full["accent"] == "#123456" and full["includeHappyPath"] is False
+
+    # Delete reverts the project to the default (null).
+    d = client.delete("/api/reporting/style", params={"connectionId": "c1", "projectId": "APF"})
+    assert d.status_code == 200 and d.json() == []
+    assert store.report_style_for("c1", "APF") is None
+
+
+def test_reporting_style_rejects_bad_accent(admin):
+    server, _ = admin
+    client = _login(server)
+    resp = client.post(
+        "/api/reporting/style",
+        json={"connectionId": "c1", "projectId": "p", "accent": "nope"},
+    )
+    assert resp.status_code == 400
+
+
+def test_reporting_prompts_roundtrip(admin):
+    server, store = admin
+    client = _login(server)
+
+    assert client.get("/api/reporting/prompts").json() == []
+    client.post(
+        "/api/reporting/prompts",
+        json={"connectionId": "c1", "projectId": "p1", "prompt": "Find outliers"},
+    )
+    assert store.report_prompt_for("c1", "p1") == "Find outliers"
+    # Empty prompt removes it.
+    client.post(
+        "/api/reporting/prompts",
+        json={"connectionId": "c1", "projectId": "p1", "prompt": ""},
+    )
+    assert client.get("/api/reporting/prompts").json() == []
+    # A prompt needs a connection and a project.
+    assert (
+        client.post("/api/reporting/prompts", json={"connectionId": "", "projectId": "p", "prompt": "x"}).status_code
+        == 400
+    )

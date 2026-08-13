@@ -311,13 +311,16 @@ def test_login_appearance_endpoint_is_open(gui):
     """The login background is served pre-auth (the login page needs it)."""
     server, store = gui
     client = TestClient(server.app)
-    assert client.get("/auth/login-appearance").json() == {
+    body = client.get("/auth/login-appearance").json()
+    assert {k: body[k] for k in ("type", "color", "image")} == {
         "type": "default",
         "color": "",
         "image": "",
     }
+    assert body["version"]  # release label shown on the sign-in panel
     store.set_login_appearance(type="color", color="#0a84ff")
-    assert client.get("/auth/login-appearance").json() == {
+    body = client.get("/auth/login-appearance").json()
+    assert {k: body[k] for k in ("type", "color", "image")} == {
         "type": "color",
         "color": "#0a84ff",
         "image": "",

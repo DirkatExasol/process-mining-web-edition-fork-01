@@ -385,6 +385,11 @@ export const api = {
       targetNorms: Record<string, Record<string, number>>
       targetMetric: TransitionMetric
       happyPaths: HappyPath[]
+      notes?: ProcessNote[]
+      connectionId?: string
+      sankeySvg?: string
+      sankeyCaption?: string
+      preparedFor?: string
     },
   ) =>
     post<DocumentationResponse>(`/api/projects/${enc(projectId)}/documentation`, payload),

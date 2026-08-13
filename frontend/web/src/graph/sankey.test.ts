@@ -33,7 +33,7 @@ describe('buildSankey', () => {
     expect(m.clustered).toBe(0)
     expect(m.nodes.map((n) => [n.id, n.column]).sort()).toEqual([['A', 0], ['B', 1], ['C', 2]])
     expect(m.columns).toBe(3)
-    expect(m.links).toEqual([
+    expect(m.links.map((l) => ({ source: l.source, target: l.target, value: l.value }))).toEqual([
       { source: 'A', target: 'B', value: 10 },
       { source: 'B', target: 'C', value: 8 },
     ])
@@ -80,7 +80,9 @@ describe('buildSankey', () => {
     const a = m.nodes.find((n) => n.id === 'A')!
     expect(a.isCluster).toBe(false)
     expect(a.internalHops).toBe(7)
-    expect(m.links).toEqual([{ source: 'A', target: 'B', value: 10 }])
+    expect(m.links.map((l) => ({ source: l.source, target: l.target, value: l.value }))).toEqual([
+      { source: 'A', target: 'B', value: 10 },
+    ])
   })
 
   it('sets node volume to max(inflow, outflow)', () => {
@@ -89,5 +91,27 @@ describe('buildSankey', () => {
       graph(['A', 'X', 'B', 'C'], [['A', 'B', 10], ['X', 'B', 5], ['B', 'C', 12]]),
     )
     expect(m.nodes.find((n) => n.id === 'B')!.volume).toBe(15)
+  })
+
+  it('aggregates times (occurrence-weighted avg, min-of-mins, max-of-maxes) on merged links', () => {
+    const t = (
+      fromStep: string, toStep: string, occurrences: number,
+      avgSecs: number, minSecs: number, maxSecs: number, stdDevSecs: number,
+    ) => ({ fromStep, toStep, occurrences, avgSecs, minSecs, maxSecs, stdDevSecs })
+    // S→A and S→B both feed the {A,B} loop cluster, so they merge into one boundary link.
+    const g: ProcessGraph = {
+      steps: { S: step(), A: step(), B: step() },
+      transitions: [
+        t('S', 'A', 10, 100, 50, 150, 10),
+        t('S', 'B', 30, 200, 80, 260, 20),
+        t('A', 'B', 5, 0, 0, 0, 0),
+        t('B', 'A', 5, 0, 0, 0, 0),
+      ],
+    }
+    const boundary = buildSankey(g).links.find((l) => l.source === 'S')!
+    expect(boundary.value).toBe(40) // 10 + 30 occurrences
+    expect(boundary.avgSecs).toBeCloseTo((100 * 10 + 200 * 30) / 40) // 175, weighted by occ
+    expect(boundary.minSecs).toBe(50)
+    expect(boundary.maxSecs).toBe(260)
   })
 })

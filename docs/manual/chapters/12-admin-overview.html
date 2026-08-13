@@ -79,7 +79,8 @@
 <tr><td>6</td><td><b>Logging</b></td><td>Severity, rotation, the log viewer and exports</td><td>Chapter 16</td></tr>
 <tr><td>7</td><td><b>Backup</b></td><td>Manual and scheduled backups, restore</td><td>Chapter 17</td></tr>
 <tr><td>8</td><td><b>Customize</b></td><td>Sign-in page background and branding</td><td>Chapter 18</td></tr>
-<tr><td>9</td><td><b>Integration</b></td><td>Enabling the integration console</td><td>Chapter 19</td></tr>
+<tr><td>9</td><td><b>Reporting</b></td><td>AI report language model, style and per-connection/project analysis prompts</td><td>This chapter (§12.8)</td></tr>
+<tr><td>10</td><td><b>Integration</b></td><td>Enabling the integration console</td><td>Chapter 19</td></tr>
 </tbody>
 </table>
 
@@ -362,5 +363,29 @@ HTTPS :8453; reconnect there if it stops responding.</code></pre>
 </ol>
 
 <div class="warn"><strong>Warning</strong> If the admin panel does not answer on <code>https://&lt;host&gt;:8453/</code> after the restart, try <code>http://&lt;host&gt;:8090/</code>. Answering there means the HTTPS fall-back was taken because no certificate was active; return to the TLS / SSL tab, activate one and restart again.</div>
+
+<h2 id="admin-reporting">12.8 The Reporting tab</h2>
+
+<p>The <b>Reporting</b> tab governs the high-gloss <b>AI supported Documentation</b> report (see §11). The report is produced in two stages — a language model analyses the transition table and returns structured findings, then the server assembles those findings plus the process Sankey, the Happy Path / Conformance sections and the project notes into a styled, printable document — a cover with executive summary, a clickable table of contents, and one topic per page. This tab configures all three parts, and is entirely separate from the LLM attached to a connection (which the app uses for the interactive analysis).</p>
+
+<h3 id="admin-reporting-llm">12.8.1 Report language model</h3>
+
+<p>An OpenAI-compatible endpoint dedicated to the report: a <code>/v1</code>-style <b>Server URL</b>, a <b>Model</b> and an optional <b>API key</b>. <b>Test</b> probes it and lists the available models. Leave the API-key field blank to keep the stored key; leave the whole <b>Server URL</b> blank to fall back to the LLM configured on the connection. Press <b>Save language model</b> to store it. The model is shared by every project; the key is encrypted at rest and never returned to the browser.</p>
+
+<div class="tip"><strong>Tip</strong> For confidentiality, prefer a <b>locally hosted</b> model server (Ollama, llama.cpp, vLLM, LM Studio). Only the aggregated transition table is ever sent to it; the Sankey, Happy Path and Conformance sections are assembled locally and never leave your network.</div>
+
+<h3 id="admin-reporting-style">12.8.2 Style &amp; sections (per project)</h3>
+
+<p>The report look is configured <b>per (connection, project)</b>, so one environment can brand reports differently for each customer — a service provider running many customers from the same installation gives each project its own theme. Pick the <b>connection</b>, then one of its <b>projects</b> (loaded live from its database, shown by title, stored by id); the fields below load that project's saved style, or defaults when it has none.</p>
+
+<p>Each project's style holds an <b>accent colour</b> (a <code>#rrggbb</code> hex, applied to headings, the executive-summary callout and table headers), an optional <b>organisation / letterhead</b> line, an optional <b>logo</b> with a <b>Left</b>/<b>Right</b> position and a <b>size</b> slider (0.5×–2×, aspect ratio kept), and three switches to include or omit the <b>process-flow Sankey</b>, the <b>Happy Path</b> section and the <b>Conformance gap analysis</b>. Press <b>Save style</b> to store it for the selected project, or <b>Remove</b> to revert that project to the plain default theme. Configured projects are listed below with Edit / Remove actions.</p>
+
+<p>The <b>logo</b> accepts a PNG, JPEG, WebP or SVG. Raster images are scaled down and re-encoded in the browser before upload, so even a large original ends up small; the stored logo is placed on the <b>first page</b> of that project's reports, on the chosen side. When both a logo and an organisation name are set, the logo sits on its chosen side and the organisation name appears as a letterhead on the opposite side; with no logo, the organisation name leads the cover.</p>
+
+<div class="note"><strong>Note</strong> A project with no style of its own uses a plain built-in theme (accent, no letterhead or logo, all sections included). There is no shared company-wide default — configure each customer's projects explicitly.</div>
+
+<h3 id="admin-reporting-prompts">12.8.3 Analysis prompts</h3>
+
+<p>The instruction the report model follows can be tailored per process by <b>linking a prompt to a connection and a project</b>. Choose the <b>connection</b> from its dropdown; the <b>project</b> dropdown then lists that connection's projects (shown by title, stored by id), loaded live from its database. Pick the project, type the <b>prompt</b>, and <b>Save prompt</b>. The saved mappings are listed below with Edit / Remove actions. When a project has no prompt of its own, the app's per-project prompt template is used instead.</p>
 
 </section>

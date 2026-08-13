@@ -2753,6 +2753,16 @@ textarea.text-input {
   display: none;
 }
 
+/* The AI report renders inside its own iframe (self-contained styled HTML); it fills the
+   view and prints via its own contentWindow, so it needs no app-side print stylesheet. */
+.ai-report-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+
 @media print {
   /* The print doc is portalled to <body>, a sibling of #root — hide the app. */
   #root {

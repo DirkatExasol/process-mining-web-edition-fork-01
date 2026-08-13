@@ -4,28 +4,28 @@
  * and norms. After: renders the assembled report (analysis, journey paths, happy
  * path conformance, conformance gaps, user comments, analysis parameters). */
 
-import { useCallback, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { Markdown } from '../components/Markdown'
+import { useRef, useState } from 'react'
 import { Sheet, Unavailable } from '../components/ui'
-import { formatDateTime } from '../graph/format'
 import { aChartFilterSummary, useStore } from '../store'
-import { noteTargetLabel } from '../types'
 
 export function AIDocumentationView() {
   const store = useStore()
   const [showPrompt, setShowPrompt] = useState(false)
-  // The global print stylesheet hides #root (so the Help panel can print a doc
-  // portalled to <body>). The report lives inside #root, so it must print the
-  // same way — portal a print-only copy to <body> and reset afterwards.
-  const [printing, setPrinting] = useState(false)
-  const printReport = useCallback(() => {
-    setPrinting(true)
-    window.requestAnimationFrame(() => {
-      window.print()
-      window.setTimeout(() => setPrinting(false), 500)
-    })
-  }, [])
+  // The report is a fully self-contained styled HTML document assembled server-side. It
+  // renders in its own iframe (its CSS is isolated from the app), and "Save as PDF" prints
+  // that frame — the same Chrome-print path that produced the reference report.
+  const frameRef = useRef<HTMLIFrameElement>(null)
+  // The report is shown in its own iframe (isolated CSS). The frame is same-origin so the
+  // host can trigger printing on it; it also runs the report's embedded script (which owns
+  // the table-of-contents scrolling — fragment links don't resolve against about:srcdoc) and
+  // may open the print dialog (allow-modals). We print THIS frame directly (rather than a
+  // blob: URL) because a strict Content-Security-Policy can forbid blob: documents.
+  const printReport = () => {
+    const win = frameRef.current?.contentWindow
+    if (!win) return
+    win.focus()
+    win.print()
+  }
 
   const summary = aChartFilterSummary(store)
   const llmReachable = store.connection.isLLMReachable
@@ -53,8 +53,7 @@ export function AIDocumentationView() {
   }
 
   const analysis = store.llmAnalysis
-  if (analysis?.result) {
-    const report = buildReport(store, analysis)
+  if (analysis?.reportHtml) {
     return (
       <div className="col" style={{ flex: 1, minHeight: 0, gap: 0 }}>
         <div
@@ -73,37 +72,30 @@ export function AIDocumentationView() {
           <button className="btn small" onClick={() => setShowPrompt(true)}>
             Show prompt
           </button>
-          <button className="btn small" onClick={printReport}>
-            ⎙ Print / PDF
+          <button className="btn small prominent" onClick={printReport}>
+            ⎙ Save as PDF
           </button>
           <button
             className="btn small"
-            disabled={!llmReachable}
             onClick={() => void store.runLLMAnalysis()}
           >
             ↻ Re-run
           </button>
         </div>
 
-        <div className="scroll-view">
-          <Markdown text={report} />
-        </div>
+        <iframe
+          ref={frameRef}
+          title="AI report"
+          className="ai-report-frame"
+          sandbox="allow-same-origin allow-scripts allow-modals"
+          srcDoc={analysis.reportHtml}
+        />
 
         {showPrompt && (
           <Sheet title="Prompt sent to the LLM" wide onClose={() => setShowPrompt(false)}>
             <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{analysis.prompt}</pre>
           </Sheet>
         )}
-
-        {/* Print-only copy portalled to <body> (a sibling of #root, which the
-            print stylesheet hides), so the report actually appears on the page. */}
-        {printing &&
-          createPortal(
-            <div className="ai-print-doc">
-              <Markdown text={report} />
-            </div>,
-            document.body,
-          )}
       </div>
     )
   }
@@ -117,7 +109,6 @@ export function AIDocumentationView() {
         action={
           <button
             className="btn prominent"
-            disabled={!llmReachable}
             onClick={() => void store.runLLMAnalysis()}
           >
             ↻ Try Again
@@ -171,7 +162,6 @@ export function AIDocumentationView() {
       <button
         className="btn prominent"
         style={{ minWidth: 220, padding: '9px 16px' }}
-        disabled={!llmReachable}
         onClick={() => void store.runLLMAnalysis()}
       >
         🧠 AI supported Documentation
@@ -179,10 +169,11 @@ export function AIDocumentationView() {
 
       {!llmReachable && (
         <span
-          className="t-caption fg-orange"
-          style={{ maxWidth: 320, textAlign: 'center' }}
+          className="t-caption fg-secondary"
+          style={{ maxWidth: 360, textAlign: 'center' }}
         >
-          ⚠ LLM server not reachable. Check your connection profile.
+          The report uses the LLM configured in the admin Reporting tab if set, otherwise
+          your connection's LLM (which currently looks unreachable).
         </span>
       )}
     </div>
@@ -224,76 +215,3 @@ function NoticeCard({
   )
 }
 
-/** Assembles the report the way `reportDocument` does in the Swift view. */
-function buildReport(
-  store: ReturnType<typeof useStore.getState>,
-  analysis: NonNullable<ReturnType<typeof useStore.getState>['llmAnalysis']>,
-): string {
-  const project = store.selectedProject
-  const parts: string[] = []
-
-  parts.push(`# ${project?.title ?? 'Process Documentation'}`)
-  parts.push('_AI-Supported Process Documentation_')
-  parts.push(`> ${aChartFilterSummary(store)}`)
-  if (analysis.generatedAt) {
-    parts.push(`> Generated: ${formatDateTime(analysis.generatedAt)}`)
-  }
-  parts.push('---')
-  parts.push('## 1. AI Analysis')
-  parts.push(analysis.result?.trim() ?? '')
-
-  let chapter = 2
-  if (analysis.journeyPathsSummary) {
-    parts.push(
-      analysis.journeyPathsSummary.replace(
-        /^\s*## Journey Paths/m,
-        `## ${chapter++}. Journey Paths`,
-      ),
-    )
-  }
-  if (analysis.happyPathSummary) {
-    parts.push(
-      analysis.happyPathSummary.replace(
-        /^\s*## Happy Path Conformance/m,
-        `## ${chapter++}. Happy Path Conformance`,
-      ),
-    )
-  }
-  if (analysis.conformanceSummary) {
-    parts.push(
-      analysis.conformanceSummary.replace(
-        /^\s*## Conformance Check – Gap Analysis/m,
-        `## ${chapter++}. Conformance Check – Gap Analysis`,
-      ),
-    )
-  }
-
-  if (store.projectNotes.length > 0) {
-    const sorted = [...store.projectNotes].sort((a, b) =>
-      a.createdAt.localeCompare(b.createdAt),
-    )
-    let table = `## ${chapter++}. User Comments\n\n`
-    table += '| Element | Type | User | Note | Date |\n'
-    table += '|---------|------|------|------|------|\n'
-    for (const note of sorted) {
-      const text = note.text.replace(/\|/g, '｜').replace(/\n/g, '<br>')
-      table += `| ${noteTargetLabel(note.target)} | ${
-        note.target.type === 'edge' ? 'Edge' : 'Node'
-      } | ${note.authorName || note.username || '—'} | ${text} | ${formatDateTime(note.createdAt)} |\n`
-    }
-    parts.push(table)
-  }
-
-  let params = `## ${chapter}. Analysis Parameters\n\n`
-  if (analysis.model) params += `**Model:** \`${analysis.model}\`\n\n`
-  if (store.llmPromptTemplate) {
-    params += '**Prompt template:**\n\n'
-    params += store.llmPromptTemplate
-      .split('\n')
-      .map((line) => `> ${line}`)
-      .join('\n')
-  }
-  parts.push(params)
-
-  return parts.join('\n\n')
-}

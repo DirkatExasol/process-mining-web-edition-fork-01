@@ -68,6 +68,11 @@ describe('SankeyChart', () => {
     expect(within(tip).getByText('B')).toBeInTheDocument()
   })
 
+  it('drives the display by the selected metric (footer states which)', () => {
+    render(<SankeyChart graph={graph(['A', 'B'], [['A', 'B', 10]])} metric="Avg Time" />)
+    expect(screen.getByText(/Band width shows/)).toHaveTextContent('Avg Time')
+  })
+
   it('shows an empty-state message for an empty graph', () => {
     render(<SankeyChart graph={graph([], [])} />)
     expect(screen.getByText(/no transitions/i)).toBeInTheDocument()

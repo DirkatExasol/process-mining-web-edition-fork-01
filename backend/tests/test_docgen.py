@@ -3,10 +3,38 @@ LLM prompt assembly (no network, no DB)."""
 
 from __future__ import annotations
 
-from app.models import HappyPath, JourneyPath, ProcessGraph, TransitionMetric
+from datetime import datetime
+
+from app.models import (
+    FilterSnapshot,
+    HappyPath,
+    JourneyPath,
+    NoteTarget,
+    ProcessGraph,
+    ProcessNote,
+    TransitionMetric,
+)
 from app.services import docgen
 
 from .conftest import edge, step
+
+
+def _note(*, title, importance, resolved=False, is_node=True, day=1) -> ProcessNote:
+    target = NoteTarget(type="node", value="A") if is_node else NoteTarget(
+        type="edge", **{"from": "A"}, to="B"
+    )
+    return ProcessNote(
+        title=title,
+        text="body of " + title,
+        importance=importance,
+        resolved=resolved,
+        target=target,
+        createdAt=datetime(2026, 8, day),
+        filterSnapshot=FilterSnapshot(
+            fromDate=datetime(2026, 1, 1), toDate=datetime(2026, 12, 31)
+        ),
+        authorName="Dirk",
+    )
 
 
 def _graph() -> ProcessGraph:
@@ -65,6 +93,25 @@ def test_happy_path_section_scores_defined_paths():
     md = docgen.happy_path_section(paths, variants)
     assert "| Ideal |" in md
     assert "1.00" in md  # full conformance
+
+
+def test_notes_section_empty_without_notes():
+    assert docgen.notes_section([]) == ""
+
+
+def test_notes_section_separates_open_resolved_and_sorts_by_severity():
+    notes = [
+        _note(title="Minor", importance="NORMAL", day=5),
+        _note(title="Critical", importance="URGENT", day=1),
+        _note(title="Fixed thing", importance="IMPORTANT", resolved=True),
+    ]
+    html = docgen.notes_section(notes)
+    assert "Open (2)" in html and "Resolved (1)" in html
+    # Within the Open group, URGENT sorts before NORMAL.
+    assert html.index("Critical") < html.index("Minor")
+    assert "🔴 Urgent" in html and "⚪ Normal" in html
+    # The resolved note is in its own section.
+    assert "Fixed thing" in html and "🟠 Important" in html
 
 
 def test_build_prompt_includes_title_template_and_table():

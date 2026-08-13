@@ -5,7 +5,9 @@
 
 <h2 id="ai-overview">AI supported Documentation</h2>
 
-<p>The <b>AI supported Documentation</b> view (🧠 in the <b>☰ Switch view</b> menu) produces a written analysis of your process. It sends the <b>current A-Chart transition table</b> together with your <b>prompt template</b> to the OpenAI-compatible model server configured on the active connection, and renders the model's answer as a Markdown report with numbered chapters. Locally computed material — journey paths, happy-path conformance, the conformance gap analysis and your notes — is appended to that report afterwards.</p>
+<p>The <b>AI supported Documentation</b> view (🧠 in the <b>☰ Switch view</b> menu) produces a written analysis of your process, in <b>two stages with a clear division of labour</b>. First a language model does the <b>analysis</b>: it is sent <b>only the current A-Chart transition table</b> and an instruction, and returns <b>structured findings</b> (a title, an executive summary and numbered sections). Then the server does the <b>assembly</b>: it lays those findings out — together with the process-flow <b>Sankey</b> and the locally-computed <b>Happy Path</b> and <b>Conformance</b> sections — into one polished, self-contained HTML report, styled with the accent colour and letterhead set by your administrator. The report is shown in its own frame; <b>⎙ Save as PDF</b> exports it via the browser's print-to-PDF (the same way the reference report was produced).</p>
+
+<p>The report's language model is configured once by an administrator in the admin <b>Reporting</b> tab, while the <b>style &amp; sections</b> (accent, letterhead, logo and position, and which optional sections to include) and the <b>analysis prompt</b> are both configured <b>per connection and project</b> — so a single installation can brand and tailor reports differently for each customer. A project with no style of its own uses a plain default theme. All of this is separate from the interactive LLM attached to the connection; when no report LLM is configured, the report falls back to the connection's LLM.</p>
 
 <div class="note"><strong>Note</strong> The view <b>always analyses the A-Chart dataset and the A-Chart filters</b>, no matter which view you were in when you switched to it. If you want the report to describe a particular segment, set that segment up in the A-Chart first, tap <b>Apply</b>, and then switch to AI supported Documentation. The B-Chart, samples and simulation slots are never used as the source.</div>
 
@@ -13,7 +15,7 @@
 
 <h3 id="ai-what-is-sent">What is sent to the language model</h3>
 
-<p>Only two things leave the deployment: the <b>transition table of the currently loaded A-Chart</b> (the aggregated directly-follows pairs behind the map you can see) and the <b>prompt template</b> stored for this project. They are posted to the base URL configured on the active connection.</p>
+<p>Only two things leave the deployment: the <b>transition table of the currently loaded A-Chart</b> (the aggregated directly-follows pairs behind the map you can see) and the <b>prompt template</b> stored for this project. They are posted to the base URL of the <b>report LLM</b> configured in the admin Reporting tab (or, when none is set, the active connection's LLM).</p>
 
 <p>Everything else in the report is computed on your own servers and is <b>never sent to the model</b>:</p>
 
@@ -24,8 +26,9 @@
 <tr><td>Prompt template</td><td>Stored per project (sidebar Configuration)</td><td>Yes</td></tr>
 <tr><td>Journey Paths chapter</td><td>Computed locally</td><td>No</td></tr>
 <tr><td>Happy Path Conformance chapter</td><td>Computed locally</td><td>No</td></tr>
-<tr><td>Conformance Check – Gap Analysis chapter</td><td>Computed locally</td><td>No</td></tr>
-<tr><td>User Comments chapter (project notes)</td><td>NOTES table in your Exasol database</td><td>No</td></tr>
+<tr><td>Conformance – Gap Analysis chapter</td><td>Computed locally</td><td>No</td></tr>
+<tr><td>Process-flow Sankey diagram</td><td>Rendered in your browser, embedded as vector art</td><td>No</td></tr>
+<tr><td>Notes chapter (project notes)</td><td>NOTES table in your Exasol database</td><td>No</td></tr>
 </tbody>
 </table>
 
@@ -38,8 +41,8 @@
 <p>The feature is only usable when the connection you are currently connected to has a model server attached and that server answers.</p>
 
 <dl>
-<dt>An LLM server on the active connection</dt><dd>A connection bundles one Exasol database with an <b>optional</b> OpenAI-compatible LLM server (base URL, model, optional API key). When one is attached, the connection card in the sidebar shows an <b>LLM</b> line in addition to the <b>Database</b> line.</dd>
-<dt>The blue reachability dot</dt><dd>The active connection card carries up to two status dots. The <b>first</b> dot is the database state — <b>green</b> when connected, <b>orange</b> while connecting or after a failure. The <b>second</b> dot appears only when an LLM server is attached: <b>blue</b> means the model server is reachable, <b>orange</b> means it is not. The AI run button stays disabled until that second dot is <b>blue</b>.</dd>
+<dt>A report language model</dt><dd>The report is analysed by the <b>report LLM</b> configured by an administrator in the admin <b>Reporting</b> tab (its own base URL, model and optional key, independent of the interactive LLM attached to the connection). When no report LLM is configured, the report falls back to the connection's LLM. Because the report has its own model, the run button is <b>not</b> gated on the connection's LLM reachability dot — you can generate a report even when the connection carries no interactive LLM.</dd>
+<dt>The connection's own LLM (optional)</dt><dd>Independently, a connection may bundle its own OpenAI-compatible LLM server for the interactive features; when attached, the connection card shows an <b>LLM</b> line and a second status dot — <b>blue</b> when reachable, <b>orange</b> when not. That dot reflects the interactive LLM, not the report LLM.</dd>
 <dt>A selected project</dt><dd>Without one the view shows 🗺 <b>No Project Selected</b>.</dd>
 </dl>
 
@@ -65,7 +68,7 @@
 <h3 id="ai-running">Running an analysis</h3>
 
 <ol class="steps">
-<li>Connect to a connection that has an LLM server attached, and confirm the <b>second status dot on the connection card is blue</b>.</li>
+<li>Connect to the connection whose project you want to document. The report uses the <b>report LLM</b> set in the admin Reporting tab, so the connection does not need its own interactive LLM attached.</li>
 <li>Open the <b>A-Chart</b>, set the date window, included/excluded steps and meta filters you want the report to describe, and tap <b>Apply</b>.</li>
 <li>Open the <b>☰ Switch view</b> menu in the top-right corner and choose <b>AI supported Documentation</b> (🧠).</li>
 <li>Check the three notice cards. If the Happy Path or Conformance Check card warns that material is missing and you want it included, define it first and come back.</li>
@@ -73,18 +76,17 @@
 <li>When the answer arrives the report replaces the pre-run screen.</li>
 </ol>
 
-<p>If the run fails, the view shows ⚠️ <b>Analysis Failed</b> with the error message returned by the server and a <b>↻ Try Again</b> button. Try Again is itself disabled while the LLM is unreachable, so a failure caused by the model server going away leaves you with a greyed-out button rather than a retry loop.</p>
+<p>If the run fails, the view shows ⚠️ <b>Analysis Failed</b> with the error message returned by the server and a <b>↻ Try Again</b> button. A common cause is the report LLM being unconfigured or unreachable — check the admin <b>Reporting</b> tab's <b>Test</b> button.</p>
 
 <h3 id="ai-report">Reading the generated report</h3>
 
-<p>The report renders as Markdown. Its chapters are numbered dynamically, so the numbering shifts depending on which optional material exists:</p>
+<p>The report opens with a <b>cover</b> — the model's report title and subtitle, your letterhead, the line <i>Prepared for &lt;name&gt;</i> with the generation date, and the model's <b>executive summary</b> — followed by a <b>clickable table of contents</b>. Each entry in that contents list jumps to its chapter, both on screen and in the exported PDF. Every chapter then <b>starts on a fresh page under a large section title</b>, so the printed report reads one topic per page. The chapters, present only when their material exists, are:</p>
 
 <ol class="steps">
-<li><b>Header</b> — the project title, the line <i>AI-Supported Process Documentation</i>, the filter summary as a block quote, and <i>Generated: &lt;date time&gt;</i>.</li>
-<li><b>1. AI Analysis</b> — the model's answer, exactly as returned.</li>
-<li><b>Journey Paths</b>, <b>Happy Path Conformance</b> and <b>Conformance Check – Gap Analysis</b> — optional chapters, present only when the corresponding material exists, numbered in sequence.</li>
-<li><b>User Comments</b> — a table of every note on the project, in chronological order, with the columns <b>Element</b>, <b>Type</b>, <b>User</b>, <b>Note</b> and <b>Date</b>. This is where the annotation layer described in the second half of this chapter enters the printed record.</li>
-<li><b>Analysis Parameters</b> — the model id and the prompt template used, block-quoted, so a reader can tell how the analysis was obtained.</li>
+<li><b>Analysis</b> — the model's findings, laid out as numbered sections with any tables it returned.</li>
+<li><b>Process flow</b> — the process-flow <b>Sankey</b> embedded as a vector image, with its caption.</li>
+<li><b>Conformance – Gap Analysis</b>, <b>Happy Path Conformance</b> and <b>Journey Paths</b> — the locally-computed material, each its own chapter, present only when the corresponding paths or norms exist.</li>
+<li><b>Notes</b> — the project's annotations, split into <b>Open</b> and <b>Resolved</b> sub-tables, each <b>sorted by severity (most severe first)</b> and then by date. The columns are <b>Severity</b>, <b>Element</b>, <b>Title</b>, <b>Note</b>, <b>Author</b> and <b>Date</b>. This is where the annotation layer described in the second half of this chapter enters the printed record.</li>
 </ol>
 
 <p>The report toolbar carries the filter summary and three controls:</p>
@@ -92,7 +94,7 @@
 <dl>
 <dt>Show prompt</dt><dd>Opens the sheet <b>"Prompt sent to the LLM"</b> containing the exact prompt text that was transmitted. Use it when you need to reproduce or audit a result.</dd>
 <dt>⎙ Print / PDF</dt><dd>Prints <b>just the report</b> — not the surrounding application — through the browser's own print dialogue. Choose "Save as PDF" there to file the report.</dd>
-<dt>↻ Re-run</dt><dd>Runs the analysis again with the current filters and prompt. Disabled while the LLM server is unreachable.</dd>
+<dt>↻ Re-run</dt><dd>Runs the analysis again with the current filters and prompt, using the report language model configured in the admin <b>Reporting</b> tab.</dd>
 </dl>
 
 <div class="note"><strong>Note</strong> Markdown support in the report is deliberately restricted. Headings, bold, italic, inline code, fenced code blocks, bullet and ordered lists, block quotes, horizontal rules and pipe tables all render. Links are limited to <code>http</code>, <code>https</code>, <code>mailto</code> and relative targets — any other scheme is neutralised — and raw HTML is sanitised, so scripts and event handlers in a model's answer are stripped before display. Images and nested lists are not rendered.</div>

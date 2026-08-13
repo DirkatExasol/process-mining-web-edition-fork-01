@@ -50,6 +50,7 @@ import {
 } from './types'
 import { addDays, fromISODate, toISODate } from './graph/format'
 import { migrateHappyPath } from './graph/happyPath'
+import { sankeySvg as sankeySvgString } from './flow/sankeySvg'
 import { authenticateWithPasskey } from './passkey'
 
 export type ABSide = 'a' | 'b'
@@ -2291,8 +2292,14 @@ export const useStore = create<Store>((set, get) => {
       if (!s.selectedProject) return
       set({ isLLMAnalyzing: true, llmAnalysis: null, llmAnalysisError: null })
       try {
+        // Pull the latest notes so the report's Notes chapter is current even if the
+        // user never opened the Notes view this session.
+        await get().loadNotes()
         // Analysis always uses A-Chart data as the reference dataset.
         const graph = s.savedChartStates['A-Chart']?.processGraph ?? s.processGraph
+        // The process diagram embedded in the report is the same Sankey the app draws,
+        // rendered to a standalone SVG (concrete colours) so it survives into the print doc.
+        const sankeySvg = sankeySvgString(graph, s.transitionMetric, s.journeyCount ?? 0)
         const response = await api.documentation(s.selectedProject.projectId, {
           projectTitle: s.selectedProject.title,
           filter: get().currentFilterSpec(),
@@ -2301,6 +2308,11 @@ export const useStore = create<Store>((set, get) => {
           targetNorms: s.targetNorms,
           targetMetric: s.targetMetric,
           happyPaths: s.happyPaths,
+          notes: s.projectNotes,
+          connectionId: s.connection.activeProfileId ?? '',
+          sankeySvg,
+          sankeyCaption: `Reconstructed process flow — band width shows ${s.transitionMetric}; looping steps are collapsed into single ↺ nodes.`,
+          preparedFor: s.authDisplayName || s.authUser || '',
         })
         set({ llmAnalysis: response, llmAnalysisError: response.error })
       } catch (error) {
