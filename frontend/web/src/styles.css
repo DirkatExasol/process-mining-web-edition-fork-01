@@ -39,7 +39,7 @@
   --radius: 10px;
   --radius-lg: 16px;
 
-  --sidebar-width: 340px;
+  --sidebar-width: 357px;
 
   --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto,
     'Helvetica Neue', Arial, sans-serif;
@@ -325,6 +325,25 @@ textarea {
   font-size: 11px;
   font-weight: 600;
   color: var(--secondary);
+}
+
+/* Configuration sub-menus are indented, each carrying a short left guide tick, so
+   they read clearly as nested items under the Configuration section without
+   shifting the divider or the general toggles below them. */
+.config-section > .sub-header {
+  position: relative;
+  padding-left: 32px;
+}
+
+.config-section > .sub-header::before {
+  content: '';
+  position: absolute;
+  left: 22px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--separator-soft);
 }
 
 .divider {
@@ -945,6 +964,7 @@ textarea.text-input {
 }
 
 .kpi-tile {
+  position: relative;
   min-width: 132px;
   flex-shrink: 0;
   padding: 8px 12px;
@@ -955,6 +975,45 @@ textarea.text-input {
   display: flex;
   flex-direction: column;
   gap: 3px;
+}
+
+/* A strip tile that can be dragged to reorder and removed on hover (the fixed
+   Individual-Journey tiles get neither). */
+.kpi-tile.draggable {
+  cursor: grab;
+}
+
+.kpi-tile.dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+.kpi-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--secondary);
+  background: var(--bg-fill);
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.kpi-tile:hover .kpi-remove,
+.kpi-remove:focus-visible {
+  opacity: 1;
+}
+
+.kpi-remove:hover {
+  background: var(--red);
+  color: #fff;
 }
 
 .kpi-tile .kpi-label {
@@ -1174,6 +1233,138 @@ textarea.text-input {
   box-shadow: var(--shadow-sm);
 }
 
+/* ── Sankey flow view (A-Chart / B-Chart) ─────────────────────────────────── */
+
+.sankey-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-grouped);
+}
+
+.sankey-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 14px 4px;
+}
+
+.sankey-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.sankey-link {
+  fill-opacity: 0.42;
+  cursor: pointer;
+  transition: fill-opacity 0.12s ease;
+}
+
+.sankey-link:hover {
+  fill-opacity: 0.72;
+}
+
+.sankey-link.dim {
+  fill-opacity: 0.07;
+}
+
+.sankey-node rect {
+  stroke: var(--bg-grouped);
+  stroke-width: 1.5;
+  transition: opacity 0.12s ease;
+}
+
+.sankey-node.dim {
+  opacity: 0.2;
+}
+
+/* Hovering a node (especially a collapsed loop group) lights it up: an accent ring +
+   glow on the bar and an accent label, so it clearly stands out from the flow. */
+.sankey-node.focus rect {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 70%, transparent));
+}
+
+.sankey-node.focus .sankey-nlabel {
+  fill: var(--accent);
+}
+
+/* A halo (stroke = the pane background) keeps labels legible over the ribbons. */
+.sankey-nlabel {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--primary);
+  paint-order: stroke fill;
+  stroke: var(--bg-grouped);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.sankey-ncount {
+  font-size: 11px;
+  fill: var(--secondary);
+  font-variant-numeric: tabular-nums;
+  paint-order: stroke fill;
+  stroke: var(--bg-grouped);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.sankey-foot {
+  padding: 4px 16px 10px;
+  font-size: 11px;
+  color: var(--tertiary);
+  line-height: 1.4;
+}
+
+.sankey-tip {
+  position: fixed;
+  pointer-events: none;
+  z-index: 50;
+  background: var(--bg-elevated);
+  color: var(--primary);
+  border: 1px solid var(--separator);
+  border-radius: 9px;
+  padding: 8px 11px;
+  font-size: 12px;
+  line-height: 1.45;
+  max-width: 280px;
+  box-shadow: var(--shadow-lg);
+}
+
+.sankey-tip-big {
+  display: block;
+  font-size: 14px;
+  font-weight: 650;
+  margin-bottom: 2px;
+}
+
+.sankey-tip-mut {
+  color: var(--secondary);
+}
+
+.sankey-tip-members {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--separator-soft);
+}
+
+.sankey-tip-members ul {
+  margin: 3px 0 0;
+  padding-left: 15px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.sankey-tip-members li {
+  font-weight: 600;
+  line-height: 1.5;
+}
+
 .react-flow__node {
   cursor: grab;
 }
@@ -1202,6 +1393,23 @@ textarea.text-input {
 .step-node.lifted {
   box-shadow: 0 8px 16px rgba(0, 0, 0, 0.28);
   border-color: rgba(0, 0, 0, 0.28);
+}
+
+/* Hover-dwell spotlight: rest on a node for a few seconds and it + its neighbours light
+   up while every other node fades back, so one step's connections read clearly in a
+   crowded map. `drop-shadow` follows the node's actual (possibly clipped) shape. */
+.step-node {
+  transition: opacity 0.2s ease, filter 0.2s ease;
+}
+
+.step-node.dimmed {
+  opacity: 0.22;
+  filter: grayscale(0.35);
+}
+
+.step-node.focused {
+  filter: drop-shadow(0 0 0 2px var(--accent))
+    drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 65%, transparent));
 }
 
 /* Node text scales with the node box via --node-scale (set inline in StepNode),
@@ -1457,6 +1665,26 @@ textarea.text-input {
   width: 72px;
 }
 
+/* Canvas button that opens the underlying transition table (A/B charts, opt-in). */
+.table-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  background: var(--material-thin);
+  backdrop-filter: blur(20px);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+  transition: background 0.15s ease;
+}
+
+.table-btn:hover {
+  background: var(--material);
+}
+
 .zoom-controls {
   display: flex;
   align-items: center;
@@ -1492,6 +1720,90 @@ textarea.text-input {
   width: 1px;
   height: 16px;
   background: var(--separator);
+}
+
+/* ── Transition table panel ───────────────────────────────────────────────── */
+
+.ttable-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.ttable-scroll {
+  overflow: auto;
+  max-height: 60vh;
+  border: 1px solid var(--separator-soft);
+  border-radius: var(--radius-sm);
+}
+
+.ttable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ttable th,
+.ttable td {
+  padding: 6px 10px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--separator-soft);
+}
+
+.ttable td.num,
+.ttable th.num {
+  text-align: right;
+}
+
+.ttable td.truncate,
+.ttable td .truncate {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Sticky, clickable header row. */
+.ttable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-secondary-grouped);
+  font-weight: 600;
+  color: var(--secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.ttable-th:hover {
+  color: var(--primary);
+}
+
+.ttable-th.sorted {
+  color: var(--accent);
+}
+
+.ttable-caret {
+  font-size: 9px;
+}
+
+.ttable tbody tr:hover {
+  background: var(--bg-fill);
+}
+
+.ttable tr.self td {
+  color: var(--secondary);
+  font-style: italic;
+}
+
+.ttable-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--tertiary);
 }
 
 .loading-pill {

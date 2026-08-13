@@ -293,6 +293,7 @@ function ABPanel({
           chartMode={label}
           metric={metric}
           journeyTotal={(side === 'a' ? store.abJourneyCountA : store.abJourneyCountB) ?? 0}
+          allowTransitionTable
           isLoading={loading}
           syncState={syncState}
           notice={simulationFilterNotice(

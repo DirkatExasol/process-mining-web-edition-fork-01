@@ -45,7 +45,7 @@
 <dl>
 <dt>Thickness</dt><dd>Edge width runs from 3 px to 22 px, scaled linearly against the largest value among the visible edges (for <b>Percentage</b> and <b>Journey %</b> the scale is a fixed 0–100 %). The arrowhead scales with the width.</dd>
 <dt>Opacity</dt><dd>Alpha runs from 0.3 to 0.8 on the same linear scale, so weak transitions recede.</dd>
-<dt>Colour</dt><dd>When <b>Colorise edges by weight</b> is on (see §8.5.6) the edge is tinted along the gradient configured for that metric; otherwise it is grey.</dd>
+<dt>Colour</dt><dd>When <b>Colorise edges by weight</b> is on (see §8.5.4) the edge is tinted along the gradient configured for that metric; otherwise it is grey.</dd>
 </dl>
 
 <p>Each metric has its own colour schema, configured in the <b>Edge Colour Schema</b> sheet (open it by clicking the colour-scale legend on the canvas) and stored separately per metric. The built-in defaults are:</p>
@@ -229,7 +229,7 @@
 
 <figure data-fig="app-07-configuration"><figcaption>The Configuration section: step groups, font scaling, KPI order, the step editor and the display toggles.</figcaption></figure>
 
-<p>Configuration holds display settings, the KPI strip layout, the step editor and the AI prompt. Its four collapsible sub-headers — <b>Step Groups</b>, <b>Flowchart Font Sizes</b>, <b>KPIs</b> and <b>Steps</b> — are all expanded by default, and their expansion state is remembered per user. Every setting on this page is stored per user in the backend settings store, so it follows you between browsers and machines; the exception is the <b>Steps</b> editor, which writes shared step properties to the project database.</p>
+<p>Configuration holds display settings, the KPI strip layout, the step editor and the AI prompt. Its six collapsible sub-headers — <b>Step Groups</b>, <b>KPIs</b>, <b>Steps</b>, <b>Layout</b>, <b>Dates and Times</b> and <b>AI related</b> — are all expanded by default, and their expansion state is remembered per user. Every setting on this page is stored per user in the backend settings store, so it follows you between browsers and machines; the exception is the <b>Steps</b> editor, which writes shared step properties to the project database.</p>
 
 <h3 id="ch8-cfg-groups">8.5.1 🗂 Step Groups</h3>
 
@@ -238,22 +238,7 @@
 <dt>▦ Groups start</dt><dd>Segmented control, visible only while the toggle is on: <b>Expanded</b> (default) | <b>Collapsed</b> | <b>Persisted</b>. It decides whether group containers on the process map start open, start closed, or restore the state you last left them in for that project and chart mode.</dd>
 </dl>
 
-<h3 id="ch8-cfg-fonts">8.5.2 🔠 Flowchart Font Sizes</h3>
-
-<p>Three segmented controls, each offering <b>S | M | L | XL</b>. Enlarging a node font also enlarges the node box, so text never spills outside its shape.</p>
-
-<table>
-<thead><tr><th>Control</th><th>Default</th><th>Scale factors (S / M / L / XL)</th><th>Affects</th></tr></thead>
-<tbody>
-<tr><td><b>Nodes</b></td><td>M (2.25)</td><td>1.95 / 2.25 / 2.7 / 3.15</td><td>Node box and node text</td></tr>
-<tr><td><b>Edges</b></td><td>M (3.375)</td><td>2.925 / 3.375 / 4.05 / 4.725</td><td>Edge labels, badges and note bubbles</td></tr>
-<tr><td><b>Group titles</b></td><td>M (2.25)</td><td>1.95 / 2.25 / 2.7 / 3.15</td><td>Group name pill and its collapse toggle</td></tr>
-</tbody>
-</table>
-
-<div class="note"><strong>Note</strong> The edge presets are deliberately 50 % larger than the node presets at every step, because transition labels are small floating text and would otherwise be unreadable next to a node caption of nominally the same size.</div>
-
-<h3 id="ch8-cfg-kpis">8.5.3 📊 KPIs</h3>
+<h3 id="ch8-cfg-kpis">8.5.2 📊 KPIs</h3>
 
 <p>This is a drag-to-reorder list of the ten KPI tiles shown in the strip above the charts. Each row has a ≡ handle, an icon, a label and an on/off switch. <b>All ten default to on</b>, in this order:</p>
 
@@ -268,7 +253,7 @@
 <tr><td>6</td><td>🐢 <b>Longest Journey</b></td><td>Maximum journey duration</td></tr>
 <tr><td>7</td><td>ƒ <b>Graph Value</b></td><td>Σ (step score × visits) over scored nodes, shown with an explicit sign. Hidden when no step carries a score.</td></tr>
 <tr><td>8</td><td>◔ <b>Process Goodness</b></td><td>Server-computed goodness score, signed, two decimals. Hidden when null.</td></tr>
-<tr><td>9</td><td>⇄ <b>Process Similarity</b></td><td>A/B similarity between 0 and 1. Present only once a similarity has been computed.</td></tr>
+<tr><td>9</td><td>⇄ <b>Process Similarity</b></td><td>A/B similarity between 0 and 1. Shown only in A/B Comparison, and only once a similarity has been computed — never on a single-process chart.</td></tr>
 <tr><td>10</td><td>▤ <b>Active Sample</b></td><td>The side's data source ("Original", "Sample 1"–"Sample 3", "Sim-A", "Sim-B") and its journey count.</td></tr>
 </tbody>
 </table>
@@ -278,9 +263,11 @@
 <li>Use each row's switch to hide or show that tile.</li>
 </ol>
 
-<div class="note"><strong>Note</strong> Order and visibility apply to the KPI strip above A-Chart, B-Chart and the A/B panels. Individual Journey renders its own fixed tiles (Date, Duration, Sum of Scores, Steps visited/distinct plus up to three meta tiles) and is not affected by these settings.</div>
+<p>The same two actions are also available <b>directly on the KPI strip</b> above the chart, so you rarely need to open this list. Drag any tile onto another to reorder it, and hover a tile to reveal a <b>×</b> in its top-right corner that hides it. The strip and this list share one order and one set of on/off flags: change either place and the other updates at once, and both persist per user. A tile you hide with its × is switched back on from this list.</p>
 
-<h3 id="ch8-cfg-steps">8.5.4 ⬭ Steps (the Step Editor)</h3>
+<div class="note"><strong>Note</strong> Order and visibility apply to the KPI strip above A-Chart, B-Chart and the A/B panels — reorder or remove from either the strip or this list. Individual Journey renders its own fixed tiles (Date, Duration, Sum of Scores, Steps visited/distinct plus up to three meta tiles), which are neither reorderable nor removable and are not affected by these settings.</div>
+
+<h3 id="ch8-cfg-steps">8.5.3 ⬭ Steps (the Step Editor)</h3>
 
 <div class="warn"><strong>Warning</strong> Step properties live in the project's STEPS table and are therefore <b>shared with every user of that database</b>. Recolouring or rescoring a step changes it for everyone, and scores feed the Graph Value KPI and the Journey Score filter.</div>
 
@@ -296,15 +283,40 @@
 
 <p>Saving refreshes the score filter bounds and reloads the graph, so a changed score is reflected in the Journey Score slider and the Graph Value KPI straight away.</p>
 
-<h3 id="ch8-cfg-toggles">8.5.5 Display toggles</h3>
+<p>At the top of this <b>Steps</b> sub-section sits the <b>🗒 Show node notes</b> toggle (default <b>on</b>). It controls whether each node shows its note / description under the step name on the map (truncated to 20 characters plus an ellipsis; the full text is in the hover tooltip and behind the node action <b>≡ Show description</b>), along with the yellow note badges. It lives here because the note it shows is the one set in the Step editor above.</p>
+
+<p>Below it, <b>✨ Highlight Trigger</b> sets how long you must rest the pointer on a node before the process map spotlights that node and its incoming and outgoing transitions (dimming everything else — see §9). Choose <b>1&nbsp;s</b> (default), <b>2&nbsp;s</b> or <b>3&nbsp;s</b>, or <b>Off</b> to disable the spotlight. It applies to every process map except the Individual Journey and is stored per user.</p>
+
+<h3 id="ch8-cfg-toggles">8.5.4 ✨ Layout</h3>
+
+<p>A collapsible sub-section (default <b>expanded</b>) that groups the flow-chart rendering options: three display toggles and the flowchart font sizes.</p>
 
 <dl>
-<dt>🗒 Show node notes</dt><dd>Default <b>on</b>. Shows the step description or note under the step name on the map (truncated to 20 characters plus an ellipsis; the full text is in the hover tooltip and behind the node action <b>≡ Show description</b>).</dd>
 <dt>✨ Optimise layout</dt><dd>Default <b>on</b>. Uses the optimised automatic layout for the flow chart.</dd>
 <dt>🎨 Colorise edges by weight</dt><dd>Default <b>on</b>. Tints each transition along its metric's gradient; when off, all edges are grey and only thickness and opacity encode the metric. The same switch also appears at the top of the Edge Colour Schema sheet.</dd>
+<dt>▦ Transition-table button</dt><dd>Default <b>off</b>. When on, a <b>▦ Transitions</b> button appears in the lower-right of the A-Chart, B-Chart and both A/B-Comparison panels; it opens the underlying transition table (see §9). The button is hidden everywhere until you switch it on here.</dd>
 </dl>
 
-<h3 id="ch8-cfg-window">8.5.6 🗓 Default date window</h3>
+<h4 id="ch8-cfg-fonts">🔠 Flowchart font sizes</h4>
+
+<p>Three segmented controls, each offering <b>S | M | L | XL</b>. Enlarging a node font also enlarges the node box, so text never spills outside its shape.</p>
+
+<table>
+<thead><tr><th>Control</th><th>Default</th><th>Scale factors (S / M / L / XL)</th><th>Affects</th></tr></thead>
+<tbody>
+<tr><td><b>Nodes</b></td><td>M (2.25)</td><td>1.95 / 2.25 / 2.7 / 3.15</td><td>Node box and node text</td></tr>
+<tr><td><b>Edges</b></td><td>M (3.375)</td><td>2.925 / 3.375 / 4.05 / 4.725</td><td>Edge labels, badges and note bubbles</td></tr>
+<tr><td><b>Group titles</b></td><td>M (2.25)</td><td>1.95 / 2.25 / 2.7 / 3.15</td><td>Group name pill and its collapse toggle</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> The edge presets are deliberately 50 % larger than the node presets at every step, because transition labels are small floating text and would otherwise be unreadable next to a node caption of nominally the same size.</div>
+
+<h3 id="ch8-cfg-window">8.5.5 🗓 Dates and Times</h3>
+
+<p>This category groups the time-related display settings. It currently holds one control, <b>Default date window</b>.</p>
+
+<h4>🗓 Default date window</h4>
 
 <p>A number input (whole numbers, minimum 0) followed by the word "days", default <b>30</b>. The hint below it reads: <i>"On load, show the last N days. 0 = full range. Applies next project load."</i></p>
 
@@ -312,9 +324,13 @@
 
 <div class="warn"><strong>Warning</strong> Changing this value does <b>not</b> reload the project you are currently working on. It takes effect the next time a project is opened. To apply it now, reselect the project — which also resets filters, A/B state, statistics and AI results.</div>
 
-<h3 id="ch8-cfg-prompt">8.5.7 💬 LLM Prompt</h3>
+<h3 id="ch8-cfg-prompt">8.5.6 ✨ AI related</h3>
 
-<p>The last row pairs the label <b>LLM Prompt</b> with an <b>Edit</b> button, which is disabled until a project is selected.</p>
+<p>This category groups the settings for the AI supported Documentation. It currently holds one control, <b>LLM Prompt</b>.</p>
+
+<h4>💬 LLM Prompt</h4>
+
+<p>This row pairs the label <b>LLM Prompt</b> with an <b>Edit</b> button, which is disabled until a project is selected.</p>
 
 <ol class="steps">
 <li>Press <b>Edit</b>. The <b>LLM Prompt Template</b> sheet opens with the explanation "This prompt is sent to the LLM together with the current transition table. Use it to guide the analysis style and output format."</li>
@@ -343,12 +359,14 @@ layout.</code></pre>
 <tr><td>Sampling method</td><td>Sampling</td><td>Random (then your last used method)</td></tr>
 <tr><td>Show step groups</td><td>Configuration</td><td>On</td></tr>
 <tr><td>Groups start</td><td>Configuration</td><td>Expanded</td></tr>
-<tr><td>Font size — Nodes / Edges / Group titles</td><td>Configuration</td><td>M / M / M</td></tr>
-<tr><td>KPI tiles</td><td>Configuration</td><td>All ten on, in the order listed in §8.5.3</td></tr>
-<tr><td>Show node notes</td><td>Configuration</td><td>On</td></tr>
-<tr><td>Optimise layout</td><td>Configuration</td><td>On</td></tr>
-<tr><td>Colorise edges by weight</td><td>Configuration</td><td>On</td></tr>
-<tr><td>Default date window</td><td>Configuration</td><td>30 days</td></tr>
+<tr><td>Font size — Nodes / Edges / Group titles</td><td>Configuration → Layout</td><td>M / M / M</td></tr>
+<tr><td>KPI tiles</td><td>Configuration</td><td>All ten on, in the order listed in §8.5.2</td></tr>
+<tr><td>Show node notes</td><td>Configuration → Steps</td><td>On</td></tr>
+<tr><td>Highlight Trigger</td><td>Configuration → Steps</td><td>1 s</td></tr>
+<tr><td>Optimise layout</td><td>Configuration → Layout</td><td>On</td></tr>
+<tr><td>Colorise edges by weight</td><td>Configuration → Layout</td><td>On</td></tr>
+<tr><td>Transition-table button</td><td>Configuration → Layout</td><td>Off</td></tr>
+<tr><td>Default date window</td><td>Configuration → Dates and Times</td><td>30 days</td></tr>
 <tr><td>Date slider mode</td><td>Chart header</td><td>Range</td></tr>
 <tr><td>Theme</td><td>Theme bar</td><td>System</td></tr>
 </tbody>

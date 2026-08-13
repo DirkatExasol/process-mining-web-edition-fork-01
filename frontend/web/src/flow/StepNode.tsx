@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { memo } from 'react'
+import { memo, useContext } from 'react'
 import {
   NOTE_YELLOW,
   SCORE_NEGATIVE,
@@ -8,6 +8,7 @@ import {
   namedColor,
 } from '../graph/colors'
 import { formatTimeOnly } from '../graph/format'
+import { FlowFocusContext } from './focusContext'
 import type { StepInfo } from '../types'
 
 export interface StepNodeData extends Record<string, unknown> {
@@ -42,9 +43,14 @@ function shapeStyle(shape: string, w: number, h: number): React.CSSProperties {
   }
 }
 
-function StepNodeComponent({ data, dragging }: NodeProps) {
+function StepNodeComponent({ id, data, dragging }: NodeProps) {
   const { name, step, nodeW, nodeH, scale, showDescription, groupProxy, hasNote } =
     data as StepNodeData
+
+  // Hover-dwell focus: the spotlit node and its neighbours stay bright; everything else dims.
+  const focus = useContext(FlowFocusContext)
+  const isFocused = focus?.node === id
+  const dimmed = focus != null && !focus.nodes.has(id)
 
   const background = groupProxy ? groupProxy.color : namedColor(step.bgColor)
   const foreground = groupProxy ? '#FFFFFF' : namedColor(step.fgColor)
@@ -68,7 +74,7 @@ function StepNodeComponent({ data, dragging }: NodeProps) {
     <div
       className={`step-node${dragging ? ' lifted' : ''}${
         hasDescription || step.eventTime ? ' split' : ''
-      }`}
+      }${dimmed ? ' dimmed' : ''}${isFocused ? ' focused' : ''}`}
       style={{
         width: nodeW,
         height: nodeH,

@@ -1,10 +1,10 @@
 /** KPI tiles — port of the `kpiPanel` / `singleChartKPITile` / `abPanelKPITile`
  *  section of ProcessMapView.swift. Order and visibility come from settings. */
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { formatDateShort, formatDurationLong } from '../graph/format'
 import { readSetting, useSetting } from '../settings'
-import { useStore, type ABSide } from '../store'
+import { useStore, type ABSide, type Store } from '../store'
 import {
   KPI_DEFAULT_ORDER,
   KPI_META,
@@ -41,24 +41,53 @@ function signed(value: number, digits = 0): string {
   return `${value < 0 ? '−' : '+'}${formatted}`
 }
 
+/** Drag-to-reorder + hover-to-remove wiring for a strip tile. Absent on the fixed
+ *  Individual-Journey tiles, which are neither reorderable nor removable. */
+export interface KpiDnd {
+  dragging: boolean
+  onDragStart: () => void
+  onDragEnd: () => void
+  onDropOn: () => void
+  onRemove?: () => void
+}
+
 export function KpiTile({
   label,
   icon,
   value,
   loading = false,
   color,
+  dnd,
 }: {
   label: string
   icon: string
   value: string
   loading?: boolean
   color?: string
+  dnd?: KpiDnd
 }) {
   return (
     <div
-      className="kpi-tile"
+      className={`kpi-tile${dnd ? ' draggable' : ''}${dnd?.dragging ? ' dragging' : ''}`}
       style={color ? { borderColor: color, borderWidth: 1.5 } : undefined}
+      draggable={dnd ? true : undefined}
+      onDragStart={dnd?.onDragStart}
+      onDragEnd={dnd?.onDragEnd}
+      onDragOver={dnd ? (e) => e.preventDefault() : undefined}
+      onDrop={dnd?.onDropOn}
     >
+      {dnd?.onRemove && (
+        <button
+          className="kpi-remove"
+          title={`Hide ${label}`}
+          aria-label={`Hide ${label}`}
+          draggable={false}
+          onDragStart={(e) => e.preventDefault()}
+          onClick={dnd.onRemove}
+        >
+          ×
+        </button>
+      )}
       <div className="kpi-label">
         <span aria-hidden style={{ color: color ?? 'var(--accent)' }}>
           {icon}
@@ -98,82 +127,49 @@ interface TileInputs {
   loading: boolean
 }
 
-/** Renders one KPI by id, honouring its `kpi.show.<id>` visibility flag. */
-function Tile({ id, inputs }: { id: string; inputs: TileInputs }) {
-  const store = useStore()
-  const [visible] = useSetting<boolean>(`kpi.show.${id}`, true)
-  const meta = KPI_META[id]
-  if (!visible || !meta) return null
+interface KpiTileSpec {
+  label: string
+  icon: string
+  value: string
+  loading?: boolean
+  color?: string
+}
 
+/** The display values for one KPI by id, or null when it has no data / doesn't apply
+ *  (e.g. graph value without scores, similarity outside A/B). Pure — no visibility. */
+function tileSpec(id: string, store: Store, inputs: TileInputs): KpiTileSpec | null {
+  const meta = KPI_META[id]
+  if (!meta) return null
   const { graph, journeyCount, durations, goodness, otherGoodness, side, loading } =
     inputs
 
   switch (id) {
     case 'totalJourneys':
-      return (
-        <KpiTile
-          label={meta.label}
-          icon={meta.icon}
-          value={store.totalJourneyCount?.toLocaleString() ?? '—'}
-          loading={loading && store.totalJourneyCount == null}
-        />
-      )
+      return {
+        label: meta.label,
+        icon: meta.icon,
+        value: store.totalJourneyCount?.toLocaleString() ?? '—',
+        loading: loading && store.totalJourneyCount == null,
+      }
     case 'filteredJourneys':
-      return (
-        <KpiTile
-          label={meta.label}
-          icon={meta.icon}
-          value={journeyCount?.toLocaleString() ?? '—'}
-          loading={loading}
-        />
-      )
+      return {
+        label: meta.label,
+        icon: meta.icon,
+        value: journeyCount?.toLocaleString() ?? '—',
+        loading,
+      }
     case 'shortestJourney':
-      return (
-        <KpiTile
-          label={meta.label}
-          icon={meta.icon}
-          value={formatDurationLong(durations.minSecs)}
-          loading={loading}
-        />
-      )
+      return { label: meta.label, icon: meta.icon, value: formatDurationLong(durations.minSecs), loading }
     case 'avgJourney':
-      return (
-        <KpiTile
-          label={meta.label}
-          icon={meta.icon}
-          value={formatDurationLong(durations.avgSecs)}
-          loading={loading}
-        />
-      )
+      return { label: meta.label, icon: meta.icon, value: formatDurationLong(durations.avgSecs), loading }
     case 'stdDev':
-      return (
-        <KpiTile
-          label={meta.label}
-          icon={meta.icon}
-          value={formatDurationLong(durations.stdDevSecs)}
-          loading={loading}
-        />
-      )
+      return { label: meta.label, icon: meta.icon, value: formatDurationLong(durations.stdDevSecs), loading }
     case 'longestJourney':
-      return (
-        <KpiTile
-          label={meta.label}
-          icon={meta.icon}
-          value={formatDurationLong(durations.maxSecs)}
-          loading={loading}
-        />
-      )
+      return { label: meta.label, icon: meta.icon, value: formatDurationLong(durations.maxSecs), loading }
     case 'graphValue': {
       const value = graphValue(graph)
       if (value == null) return null
-      return (
-        <KpiTile
-          label={meta.label}
-          icon={meta.icon}
-          value={signed(value)}
-          loading={loading}
-        />
-      )
+      return { label: meta.label, icon: meta.icon, value: signed(value), loading }
     }
     case 'processGoodness': {
       if (goodness == null) return null
@@ -186,27 +182,21 @@ function Tile({ id, inputs }: { id: string; inputs: TileInputs }) {
               ? 'var(--green)'
               : 'var(--red)'
       }
-      return (
-        <KpiTile
-          label={meta.label}
-          icon={meta.icon}
-          value={signed(goodness, 2)}
-          loading={loading}
-          color={color}
-        />
-      )
+      return { label: meta.label, icon: meta.icon, value: signed(goodness, 2), loading, color }
     }
     case 'processSimilarity': {
+      // A/B Comparison only — it compares the two panels, so it is meaningless (and must
+      // never appear) on A-Chart, B-Chart, Statistics or any other single-process view,
+      // even when a stale score from an earlier A/B run lingers in the store.
+      if (store.activeChartMode !== 'A/B Comparison') return null
       if (store.abSimilarityScore == null) return null
       const q = store.abSimilarityScore
-      return (
-        <KpiTile
-          label={meta.label}
-          icon={meta.icon}
-          value={q.toFixed(2)}
-          color={q >= 0.7 ? 'var(--green)' : q <= 0.3 ? 'var(--red)' : 'var(--blue)'}
-        />
-      )
+      return {
+        label: meta.label,
+        icon: meta.icon,
+        value: q.toFixed(2),
+        color: q >= 0.7 ? 'var(--green)' : q <= 0.3 ? 'var(--red)' : 'var(--blue)',
+      }
     }
     case 'activeSample': {
       // Reflect the side's actual data source: a sample set, or a Sim-A/Sim-B
@@ -214,34 +204,67 @@ function Tile({ id, inputs }: { id: string; inputs: TileInputs }) {
       const source = (side ?? 'a') === 'a' ? store.abDataSourceA : store.abDataSourceB
       if (source.kind === 'simulation') {
         const result = source.slot === 'Sim-A' ? store.simResultA : store.simResultB
-        return (
-          <KpiTile
-            label={source.slot}
-            icon={meta.icon}
-            value={result?.totalJourneys?.toLocaleString() ?? '—'}
-          />
-        )
+        return { label: source.slot, icon: meta.icon, value: result?.totalJourneys?.toLocaleString() ?? '—' }
       }
       const count = store.sampleCounts[source.sampleSet] ?? store.totalJourneyCount
-      return (
-        <KpiTile
-          label={sampleShortLabel(source.sampleSet)}
-          icon={meta.icon}
-          value={count?.toLocaleString() ?? '—'}
-        />
-      )
+      return { label: sampleShortLabel(source.sampleSet), icon: meta.icon, value: count?.toLocaleString() ?? '—' }
     }
     default:
       return null
   }
 }
 
+/** One strip tile: honours its `kpi.show.<id>` flag and carries the drag-reorder +
+ *  hover-remove affordances. The × writes the same `kpi.show.<id>` the left-panel
+ *  toggle does, so the panel and strip stay in lock-step (and persist per user). */
+function Tile({
+  id,
+  inputs,
+  dnd,
+}: {
+  id: string
+  inputs: TileInputs
+  dnd: Omit<KpiDnd, 'onRemove'>
+}) {
+  const store = useStore()
+  const [visible, setVisible] = useSetting<boolean>(`kpi.show.${id}`, true)
+  if (!visible) return null
+  const spec = tileSpec(id, store, inputs)
+  if (!spec) return null
+  return <KpiTile {...spec} dnd={{ ...dnd, onRemove: () => setVisible(false) }} />
+}
+
 export function KpiStrip(inputs: TileInputs) {
   const ids = useOrderedKpiIds()
+  const [, setOrder] = useSetting<string>('kpi.order')
+  const [dragging, setDragging] = useState<string | null>(null)
+
+  // Reorder the FULL id list (same as the left-panel Configuration → KPIs list), so the
+  // two views share one `kpi.order`. Dragging a strip tile onto another moves it there.
+  const reorder = (dragId: string, targetId: string) => {
+    if (dragId === targetId) return
+    const arr = ids.filter((x) => x !== dragId)
+    const index = arr.indexOf(targetId)
+    arr.splice(index < 0 ? arr.length : index, 0, dragId)
+    setOrder(arr.join(','))
+  }
+
   return (
     <div className="kpi-strip">
       {ids.map((id) => (
-        <Tile key={id} id={id} inputs={inputs} />
+        <Tile
+          key={id}
+          id={id}
+          inputs={inputs}
+          dnd={{
+            dragging: dragging === id,
+            onDragStart: () => setDragging(id),
+            onDragEnd: () => setDragging(null),
+            onDropOn: () => {
+              if (dragging) reorder(dragging, id)
+            },
+          }}
+        />
       ))}
     </div>
   )

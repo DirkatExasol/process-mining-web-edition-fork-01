@@ -3,8 +3,9 @@
  *  imported-row total and the latest import date/time. */
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import { IntegrationPipeline } from './IntegrationPipeline'
+import { renderSettled, resetStoreOutsideRender } from '../test/renderSettled'
 import { useStore } from '../store'
 import type { PipelineRun } from '../integration/runHistory'
 
@@ -31,11 +32,15 @@ function run(over: Partial<PipelineRun> = {}): PipelineRun {
   } as PipelineRun
 }
 
-afterEach(() => useStore.setState({ connections: [], authUser: null } as never))
+afterEach(() =>
+  resetStoreOutsideRender(() =>
+    useStore.setState({ connections: [], authUser: null } as never),
+  ),
+)
 
 describe('IntegrationPipeline source node', () => {
-  it('shows the imported-row total and the latest import date/time on the Source node', () => {
-    render(<IntegrationPipeline runs={[run()]} live={null} />)
+  it('shows the imported-row total and the latest import date/time on the Source node', async () => {
+    await renderSettled(<IntegrationPipeline runs={[run()]} live={null} />)
 
     // Rows imported on the Source node.
     expect(screen.getAllByText(/100 rows imported/).length).toBeGreaterThanOrEqual(1)
@@ -47,12 +52,12 @@ describe('IntegrationPipeline source node', () => {
     expect(screen.getByText(new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))).toBeTruthy()
   })
 
-  it('uses the NEWEST run of a source for the stamp when it has run several times', () => {
+  it('uses the NEWEST run of a source for the stamp when it has run several times', async () => {
     // Two runs of the same source; the pipeline aggregates by name, newest wins the stamp.
     const older = run({ startedAt: '2026-08-01T08:00:00Z', finishedAt: '2026-08-01T08:00:03Z', recordsPushed: 40 })
     const newer = run({ startedAt: '2026-08-06T09:00:00Z', finishedAt: '2026-08-06T09:00:05Z', recordsPushed: 60 })
     // runHistory stores newest-first.
-    render(<IntegrationPipeline runs={[newer, older]} live={null} />)
+    await renderSettled(<IntegrationPipeline runs={[newer, older]} live={null} />)
 
     // Totals accumulate across both runs …
     expect(screen.getAllByText(/100 rows imported/).length).toBeGreaterThanOrEqual(1)
@@ -63,13 +68,13 @@ describe('IntegrationPipeline source node', () => {
     expect(screen.getByText(new RegExp(newest.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))).toBeTruthy()
   })
 
-  it('shows no stamp on the empty idle skeleton', () => {
-    render(<IntegrationPipeline runs={[]} live={null} />)
+  it('shows no stamp on the empty idle skeleton', async () => {
+    await renderSettled(<IntegrationPipeline runs={[]} live={null} />)
     expect(screen.queryByText(/🕒/)).toBeNull()
   })
 
-  it('renders the Abstraction layer hub wider than the other nodes', () => {
-    render(<IntegrationPipeline runs={[run()]} live={null} />)
+  it('renders the Abstraction layer hub wider than the other nodes', async () => {
+    await renderSettled(<IntegrationPipeline runs={[run()]} live={null} />)
     // The hub node carries the "wide" modifier; the ordinary nodes do not.
     const hub = screen.getByText('Ingest & normalise').closest('.ipipe-node') as HTMLElement
     expect(hub.className).toContain('wide')

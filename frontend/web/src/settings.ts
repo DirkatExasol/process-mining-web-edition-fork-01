@@ -34,6 +34,12 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   'graph.node.scale': 2.25,
   'graph.edge.scale': 3.375,
   'graph.group.scale': 2.25,
+  // How long (ms) to rest on a node before its neighbourhood is spotlit; 0 = off.
+  'graph.highlightTriggerMs': 1000,
+  // The ▦ button that opens the underlying transition table (A/B charts only). Off by default.
+  'graph.showTransitionTableButton': false,
+  // A-Chart / B-Chart canvas view: false = flowchart, true = Sankey flow.
+  'graph.sankeyView': false,
   'sidebar.configGroupsExpanded': true,
   'sidebar.configFontsExpanded': true,
   'processmap.kpiExpanded': true,
@@ -48,6 +54,9 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   'sidebar.filtersScoreExpanded': false,
   'sidebar.configStepsExpanded': true,
   'sidebar.configKpisExpanded': true,
+  'sidebar.configLayoutExpanded': true,
+  'sidebar.configDatesExpanded': true,
+  'sidebar.configAiExpanded': true,
   'achart.controlsExpanded': true,
   'bchart.controlsExpanded': true,
   'compliance.controlsExpanded': true,
@@ -70,6 +79,11 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   'kpi.show.activeSample': true,
   'sampling.activeSampleSetA': 'ORIGINAL',
   'sampling.activeSampleSetB': 'ORIGINAL',
+  // "Resume where you left off": the last working position, persisted per user so it
+  // survives an inactivity logout (or a plain reload). Empty string = nothing to restore.
+  'session.lastConnectionId': '',
+  'session.lastProjectId': '',
+  'session.lastChartMode': '',
 }
 
 let cache: Record<string, unknown> = { ...SETTING_DEFAULTS }

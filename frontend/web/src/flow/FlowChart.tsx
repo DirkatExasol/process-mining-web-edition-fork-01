@@ -50,10 +50,13 @@ import {
   type StepInfo,
   type TransitionMetric,
 } from '../types'
+import { computeFocus, FlowFocusContext, type FlowFocus } from './focusContext'
 import { GroupBoxNode, type GroupBoxData } from './GroupBoxNode'
 import { MARKER_H, MARKER_W, MarkerNode } from './MarkerNode'
 import { MetricEdge, type MetricEdgeData } from './MetricEdge'
 import { StepNode, type StepNodeData } from './StepNode'
+import { TransitionTablePanel } from './TransitionTablePanel'
+import type { Node as RFNode } from '@xyflow/react'
 
 const nodeTypes = { step: StepNode, groupBox: GroupBoxNode, marker: MarkerNode }
 const edgeTypes = { metric: MetricEdge }
@@ -104,6 +107,15 @@ export interface FlowChartProps {
   readOnly?: boolean
   /** Total filtered journeys — the denominator for the 'Journey %' edge metric. */
   journeyTotal?: number
+  /** Hover-dwell focus: resting on a node spotlights it and its edges and dims the rest,
+   *  for inspecting a step's neighbourhood in a crowded map. Default on; the Individual
+   *  Journey (a single, already-sparse trace) turns it off. The dwell delay is the user's
+   *  "Highlight Trigger" setting (0 disables it entirely). */
+  hoverFocus?: boolean
+  /** Offer the ▦ button that opens the underlying transition table. Enabled on the
+   *  A-Chart, B-Chart and A/B panels; the button itself is still hidden unless the user
+   *  turns it on in Configuration → Layout. */
+  allowTransitionTable?: boolean
 }
 
 interface MenuState {
@@ -134,6 +146,8 @@ function FlowChartInner(props: FlowChartProps) {
     normIsMinimum = false,
     onEdgeTap,
     journeyTotal = 0,
+    hoverFocus = true,
+    allowTransitionTable = false,
   } = props
 
   const flow = useReactFlow()
@@ -146,6 +160,8 @@ function FlowChartInner(props: FlowChartProps) {
   const [groupScale] = useSetting<number>('graph.group.scale')
   const [optimisedLayout] = useSetting<boolean>('graph.optimisedLayout')
   const [colorizeByWeight] = useSetting<boolean>('graph.edge.colorizeByWeight')
+  const [highlightTriggerMs] = useSetting<number>('graph.highlightTriggerMs')
+  const [showTableButton] = useSetting<boolean>('graph.showTransitionTableButton')
   const [graphStartMode] = useSetting<GraphStartMode>('graph.startMode')
   // The schema for the *displayed* metric is reactive so the legend and edges
   // update instantly when it is changed in the colour wizard.
@@ -162,6 +178,18 @@ function FlowChartInner(props: FlowChartProps) {
   const [descriptionNode, setDescriptionNode] = useState<string | null>(null)
   const [zoom, setZoom] = useState(1)
   const [showColorWizard, setShowColorWizard] = useState(false)
+  const [showTable, setShowTable] = useState(false)
+  // Hover-dwell focus (null unless a node has been rested on long enough). Held as state so
+  // only the leaf node/edge components that consume FlowFocusContext re-render when it
+  // changes — the node arrays and their caches are untouched.
+  const [focus, setFocus] = useState<FlowFocus | null>(null)
+  const dwellTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearDwell = useCallback(() => {
+    if (dwellTimer.current) {
+      clearTimeout(dwellTimer.current)
+      dwellTimer.current = null
+    }
+  }, [])
 
   const allGroupNames = useMemo(
     () =>
@@ -269,6 +297,32 @@ function FlowChartInner(props: FlowChartProps) {
     }
     return { steps, transitions }
   }, [graph, collapsedGroups, nodesInGroup, resolvedStep])
+
+  // ── Hover-dwell focus ────────────────────────────────────────────────────
+  //
+  // Rest on a step node for DWELL_MS and it, its neighbours and its edges light up while
+  // the rest of the map dims — for reading one step's connections in a crowded chart. Only
+  // real step nodes trigger it (not group boxes or start/end markers).
+  const onNodeMouseEnter = useCallback(
+    (_: React.MouseEvent, node: RFNode) => {
+      // A 0 ms trigger means the user has turned the spotlight off entirely.
+      if (!hoverFocus || highlightTriggerMs <= 0 || node.type !== 'step') return
+      clearDwell()
+      const id = node.id
+      dwellTimer.current = setTimeout(() => {
+        setFocus(computeFocus(drawGraph.transitions, id))
+      }, highlightTriggerMs)
+    },
+    [hoverFocus, highlightTriggerMs, clearDwell, drawGraph],
+  )
+
+  const endFocus = useCallback(() => {
+    clearDwell()
+    setFocus(null)
+  }, [clearDwell])
+
+  // Never leave a dangling timer if the chart unmounts mid-dwell.
+  useEffect(() => clearDwell, [clearDwell])
 
   // Node scale grows the node box AND the font together, so text always stays
   // inside; the layout uses the scaled dimensions so nodes never overlap.
@@ -794,20 +848,29 @@ function FlowChartInner(props: FlowChartProps) {
     menuDescription !== menu?.node
 
   return (
-    <div className="flow-wrap" ref={wrapRef}>
+    <div className={`flow-wrap${focus ? ' has-focus' : ''}`} ref={wrapRef}>
+      <FlowFocusContext.Provider value={focus}>
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        onNodesChange={onNodesChange}
+        onNodesChange={(changes) => {
+          // A drag (or any position change) ends the dwell spotlight immediately.
+          if (changes.some((c) => c.type === 'position')) endFocus()
+          onNodesChange(changes)
+        }}
         onMove={onMove}
+        onNodeMouseEnter={onNodeMouseEnter}
+        onNodeMouseLeave={endFocus}
         onNodeClick={(event, node) => {
+          endFocus()
           if (!onNodeAction) return
           if (node.id.startsWith('box:') || virtualGroupOf(node.id)) return
           setMenu({ kind: 'node', node: node.id, x: event.clientX, y: event.clientY })
         }}
         onPaneClick={() => {
+          endFocus()
           setMenu(null)
           setDescriptionNode(null)
         }}
@@ -823,6 +886,7 @@ function FlowChartInner(props: FlowChartProps) {
       >
         <Background variant={BackgroundVariant.Dots} gap={GRID_SIZE} size={1} />
       </ReactFlow>
+      </FlowFocusContext.Provider>
 
       {isLoading && (
         <div className="loading-pill row">
@@ -875,6 +939,17 @@ function FlowChartInner(props: FlowChartProps) {
                 <span>No color scale</span>
               </div>
             )}
+          </button>
+        )}
+
+        {allowTransitionTable && showTableButton && (
+          <button
+            className="table-btn"
+            onClick={() => setShowTable(true)}
+            title="Show the transition table behind this chart"
+            aria-label="Show transition table"
+          >
+            ▦ Transitions
           </button>
         )}
 
@@ -1043,6 +1118,15 @@ function FlowChartInner(props: FlowChartProps) {
 
       {showColorWizard && (
         <EdgeColorWizard onClose={() => setShowColorWizard(false)} />
+      )}
+
+      {showTable && (
+        <TransitionTablePanel
+          graph={graph}
+          journeyTotal={journeyTotal}
+          title={chartMode}
+          onClose={() => setShowTable(false)}
+        />
       )}
     </div>
   )

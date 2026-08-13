@@ -1097,16 +1097,22 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
   )
   const [optimised, setOptimised] = useSetting<boolean>('graph.optimisedLayout')
   const [colorize, setColorize] = useSetting<boolean>('graph.edge.colorizeByWeight')
+  const [tableButton, setTableButton] = useSetting<boolean>(
+    'graph.showTransitionTableButton',
+  )
   const [defaultWindowDays, setDefaultWindowDays] = useSetting<number>(
     'graph.defaultWindowDays',
   )
   const [nodeScale, setNodeScale] = useSetting<number>('graph.node.scale')
   const [edgeScale, setEdgeScale] = useSetting<number>('graph.edge.scale')
   const [groupScale, setGroupScale] = useSetting<number>('graph.group.scale')
+  const [highlightMs, setHighlightMs] = useSetting<number>('graph.highlightTriggerMs')
   const [groupsOpen, setGroupsOpen] = useSetting<boolean>('sidebar.configGroupsExpanded')
-  const [fontsOpen, setFontsOpen] = useSetting<boolean>('sidebar.configFontsExpanded')
   const [kpisOpen, setKpisOpen] = useSetting<boolean>('sidebar.configKpisExpanded')
   const [stepsOpen, setStepsOpen] = useSetting<boolean>('sidebar.configStepsExpanded')
+  const [layoutOpen, setLayoutOpen] = useSetting<boolean>('sidebar.configLayoutExpanded')
+  const [datesOpen, setDatesOpen] = useSetting<boolean>('sidebar.configDatesExpanded')
+  const [aiOpen, setAiOpen] = useSetting<boolean>('sidebar.configAiExpanded')
   const [kpiOrder, setKpiOrder] = useSetting<string>('kpi.order')
   const [dragging, setDragging] = useState<string | null>(null)
 
@@ -1138,9 +1144,16 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
     { value: '4.05', label: 'L' },
     { value: '4.725', label: 'XL' },
   ]
+  // Dwell delay before a hovered node's neighbourhood is spotlit; "Off" disables it.
+  const HIGHLIGHT_OPTIONS = [
+    { value: '0', label: 'Off' },
+    { value: '1000', label: '1s' },
+    { value: '2000', label: '2s' },
+    { value: '3000', label: '3s' },
+  ]
 
   return (
-    <div className="col" style={{ gap: 0 }}>
+    <div className="col config-section" style={{ gap: 0 }}>
       {/* Collapsible sections first */}
       <SubHeader
         icon="🗂"
@@ -1174,41 +1187,6 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
       )}
 
       <SubHeader
-        icon="🔠"
-        title="Flowchart Font Sizes"
-        open={fontsOpen}
-        onToggle={() => setFontsOpen(!fontsOpen)}
-      />
-      {fontsOpen && (
-        <div className="col" style={{ padding: '4px 20px 8px', gap: 8 }}>
-          <div className="col" style={{ gap: 4 }}>
-            <span className="t-caption2 fg-secondary">Nodes</span>
-            <Segmented
-              options={NODE_FONT_OPTIONS}
-              value={String(nodeScale ?? 2.25)}
-              onChange={(v) => setNodeScale(Number(v))}
-            />
-          </div>
-          <div className="col" style={{ gap: 4 }}>
-            <span className="t-caption2 fg-secondary">Edges</span>
-            <Segmented
-              options={EDGE_FONT_OPTIONS}
-              value={String(edgeScale ?? 3.375)}
-              onChange={(v) => setEdgeScale(Number(v))}
-            />
-          </div>
-          <div className="col" style={{ gap: 4 }}>
-            <span className="t-caption2 fg-secondary">Group titles</span>
-            <Segmented
-              options={NODE_FONT_OPTIONS}
-              value={String(groupScale ?? 2.25)}
-              onChange={(v) => setGroupScale(Number(v))}
-            />
-          </div>
-        </div>
-      )}
-
-      <SubHeader
         icon="📊"
         title="KPIs"
         open={kpisOpen}
@@ -1238,71 +1216,143 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
         onToggle={() => setStepsOpen(!stepsOpen)}
       />
       {stepsOpen && (
-        <div style={{ padding: '0 20px 14px' }}>
-          <StepEditor />
+        <>
+          <ToggleRow
+            icon="🗒"
+            label="Show node notes"
+            checked={showDescriptions}
+            onChange={setShowDescriptions}
+          />
+          <div className="col" style={{ padding: '6px 20px 8px', gap: 5 }}>
+            <span className="t-caption fg-secondary">✨ Highlight Trigger</span>
+            <Segmented
+              options={HIGHLIGHT_OPTIONS}
+              value={String(highlightMs ?? 1000)}
+              onChange={(v) => setHighlightMs(Number(v))}
+            />
+            <span className="t-caption2 fg-tertiary">
+              Rest on a node this long to spotlight it and its connections. Not used in
+              Individual Journey.
+            </span>
+          </div>
+          <div style={{ padding: '0 20px 14px' }}>
+            <StepEditor />
+          </div>
+        </>
+      )}
+
+      <SubHeader
+        icon="✨"
+        title="Layout"
+        open={layoutOpen}
+        onToggle={() => setLayoutOpen(!layoutOpen)}
+      />
+      {layoutOpen && (
+        <>
+          <ToggleRow
+            icon="✨"
+            label="Optimise layout"
+            checked={optimised}
+            onChange={setOptimised}
+          />
+          <ToggleRow
+            icon="🎨"
+            label="Colorise edges by weight"
+            checked={colorize}
+            onChange={setColorize}
+          />
+          <ToggleRow
+            icon="▦"
+            label="Transition-table button"
+            checked={tableButton}
+            onChange={setTableButton}
+          />
+          <div className="col" style={{ padding: '6px 20px 8px', gap: 8 }}>
+            <span className="t-caption fg-secondary" style={{ fontWeight: 600 }}>
+              🔠 Flowchart font sizes
+            </span>
+            <div className="col" style={{ gap: 4 }}>
+              <span className="t-caption2 fg-secondary">Nodes</span>
+              <Segmented
+                options={NODE_FONT_OPTIONS}
+                value={String(nodeScale ?? 2.25)}
+                onChange={(v) => setNodeScale(Number(v))}
+              />
+            </div>
+            <div className="col" style={{ gap: 4 }}>
+              <span className="t-caption2 fg-secondary">Edges</span>
+              <Segmented
+                options={EDGE_FONT_OPTIONS}
+                value={String(edgeScale ?? 3.375)}
+                onChange={(v) => setEdgeScale(Number(v))}
+              />
+            </div>
+            <div className="col" style={{ gap: 4 }}>
+              <span className="t-caption2 fg-secondary">Group titles</span>
+              <Segmented
+                options={NODE_FONT_OPTIONS}
+                value={String(groupScale ?? 2.25)}
+                onChange={(v) => setGroupScale(Number(v))}
+              />
+            </div>
+          </div>
+        </>
+      )}
+
+      <SubHeader
+        icon="🗓"
+        title="Dates and Times"
+        open={datesOpen}
+        onToggle={() => setDatesOpen(!datesOpen)}
+      />
+      {datesOpen && (
+        <div className="col" style={{ padding: '8px 20px', gap: 4 }}>
+          <div className="row" style={{ gap: 10 }}>
+            <span aria-hidden className="fg-secondary">
+              🗓
+            </span>
+            <span className="t-caption fg-secondary spacer">Default date window</span>
+            <input
+              className="text-input"
+              type="number"
+              min={0}
+              step={1}
+              aria-label="Default date window (days)"
+              value={defaultWindowDays ?? 0}
+              onChange={(e) =>
+                setDefaultWindowDays(Math.max(0, Math.floor(Number(e.target.value) || 0)))
+              }
+              style={{ width: 64 }}
+            />
+            <span className="t-caption fg-secondary">days</span>
+          </div>
+          <span className="t-caption2 fg-tertiary" style={{ paddingLeft: 30 }}>
+            On load, show the last N days. 0 = full range. Applies next project load.
+          </span>
         </div>
       )}
 
-      <Divider />
-
-      {/* Non-collapsible options below */}
-      <ToggleRow
-        icon="🗒"
-        label="Show node notes"
-        checked={showDescriptions}
-        onChange={setShowDescriptions}
-      />
-      <ToggleRow
+      <SubHeader
         icon="✨"
-        label="Optimise layout"
-        checked={optimised}
-        onChange={setOptimised}
+        title="AI related"
+        open={aiOpen}
+        onToggle={() => setAiOpen(!aiOpen)}
       />
-      <ToggleRow
-        icon="🎨"
-        label="Colorise edges by weight"
-        checked={colorize}
-        onChange={setColorize}
-      />
-
-      <div className="col" style={{ padding: '8px 20px', gap: 4 }}>
-        <div className="row" style={{ gap: 10 }}>
+      {aiOpen && (
+        <div className="row" style={{ padding: '8px 20px', gap: 10 }}>
           <span aria-hidden className="fg-secondary">
-            🗓
+            💬
           </span>
-          <span className="t-caption fg-secondary spacer">Default date window</span>
-          <input
-            className="text-input"
-            type="number"
-            min={0}
-            step={1}
-            aria-label="Default date window (days)"
-            value={defaultWindowDays ?? 0}
-            onChange={(e) =>
-              setDefaultWindowDays(Math.max(0, Math.floor(Number(e.target.value) || 0)))
-            }
-            style={{ width: 64 }}
-          />
-          <span className="t-caption fg-secondary">days</span>
+          <span className="t-caption fg-secondary spacer">LLM Prompt</span>
+          <button
+            className="btn small"
+            disabled={!store.selectedProject}
+            onClick={onEditPrompt}
+          >
+            Edit
+          </button>
         </div>
-        <span className="t-caption2 fg-tertiary" style={{ paddingLeft: 30 }}>
-          On load, show the last N days. 0 = full range. Applies next project load.
-        </span>
-      </div>
-
-      <div className="row" style={{ padding: '8px 20px', gap: 10 }}>
-        <span aria-hidden className="fg-secondary">
-          💬
-        </span>
-        <span className="t-caption fg-secondary spacer">LLM Prompt</span>
-        <button
-          className="btn small"
-          disabled={!store.selectedProject}
-          onClick={onEditPrompt}
-        >
-          Edit
-        </button>
-      </div>
+      )}
     </div>
   )
 }

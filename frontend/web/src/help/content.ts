@@ -194,6 +194,7 @@ const connecting: HelpTopic = {
         p('Tap a connection card to connect; tap it again to disconnect. Only one connection is active at a time. Disconnecting clears all loaded data — project, map, KPIs and filters all reset.'),
         p('Up to two coloured dots appear on the active connection. The first is the database state: green when connected, orange while connecting or after a failure. The second appears only when an LLM server is attached: blue when the model server is reachable, orange when it is not.'),
         tip('Use the ↻ button in the Connections header to refresh the list after an administrator has just granted you a new connection.'),
+        tip('The app resumes where you left off: after signing in again — including after an idle sign-out — it automatically reconnects to your last connection, reopens the last project and returns to the last view. Pressing Disconnect clears that memory, so a deliberate disconnect is never silently undone.'),
       ],
     },
     {
@@ -493,7 +494,7 @@ const chartViews: HelpTopic = {
     {
       heading: 'A-Chart',
       body: [
-        p('The primary process map. Shows all journeys matching the current filter set as an aggregated directly-follows graph; arrow thickness reflects the selected transition metric. When a project is first selected, A-Chart loads automatically using the last N days of data — N defaults to 30 and is set in Configuration → Default date window (0 shows the full range).'),
+        p('The primary process map. Shows all journeys matching the current filter set as an aggregated directly-follows graph; arrow thickness reflects the selected transition metric. When a project is first selected, A-Chart loads automatically using the last N days of data — N defaults to 30 and is set in Configuration → Dates and Times → Default date window (0 shows the full range).'),
         tip('A date slider sits above the map, in the Date & Metrics card. In Range mode it has two independently draggable thumbs — drag either to move the window start or end; in Day mode a single thumb selects one calendar day. Both thumbs also respond to the arrow keys once focused. Switch modes with the Range / Day control at the right of the metric row, just below the slider.'),
       ],
     },
@@ -628,6 +629,7 @@ const processMap: HelpTopic = {
         p('When “Colorise edges by weight” is on, each arrow is tinted using the colour scale configured for the active metric, from the low-end colour (few / short) to the high-end colour (many / long). Thickness always encodes the value independently of colour.'),
         def('Per-metric scales', 'Each metric has its own scale. Defaults: Count → green, Percentage → green, Journey % → green, Avg Time → orange, Min Time → blue, Max Time → red, Std Dev → purple.'),
         tip('Click the colour legend in the bottom-right corner of the map to open the wizard and pick a scale for each metric, with a live preview. “Reset to defaults” restores the built-in scales.'),
+        tip('To read the exact figures behind the chart rather than compare edge widths, open the transition table: a ▦ Transitions button in the lower-right of the A-Chart, B-Chart and A/B panels lists every transition with all metrics at once (Count, % Outgoing, Journey %, Avg / Min / Max, Std Dev), searchable and sortable by any column, with a ⧉ Copy button that exports the rows as tab-separated values for a spreadsheet. The button is hidden until you enable it in Configuration → Layout → Transition-table button.'),
       ],
     },
     {
@@ -649,6 +651,8 @@ const processMap: HelpTopic = {
           '⤢ fits the graph; the ± buttons zoom precisely.',
         ),
         tip('The quality of the automatic layout depends on the “Optimise layout” toggle in Configuration — when on, crossing minimisation produces a cleaner arrangement on complex graphs.'),
+        tip('Inspecting one step in a dense map: hover a node and hold still for the dwell time (one second by default). The node and its incoming and outgoing transitions light up while everything else fades back, so you can trace exactly what leads into and out of it. Move the pointer away (or click, pan or drag) to clear it. Set the delay — 1 s / 2 s / 3 s, or Off — with the “Highlight Trigger” control in Configuration → Steps. This spotlight is available on every process map except the Individual Journey, whose single trace is already sequential.'),
+        tip('A 🕸 Flowchart / 🌊 Sankey switch floats at the top of the A-Chart and B-Chart. The Sankey view shows the same data as a left-to-right flow — band width is proportional to journey volume. To keep it readable it collapses each cluster of steps that loop among one another into a single ↺ node (named after their shared step group when they have one); hover any band for exact counts, or hover a collapsed node to highlight it and see the full list of steps grouped inside plus their internal-loop total. Your choice of flowchart or Sankey is remembered per user.'),
       ],
     },
     {
@@ -694,7 +698,8 @@ const kpi: HelpTopic = {
     {
       heading: 'Behaviour',
       body: [
-        p('The strip and the date slider appear only once a chart has loaded data, and are hidden on launch, after disconnecting, and on any view not yet loaded. Tap the chevron handle to collapse the strip — the journey counts then appear inline in the handle bar. Reorder tiles and toggle their visibility in Configuration → KPIs.'),
+        p('The strip and the date slider appear only once a chart has loaded data, and are hidden on launch, after disconnecting, and on any view not yet loaded. Tap the chevron handle to collapse the strip — the journey counts then appear inline in the handle bar.'),
+        p('You can rearrange the strip in place: drag any tile onto another to reorder them, and hover a tile to reveal a × in its top-right corner that hides it. This is the same order and visibility as the Configuration → KPIs list — change it in either place and the other updates instantly. Both are stored per user, so your arrangement follows you between browsers and machines. A tile hidden with its × is switched back on from Configuration → KPIs.'),
         tip('In A/B Comparison, each panel has its own KPI strip. The Process Goodness tile is coloured green when this panel’s value beats the other, red when lower, blue when equal within 0.005.'),
       ],
     },
@@ -1223,7 +1228,7 @@ const aiDocumentation: HelpTopic = {
       body: [
         p('The AI Documentation view sends the current A-Chart transition table, together with your prompt template, to the OpenAI-compatible endpoint configured on the active connection, and renders the answer as a structured Markdown report.'),
         p('The report also includes sections computed locally and never sent to the model: the journey-paths table, happy-path conformance, the conformance gap analysis, and your notes. Before running, notice cards summarise the A-Chart filter context plus how many happy paths and norms will be included.'),
-        tip('Edit the prompt under Configuration → LLM Prompt; templates are stored per project. Use the browser’s Print / PDF to export the finished report.'),
+        tip('Edit the prompt under Configuration → AI related → LLM Prompt; templates are stored per project. Use the browser’s Print / PDF to export the finished report.'),
       ],
     },
     {
@@ -1313,7 +1318,7 @@ const configuration: HelpTopic = {
       heading: 'Display options',
       body: [
         def('Show step groups', 'Toggles the dashed BELONGS_TO group boxes. When on, “Groups start” chooses whether groups load Expanded, Collapsed, or in their last Persisted state.'),
-        def('Show node notes', 'Shows the shortened DESCRIPTION under the step name on each node, and the yellow note badges.'),
+        def('Show node notes', 'Shows the shortened DESCRIPTION under the step name on each node, and the yellow note badges. It sits at the top of the Steps sub-section, next to the step editor whose notes it displays.'),
         def('Optimise layout', 'Enables barycenter crossing-minimisation for a cleaner arrangement on complex graphs.'),
         def('Colorise edges by weight', 'Turns on the per-metric colour scales (configure them from the map’s colour legend).'),
         def('Default date window', 'How many days back the map shows when a project first loads — the window ends at the latest event date and spans the last N days. Defaults to 30; set 0 to load the project’s full range. Takes effect on the next project load; it does not move the slider on the current map.'),

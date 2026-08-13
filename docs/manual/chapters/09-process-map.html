@@ -85,6 +85,14 @@
 
   <p>Layouts are stored server-side per user, and they are keyed by project <i>and</i> by chart mode. A-Chart, B-Chart, Happy Path, Conformance, each simulation slot (<code>sim_&lt;slot&gt;</code>) and each individual journey (<code>ij_&lt;eventId&gt;</code>) therefore keep completely independent arrangements of the same steps. Because the storage is server-side, your layouts follow you to another browser or machine and are included in backups.</p>
 
+  <h3 id="ch9-dwell">Spotlighting a step's connections</h3>
+
+  <p>Dense maps with many overlapping edges can be hard to read. To isolate one step, <b>hover the pointer over its node and hold still</b> for the dwell time — <b>one second by default</b>. The node and its immediate neighbours brighten and every transition that enters or leaves it stays at full strength, while all other nodes and edges fade to the background. This makes a single step's inputs and outputs easy to trace even in a crowded chart.</p>
+
+  <p>The dwell time is the <b>Highlight Trigger</b> setting in <b>Configuration → Steps</b>: choose <b>1 s</b> (default), <b>2 s</b> or <b>3 s</b>, or <b>Off</b> to disable the spotlight entirely. The choice is stored per user, so it follows you between browsers and machines.</p>
+
+  <p>The spotlight clears as soon as you move the pointer off the node, or when you click, pan or drag. Nothing is saved — it is a momentary, read-only aid. It is available on every process map <b>except the Individual Journey</b>, whose single trace is already strictly sequential and needs no untangling.</p>
+
   <h2 id="ch9-edges">Edges and metric labels</h2>
 
   <p>Each edge is one observed transition from one step to another. Five metrics can be displayed, selected with the metric chips in the "Date &amp; Metrics" card above the chart:</p>
@@ -150,6 +158,16 @@
   </table>
 
   <p>Choices are saved per metric under <code>graph.edge.colorSchema.&lt;metric&gt;</code> and are included in backups. The sheet's own explanatory text summarises the rule: edge thickness always encodes the selected metric; colouring is an additional layer tinting each transition from the lowest to the highest value.</p>
+
+  <h3 id="ch9-transition-table">The transition table behind the chart</h3>
+
+  <p>Every edge on the map is one row of the underlying directly-follows graph. To read the exact figures rather than compare edge widths, open the <b>transition table</b>: the raw data the chart is drawn from, shown in full with <b>all metrics at once</b>.</p>
+
+  <p>The table is reached from a <b>▦ Transitions</b> button in the lower-right of the canvas. That button is <b>hidden by default</b>; switch it on under <b>Configuration → Layout → Transition-table button</b> (see §8.5.4). It is offered only on the <b>A-Chart, B-Chart and the two A/B-Comparison panels</b> — not on the Individual Journey, Conformance or Happy Path maps.</p>
+
+  <p>The panel lists one row per transition with these columns: <b>From</b>, <b>To</b> (self-loops are marked ↺), <b># Count</b>, <b>% Outgoing</b> (the transition's share of its source step's departures), <b>Journey %</b> (its share of all filtered journeys), and <b>Avg</b>, <b>Min</b>, <b>Max</b> time and <b>Std Dev</b> — a dash where a time statistic is unavailable. A search box filters by step name, and clicking any column header sorts by it (click again to reverse); the table opens sorted by Count, largest first. A count above the table reports how many transitions match and the total occurrences. The view is read-only and reflects exactly the graph currently drawn, filters and all.</p>
+
+  <p>A <b>⧉ Copy</b> button copies the rows currently shown (in their current filter and sort order) to the clipboard as tab-separated values, ready to paste straight into a spreadsheet. The copied data uses raw numbers rather than the display strings — times in <b>seconds</b> (blank when unavailable) and shares as plain percentages — so it is immediately usable for further analysis.</p>
 
   <h2 id="ch9-groups">Grouping boxes</h2>
 
@@ -243,6 +261,16 @@
   </table>
 
   <p>With data present, a right-aligned footer reads "Query time: N ms" (or "N.NN s" for longer queries). Its tooltip — "Server-side execution time of the queries behind this view" — is a reminder that this figure measures the database, not the browser.</p>
+
+  <h3 id="ch9-sankey">Flowchart or Sankey</h3>
+
+  <p>A small switch floats at the top of the A-Chart and B-Chart canvas — <b>🕸 Flowchart</b> / <b>🌊 Sankey</b> — exactly like the Flowchart/Swimlane switch on the Individual Journey. It flips the same data between two renderings; your choice is remembered per user and applies to both charts.</p>
+
+  <p>The <b>Sankey</b> view draws the process as a left-to-right flow: each band is a transition and its width is proportional to the number of journeys that take it, so the busy paths are obvious at a glance. Nodes are laid out in columns by their distance from the start. Hover any band for its exact count and its share of the source step's outflow; hover a node for its throughput. Whatever you hover stays lit while everything else dims, which makes a single path easy to trace.</p>
+
+  <p>A Sankey has to flow strictly forward, but a process is full of loops. The view resolves this automatically: it finds each <b>cluster of steps that loop among one another</b> — formally, each strongly-connected component of the graph — and <b>collapses it into a single node</b>, marked <b>↺</b>. The loops that used to tangle the diagram become an "internal loops" count, and the amenities that passengers circulate between (Duty&nbsp;Free ⇄ Dining ⇄ Lounge, for example) become one tidy "airside" node. A collapsed node is named after the members' shared step group when they have one, otherwise after its busiest member. A footer states how many clusters were collapsed. This needs no configuration and works on any process; a purely sequential process simply produces no clusters.</p>
+
+  <p>Hovering a collapsed node highlights it and <b>lists every step inside the group</b>, together with the number of internal loops between them — so nothing is hidden by the grouping: you can always see exactly which steps were folded together and why.</p>
 
   <h2 id="ch9-bchart">The B-Chart</h2>
 

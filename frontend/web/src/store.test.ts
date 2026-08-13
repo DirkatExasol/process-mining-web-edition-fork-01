@@ -2,7 +2,7 @@
  *  `isPower` state. The compute-backend API is mocked; we exercise the Zustand
  *  actions directly. */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('./api', () => ({
   ApiError: class ApiError extends Error {
@@ -39,6 +39,7 @@ vi.mock('./api', () => ({
 
 import { api, ApiError } from './api'
 import { useStore } from './store'
+import { replaceSettings } from './settings'
 
 const mockApi = api as unknown as Record<string, ReturnType<typeof vi.fn>>
 
@@ -314,5 +315,121 @@ describe('transitions mode indicator', () => {
     useStore.setState({ selectedProject: { projectId: 'P', title: 'P', description: '' } })
     await useStore.getState().reloadGraph()
     expect(useStore.getState().transitionsMode).toBe('fallback')
+  })
+})
+
+describe('restoreLastSession (resume where you left off)', () => {
+  // Capture the real actions once, at collection time (before any test overrides them),
+  // so afterEach can put the store back for the rest of the suite.
+  const original = {
+    connectConnection: useStore.getState().connectConnection,
+    selectProject: useStore.getState().selectProject,
+    switchChartMode: useStore.getState().switchChartMode,
+    loadProjects: useStore.getState().loadProjects,
+  }
+
+  const assigned = { id: 'c1', name: 'Prod', host: 'db', port: 8563, schema: 'S', hasLLM: false, llmURL: '' }
+  const projectA = { projectId: 'p1', title: 'P1', description: '' }
+  const connected = { isConnected: true, isLLMReachable: false, activeProfileId: 'c1', username: '', lastError: null }
+  const disconnected = { isConnected: false, isLLMReachable: false, activeProfileId: null, username: '', lastError: null }
+
+  beforeEach(() => {
+    replaceSettings({}) // clear the snapshot (all session.* back to '')
+    useStore.setState({
+      connections: [assigned] as never,
+      connection: disconnected,
+      projects: [],
+      selectedProject: null,
+      activeChartMode: 'A-Chart',
+    })
+  })
+
+  afterEach(() => {
+    useStore.setState(original)
+    replaceSettings({})
+  })
+
+  it('does nothing when there is no saved session', async () => {
+    const connectSpy = vi.fn()
+    useStore.setState({ connectConnection: connectSpy as never })
+    await useStore.getState().restoreLastSession()
+    expect(connectSpy).not.toHaveBeenCalled()
+  })
+
+  it('reconnects, reopens the last project and restores the last view', async () => {
+    replaceSettings({
+      'session.lastConnectionId': 'c1',
+      'session.lastProjectId': 'p1',
+      'session.lastChartMode': 'Statistics',
+    })
+    const connectSpy = vi.fn(async () => {
+      useStore.setState({ connection: connected, projects: [projectA] })
+      return true
+    })
+    const selectSpy = vi.fn(async (p: typeof projectA) =>
+      useStore.setState({ selectedProject: p, activeChartMode: 'A-Chart' }),
+    )
+    const switchSpy = vi.fn((m: string) => useStore.setState({ activeChartMode: m as never }))
+    useStore.setState({
+      connectConnection: connectSpy as never,
+      selectProject: selectSpy as never,
+      switchChartMode: switchSpy as never,
+    })
+
+    await useStore.getState().restoreLastSession()
+
+    expect(connectSpy).toHaveBeenCalledWith(assigned)
+    expect(selectSpy).toHaveBeenCalledWith(projectA)
+    expect(switchSpy).toHaveBeenCalledWith('Statistics')
+    expect(useStore.getState().activeChartMode).toBe('Statistics')
+  })
+
+  it('skips reconnect when the saved connection is no longer assigned', async () => {
+    replaceSettings({ 'session.lastConnectionId': 'gone', 'session.lastProjectId': 'p1' })
+    const connectSpy = vi.fn()
+    useStore.setState({ connectConnection: connectSpy as never })
+    await useStore.getState().restoreLastSession()
+    expect(connectSpy).not.toHaveBeenCalled()
+  })
+
+  it('does not switch the view when the saved mode is A-Chart (the default)', async () => {
+    replaceSettings({
+      'session.lastConnectionId': 'c1',
+      'session.lastProjectId': 'p1',
+      'session.lastChartMode': 'A-Chart',
+    })
+    const connectSpy = vi.fn(async () => {
+      useStore.setState({ connection: connected, projects: [projectA] })
+      return true
+    })
+    const selectSpy = vi.fn(async (p: typeof projectA) =>
+      useStore.setState({ selectedProject: p, activeChartMode: 'A-Chart' }),
+    )
+    const switchSpy = vi.fn()
+    useStore.setState({
+      connectConnection: connectSpy as never,
+      selectProject: selectSpy as never,
+      switchChartMode: switchSpy as never,
+    })
+
+    await useStore.getState().restoreLastSession()
+
+    expect(selectSpy).toHaveBeenCalledWith(projectA)
+    expect(switchSpy).not.toHaveBeenCalled()
+  })
+
+  it('does not reconnect when already on the saved connection, just restores project/view', async () => {
+    replaceSettings({ 'session.lastConnectionId': 'c1', 'session.lastProjectId': 'p1' })
+    useStore.setState({ connection: connected, projects: [projectA] })
+    const connectSpy = vi.fn()
+    const selectSpy = vi.fn(async (p: typeof projectA) =>
+      useStore.setState({ selectedProject: p }),
+    )
+    useStore.setState({ connectConnection: connectSpy as never, selectProject: selectSpy as never })
+
+    await useStore.getState().restoreLastSession()
+
+    expect(connectSpy).not.toHaveBeenCalled()
+    expect(selectSpy).toHaveBeenCalledWith(projectA)
   })
 })

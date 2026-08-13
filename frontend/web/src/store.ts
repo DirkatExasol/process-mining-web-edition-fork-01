@@ -17,6 +17,7 @@ import {
 } from './settings'
 import {
   EMPTY_GRAPH,
+  DETAIL_VIEW_MODES,
   INT_MAX,
   INT_MIN,
   type ABDataSource,
@@ -334,6 +335,9 @@ export interface AppActions {
 
   loadProjects: () => Promise<void>
   selectProject: (project: Project) => Promise<void>
+  /** After login/boot, reconnect to the last connection, reopen the last project and
+   *  restore the last view — the per-user "resume where you left off" replay. */
+  restoreLastSession: () => Promise<void>
 
   patch: (values: Partial<AppState>) => void
   setTransitionMetric: (metric: TransitionMetric) => void
@@ -793,6 +797,8 @@ export const useStore = create<Store>((set, get) => {
           })
           return false
         }
+        // Remember this connection so a later login can auto-reconnect to it.
+        writeSetting('session.lastConnectionId', conn.id)
         await get().loadProjects()
         return true
       } catch (error) {
@@ -813,6 +819,11 @@ export const useStore = create<Store>((set, get) => {
       const connection = await api.disconnect()
       get().clearSession()
       set({ connection })
+      // An explicit disconnect is a deliberate exit — forget the resume target so the
+      // next login doesn't silently reconnect. (An inactivity logout does NOT come
+      // through here, so its snapshot is preserved for the resume.)
+      writeSetting('session.lastConnectionId', '')
+      writeSetting('session.lastProjectId', '')
     },
 
     clearSession: () => {
@@ -1124,6 +1135,10 @@ export const useStore = create<Store>((set, get) => {
         happyPathScores: {},
       })
 
+      // Remember the open project (and that we're back on A-Chart) for the resume.
+      writeSetting('session.lastProjectId', projectId)
+      writeSetting('session.lastChartMode', 'A-Chart')
+
       try {
         const boot = await api.bootstrap(projectId, activeSampleSet('a'))
 
@@ -1270,6 +1285,36 @@ export const useStore = create<Store>((set, get) => {
       }
     },
 
+    restoreLastSession: async () => {
+      const connId = readSetting<string>('session.lastConnectionId', '')
+      const projId = readSetting<string>('session.lastProjectId', '')
+      const mode = readSetting<string>('session.lastChartMode', '')
+
+      // 1) Auto-reconnect to the last connection, unless we are already on it (e.g. the
+      //    server session survived a plain reload). connectConnection loads the projects.
+      const before = get()
+      if (connId && before.connection.activeProfileId !== connId) {
+        const match = before.connections.find((c) => c.id === connId)
+        if (!match) return // connection revoked / no longer assigned — nothing to resume
+        const ok = await get().connectConnection(match)
+        if (!ok) return // reconnect failed (its own alert already explains why)
+      } else if (connId && before.connection.isConnected && before.projects.length === 0) {
+        await get().loadProjects()
+      }
+      if (!connId || !get().connection.isConnected) return
+
+      // 2) Reopen the last project (selectProject resets the view to A-Chart).
+      if (!projId) return
+      const project = get().projects.find((p) => p.projectId === projId)
+      if (!project) return
+      await get().selectProject(project)
+
+      // 3) Restore the last view — must come AFTER selectProject, which forced A-Chart.
+      if (mode && mode !== 'A-Chart' && (DETAIL_VIEW_MODES as readonly string[]).includes(mode)) {
+        get().switchChartMode(mode as DetailViewMode)
+      }
+    },
+
     // ── chart mode switching ──────────────────────────────────────────────
 
     setTransitionMetric: (metric) => {
@@ -1310,6 +1355,7 @@ export const useStore = create<Store>((set, get) => {
       }
 
       set({ activeChartMode: mode, savedChartStates: saved })
+      writeSetting('session.lastChartMode', mode)
 
       if (mode === 'A/B Comparison') {
         const a = saved['A-Chart']

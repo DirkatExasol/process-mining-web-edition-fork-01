@@ -26,6 +26,10 @@ export function App() {
     if (useStore.getState().connection.isConnected) {
       await useStore.getState().loadProjects()
     }
+    // Resume where the user left off: reconnect to the last connection, reopen the last
+    // project and restore the last view. Reads the per-user snapshot hydrated above, so
+    // it works both on a cold boot with a live session and after an inactivity re-login.
+    await useStore.getState().restoreLastSession()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

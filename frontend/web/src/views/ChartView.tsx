@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { FlowChart, type SyncState } from '../flow/FlowChart'
+import { SankeyChart } from '../flow/SankeyChart'
 import { Unavailable } from '../components/ui'
 import { useSetting } from '../settings'
 import { useStore } from '../store'
@@ -18,6 +19,7 @@ export function ChartView({
 }) {
   const store = useStore()
   const [sliderMode] = useSetting<SliderMode>('slider.mode')
+  const [sankey, setSankey] = useSetting<boolean>('graph.sankeyView')
   const [expanded, setExpanded] = useSetting<boolean>(
     side === 'a' ? 'achart.controlsExpanded' : 'bchart.controlsExpanded',
   )
@@ -126,26 +128,55 @@ export function ChartView({
           />
         )
       ) : (
-        <FlowChart
-          graph={store.processGraph}
-          projectId={store.selectedProject.projectId}
-          chartMode={side === 'a' ? 'A-Chart' : 'B-Chart'}
-          metric={store.transitionMetric}
-          journeyTotal={store.journeyCount ?? 0}
-          isLoading={store.isLoading}
-          syncState={syncState}
-          notice={simulationFilterNotice(
-            side === 'a' ? store.abDataSourceA : store.abDataSourceB,
+        <div className="col" style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+          {/* In-canvas view switch (flowchart ↔ Sankey), like the Individual Journey's. */}
+          <div className="swim-toggle seg-toggle" role="tablist" aria-label="Chart view">
+            <button
+              className={`seg${sankey ? '' : ' sel'}`}
+              role="tab"
+              aria-selected={!sankey}
+              onClick={() => setSankey(false)}
+              title="Directed-follows flowchart (loops shown)"
+            >
+              🕸 Flowchart
+            </button>
+            <button
+              className={`seg${sankey ? ' sel' : ''}`}
+              role="tab"
+              aria-selected={sankey}
+              onClick={() => setSankey(true)}
+              title="Sankey flow (looping clusters collapsed for readability)"
+            >
+              🌊 Sankey
+            </button>
+          </div>
+
+          {sankey ? (
+            <SankeyChart graph={store.processGraph} />
+          ) : (
+            <FlowChart
+              graph={store.processGraph}
+              projectId={store.selectedProject.projectId}
+              chartMode={side === 'a' ? 'A-Chart' : 'B-Chart'}
+              metric={store.transitionMetric}
+              journeyTotal={store.journeyCount ?? 0}
+              allowTransitionTable
+              isLoading={store.isLoading}
+              syncState={syncState}
+              notice={simulationFilterNotice(
+                side === 'a' ? store.abDataSourceA : store.abDataSourceB,
+              )}
+              readOnly={
+                (side === 'a' ? store.abDataSourceA : store.abDataSourceB).kind ===
+                'simulation'
+              }
+              onNodeAction={(node, action) => store.handleNodeAction(node, action)}
+              notes={store.projectNotes}
+              onNodeNote={notes.openNodeNotes}
+              onEdgeNote={notes.openEdgeNotes}
+            />
           )}
-          readOnly={
-            (side === 'a' ? store.abDataSourceA : store.abDataSourceB).kind ===
-            'simulation'
-          }
-          onNodeAction={(node, action) => store.handleNodeAction(node, action)}
-          notes={store.projectNotes}
-          onNodeNote={notes.openNodeNotes}
-          onEdgeNote={notes.openEdgeNotes}
-        />
+        </div>
       )}
 
       {hasData && store.queryMs != null && (

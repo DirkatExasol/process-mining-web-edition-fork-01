@@ -1,5 +1,6 @@
-import { memo } from 'react'
+import { memo, useContext } from 'react'
 import { EdgeLabelRenderer, type EdgeProps } from '@xyflow/react'
+import { FlowFocusContext } from './focusContext'
 import {
   EDGE_SCHEMA_GRADIENTS,
   NOTE_YELLOW,
@@ -137,6 +138,12 @@ function MetricEdgeComponent({
   } = d
   const eScale = edgeScale || 1
 
+  // Hover-dwell focus: fade edges that don't touch the spotlit node so the focused node's
+  // incoming/outgoing connections stand out in a crowded map.
+  const focus = useContext(FlowFocusContext)
+  const dimmed = focus != null && !focus.edges.has(id)
+  const emphasisStyle = { opacity: dimmed ? 0.1 : 1, transition: 'opacity 0.2s ease' }
+
   const isSelfLoop = transition.fromStep === transition.toStep
   // Both the legacy Count norm and the new Percentage metric are outgoing-share percentages.
   const isCountPct = normMetric === 'Count' || normMetric === 'Percentage'
@@ -250,6 +257,7 @@ function MetricEdgeComponent({
 
   return (
     <>
+      <g style={emphasisStyle}>
       {!isSelfLoop && (
         <defs>
           <marker
@@ -289,13 +297,16 @@ function MetricEdgeComponent({
           onEdgeClick?.(transition, { x: event.clientX, y: event.clientY })
         }
       />
+      </g>
 
       <EdgeLabelRenderer>
         <div
           style={{
             position: 'absolute',
             transform: `translate(-50%, -50%) translate(${midX}px, ${midY}px)`,
-            pointerEvents: 'all',
+            pointerEvents: dimmed ? 'none' : 'all',
+            opacity: dimmed ? 0.1 : 1,
+            transition: 'opacity 0.2s ease',
             display: 'flex',
             alignItems: 'center',
             gap: Math.round(6 * eScale),

@@ -328,6 +328,18 @@
 
 <p>API calls begin returning 401 with "Authentication required." The application surfaces this as an error, and reloading the page lands you on the sign-in panel. Two other server messages you may meet are unrelated to authentication but appear in the same place: "The compute backend is not reachable. Start it with ./run.sh or check PMW_BACKEND_URL." (502) and "The compute backend timed out." (504).</p>
 
+<h3 id="ch5-resume">5.6.6 Resuming where you left off</h3>
+
+<p>The main application remembers your last working position and restores it automatically the next time it loads. When you sign in again — including after an idle sign-out — it <b>reconnects to the database connection</b> you were using, <b>reopens the project</b> you had open and <b>returns to the view</b> you were in (A-Chart, Statistics, A/B Comparison, and so on). The same restore happens on a plain page reload while your session is still alive.</p>
+
+<p>The position is stored per user in your server-side settings, so it follows you between browsers and machines, exactly like your presets and layouts. It records only <em>where</em> you were — the connection, the project and the view — not any transient in-progress edits. A few natural limits apply:</p>
+
+<ul>
+<li>If the saved connection has since been un-assigned from you, or the saved project no longer exists, that step is skipped silently and you land one level up (connected but no project, or signed in but not connected).</li>
+<li>If the automatic reconnection fails — for example the database is down — the usual "Connection Failed" retry dialog appears, just as if you had clicked the connection yourself.</li>
+<li>Explicitly pressing <b>Disconnect</b> clears the saved connection, so a deliberate disconnect is never silently undone on your next sign-in. (An idle sign-out does <em>not</em> count as a disconnect — that is exactly the case this feature is for.)</li>
+</ul>
+
 <h2 id="ch5-lockout">5.7 Account lockout and attempt throttling</h2>
 
 <h3 id="ch5-lockout-account">5.7.1 Failed-sign-in lockout</h3>

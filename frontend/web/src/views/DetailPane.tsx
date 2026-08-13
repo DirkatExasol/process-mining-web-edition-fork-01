@@ -304,6 +304,9 @@ function IndividualJourneyView() {
           // here — always show the average transition time. The sidebar Metrics
           // selector is hidden for this mode (see Sidebar).
           metric="Avg Time"
+          // A single trace is already sparse and strictly sequential, so the hover-dwell
+          // spotlight (for untangling crowded aggregate maps) is not wanted here.
+          hoverFocus={false}
         />
       )}
     </div>
