@@ -23,12 +23,13 @@ export default defineConfig({
     sourcemap: false,
     chunkSizeWarningLimit: 1500,
     rollupOptions: {
-      // Two entry points sharing one dist/ (and chunked vendor code): the main app
-      // (index.html) and the integration console (integration.html). Each Python
-      // surface serves its own HTML shell.
+      // Entry points sharing one dist/ (and chunked vendor code): the main app
+      // (index.html), the integration console (integration.html) and the Actions
+      // authoring surface (actions.html). Each Python surface serves its own shell.
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         integration: fileURLToPath(new URL('./integration.html', import.meta.url)),
+        actions: fileURLToPath(new URL('./actions.html', import.meta.url)),
       },
     },
   },

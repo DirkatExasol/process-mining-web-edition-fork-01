@@ -384,7 +384,7 @@ def login_page(error: str = "", inactivity: bool = False, bg_css: str = "",
     return f"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 {_FAVICON_LINK}{_THEME_BOOT}
-<title>Administration — Sign in</title><style>{_STYLE}
+<title>Process Mining - Administration</title><style>{_STYLE}
 /* App-master (LoginView.tsx) tokens, mirrored so both panels render identically
    in light and dark. Rules are scoped under .login-splash so they win over the
    base input/button styles in _STYLE. */
@@ -560,7 +560,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     return f"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 {_FAVICON_LINK}{_THEME_BOOT}
-<title>Administration</title><style>{_STYLE}</style></head><body>
+<title>Process Mining - Administration</title><style>{_STYLE}</style></head><body>
 <div class="topbar">
   <div class="brand"><div class="logo">{_LOGO_SVG}</div>
     <div><h1>Administration</h1><div class="sub">Process Mining Demonstrator</div></div></div>
@@ -661,6 +661,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <button data-tab="customize" onclick="selectTab('customize')">Customize</button>
     <button data-tab="reporting" onclick="selectTab('reporting')">Reporting</button>
     <button data-tab="integration" onclick="selectTab('integration')">Integration</button>
+    <button data-tab="actions" onclick="selectTab('actions')">Actions</button>
   </div>
 
   <div class="tabpanel sel" id="tab-appcontrol">
@@ -1321,6 +1322,30 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     </p>
   </div>
   </div><!-- /tab-integration -->
+
+  <div class="tabpanel" id="tab-actions">
+  <div class="card">
+    <h2>Actions</h2>
+    <p class="muted" style="margin-top:0">
+      Lets authors attach small, business-readable <strong>actions</strong> to process-map
+      nodes (e.g. &ldquo;show the last log entries from this node&rdquo;). Actions are written on a
+      separate <strong>Actions</strong> surface (reachable by <strong>developers</strong> and
+      <strong>admins</strong>) and run from a node&rsquo;s menu in the app by every signed-in user
+      except plain standard users.
+    </p>
+    <label class="row" style="font-size:14px; cursor:pointer; gap:8px; align-items:center">
+      <input type="checkbox" id="act_enabled" style="width:auto" onchange="toggleActionsEnabled()">
+      Enable Actions
+    </label>
+    <div id="act_status" class="col" style="margin-top:12px; gap:6px"></div>
+    <p class="subtle" style="margin-top:10px">
+      The Actions surface follows the same TLS mode &amp; certificate as the app and this admin
+      interface (change them in the <strong>TLS / SSL</strong> tab). Enabling/disabling and
+      TLS changes take effect after <strong>↻ Restart app server</strong> in the
+      <strong>App Control</strong> tab.
+    </p>
+  </div>
+  </div><!-- /tab-actions -->
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -1812,6 +1837,7 @@ function selectTab(name) {
   if (name === 'reporting') loadReporting().catch(e => toast(e.message, true));
   if (name === 'backup') loadSchedule().catch(e => toast(e.message, true));
   if (name === 'integration') loadIntegration().catch(e => toast(e.message, true));
+  if (name === 'actions') loadActions().catch(e => toast(e.message, true));
 }
 
 // ── AI Reporting ─────────────────────────────────────────────────────────────
@@ -2141,6 +2167,28 @@ async function toggleIntegrationEnabled() {
                   : 'Integration console disabled — restart to apply');
     await loadIntegration();
   } catch (e) { toast(e.message, true); $('int_enabled').checked = !enabled; }
+}
+async function loadActions() {
+  const s = await api('/api/actions');
+  $('act_enabled').checked = !!s.enabled;
+  const host = location.hostname || '127.0.0.1';
+  const running = s.running
+    ? '<span class="pill neutral">launcher running</span>'
+    : '<span class="pill off">launcher not detected</span>';
+  $('act_status').innerHTML =
+    '<div class="row" style="gap:8px; align-items:center">' + running + '</div>' +
+    '<div class="subtle">HTTP: <code>http://' + esc(host) + ':' + s.httpPort + '</code></div>' +
+    '<div class="subtle">HTTPS: <code>https://' + esc(host) + ':' + s.httpsPort +
+      '</code> <span class="muted">(when TLS is optional or required)</span></div>';
+}
+async function toggleActionsEnabled() {
+  const enabled = $('act_enabled').checked;
+  try {
+    await api('/api/actions/enabled', { method: 'POST', body: JSON.stringify({ enabled }) });
+    toast(enabled ? 'Actions enabled — restart to apply'
+                  : 'Actions disabled — restart to apply');
+    await loadActions();
+  } catch (e) { toast(e.message, true); $('act_enabled').checked = !enabled; }
 }
 
 // ── Customize (login page background) ───────────────────────────────────────

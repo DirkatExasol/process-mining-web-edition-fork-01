@@ -1,0 +1,72 @@
+<section class="chapter" id="ch-actions" data-title="Actions" data-num="25">
+<h1><span class="chnum">25</span> Actions</h1>
+
+<p class="chintro">An <em>action</em> is a small, business-readable query you attach to process-map nodes. From a node&rsquo;s menu you can show the last log entries from that step, from the steps around it, or a transition table for everything that follows &mdash; and the result always honours whatever filters you currently have set on the chart. Actions are written in a tiny script language that the system translates into database SQL for you. This chapter explains how the feature is turned on, how to author actions on the Actions surface, the script language and its clauses, how availability decides where an action appears, and how an action runs from the app.</p>
+
+<div class="role">Requires: <b>Administrator</b> to enable the feature; <b>Developer</b> (or Administrator) to author actions; and any signed-in user <em>except a plain standard user</em> (that is, Power, Developer or Administrator) to run them from the app. The feature is <b>off</b> until an administrator enables it.</div>
+
+<h2 id="act-enable">25.1 Enabling the feature</h2>
+
+<p>Actions are opt-in. In the admin interface open the <strong>Actions</strong> tab and tick <strong>Enable Actions</strong>, then restart the app server from <strong>App Control</strong> so the surface binds its listeners. While the feature is off, the Actions surface serves a &ldquo;disabled&rdquo; page and the app shows no <strong>Actions</strong> entry in node menus.</p>
+
+<p>The Actions authoring surface runs on its own port &mdash; by default HTTP <code>:8110</code> and HTTPS <code>:8473</code> &mdash; and follows the same TLS mode and certificate as the app and admin interface. Only developers and administrators may sign in to it.</p>
+
+<h2 id="act-author">25.2 Authoring actions</h2>
+
+<p>Open the Actions surface, sign in, then pick a <strong>connection</strong> and a <strong>project</strong> at the top. Actions are saved per connection <em>and</em> project, so a service provider hosting several customers keeps each customer&rsquo;s actions separate. The builder then shows the saved actions for that project on the left and an editor on the right.</p>
+
+<p>As you type, the editor validates the script live, restates it in plain English, and shows the exact SQL it will run. The <strong>Test</strong> panel runs the script against a node you choose (standing in for <code>THIS</code>) so you can see real rows before saving. <strong>Save</strong> stores the action; <strong>Delete</strong> removes it.</p>
+
+<h2 id="act-language">25.3 The script language</h2>
+
+<p>An action is a handful of clauses. Keywords are case-insensitive, and <code>NODE</code>/<code>NODES</code> and <code>ENTRY</code>/<code>ENTRIES</code> are interchangeable. A clause keyword may sit on its own line with its value on the following line(s), or share a line with its value.</p>
+
+<table>
+<thead><tr><th>Clause</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>AVAILABILITY</code></td><td>Where the action appears in node menus: <code>ALL NODES</code>, or a comma-separated list of step names (e.g. <code>LOGIN, LOGOUT, PAYMENT</code>).</td></tr>
+<tr><td><code>SHOW</code></td><td>What to display: <code>LAST [N] LOG ENTRIES</code> (N defaults to 1), or <code>TRANSITION TABLE WITH &hellip;</code> listing one or more metrics (see below).</td></tr>
+<tr><td><code>FROM</code></td><td><code>NODE(&hellip;)</code> relative to the clicked node: <code>THIS</code>, <code>PREVIOUS</code>, <code>FOLLOWING</code>, <code>ALL FOLLOWING</code>, <code>ALL PREVIOUS</code> &mdash; combine them, e.g. <code>NODE(THIS, ALL FOLLOWING)</code>.</td></tr>
+<tr><td><code>SORT</code></td><td>Optional. <code>ASCENDING</code> or <code>DESCENDING</code> (log entries by time; the default is most recent first).</td></tr>
+<tr><td><code>WHERE</code></td><td>Optional filter. This version supports <code>EVENT_ID :: [id, id, &hellip;]</code> (the <code>::</code> reads as &ldquo;is one of&rdquo;).</td></tr>
+</tbody>
+</table>
+
+<p>A minimal example &mdash; show the single most recent event of the clicked node:</p>
+
+<pre class="code">AVAILABILITY
+    PAYMENT
+SHOW
+    LAST 1 LOG ENTRY
+FROM
+    NODE(THIS)
+SORT
+    DESCENDING</pre>
+
+<p>A transition table can list any of the chart&rsquo;s metrics, in any combination, as quoted names after <code>WITH</code>: <code>"COUNT"</code>, <code>"%JOURNEY%"</code> (share of all filtered journeys traversing the edge), <code>"%OUTGOING%"</code> (branching share of the source node&rsquo;s outgoing journeys), and the transition-time metrics <code>"AVG TIME"</code>, <code>"MIN TIME"</code>, <code>"MAX TIME"</code> and <code>"STD DEV"</code> (in seconds). Friendly short forms are accepted too &mdash; e.g. <code>AVG</code>, <code>MIN</code>, <code>MAX</code>, <code>STDDEV</code>, <code>PERCENTAGE</code>, <code>JOURNEY %</code>. Each metric becomes a column, in the order you list them. As a shorthand, <code>TRANSITION TABLE WITH ALL METRICS</code> includes every metric at once.</p>
+
+<p>A transition table for the clicked node and everything downstream, over the most recent activity:</p>
+
+<pre class="code">AVAILABILITY
+    ALL NODES
+SHOW
+    TRANSITION TABLE WITH "COUNT", "%JOURNEY%"
+    FOR LAST 50 LOG ENTRIES
+FROM
+    NODE(THIS, ALL FOLLOWING)</pre>
+
+<h2 id="act-availability">25.4 Availability &mdash; where an action appears</h2>
+
+<p>The <code>AVAILABILITY</code> clause decides which nodes list the action. <code>ALL NODES</code> makes it appear on every node; a list of step names limits it to those steps. When you right-click a node in the process map, only the actions whose availability matches that node show up in the <strong>Actions</strong> section of its menu.</p>
+
+<h2 id="act-run">25.5 Running an action</h2>
+
+<p>In the process map, click a node and choose the action from the <strong>Actions</strong> section of its menu. The system resolves the <code>FROM</code> selectors against the live graph (so <code>PREVIOUS</code>, <code>FOLLOWING</code> and their transitive <code>ALL</code> forms become concrete steps), runs the query, and shows the result &mdash; a log-entry table or a transition table &mdash; over the map.</p>
+
+<div class="note"><strong>Actions always respect the chart&rsquo;s current filters</strong> &mdash; the date range, included and excluded steps, the meta filters, the step-count / journey-time / score ranges and the sample set. The same action therefore answers a different question as you narrow the view, which is the point: it reads the situation you are looking at rather than the whole database.</div>
+
+<h2 id="act-limits">25.6 Limits of this version</h2>
+
+<p>The <code>WHERE</code> clause supports an <code>EVENT_ID</code> list only; richer conditions are not yet available. On a transition table, a <code>FOR LAST N LOG ENTRIES</code> qualifier is applied as an approximate recency cap rather than an exact windowing. Log-entry results are capped to a safe maximum number of rows.</p>
+
+</section>

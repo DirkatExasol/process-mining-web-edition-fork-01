@@ -26,6 +26,8 @@ import {
   type EdgeColorSchema,
 } from '../graph/colors'
 import { EdgeColorWizard } from './EdgeColorWizard'
+import { actionMatchesNode } from '../actions/describe'
+import type { SavedAction } from '../actions/types'
 import {
   GRID_SIZE,
   NODE_W,
@@ -116,6 +118,11 @@ export interface FlowChartProps {
    *  A-Chart, B-Chart and A/B panels; the button itself is still hidden unless the user
    *  turns it on in Configuration → Layout. */
   allowTransitionTable?: boolean
+  /** Saved node-menu actions available for this project (the caller passes only when the
+   *  Actions feature is enabled and the user may run them). The node menu lists those
+   *  whose AVAILABILITY matches the clicked node. */
+  actionItems?: SavedAction[]
+  onRunAction?: (action: SavedAction, node: string) => void
 }
 
 interface MenuState {
@@ -1049,6 +1056,36 @@ function FlowChartInner(props: FlowChartProps) {
                 ✎ Show Notes ({noteCounts.get(`node:${menu.node}`) ?? 0})
               </button>
             )}
+            {(() => {
+              const node = menu.node as string
+              const matches = (props.actionItems ?? []).filter((a) =>
+                actionMatchesNode(a.spec, node),
+              )
+              if (!matches.length || !props.onRunAction) return null
+              return (
+                <>
+                  <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+                  <div
+                    className="fg-secondary"
+                    style={{ fontSize: 11, padding: '2px 10px', textTransform: 'uppercase', letterSpacing: 0.5 }}
+                  >
+                    Actions
+                  </div>
+                  {matches.map((a) => (
+                    <button
+                      key={a.id}
+                      className="p-item"
+                      onClick={() => {
+                        props.onRunAction?.(a, node)
+                        setMenu(null)
+                      }}
+                    >
+                      ⚡ {a.name || '(unnamed)'}
+                    </button>
+                  ))}
+                </>
+              )
+            })()}
           </div>
         </>
       )}

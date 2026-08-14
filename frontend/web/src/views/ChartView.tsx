@@ -9,6 +9,10 @@ import { useStore } from '../store'
 import { simulationFilterNotice, type SliderMode } from '../types'
 import { ChartControls } from './ChartControls'
 import { useNoteHandlers } from './useNoteHandlers'
+import { api } from '../api'
+import { resolveScope } from '../actions/resolveScope'
+import type { ActionRunResult, SavedAction } from '../actions/types'
+import { ActionResultModal } from './ActionResultModal'
 
 export function ChartView({
   side,
@@ -26,6 +30,39 @@ export function ChartView({
   const [sliderFrom, setSliderFrom] = useState(store.fromDate)
   const [sliderTo, setSliderTo] = useState(store.toDate)
   const notes = useNoteHandlers()
+
+  // Node-menu actions: available to run for power/dev/admin when the feature is enabled.
+  const runRole = store.authIsPower || store.authIsDeveloper || store.authIsAdmin
+  const actionItems = store.actionsEnabled && runRole ? store.projectActions : []
+  const [actionModal, setActionModal] = useState<{
+    title: string
+    result: ActionRunResult | null
+    busy: boolean
+    error: string | null
+  } | null>(null)
+
+  const runNodeAction = async (action: SavedAction, node: string) => {
+    const connId = store.connection.activeProfileId ?? ''
+    const projectId = store.selectedProject?.projectId ?? ''
+    const resolvedSteps = resolveScope(action.spec.from.selectors, node, store.processGraph.transitions)
+    setActionModal({ title: `${action.name} · ${node}`, result: null, busy: true, error: null })
+    try {
+      const result = await api.runAction(projectId, action.id, {
+        connectionId: connId,
+        filter: store.currentFilterSpec(),
+        contextNode: node,
+        resolvedSteps,
+      })
+      setActionModal({ title: `${action.name} · ${node}`, result, busy: false, error: null })
+    } catch (e) {
+      setActionModal({
+        title: `${action.name} · ${node}`,
+        result: null,
+        busy: false,
+        error: String((e as Error).message ?? e),
+      })
+    }
+  }
 
   // Keep the slider in sync with the store's applied window. This covers project
   // load (the "last N days" default), a Day snap to the nearest date, and — the
@@ -178,6 +215,8 @@ export function ChartView({
               notes={store.projectNotes}
               onNodeNote={notes.openNodeNotes}
               onEdgeNote={notes.openEdgeNotes}
+              actionItems={actionItems}
+              onRunAction={(action, node) => void runNodeAction(action, node)}
             />
           )}
         </div>
@@ -196,6 +235,16 @@ export function ChartView({
       )}
 
       {notes.element}
+
+      {actionModal && (
+        <ActionResultModal
+          title={actionModal.title}
+          result={actionModal.result}
+          busy={actionModal.busy}
+          error={actionModal.error}
+          onClose={() => setActionModal(null)}
+        />
+      )}
     </div>
   )
 }

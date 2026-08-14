@@ -43,6 +43,9 @@ from app.config import (  # noqa: E402
     INTEGRATION_HTTPS_PORT,
     INTEGRATION_PID_PATH,
     INTEGRATION_PORT,
+    ACTIONS_HTTPS_PORT,
+    ACTIONS_PID_PATH,
+    ACTIONS_PORT,
 )
 from app import licensing  # noqa: E402
 from app import log_events as logx  # noqa: E402
@@ -174,7 +177,7 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Process Mining Demonstrator — Administration",
+    title="Process Mining - Administration",
     version="1.0.0",
     lifespan=_lifespan,
 )
@@ -1681,6 +1684,14 @@ def api_restart(user: User = Depends(require_admin)):
             os.kill(integration_pid, signal.SIGHUP)
         except (ValueError, OSError):
             integration_pid = None
+    # The Actions surface follows the same TLS plan; rebind it too (best-effort).
+    actions_pid: int | None = None
+    if ACTIONS_PID_PATH.exists():
+        try:
+            actions_pid = int(ACTIONS_PID_PATH.read_text().strip())
+            os.kill(actions_pid, signal.SIGHUP)
+        except (ValueError, OSError):
+            actions_pid = None
     # Restart the admin launcher too, best-effort: signalling our own launcher tears
     # down this very listener, so don't fail the request if the response races it.
     admin_pid: int | None = None
@@ -1690,7 +1701,13 @@ def api_restart(user: User = Depends(require_admin)):
             os.kill(admin_pid, signal.SIGHUP)
         except (ValueError, OSError):
             admin_pid = None
-    return {"ok": True, "pid": gui_pid, "integrationPid": integration_pid, "adminPid": admin_pid}
+    return {
+        "ok": True,
+        "pid": gui_pid,
+        "integrationPid": integration_pid,
+        "actionsPid": actions_pid,
+        "adminPid": admin_pid,
+    }
 
 
 # ── API: integration / data-source console ────────────────────────────────────
@@ -1723,6 +1740,35 @@ def api_set_integration_enabled(
         username=user.username, operation="config",
     )
     return {"ok": True, "enabled": store.integration_enabled}
+
+
+class ActionsEnabledBody(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/actions")
+def api_actions_status(user: User = Depends(require_admin)):
+    """State of the Actions feature: whether it's enabled, the Actions surface ports and
+    whether its launcher is currently running (best-effort, from the PID file)."""
+    return {
+        "enabled": store.actions_enabled,
+        "httpPort": ACTIONS_PORT,
+        "httpsPort": ACTIONS_HTTPS_PORT,
+        "running": ACTIONS_PID_PATH.exists(),
+    }
+
+
+@app.post("/api/actions/enabled")
+def api_set_actions_enabled(
+    body: ActionsEnabledBody, user: User = Depends(require_admin)
+):
+    store.set_actions_enabled(body.enabled)
+    logx.usage(
+        f"admin {user.username} {'enabled' if body.enabled else 'disabled'} "
+        f"the Actions feature",
+        username=user.username, operation="config",
+    )
+    return {"ok": True, "enabled": store.actions_enabled}
 
 
 # ── API: connections (admin-defined, assigned to users) ───────────────────────

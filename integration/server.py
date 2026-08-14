@@ -44,7 +44,7 @@ def _may_enter(user: User) -> bool:
 
 
 app = build_surface_app(
-    title="Process Mining Demonstrator — Integration",
+    title="Process Mining - Integration",
     audience="integration",
     cookie_name=SESSION_COOKIE,
     dist_dir=DIST_DIR,

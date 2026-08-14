@@ -64,6 +64,7 @@ INTERNAL_KEY_PATH = CERTS_DIR / "internal.key"
 GUI_PID_PATH = DATA_DIR / "gui.pid"
 ADMIN_PID_PATH = DATA_DIR / "admin.pid"
 INTEGRATION_PID_PATH = DATA_DIR / "integration.pid"
+ACTIONS_PID_PATH = DATA_DIR / "actions.pid"
 
 BACKEND_HOST = os.environ.get("PMW_BACKEND_HOST", "127.0.0.1")
 BACKEND_PORT = int(os.environ.get("PMW_BACKEND_PORT", "8000"))
@@ -88,6 +89,15 @@ INTEGRATION_HOST = os.environ.get("PMW_INTEGRATION_HOST", ADMIN_HOST)
 INTEGRATION_PORT = int(os.environ.get("PMW_INTEGRATION_PORT", str(ADMIN_PORT + 10)))
 INTEGRATION_HTTPS_PORT = int(
     os.environ.get("PMW_INTEGRATION_HTTPS_PORT", str(ADMIN_HTTPS_PORT + 10))
+)
+
+# The Actions authoring surface runs on its own port — by convention the admin port
+# + 20 (HTTP 8110 / HTTPS 8473 with the defaults). It follows the same shared TLS
+# plan as the app + admin + integration, and only developers and admins may sign in.
+ACTIONS_HOST = os.environ.get("PMW_ACTIONS_HOST", ADMIN_HOST)
+ACTIONS_PORT = int(os.environ.get("PMW_ACTIONS_PORT", str(ADMIN_PORT + 20)))
+ACTIONS_HTTPS_PORT = int(
+    os.environ.get("PMW_ACTIONS_HTTPS_PORT", str(ADMIN_HTTPS_PORT + 20))
 )
 
 # File sources for the integration console read from this sandbox directory by default —

@@ -38,6 +38,7 @@ Four independent Python processes:
 | **GUI Server** (`frontend/`) | 8080 / 8443 | Serves the React SPA and proxies `/api/*`; binds HTTP and/or HTTPS per the TLS mode |
 | **Admin Interface** (`admin/`) | 8090 / 8453 | TLS/certificate management, the user allow-list, and per-user database connections |
 | **Integration Console** (`integration/`) | 8100 / 8463 | Data-source configuration; developers and admins only |
+| **Actions** (`actions/`) | 8110 / 8473 | Author business-readable node-menu actions; developers and admins only (off until an admin enables it) |
 
 ```
 Browser ──► GUI Server (:8080 / :8443) ──proxy /api──► Compute Backend (:8000) ──► Exasol
@@ -46,6 +47,8 @@ Browser ──► GUI Server (:8080 / :8443) ──proxy /api──► Compute B
 Admin ────► Admin Interface (:8090 / :8453) ──► security store (users, certificates, TLS mode, connections)
 
 Developer ► Integration Console (:8100 / :8463) ──► data-source configuration (same sign-in, role-gated)
+
+Developer ► Actions (:8110 / :8473) ──► author node-menu actions (DSL → filter-guided SQL; run from the app)
 ```
 
 The GUI, admin and integration surfaces share one sign-in stack (password, TOTP
@@ -82,7 +85,7 @@ python3.13 -m venv .venv
 ## Running
 
 ```bash
-./run.sh            # backend :8000 + GUI :8080/:8443 + admin :8090 + integration :8100
+./run.sh            # backend :8000 + GUI :8080/:8443 + admin :8090 + integration :8100 + actions :8110
 ```
 
 Then open the app at <http://127.0.0.1:8080>, the admin interface at

@@ -817,6 +817,7 @@ def build_surface_app(
             "mfaEnabled": user.mfa_enabled if user else False,
             "requireLogin": store.require_login,
             "idleTimeoutMins": store.idle_timeout_mins,
+            "actionsEnabled": store.actions_enabled,
         }
         response = JSONResponse(payload)
         # Polling this (the client does so on activity) slides the idle window.

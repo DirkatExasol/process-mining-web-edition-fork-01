@@ -36,6 +36,7 @@ import type {
   TransitionMetric,
 } from './types'
 import type { LoginAppearance } from './loginAppearance'
+import type { ActionRunResult, ActionSpec, SavedAction } from './actions/types'
 
 /** The signed-in user payload returned by password, passkey and MFA sign-in. */
 export interface AuthUser {
@@ -108,6 +109,7 @@ export const api = {
       authSource: string | null
       requireLogin: boolean
       idleTimeoutMins: number
+      actionsEnabled: boolean
       passkeyAllowed: boolean
       mfaAllowed: boolean
       mfaEnabled: boolean
@@ -405,6 +407,50 @@ export const api = {
       connectionId,
       prompt,
     }),
+
+  // ── actions (saved node-menu actions, per connection + project) ───────────
+  listActions: (projectId: string, connectionId: string) =>
+    get<{ actions: SavedAction[] }>(
+      `/api/projects/${enc(projectId)}/actions?connectionId=${enc(connectionId)}`,
+    ),
+  createAction: (
+    projectId: string,
+    body: { connectionId: string; name: string; script: string; spec: ActionSpec; enabled: boolean },
+  ) => post<SavedAction>(`/api/projects/${enc(projectId)}/actions`, body),
+  updateAction: (
+    projectId: string,
+    actionId: string,
+    body: { connectionId: string; name: string; script: string; spec: ActionSpec; enabled: boolean },
+  ) => put<SavedAction>(`/api/projects/${enc(projectId)}/actions/${enc(actionId)}`, body),
+  deleteAction: (projectId: string, actionId: string, connectionId: string) =>
+    del<{ ok: boolean }>(
+      `/api/projects/${enc(projectId)}/actions/${enc(actionId)}?connectionId=${enc(connectionId)}`,
+    ),
+  runAction: (
+    projectId: string,
+    actionId: string,
+    body: { connectionId: string; filter: FilterSpec; contextNode: string; resolvedSteps: string[] },
+  ) => post<ActionRunResult>(`/api/projects/${enc(projectId)}/actions/${enc(actionId)}/run`, body),
+  previewRunAction: (
+    projectId: string,
+    body: {
+      connectionId: string
+      spec: ActionSpec
+      filter: FilterSpec
+      contextNode: string
+      resolvedSteps: string[]
+    },
+  ) => post<ActionRunResult>(`/api/projects/${enc(projectId)}/actions/preview-run`, body),
+  previewActionSql: (
+    projectId: string,
+    body: {
+      connectionId: string
+      spec: ActionSpec
+      filter: FilterSpec
+      contextNode: string
+      resolvedSteps: string[]
+    },
+  ) => post<{ sql: string }>(`/api/projects/${enc(projectId)}/actions/preview-sql`, body),
 
   // ── settings ─────────────────────────────────────────────────────────────
   settings: () => get<Record<string, unknown>>('/api/settings'),

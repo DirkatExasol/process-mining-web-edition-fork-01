@@ -1579,6 +1579,44 @@ const integrationMonitoring: HelpTopic = {
   ],
 }
 
+const actions: HelpTopic = {
+  id: 'actions',
+  title: 'Actions',
+  subtitle: 'Business-readable queries on the process map',
+  icon: '⚡',
+  sections: [
+    {
+      heading: 'What actions are',
+      body: [
+        p('An action is a small, business-readable script attached to process-map nodes. From a node’s menu you can, for example, show the last log entries from that node, from the steps around it, or a transition table for everything that follows — all honouring the filters you currently have set on the chart.'),
+        p('Actions are written and saved on the separate Actions site (developers and administrators only) and run from the app by anyone except a plain standard user. The whole feature is off until an administrator enables it in the admin panel’s Actions tab.'),
+      ],
+    },
+    {
+      heading: 'The script language',
+      body: [
+        p('Each action is a few clauses. Keywords are case-insensitive, and NODE/NODES and ENTRY/ENTRIES are interchangeable:'),
+        ul(
+          'AVAILABILITY — where the action appears: ALL NODES, or a comma-separated list of step names (e.g. LOGIN, LOGOUT, PAYMENT).',
+          'SHOW — LAST [N] LOG ENTRIES (N defaults to 1), or TRANSITION TABLE WITH one or more metrics: "COUNT", "%JOURNEY%", "%OUTGOING%", "AVG TIME", "MIN TIME", "MAX TIME", "STD DEV" (short forms like AVG/MIN/MAX/STDDEV/PERCENTAGE also work), or TRANSITION TABLE WITH ALL METRICS for every metric at once.',
+          'FROM — NODE(…) relative to the clicked node: THIS, PREVIOUS, FOLLOWING, ALL FOLLOWING, ALL PREVIOUS (combine them, e.g. NODE(THIS, ALL FOLLOWING)).',
+          'SORT — ASCENDING or DESCENDING (log entries by time; default most-recent-first).',
+          'WHERE — an optional filter; this version supports EVENT_ID :: [id, id, …].',
+        ),
+        code('AVAILABILITY\n\tPAYMENT\nSHOW\n\tLAST 1 LOG ENTRY\nFROM\n\tNODE(THIS)\nSORT\n\tDESCENDING'),
+        p('The builder validates the script live, restates it in plain English, and shows the exact SQL it will run. A Test panel runs it against a node of your choosing so you can see real rows before saving.'),
+      ],
+    },
+    {
+      heading: 'Running an action',
+      body: [
+        p('In the process map, click a node and pick the action from the Actions section of its menu — only actions whose AVAILABILITY matches that node are listed. The result (log entries or a transition table) opens over the map.'),
+        tip('Actions always respect the chart’s current filters — date range, included/excluded steps, meta filters, ranges and the sample set — so the same action answers a different question as you narrow the view.'),
+      ],
+    },
+  ],
+}
+
 export const HELP_TOPICS: HelpTopic[] = [
   overview,
   database,
@@ -1608,6 +1646,7 @@ export const HELP_TOPICS: HelpTopic[] = [
   sampling,
   aiDocumentation,
   notes,
+  actions,
   // Integration console chapters — grouped under one developer-only TOC sub-menu.
   integrationConsole,
   integrationSources,

@@ -698,3 +698,69 @@ def test_duration_buckets_empty_returns_no_buckets():
     from app.models import FilterSpec as _FS
     r, mgr = _cap_repo([])
     assert asyncio.run(r.load_duration_buckets("proj", _FS())) == []
+
+
+# ── Actions: raw log-entry query (SHOW LAST N LOG ENTRIES FROM NODE(...)) ─────
+
+
+def test_log_entries_sql_scopes_by_step_order_and_limit():
+    from app.models import FilterSpec as _FS
+
+    r = repo()
+    sql = r._log_entries_sql(
+        "proj", ["PAYMENT", "LOGIN"], _FS(), event_ids=None, limit=5, descending=True
+    )
+    assert "SELECT EVENT_ID, STEP, EVENT_TIME, META_1, META_2, META_3" in sql
+    assert "STEP IN ('PAYMENT', 'LOGIN')" in sql
+    assert "ORDER BY EVENT_TIME DESC, STEP_ID DESC" in sql
+    assert "LIMIT 5" in sql
+    # Project scope + the sample-set fragment are always applied.
+    assert "WHERE PROJECT_ID = 'proj'" in sql
+    assert "SAMPLE_SET = 'ORIGINAL'" in sql
+
+
+def test_log_entries_sql_ascending_and_clamps_the_limit():
+    from app.models import FilterSpec as _FS
+
+    r = repo()
+    sql = r._log_entries_sql("proj", ["A"], _FS(), event_ids=None, limit=10_000, descending=False)
+    assert "ORDER BY EVENT_TIME ASC, STEP_ID ASC" in sql
+    assert "LIMIT 1000" in sql  # _MAX_LOG_ENTRIES
+
+
+def test_log_entries_sql_event_id_list_is_md5_normalised_and_escaped():
+    import hashlib
+
+    from app.models import FilterSpec as _FS
+
+    r = repo()
+    sql = r._log_entries_sql(
+        "proj", ["A"], _FS(), event_ids=["CRA-000124"], limit=1, descending=True
+    )
+    digest = hashlib.md5(b"CRA-000124").hexdigest()
+    assert f"EVENT_ID IN ('{digest}')" in sql  # business id hashed to the stored MD5
+
+    # An already-hashed 32-char hex id is used as-is; single quotes are escaped.
+    already = "0" * 32
+    sql2 = r._log_entries_sql("pr'oj", ["O'Brien"], _FS(), event_ids=[already], limit=1, descending=True)
+    assert f"EVENT_ID IN ('{already}')" in sql2
+    assert "STEP IN ('O''Brien')" in sql2 and "PROJECT_ID = 'pr''oj'" in sql2
+
+
+def test_load_log_entries_empty_steps_runs_no_query():
+    from app.models import FilterSpec as _FS
+
+    r, mgr = _cap_repo(rows=[["e1", "PAYMENT", datetime(2024, 1, 1), None, None, None]])
+    out = asyncio.run(r.load_log_entries("proj", [], _FS()))
+    assert out == {"columns": ["EVENT_ID", "STEP", "EVENT_TIME", "META_1", "META_2", "META_3"], "rows": []}
+    assert mgr.executed == []  # no steps ⇒ never touches the database
+
+
+def test_load_log_entries_shapes_rows():
+    from app.models import FilterSpec as _FS
+
+    rows = [["e1", "PAYMENT", datetime(2024, 1, 2, 3, 4, 5), "m1", None, "m3"]]
+    r, mgr = _cap_repo(rows=rows)
+    out = asyncio.run(r.load_log_entries("proj", ["PAYMENT"], _FS(), limit=1))
+    assert len(mgr.executed) == 1
+    assert out["rows"] == [["e1", "PAYMENT", "2024-01-02 03:04:05", "m1", None, "m3"]]

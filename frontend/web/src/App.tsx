@@ -74,6 +74,7 @@ export function App() {
       <>
         <ThemeSync />
         <LoginView
+          subtitle="Work-Bench"
           onSignedIn={() => {
             void initAfterAuth()
           }}

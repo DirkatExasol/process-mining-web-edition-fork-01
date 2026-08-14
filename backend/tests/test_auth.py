@@ -110,10 +110,20 @@ def test_session_reports_unauthenticated_and_require_login(gui):
         "authSource": None,
         "requireLogin": True,
         "idleTimeoutMins": 0,
+        "actionsEnabled": False,
         "passkeyAllowed": False,
         "mfaAllowed": False,
         "mfaEnabled": False,
     }
+
+
+def test_session_reports_actions_enabled_flag(gui):
+    server, store = gui
+    client = TestClient(server.app)
+    # Opt-in feature: off by default, flips when the admin enables it.
+    assert client.get("/auth/session").json()["actionsEnabled"] is False
+    store.set_actions_enabled(True)
+    assert client.get("/auth/session").json()["actionsEnabled"] is True
 
 
 def test_session_reports_and_refreshes_with_idle_timeout(gui):

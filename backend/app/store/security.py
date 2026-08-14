@@ -577,6 +577,19 @@ class SecurityStore:
             self._conn.commit()
 
     @property
+    def actions_enabled(self) -> bool:
+        """Whether the Actions feature is available: the Actions authoring surface is
+        served and the main app offers the node-menu "Actions" submenu. Opt-in, so
+        OFF by default until an admin turns it on."""
+        with self._lock:
+            return self._get_config("actions_enabled") == "1"
+
+    def set_actions_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._set_config("actions_enabled", "1" if enabled else "0")
+            self._conn.commit()
+
+    @property
     def idle_timeout_mins(self) -> int:
         """Auto sign-out after this many minutes of inactivity (0 = never)."""
         with self._lock:
@@ -1407,6 +1420,85 @@ class SecurityStore:
             if r.get("connectionId") == connection_id and r.get("projectId") == project_id:
                 return r.get("prompt") or None
         return None
+
+    # ── Actions (saved node-menu actions, per connection + project) ─────────────
+
+    def _actions_raw(self) -> list[dict]:
+        with self._lock:
+            raw = self._get_config("actions")
+        try:
+            data = json.loads(raw) if raw else []
+        except json.JSONDecodeError:
+            data = []
+        return data if isinstance(data, list) else []
+
+    def actions_for(self, connection_id: str, project_id: str) -> list[dict]:
+        """The saved actions for this (connection, project), in insertion order."""
+        cid, pid = (connection_id or "").strip(), (project_id or "").strip()
+        return [
+            dict(r)
+            for r in self._actions_raw()
+            if r.get("connectionId") == cid and r.get("projectId") == pid
+        ]
+
+    def action_by_id(self, connection_id: str, project_id: str, action_id: str) -> dict | None:
+        for r in self.actions_for(connection_id, project_id):
+            if r.get("id") == action_id:
+                return r
+        return None
+
+    def upsert_action(self, connection_id: str, project_id: str, action: dict) -> dict:
+        """Create or replace one saved action, keyed by (connection, project, id). The
+        caller supplies the id (a fresh uuid on create, the existing id on update)."""
+        cid, pid = (connection_id or "").strip(), (project_id or "").strip()
+        aid = (action.get("id") or "").strip()
+        if not cid or not pid:
+            raise ValueError("A connection and a project are required")
+        if not aid:
+            raise ValueError("An action id is required")
+        existing = self.action_by_id(cid, pid, aid)
+        now = _now()
+        record = {
+            "id": aid,
+            "connectionId": cid,
+            "projectId": pid,
+            "name": (action.get("name") or "").strip()[:200],
+            "script": (action.get("script") or "")[:20000],
+            "spec": action.get("spec") or {},
+            "enabled": bool(action.get("enabled", True)),
+            "author": (action.get("author") or "").strip(),
+            "createdAt": (existing or {}).get("createdAt") or now,
+            "updatedAt": now,
+        }
+        rows = [
+            r
+            for r in self._actions_raw()
+            if not (
+                r.get("id") == aid
+                and r.get("connectionId") == cid
+                and r.get("projectId") == pid
+            )
+        ]
+        rows.append(record)
+        with self._lock:
+            self._set_config("actions", json.dumps(rows))
+            self._conn.commit()
+        return record
+
+    def delete_action(self, connection_id: str, project_id: str, action_id: str) -> None:
+        cid, pid = (connection_id or "").strip(), (project_id or "").strip()
+        rows = [
+            r
+            for r in self._actions_raw()
+            if not (
+                r.get("id") == action_id
+                and r.get("connectionId") == cid
+                and r.get("projectId") == pid
+            )
+        ]
+        with self._lock:
+            self._set_config("actions", json.dumps(rows))
+            self._conn.commit()
 
     # ── users ─────────────────────────────────────────────────────────────────
 

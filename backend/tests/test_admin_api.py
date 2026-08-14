@@ -501,6 +501,25 @@ def test_integration_endpoints_toggle_and_require_admin(admin):
     assert store.integration_enabled is True
 
 
+def test_actions_endpoints_toggle_and_require_admin(admin):
+    server, store = admin
+    anon = TestClient(server.app)
+    assert anon.get("/api/actions").status_code == 401
+    assert anon.post("/api/actions/enabled", json={"enabled": True}).status_code == 401
+
+    client = _login(server)
+    status = client.get("/api/actions").json()
+    # Opt-in: off by default, with the surface's ports reported.
+    assert status["enabled"] is False and status["httpPort"] and status["httpsPort"]
+
+    r = client.post("/api/actions/enabled", json={"enabled": True})
+    assert r.status_code == 200 and r.json()["enabled"] is True
+    assert store.actions_enabled is True
+    assert client.get("/api/actions").json()["enabled"] is True
+    client.post("/api/actions/enabled", json={"enabled": False})
+    assert store.actions_enabled is False
+
+
 def test_provision_schema_requires_admin(admin):
     server, _ = admin
     client = TestClient(server.app)

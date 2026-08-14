@@ -88,6 +88,13 @@ else
   echo "→ integration console (HTTP ${PMW_INTEGRATION_PORT:-8100} / HTTPS ${PMW_INTEGRATION_HTTPS_PORT:-8463}, per TLS mode)"
   "$VENV/python" integration/launch.py &
   pids+=($!)
+
+  # The Actions authoring surface — a fifth surface on the admin port + 20, for
+  # developers and admins. Follows the same TLS plan; enable it in the admin panel's
+  # Actions tab (it serves a disabled page until then).
+  echo "→ actions surface (HTTP ${PMW_ACTIONS_PORT:-8110} / HTTPS ${PMW_ACTIONS_HTTPS_PORT:-8473}, per TLS mode)"
+  "$VENV/python" actions/launch.py &
+  pids+=($!)
 fi
 
 wait

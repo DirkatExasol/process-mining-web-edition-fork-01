@@ -15,6 +15,8 @@ services:
       - "10453:8453"   # admin interface (HTTPS — active once TLS is enabled in admin)
       - "10100:8100"   # integration console (HTTP — power users / developers / admins)
       - "10463:8463"   # integration console (HTTPS — active once TLS is enabled in admin)
+      - "10110:8110"   # Actions surface (HTTP — developers / admins; off until enabled in admin)
+      - "10473:8473"   # Actions surface (HTTPS — active once TLS is enabled in admin)
     environment:
       # First-run bootstrap admin — override the default password (recommended).
       # PMW_DEFAULT_ADMIN_USER: "Administrator"
@@ -35,12 +37,14 @@ services:
     # only the parts affected by the change are rebuilt.
     develop:
       watch:
-        # Backend / admin / integration / GUI Python sources → rebuild the image.
+        # Backend / admin / integration / actions / GUI Python sources → rebuild.
         - path: ./backend
           action: rebuild
         - path: ./admin
           action: rebuild
         - path: ./integration
+          action: rebuild
+        - path: ./actions
           action: rebuild
         # Frontend (Python launcher + React SPA); node_modules/dist are outputs.
         - path: ./frontend

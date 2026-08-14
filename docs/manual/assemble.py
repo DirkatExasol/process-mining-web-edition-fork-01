@@ -24,7 +24,8 @@ PARTS = [
     (2, "Part II", "Using the Application", range(5, 12)),
     (3, "Part III", "Administration", range(12, 16)),
     (4, "Part IV", "The Integration Console", range(16, 21)),
-    (5, "Part V", "Reference", range(21, 99)),
+    (5, "Part V", "Reference", range(21, 25)),
+    (6, "Part VI", "Actions", range(25, 99)),
 ]
 
 DATE = datetime.date.today().strftime("%d %B %Y")

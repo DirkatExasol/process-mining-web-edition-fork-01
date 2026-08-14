@@ -600,6 +600,35 @@ def test_integration_enabled_defaults_on_and_toggles(security):
     assert store.integration_enabled is True
 
 
+def test_actions_enabled_defaults_off_and_toggles(security):
+    store = security.store
+    assert store.actions_enabled is False  # opt-in: off by default
+    store.set_actions_enabled(True)
+    assert store.actions_enabled is True
+    store.set_actions_enabled(False)
+    assert store.actions_enabled is False
+
+
+def test_actions_crud_are_scoped_to_connection_and_project(security):
+    store = security.store
+    spec = {"availability": {"allNodes": True, "steps": []}}
+    a = store.upsert_action("connA", "P1", {"id": "id1", "name": "One", "script": "s", "spec": spec})
+    assert a["id"] == "id1" and a["connectionId"] == "connA" and a["createdAt"]
+
+    # Isolated by (connection, project).
+    assert [x["id"] for x in store.actions_for("connA", "P1")] == ["id1"]
+    assert store.actions_for("connA", "P2") == []
+    assert store.actions_for("connB", "P1") == []
+
+    # Update in place keeps the id and createdAt, refreshes updatedAt.
+    b = store.upsert_action("connA", "P1", {"id": "id1", "name": "Renamed", "spec": spec})
+    assert b["name"] == "Renamed" and b["createdAt"] == a["createdAt"]
+    assert len(store.actions_for("connA", "P1")) == 1
+
+    store.delete_action("connA", "P1", "id1")
+    assert store.actions_for("connA", "P1") == []
+
+
 def test_connections_owned_by_filters_on_owner(security):
     store = security.store
     store.create_user("pat", "pw", is_admin=False)

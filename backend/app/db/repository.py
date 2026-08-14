@@ -7,6 +7,7 @@ results, edge cases and performance characteristics carry over unchanged.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from datetime import date, datetime, timedelta
@@ -45,6 +46,10 @@ _DATE_FORMATS = ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d")
 # result set (the query timeout bounds runtime, not the rows materialised/serialised).
 _MAX_PATH_ROWS = 10_000  # variant / route path listings
 _MAX_SUGGESTIONS = 100  # event-ID autocomplete
+_MAX_LOG_ENTRIES = 1_000  # Actions "SHOW LAST N LOG ENTRIES"
+
+# Column headers returned by load_log_entries (the raw JOURNEYS row shape).
+LOG_ENTRY_COLUMNS = ["EVENT_ID", "STEP", "EVENT_TIME", "META_1", "META_2", "META_3"]
 
 
 class ProjectBounds(NamedTuple):
@@ -600,6 +605,80 @@ class ProcessRepository:
         if not result.rows:
             return 0
         return as_int(result.rows[0][0])
+
+    @staticmethod
+    def _normalize_event_id(raw: str) -> str:
+        """Match the app's EVENT_ID convention: a 32-char hex string is already the
+        stored MD5; anything else (a business id like ``CRA-000124``) is MD5-hashed."""
+        raw = raw.strip()
+        is_md5 = len(raw) == 32 and all(c in "0123456789abcdefABCDEF" for c in raw)
+        return raw if is_md5 else hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+    def _log_entries_sql(
+        self,
+        project_id: str,
+        steps: list[str],
+        f: FilterSpec,
+        *,
+        event_ids: list[str] | None,
+        limit: int,
+        descending: bool,
+    ) -> str:
+        step_list = ", ".join(f"'{esc(s)}'" for s in steps)
+        clauses = self._all_filters(project_id, f, date_only=True)
+        clauses += f"\n                AND STEP IN ({step_list})"
+        if event_ids:
+            eid_list = ", ".join(
+                f"'{esc(self._normalize_event_id(e))}'" for e in event_ids if e.strip()
+            )
+            if eid_list:
+                clauses += f"\n                AND EVENT_ID IN ({eid_list})"
+        order = "DESC" if descending else "ASC"
+        return f"""
+            SELECT EVENT_ID, STEP, EVENT_TIME, META_1, META_2, META_3
+            FROM JOURNEYS
+            WHERE PROJECT_ID = '{esc(project_id)}'{clauses}
+            ORDER BY EVENT_TIME {order}, STEP_ID {order}
+            LIMIT {_clamp(limit, 1, _MAX_LOG_ENTRIES)}
+            """
+
+    async def load_log_entries(
+        self,
+        project_id: str,
+        steps: list[str],
+        f: FilterSpec,
+        *,
+        event_ids: list[str] | None = None,
+        limit: int = 1,
+        descending: bool = True,
+    ) -> dict[str, Any]:
+        """Raw JOURNEYS rows for the given steps (an Action's resolved node set),
+        honouring the chart filter ``f`` plus an optional EVENT_ID allow-list, newest
+        first by default. Returns ``{columns, rows}`` for a generic result table."""
+        if not steps:
+            return {"columns": LOG_ENTRY_COLUMNS, "rows": []}
+        result = await self.db.execute(
+            self._log_entries_sql(
+                project_id, steps, f, event_ids=event_ids, limit=limit, descending=descending
+            ),
+            timeout=QUERY_TIMEOUT_SECS,
+        )
+        rows: list[list[Any]] = []
+        for row in result.rows:
+            cells = (list(row) + [None] * 6)[:6]
+            eid, step, when = cells[0], cells[1], cells[2]
+            dt = parse_date(when)
+            rows.append(
+                [
+                    eid if isinstance(eid, str) else (str(eid) if eid is not None else None),
+                    step if isinstance(step, str) else (str(step) if step is not None else None),
+                    dt.isoformat(sep=" ") if dt else (str(when) if when is not None else None),
+                    clean_str(cells[3]),
+                    clean_str(cells[4]),
+                    clean_str(cells[5]),
+                ]
+            )
+        return {"columns": LOG_ENTRY_COLUMNS, "rows": rows}
 
     async def load_transitions(
         self, project_id: str, f: FilterSpec

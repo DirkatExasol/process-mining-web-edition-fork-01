@@ -52,6 +52,7 @@ import { addDays, fromISODate, toISODate } from './graph/format'
 import { migrateHappyPath } from './graph/happyPath'
 import { sankeySvg as sankeySvgString } from './flow/sankeySvg'
 import { authenticateWithPasskey } from './passkey'
+import type { SavedAction } from './actions/types'
 
 export type ABSide = 'a' | 'b'
 
@@ -146,6 +147,10 @@ export interface AppState {
   mfaSetupPending: string | null
   requireLogin: boolean
   idleTimeoutMins: number
+  /** Whether the admin has enabled the Actions feature (gates the node-menu submenu). */
+  actionsEnabled: boolean
+  /** Saved actions for the open (connection, project), enabled-only — listed in node menus. */
+  projectActions: SavedAction[]
   /** Set when the last sign-out was due to inactivity, so the login screen can say so. */
   signedOutForInactivity: boolean
 
@@ -349,6 +354,7 @@ export interface AppActions {
   currentFilterSpec: () => FilterSpec
   currentFilterSnapshot: () => FilterSnapshot
   resetFilters: () => void
+  loadProjectActions: () => Promise<void>
   reloadGraph: () => Promise<void>
   reloadGraphForDay: (day: string) => Promise<string | null>
   reloadABSide: (side: ABSide, from: string, to: string) => Promise<void>
@@ -469,6 +475,8 @@ const INITIAL_STATE: AppState = {
   mfaSetupPending: null,
   requireLogin: true,
   idleTimeoutMins: 0,
+  actionsEnabled: false,
+  projectActions: [],
   signedOutForInactivity: false,
 
   connections: [],
@@ -840,6 +848,7 @@ export const useStore = create<Store>((set, get) => {
         authIsDeveloper: s.authIsDeveloper,
         requireLogin: s.requireLogin,
         idleTimeoutMins: s.idleTimeoutMins,
+        actionsEnabled: s.actionsEnabled,
         connections: s.connections,
         manageableConnections: s.manageableConnections,
         assignableUsers: s.assignableUsers,
@@ -955,6 +964,7 @@ export const useStore = create<Store>((set, get) => {
           authMfaEnabled: s.authenticated ? s.mfaEnabled : false,
           requireLogin: s.requireLogin,
           idleTimeoutMins: s.idleTimeoutMins ?? 0,
+          actionsEnabled: s.actionsEnabled ?? false,
         })
         if (s.authenticated) void get().refreshManageable()
       } catch {
@@ -1245,6 +1255,9 @@ export const useStore = create<Store>((set, get) => {
           queryMs: result.queryMs,
         })
 
+        // Load this project's saved node-menu actions (no-op unless the feature is on).
+        void get().loadProjectActions()
+
         // Seed the other chart modes with the same window and real bounds.
         const seed = defaultChartState(fromDate, toDate, {
           minStepsFilter: boot.stepCountMin,
@@ -1467,6 +1480,25 @@ export const useStore = create<Store>((set, get) => {
         ...(side === 'a' ? { abMetricA: metric } : { abMetricB: metric }),
       })
       if (s.abActiveSide === side) set({ transitionMetric: metric })
+    },
+
+    // ── actions (node-menu) ───────────────────────────────────────────────
+
+    loadProjectActions: async () => {
+      const s = get()
+      const connId = s.connection.activeProfileId
+      const projectId = s.selectedProject?.projectId
+      const runRole = s.authIsPower || s.authIsDeveloper || s.authIsAdmin
+      if (!s.actionsEnabled || !runRole || !connId || !projectId) {
+        set({ projectActions: [] })
+        return
+      }
+      try {
+        const r = await api.listActions(projectId, connId)
+        set({ projectActions: r.actions.filter((a) => a.enabled) })
+      } catch {
+        set({ projectActions: [] }) // never block the chart on this
+      }
     },
 
     // ── filters ───────────────────────────────────────────────────────────
