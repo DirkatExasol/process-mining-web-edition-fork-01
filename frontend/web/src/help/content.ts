@@ -422,7 +422,7 @@ const adminDirectory: HelpTopic = {
           'Test server connection checks the server and service bind alone; Test a user login also resolves and signs in a directory account.',
           'On first successful sign-in a directory user is created locally as a plain, enabled account, so you can assign connections and, if you wish, the admin role.',
         ),
-        p('While a directory is configured, the app’s sign-in panel shows a small status light — green when the directory server answers a connection test, red when it does not. The light is hidden entirely when no directory is configured.'),
+        p('While a directory is configured, the app’s sign-in panel shows a small status light — green when the directory server answers a connection test, red when it does not. The light is hidden entirely when no directory is configured, and you can also hide it while keeping directory sign-in on with the “Show the Authentication Server availability indicator on the login panels” switch in the banner — it governs both the app and admin login panels.'),
         p('By default the admin interface stays local-only. Tick “Also allow directory sign-in to this admin interface” to let directory accounts sign in here too — but only after one has been promoted to admin in the Users tab. Local administrators always work regardless, as a break-glass route.'),
         tip('Admin is never granted from the directory — a directory user stays a normal user until a local admin promotes them.'),
       ],
@@ -520,7 +520,7 @@ const chartViews: HelpTopic = {
         p('A switch floating over the canvas (top-centre) toggles between two layouts of the same journey:'),
         ul(
           'Flowchart — the directed-follows graph, where a revisited step is drawn as a loop back to the same node.',
-          'Swimlane — the journey laid out strictly left-to-right, one column per event in time order, with a lane per node group (coloured by the group). A revisited step simply appears again further right, so there are no loops. A header row above the top lane shows each event’s date/time, and every edge shows the time taken from one node to the next. It pans and zooms, with a zoom cluster (out / in / fit / reset) in the lower-right corner like the flowchart.',
+          'Swimlane — the journey laid out strictly left-to-right, one column per event in time order, with a lane per node group (coloured by the group). A revisited step simply appears again further right, so there are no loops. A header row above the top lane shows each event’s date/time, and every edge shows the time taken from one node to the next. Below the lanes a cumulative-value line chart plots the running sum of the step scores from the start (a YTD-style total) — a green/red marker per step showing whether it added or subtracted value — so you can read the journey’s value develop from start to end. It pans and zooms as one, with a zoom cluster (out / in / fit / reset) in the lower-right corner like the flowchart.',
         ),
         tip('The swimlane is only for a single journey — it is never used for the aggregated views, where loops are meaningful.'),
         tip('A live suggestion dropdown appears as you type. Each EVENT_ID keeps its own saved node layout (flowchart).'),
@@ -1331,7 +1331,7 @@ const configuration: HelpTopic = {
       heading: 'KPIs, steps and preferences',
       body: [
         p('The KPIs sub-section lets you drag to reorder the KPI tiles and toggle each one on or off. The Steps sub-section is the in-app Step Editor: pick a step, then set its background/foreground colour, shape, score, group and description — changes are written straight to the STEPS table and the map redraws.'),
-        p('Backup & Restore and the LLM prompt template editor also live in this section. Theme (System / Light / Dark) is chosen from the bar at the bottom of the sidebar. (Sign-in is now managed centrally in the admin interface, so there is no per-client authentication toggle here.)'),
+        p('The AI related sub-section holds the LLM Prompt editor — the report analysis instruction, stored per connection and project (the same mapping the admin Reporting tab manages). It is shown only to power users, developers and administrators; regular users do not see it. Theme (System / Light / Dark) is chosen from the bar at the bottom of the sidebar. (Sign-in is now managed centrally in the admin interface, so there is no per-client authentication toggle here.)'),
       ],
     },
   ],

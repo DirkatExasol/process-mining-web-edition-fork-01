@@ -209,6 +209,7 @@ CREATE TABLE IF NOT EXISTS ldap_config (
     email_attr        TEXT NOT NULL DEFAULT 'mail',
     display_attr      TEXT NOT NULL DEFAULT 'cn',
     admin_login_enabled INTEGER NOT NULL DEFAULT 0,
+    show_status_on_login INTEGER NOT NULL DEFAULT 1,
     updated_at        TEXT NOT NULL DEFAULT ''
 );
 """
@@ -504,6 +505,12 @@ class SecurityStore:
         if "admin_login_enabled" not in ldap_cols:
             self._conn.execute(
                 "ALTER TABLE ldap_config ADD COLUMN admin_login_enabled INTEGER NOT NULL DEFAULT 0"
+            )
+        # Whether the login panels show the "Authentication Server" availability LED. Defaults
+        # to on (1) so existing installs keep their current behaviour; admins can hide it.
+        if "show_status_on_login" not in ldap_cols:
+            self._conn.execute(
+                "ALTER TABLE ldap_config ADD COLUMN show_status_on_login INTEGER NOT NULL DEFAULT 1"
             )
         # The former "connectors" table was renamed to "source_types" (a source type is
         # a name + extraction spec; the old source/source_type columns are dropped).
@@ -896,6 +903,7 @@ class SecurityStore:
                 "emailAttr": "mail",
                 "displayAttr": "cn",
                 "adminLoginEnabled": False,
+                "showStatusOnLogin": True,
             }
         return {
             "enabled": bool(row["enabled"]),
@@ -911,6 +919,7 @@ class SecurityStore:
             "emailAttr": row["email_attr"],
             "displayAttr": row["display_attr"],
             "adminLoginEnabled": self._row_flag(row, "admin_login_enabled"),
+            "showStatusOnLogin": self._row_flag(row, "show_status_on_login", default=True),
         }
 
     @property
@@ -924,9 +933,19 @@ class SecurityStore:
         return bool(row and row["enabled"] and self._row_flag(row, "admin_login_enabled"))
 
     @staticmethod
-    def _row_flag(row: sqlite3.Row, name: str) -> bool:
+    def _row_flag(row: sqlite3.Row, name: str, default: bool = False) -> bool:
         """Read an optional boolean column that may predate a migration."""
-        return bool(row[name]) if name in row.keys() else False
+        return bool(row[name]) if name in row.keys() else default
+
+    @property
+    def ldap_show_status_on_login(self) -> bool:
+        """Whether the login panels show the directory-server availability LED.
+
+        Only meaningful when a directory is configured; defaults to on so the LED
+        keeps appearing unless an admin turns it off."""
+        with self._lock:
+            row = self._ldap_row()
+        return self._row_flag(row, "show_status_on_login", default=True) if row else True
 
     def ldap_settings(self):
         """Build the LdapSettings used for authentication (bind password decrypted)."""
@@ -967,8 +986,8 @@ class SecurityStore:
                 INSERT INTO ldap_config
                     (id, enabled, server_uri, start_tls, verify_cert, ca_cert, bind_dn,
                      bind_password_enc, base_dn, user_filter, login_attr, email_attr,
-                     display_attr, admin_login_enabled, updated_at)
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     display_attr, admin_login_enabled, show_status_on_login, updated_at)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     enabled=excluded.enabled, server_uri=excluded.server_uri,
                     start_tls=excluded.start_tls, verify_cert=excluded.verify_cert,
@@ -977,6 +996,7 @@ class SecurityStore:
                     user_filter=excluded.user_filter, login_attr=excluded.login_attr,
                     email_attr=excluded.email_attr, display_attr=excluded.display_attr,
                     admin_login_enabled=excluded.admin_login_enabled,
+                    show_status_on_login=excluded.show_status_on_login,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -993,6 +1013,7 @@ class SecurityStore:
                     (data.get("emailAttr") or "mail").strip(),
                     (data.get("displayAttr") or "cn").strip(),
                     int(bool(data.get("adminLoginEnabled"))),
+                    int(bool(data.get("showStatusOnLogin", True))),
                     _now(),
                 ),
             )

@@ -986,6 +986,11 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       </label>
       <p class="subtle" style="margin:0">A directory account can only reach the admin interface once it has been promoted to
         <strong>admin</strong> in the Users tab. Local administrators always work regardless of this setting.</p>
+      <label class="row" style="font-size:13px; cursor:pointer">
+        <input type="checkbox" id="l_showStatus" style="width:auto"> Show the <strong>Authentication Server</strong> availability indicator on the login panels
+      </label>
+      <p class="subtle" style="margin:0">When on, both the app and admin sign-in panels display a live LED that reports whether the
+        directory server is reachable. Turn it off to hide that indicator from users.</p>
     </div>
     <div class="grid2" style="margin-top:14px; border-bottom:1px solid var(--border); padding-bottom:18px; align-items:stretch">
       <div class="col">
@@ -2705,6 +2710,7 @@ async function loadLdap() {
   const c = await api('/api/ldap');
   $('l_enabled').checked = !!c.enabled;
   $('l_adminLogin').checked = !!c.adminLoginEnabled;
+  $('l_showStatus').checked = c.showStatusOnLogin !== false;
   $('l_uri').value = c.serverURI || '';
   $('l_startTls').checked = !!c.startTLS;
   $('l_verify').checked = c.verifyCert !== false;
@@ -2723,6 +2729,7 @@ function ldapBody() {
   const body = {
     enabled: $('l_enabled').checked,
     adminLoginEnabled: $('l_adminLogin').checked,
+    showStatusOnLogin: $('l_showStatus').checked,
     serverURI: $('l_uri').value.trim(),
     startTLS: $('l_startTls').checked,
     verifyCert: $('l_verify').checked,

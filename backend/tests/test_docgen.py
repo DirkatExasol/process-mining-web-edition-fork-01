@@ -67,6 +67,26 @@ def test_journey_paths_section_builds_html_table():
     assert "**Total Journeys:** 5" in section
 
 
+def test_conformance_section_neutralises_hostile_step_names():
+    # A DB step name (shared JOURNEYS table → another user's report) that tries to break out
+    # of the pipe-table row with a newline + <table> must not do so: newlines/pipes are
+    # stripped from the cell, so the markdown stays one clean row and the rendered HTML (with
+    # the report's default allow_raw_html=False) contains no injected raw <table>.
+    from app.models import ProcessGraph
+    from app.services import report as R
+    from .conftest import edge, step as mkstep
+
+    hostile = "Login\n\n<table><tr><td>PWNED"
+    steps = {hostile: mkstep(hostile), "B": mkstep("B")}
+    graph = ProcessGraph(steps=steps, transitions=[edge(hostile, "B", count=10)])
+    md = docgen.conformance_section(graph, {"Count": {f"{hostile}->B": 50.0}}, TransitionMetric.count)
+    assert "\n\n<table" not in md  # the hostile newline+<table> never starts a fresh line
+    rendered = R.md_to_html(md)  # default allow_raw_html=False → the legit pipe table renders,
+    # but the hostile payload is escaped INSIDE a cell (never an injected element).
+    assert "&lt;table&gt;&lt;tr&gt;&lt;td&gt;PWNED" in rendered
+    assert "<td>PWNED" not in rendered  # never a real breakout element
+
+
 def test_conformance_section_flags_violations():
     graph = _graph()
     # Count norms are percentages of a node's outgoing traffic. A→B is 100% of A's

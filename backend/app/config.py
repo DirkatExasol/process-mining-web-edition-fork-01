@@ -16,13 +16,15 @@ def _read_app_version() -> str:
     built-in default applies when neither is present."""
     env = os.environ.get("PMW_APP_VERSION")
     if env and env.strip():
-        return env.strip()
+        return env.strip()[:120]
     version_file = Path(os.environ.get("PMW_APP_VERSION_FILE", PROJECT_ROOT / "VERSION"))
     try:
-        text = version_file.read_text(encoding="utf-8").strip()
-        if text:
-            return text
-    except OSError:
+        # Only the FIRST line, capped — so a misconfigured PMW_APP_VERSION_FILE pointing at
+        # some other file can't surface its whole contents on the (pre-auth) login pages.
+        first_line = version_file.read_text(encoding="utf-8").splitlines()[0].strip()
+        if first_line:
+            return first_line[:120]
+    except (OSError, IndexError):
         pass
     return "V0.95  - Milford Sound"
 

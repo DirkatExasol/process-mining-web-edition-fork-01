@@ -590,7 +590,7 @@ async def api_directory_status() -> Response:
     up (the client then shows nothing); reachability is the cached service-bind probe,
     run off the event loop so a slow server never blocks the page.
     """
-    if not store.ldap_enabled:
+    if not store.ldap_enabled or not store.ldap_show_status_on_login:
         return JSONResponse({"configured": False, "available": False})
 
     now = time.monotonic()
@@ -2129,6 +2129,7 @@ class LdapConfigBody(BaseModel):
     emailAttr: str = "mail"
     displayAttr: str = "cn"
     adminLoginEnabled: bool = False
+    showStatusOnLogin: bool = True
 
 
 class LdapTestBody(LdapConfigBody):
@@ -2150,6 +2151,7 @@ def _ldap_payload(body: LdapConfigBody) -> dict:
         "emailAttr": body.emailAttr,
         "displayAttr": body.displayAttr,
         "adminLoginEnabled": body.adminLoginEnabled,
+        "showStatusOnLogin": body.showStatusOnLogin,
     }
     if body.bindPassword is not None:
         data["bindPassword"] = body.bindPassword

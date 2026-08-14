@@ -325,13 +325,15 @@ Distributing by EVENT_ID co-locates all events of one journey on one cluster nod
 
 <h3 id="ldap-enable">14.7.1 Enabling directory sign-in</h3>
 
-<p>Two checkboxes sit in the top banner:</p>
+<p>Three checkboxes sit in the top banner:</p>
 
 <dl>
 <dt>Enable directory sign-in for the main app</dt>
 <dd>Turns on LDAP authentication for the application itself.</dd>
 <dt>Also allow directory sign-in to this admin interface</dt>
 <dd>Extends it to the admin interface. Note the accompanying text: &ldquo;A directory account can only reach the admin interface once it has been promoted to <b>admin</b> in the Users tab. Local administrators always work regardless of this setting.&rdquo;</dd>
+<dt>Show the Authentication Server availability indicator on the login panels</dt>
+<dd>Controls the small availability LED shown below the sign-in form (see <a href="#ch05">Signing in</a>). When on (the default), both the app and admin login panels display a live green/red indicator reporting whether the directory server is reachable. Turn it off to hide that indicator from users while keeping directory sign-in working. This setting only has an effect once a directory is configured.</dd>
 </dl>
 
 <div class="warn"><strong>Warning</strong> The administrator role is never granted by the directory. Group membership, directory attributes and organisational units confer nothing; every role is granted explicitly in the Users tab. Keep at least one <em>local</em> administrator account &mdash; it is your break-glass access if the directory becomes unreachable.</div>

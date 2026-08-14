@@ -394,6 +394,18 @@ export const api = {
   ) =>
     post<DocumentationResponse>(`/api/projects/${enc(projectId)}/documentation`, payload),
 
+  // The report analysis prompt for a (connection, project). Power/developer/admin only —
+  // the same mapping the admin Reporting tab manages.
+  reportPrompt: (projectId: string, connectionId: string) =>
+    get<{ prompt: string }>(
+      `/api/projects/${enc(projectId)}/report-prompt?connectionId=${enc(connectionId)}`,
+    ),
+  setReportPrompt: (projectId: string, connectionId: string, prompt: string) =>
+    put<{ prompt: string }>(`/api/projects/${enc(projectId)}/report-prompt`, {
+      connectionId,
+      prompt,
+    }),
+
   // ── settings ─────────────────────────────────────────────────────────────
   settings: () => get<Record<string, unknown>>('/api/settings'),
   patchSettings: (values: Record<string, unknown>) =>

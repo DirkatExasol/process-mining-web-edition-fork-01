@@ -15,6 +15,7 @@ import type {
 } from '../types'
 import { formatSecs } from '../graph/format'
 import { useSetting } from '../settings'
+import { api } from '../api'
 import { DEFAULT_LLM_PROMPT, useStore } from '../store'
 import { AuthFooter } from './AuthFooter'
 import { ConnectionEditor } from './ConnectionEditor'
@@ -1090,6 +1091,10 @@ function EventIdFilter() {
 
 function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
   const store = useStore()
+  // The LLM/report prompt is a power/developer/admin capability (same bar as connection
+  // management); regular users don't see it at all.
+  const canEditPrompt =
+    store.authIsPower || store.authIsAdmin || store.authIsDeveloper
   const [showGrouping, setShowGrouping] = useSetting<boolean>('processmap.showGrouping')
   const [startMode, setStartMode] = useSetting<GraphStartMode>('graph.startMode')
   const [showDescriptions, setShowDescriptions] = useSetting<boolean>(
@@ -1332,26 +1337,32 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
         </div>
       )}
 
-      <SubHeader
-        icon="✨"
-        title="AI related"
-        open={aiOpen}
-        onToggle={() => setAiOpen(!aiOpen)}
-      />
-      {aiOpen && (
-        <div className="row" style={{ padding: '8px 20px', gap: 10 }}>
-          <span aria-hidden className="fg-secondary">
-            💬
-          </span>
-          <span className="t-caption fg-secondary spacer">LLM Prompt</span>
-          <button
-            className="btn small"
-            disabled={!store.selectedProject}
-            onClick={onEditPrompt}
-          >
-            Edit
-          </button>
-        </div>
+      {/* The report analysis prompt is editable by power users, developers and admins only
+          (regular users never see it). It is stored per (connection, project). */}
+      {canEditPrompt && (
+        <>
+          <SubHeader
+            icon="✨"
+            title="AI related"
+            open={aiOpen}
+            onToggle={() => setAiOpen(!aiOpen)}
+          />
+          {aiOpen && (
+            <div className="row" style={{ padding: '8px 20px', gap: 10 }}>
+              <span aria-hidden className="fg-secondary">
+                💬
+              </span>
+              <span className="t-caption fg-secondary spacer">LLM Prompt</span>
+              <button
+                className="btn small"
+                disabled={!store.selectedProject || !store.connection.activeProfileId}
+                onClick={onEditPrompt}
+              >
+                Edit
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -1398,21 +1409,54 @@ function KpiToggleRow({
   )
 }
 
+// Edits the report analysis prompt stored for the CURRENT (connection, project) — the same
+// mapping the admin Reporting tab manages. Power/developer/admin only.
 function PromptEditorSheet({ onClose }: { onClose: () => void }) {
   const store = useStore()
-  const [text, setText] = useState(store.llmPromptTemplate)
+  const projectId = store.selectedProject?.projectId ?? ''
+  const connectionId = store.connection.activeProfileId ?? ''
+  const [text, setText] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    if (!projectId || !connectionId) {
+      setLoading(false)
+      return
+    }
+    api
+      .reportPrompt(projectId, connectionId)
+      .then((r) => !cancelled && setText(r.prompt || ''))
+      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => !cancelled && setLoading(false))
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, connectionId])
+
+  const save = async () => {
+    if (!connectionId || !projectId) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api.setReportPrompt(projectId, connectionId, text.trim())
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setBusy(false)
+    }
+  }
 
   return (
     <Sheet
-      title="LLM Prompt Template"
+      title="Report Analysis Prompt"
       onClose={onClose}
       footer={
         <>
-          <button
-            className="btn"
-            onClick={() => setText(DEFAULT_LLM_PROMPT)}
-          >
-            Reset to Default
+          <button className="btn" onClick={() => setText(DEFAULT_LLM_PROMPT)}>
+            Use Default
           </button>
           <span className="spacer" />
           <button className="btn" onClick={onClose}>
@@ -1420,10 +1464,8 @@ function PromptEditorSheet({ onClose }: { onClose: () => void }) {
           </button>
           <button
             className="btn prominent"
-            onClick={() => {
-              store.setLLMPromptTemplate(text)
-              onClose()
-            }}
+            disabled={busy || loading || !connectionId}
+            onClick={() => void save()}
           >
             Save
           </button>
@@ -1431,13 +1473,20 @@ function PromptEditorSheet({ onClose }: { onClose: () => void }) {
       }
     >
       <div className="t-caption fg-secondary">
-        This prompt is sent to the LLM together with the current transition table. Use it
-        to guide the analysis style and output format.
+        This instruction is sent to the report LLM together with the current transition
+        table. It is stored for the current <b>connection</b> and <b>project</b>, so each
+        process can carry its own analysis style. Leave it empty to use the built-in default.
       </div>
+      {error && (
+        <div className="t-caption" style={{ color: 'var(--red)' }}>
+          {error}
+        </div>
+      )}
       <textarea
         className="text-input"
         style={{ minHeight: 220 }}
-        value={text}
+        value={loading ? 'Loading…' : text}
+        disabled={loading}
         onChange={(e) => setText(e.target.value)}
       />
     </Sheet>

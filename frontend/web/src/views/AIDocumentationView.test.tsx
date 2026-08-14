@@ -34,8 +34,9 @@ describe('AIDocumentationView', () => {
     const frame = container.querySelector('iframe.ai-report-frame') as HTMLIFrameElement
     expect(frame).not.toBeNull()
     expect(frame.getAttribute('srcdoc')).toContain('healthy and efficient')
-    // The frame is same-origin (so the host can print it) and allows its own scripts.
-    expect(frame.getAttribute('sandbox')).toBe('allow-same-origin allow-scripts allow-modals')
+    // The frame is same-origin (so the host can print it and wire its links) but is NOT
+    // script-enabled — the report is static, so a sanitiser bypass can't run with our origin.
+    expect(frame.getAttribute('sandbox')).toBe('allow-same-origin allow-modals')
 
     // "Save as PDF" prints the on-screen report frame directly (no blob: — a strict CSP can
     // forbid blob: documents).

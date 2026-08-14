@@ -54,6 +54,59 @@ def _require_power() -> None:
         )
 
 
+def _require_power_or_developer() -> None:
+    """Restrict an action to power users, developers and administrators — the bar for
+    editing the per-(connection, project) report analysis prompt from the app."""
+    username = current_user()
+    user = security_store.get_user(username) if username else None
+    if user is None or not user.is_enabled or not (
+        user.is_admin or user.is_power or user.is_developer
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="The report prompt is editable by power users, developers and administrators only.",
+        )
+
+
+def _require_assigned_connection(connection_id: str) -> None:
+    """The caller must be assigned to this connection (the same gate `connect` uses). The
+    report prompt/style are keyed by (connection, project); without this a role-holder could
+    reach another customer's connection just by passing its id — a cross-tenant IDOR."""
+    if not security_store.user_can_use((connection_id or "").strip(), current_user()):
+        raise HTTPException(status_code=403, detail="This connection is not available to you.")
+
+
+# ── Report analysis prompt (per connection + project) ────────────────────────
+
+
+class ReportPromptBody(BaseModel):
+    connectionId: str
+    prompt: str = ""
+
+
+@router.get("/projects/{project_id}/report-prompt")
+async def get_report_prompt(project_id: str, connectionId: str = "") -> dict[str, str]:
+    """The report analysis prompt stored for this (connection, project), or "" if none.
+    Power/developer/admin only, and only for a connection assigned to the caller — it is the
+    same prompt the admin Reporting tab manages."""
+    _require_power_or_developer()
+    _require_assigned_connection(connectionId)
+    return {"prompt": security_store.report_prompt_for(connectionId, project_id) or ""}
+
+
+@router.put("/projects/{project_id}/report-prompt")
+async def put_report_prompt(project_id: str, body: ReportPromptBody) -> dict[str, str]:
+    """Upsert the report analysis prompt for this (connection, project); an empty prompt
+    clears it (the app's default template is then used)."""
+    _require_power_or_developer()
+    _require_assigned_connection(body.connectionId)
+    try:
+        security_store.set_report_prompt(body.connectionId, project_id, body.prompt)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"prompt": security_store.report_prompt_for(body.connectionId, project_id) or ""}
+
+
 # ── Notes ────────────────────────────────────────────────────────────────────
 
 
@@ -389,6 +442,11 @@ async def documentation(
 ) -> dict[str, object]:
     require_connection()
 
+    # The report's per-(connection, project) prompt and style are keyed by the caller's
+    # ACTIVE connection — never a client-supplied id — so a user can only ever pull the
+    # prompt/style of a connection they are actually connected to (and thus assigned).
+    conn_id = current_db().active_profile_id or ""
+
     # The report uses its OWN admin-configured LLM if set; otherwise it falls back to the
     # connection's LLM (the one the interactive app uses).
     report_cfg = security_store.report_config(with_secret=True)
@@ -437,7 +495,7 @@ async def documentation(
     # The LLM sees ONLY the transition table plus the analysis instruction (the admin's
     # per-(connection, project) prompt if defined, else the app's prompt template).
     instruction = (
-        security_store.report_prompt_for(request.connectionId, project_id)
+        security_store.report_prompt_for(conn_id, project_id)
         or request.promptTemplate
         or DEFAULT_LLM_PROMPT
     )
@@ -472,7 +530,7 @@ async def documentation(
     report_html = None
     # Style & Sections are per (connection, project) so one environment can brand reports
     # differently for each customer. A project with none configured uses the built-in theme.
-    style = security_store.report_style_for(request.connectionId, project_id) or {
+    style = security_store.report_style_for(conn_id, project_id) or {
         "accent": "#4a3aa7",
         "orgName": "",
         "logo": "",
@@ -488,7 +546,9 @@ async def documentation(
         if sections_html.strip():
             chapters.append({"id": "analysis", "title": "Analysis", "html": sections_html})
 
-        svg = report_service.sanitize_svg(request.sankeySvg) if style.get("includeSankey", True) else ""
+        # The client-supplied Sankey SVG is embedded as an <img> data URI (sanitised first),
+        # so it can never execute script even though it is attacker-controllable.
+        svg = report_service.svg_img(request.sankeySvg) if style.get("includeSankey", True) else ""
         if svg:
             cap = (
                 f'<p class="caption">{report_service.md_inline(request.sankeyCaption)}</p>'
@@ -499,6 +559,10 @@ async def documentation(
                 {"id": "flow", "title": "Process flow", "html": f'<div class="diagram">{svg}</div>{cap}'}
             )
 
+        # Conformance & Happy Path are pure markdown pipe tables (cells escaped by the
+        # renderer) — they do NOT get raw-HTML passthrough, so a DB-derived step name that
+        # breaks out of a table row can never inject markup. Only the Journey Paths section
+        # emits a pre-built <table> of html.escape()'d cells and needs allow_raw_html.
         if style.get("includeConformance", True) and conformance_md.strip():
             chapters.append({
                 "id": "conformance",
@@ -515,7 +579,7 @@ async def documentation(
             chapters.append({
                 "id": "journeys",
                 "title": "Journey Paths",
-                "html": report_service.md_to_html(report_service.strip_leading_heading(paths_section)),
+                "html": report_service.md_to_html(report_service.strip_leading_heading(paths_section), allow_raw_html=True),
             })
         notes_html = docgen.notes_section(request.notes)
         if notes_html:

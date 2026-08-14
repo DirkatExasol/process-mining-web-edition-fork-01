@@ -556,6 +556,23 @@ def test_admin_directory_status_available_when_reachable(admin, monkeypatch):
     }
 
 
+def test_admin_directory_status_hidden_when_switch_off(admin, monkeypatch):
+    # An admin who disables the login LED gets `configured: false` even though the
+    # directory is enabled and reachable — so neither login panel renders the indicator.
+    server, store = admin
+    store.set_ldap_config(
+        {"enabled": True, "serverURI": "ldap://x", "baseDN": "dc=x", "showStatusOnLogin": False}
+    )
+    import app.services.ldap_auth as ldap_auth
+
+    monkeypatch.setattr(ldap_auth, "test_settings", lambda *a, **k: {"ok": True})
+    client = TestClient(server.app)
+    assert client.get("/api/directory-status").json() == {
+        "configured": False,
+        "available": False,
+    }
+
+
 def test_admin_directory_status_unavailable_on_probe_failure(admin, monkeypatch):
     server, store = admin
     store.set_ldap_config({"enabled": True, "serverURI": "ldap://x", "baseDN": "dc=x"})

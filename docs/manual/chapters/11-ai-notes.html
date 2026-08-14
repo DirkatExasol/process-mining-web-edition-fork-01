@@ -101,17 +101,17 @@
 
 <h3 id="ai-prompt">Configuring the prompt</h3>
 
-<p>The prompt template is the instruction the model receives alongside the transition table. It is edited from the sidebar under <b>Configuration → LLM Prompt</b> and is <b>stored per project</b>, so different processes can carry different documentation styles. The template is held server-side against your user account, which means it follows you to another browser or machine, and it is included in <b>Backup &amp; Restore</b> alongside presets, happy paths, norms and node layouts.</p>
+<p>The prompt is the instruction the model receives alongside the transition table. It is edited from the sidebar under <b>Configuration → AI related → LLM Prompt</b> and is stored <b>per connection and project</b> — the very same mapping an administrator manages in the admin <b>Reporting</b> tab, so a change here is reflected there and vice-versa. Editing it is a <b>power-user, developer or administrator</b> capability: regular users do not see the LLM Prompt entry at all, and the report simply uses whatever prompt those roles have configured (or the built-in default when none is set). You must be connected and have a project selected to edit it; leaving the text empty clears the stored prompt so the default applies.</p>
 
 <ol class="steps">
-<li>Select the project whose prompt you want to change.</li>
-<li>Open the sidebar and expand the <b>Configuration</b> section.</li>
-<li>Open the <b>LLM Prompt</b> editor and adjust the template.</li>
+<li>Sign in as a power user, developer or administrator, connect, and select the project whose prompt you want to change.</li>
+<li>Open the sidebar, expand <b>Configuration</b>, then the <b>AI related</b> group, and tap <b>Edit</b> next to <b>LLM Prompt</b>.</li>
+<li>Adjust the instruction (or tap <b>Use Default</b> to start from the built-in template) and <b>Save</b> — it is stored for the current connection and project.</li>
 <li>Switch to <b>AI supported Documentation</b> and tap <b>↻ Re-run</b> — or the run button, on a first run — to apply it.</li>
-<li>Confirm with <b>Show prompt</b> that the text sent matches what you intended. The template is also reproduced in the report's <b>Analysis Parameters</b> chapter.</li>
+<li>Confirm with <b>Show prompt</b> that the text sent matches what you intended.</li>
 </ol>
 
-<figure data-fig="app-07-configuration"><figcaption>The sidebar Configuration section, which holds the per-project LLM prompt template editor alongside display options, KPIs and the step editor.</figcaption></figure>
+<figure data-fig="app-07-configuration"><figcaption>The sidebar Configuration section, with display options, KPIs and the step editor. The <b>AI related → LLM Prompt</b> editor appears only for power users, developers and administrators.</figcaption></figure>
 
 <h3 id="ai-troubleshooting">Troubleshooting a blank or failing report</h3>
 

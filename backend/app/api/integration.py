@@ -551,6 +551,10 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
         conn_id = mgr.active_profile_id or ""
         if not conn_id:
             raise HTTPException(status_code=400, detail="Pick a destination connection first.")
+        # The active connection is always one the caller connected to (assignment-gated at
+        # connect time), but re-check here so this fallback stays self-contained.
+        if not security_store.user_can_use(conn_id, user):
+            raise HTTPException(status_code=404, detail="Connection not found.")
         conn = security_store.get_connection(conn_id, with_secrets=True)
         if conn is None:
             raise HTTPException(
@@ -664,10 +668,11 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
             else:
                 root = await asyncio.to_thread(parse_xml, text)
                 records = iter_xml_records(root, record_path)
-        except ValueError as exc:  # malformed / unsafe document
+        except (ValueError, RecursionError) as exc:  # malformed / unsafe / deeply-nested doc
             if opened is not None:
                 await asyncio.to_thread(opened.close)
-            raise HTTPException(status_code=400, detail=str(exc))
+            detail = "The document is nested too deeply." if isinstance(exc, RecursionError) else str(exc)
+            raise HTTPException(status_code=400, detail=detail)
         read_count = len(records)
         extractor = FileExtractor(
             path=path, encoding=encoding, fields=fields, project_id=project_id,

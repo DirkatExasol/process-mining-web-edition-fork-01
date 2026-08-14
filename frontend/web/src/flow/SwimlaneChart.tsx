@@ -36,6 +36,9 @@ const LANE_H = 96
 const HEADER_H = 40 // the date/time row above the top lane
 const PAD_X = 150 // left gutter that carries the lane labels
 const UNGROUPED = '(ungrouped)'
+const CHART_H = 210 // the cumulative-value line chart below the lanes
+const CHART_GAP = 18 // gap between the last lane and the value chart
+const CHART_LABEL_FS = 16 // axis + value numbers (50% larger than the old 11px)
 
 // ── node payloads ─────────────────────────────────────────────────────────────
 
@@ -57,6 +60,18 @@ interface TimeData extends Record<string, unknown> {
 }
 interface GridData extends Record<string, unknown> {
   height: number
+}
+export interface ValuePoint {
+  cx: number // absolute x (aligned to the step column centre)
+  value: number // this step's own score (the +/- contribution)
+  cumulative: number // running sum from the process start
+}
+interface ChartData extends Record<string, unknown> {
+  width: number
+  height: number
+  points: ValuePoint[]
+  min: number
+  max: number
 }
 
 function LaneNode({ data }: { data: LaneData }) {
@@ -118,11 +133,119 @@ function GridNode({ data }: { data: GridData }) {
   return <div className="swim-grid" style={{ height: data.height }} />
 }
 
+function fmtScore(n: number): string {
+  const r = Math.round(n * 100) / 100
+  return (r > 0 ? '+' : '') + (Number.isInteger(r) ? String(r) : r.toFixed(2))
+}
+
+// A cumulative-value line chart drawn below the lanes: for each event, the running sum of
+// the step scores from the process start — so the journey's value can be read developing
+// left→right. It is a ReactFlow node, so it pans/zooms with the lanes and each point stays
+// aligned under its step column.
+function ValueChartNode({ data }: { data: ChartData }) {
+  const { width, height, points, min, max } = data
+  const plotTop = 52
+  const plotBot = height - 30
+  const span = max - min || 1
+  const yOf = (v: number) => plotBot - ((v - min) / span) * (plotBot - plotTop)
+  const zeroY = min <= 0 && max >= 0 ? yOf(0) : null
+  const linePath = points
+    .map((p, i) => `${i ? 'L' : 'M'}${p.cx.toFixed(1)} ${yOf(p.cumulative).toFixed(1)}`)
+    .join(' ')
+  return (
+    <div className="swim-valuechart" style={{ width, height }}>
+      <svg width={width} height={height} style={{ display: 'block', overflow: 'visible' }}>
+        {/* Tinted panel that matches the swimlane's own bands (the header-band tone). */}
+        <rect
+          x={0}
+          y={0}
+          width={width}
+          height={height}
+          rx={10}
+          fill="var(--bg-tertiary-grouped)"
+          stroke="var(--separator-soft)"
+        />
+        <text x={14} y={24} fill="var(--primary)" fontSize={13} fontWeight={650}>
+          Cumulative value — running sum of step scores from start to end
+        </text>
+        {/* y-axis extremes in the left gutter */}
+        <text x={14} y={plotTop + 6} fill="var(--primary)" fontSize={CHART_LABEL_FS} fontWeight={600}>
+          {fmtScore(max)}
+        </text>
+        <text x={14} y={plotBot + 4} fill="var(--primary)" fontSize={CHART_LABEL_FS} fontWeight={600}>
+          {fmtScore(min)}
+        </text>
+        {/* per-column guide lines, aligned to the step centres */}
+        {points.map((p) => (
+          <line
+            key={`g${p.cx}`}
+            x1={p.cx}
+            y1={plotTop}
+            x2={p.cx}
+            y2={plotBot}
+            stroke="var(--separator-soft)"
+            strokeWidth={1}
+          />
+        ))}
+        {/* the zero baseline (only when the range crosses zero) */}
+        {zeroY != null && (
+          <line
+            x1={PAD_X}
+            y1={zeroY}
+            x2={width - 8}
+            y2={zeroY}
+            stroke="var(--separator)"
+            strokeWidth={1}
+            strokeDasharray="4 4"
+          />
+        )}
+        <path
+          d={linePath}
+          fill="none"
+          stroke="var(--accent)"
+          strokeWidth={2.5}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        {points.map((p) => {
+          const y = yOf(p.cumulative)
+          const dot =
+            p.value > 0 ? 'var(--green)' : p.value < 0 ? 'var(--red)' : 'var(--secondary)'
+          const above = y > plotTop + 20
+          return (
+            <g key={`m${p.cx}`}>
+              <circle
+                cx={p.cx}
+                cy={y}
+                r={4}
+                fill={dot}
+                stroke="var(--bg-elevated)"
+                strokeWidth={1.5}
+              />
+              <text
+                x={p.cx}
+                y={above ? y - 11 : y + 20}
+                textAnchor="middle"
+                fill="var(--primary)"
+                fontSize={CHART_LABEL_FS}
+                fontWeight={600}
+              >
+                {fmtScore(p.cumulative)}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
 const nodeTypes = {
   swimLane: LaneNode,
   swimStep: StepNodeSwim,
   swimTime: TimeNode,
   swimGrid: GridNode,
+  swimChart: ValueChartNode,
 }
 
 // ── layout ──────────────────────────────────────────────────────────────────
@@ -132,6 +255,23 @@ function secondsBetween(a: string, b: string): number | null {
   const tb = Date.parse(b)
   if (Number.isNaN(ta) || Number.isNaN(tb)) return null
   return Math.max(0, (tb - ta) / 1000)
+}
+
+// The running (YTD-style) sum of each step's score along the sequence, with the x of each
+// point aligned to its step column's centre. `min`/`max` always include 0 so the baseline
+// is on-chart. Exported for testing.
+export function cumulativeSeries(
+  sequence: JourneyEvent[],
+  steps: ProcessGraph['steps'],
+): { points: ValuePoint[]; min: number; max: number } {
+  let running = 0
+  const points: ValuePoint[] = sequence.map((ev, i) => {
+    const value = steps[ev.step]?.score ?? 0
+    running += value
+    return { cx: PAD_X + i * COL_W + NODE_W / 2, value, cumulative: running }
+  })
+  const cums = points.map((p) => p.cumulative)
+  return { points, min: Math.min(0, ...cums), max: Math.max(0, ...cums) }
 }
 
 export function buildSwimlane(
@@ -254,6 +394,19 @@ export function buildSwimlane(
         zIndex: 2,
       })
     }
+  })
+
+  // The cumulative-value line chart, one full-width panel below the lane stack.
+  const { points, min, max } = cumulativeSeries(sequence, steps)
+  nodes.push({
+    id: 'valuechart',
+    type: 'swimChart',
+    position: { x: 0, y: gridH + CHART_GAP },
+    data: { width: totalWidth, height: CHART_H, points, min, max } as ChartData,
+    draggable: false,
+    selectable: false,
+    zIndex: 2,
+    ...dims(totalWidth, CHART_H),
   })
 
   return { nodes, edges }

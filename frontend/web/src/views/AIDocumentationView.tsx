@@ -16,15 +16,33 @@ export function AIDocumentationView() {
   // that frame — the same Chrome-print path that produced the reference report.
   const frameRef = useRef<HTMLIFrameElement>(null)
   // The report is shown in its own iframe (isolated CSS). The frame is same-origin so the
-  // host can trigger printing on it; it also runs the report's embedded script (which owns
-  // the table-of-contents scrolling — fragment links don't resolve against about:srcdoc) and
-  // may open the print dialog (allow-modals). We print THIS frame directly (rather than a
-  // blob: URL) because a strict Content-Security-Policy can forbid blob: documents.
+  // host can print it and wire its links, but it is deliberately NOT script-enabled
+  // (`sandbox="allow-same-origin allow-modals"`) — the report is static HTML, so even a
+  // sanitiser bypass in the embedded content can't run script with our origin. We print THIS
+  // frame directly (not a blob: URL) because a strict Content-Security-Policy can forbid
+  // blob: documents.
   const printReport = () => {
     const win = frameRef.current?.contentWindow
     if (!win) return
     win.focus()
     win.print()
+  }
+
+  // Fragment links don't scroll inside a srcDoc frame (base URL is about:srcdoc). The frame
+  // is same-origin, so wire the table-of-contents clicks from the host on load. The `href`
+  // values are left intact so they still become internal links in the printed PDF.
+  const wireTocLinks = () => {
+    const doc = frameRef.current?.contentDocument
+    if (!doc) return
+    doc.querySelectorAll<HTMLAnchorElement>('.toc a[href^="#"]').forEach((link) => {
+      link.addEventListener('click', (e) => {
+        const target = doc.getElementById(link.getAttribute('href')!.slice(1))
+        if (target) {
+          e.preventDefault()
+          target.scrollIntoView({ block: 'start' })
+        }
+      })
+    })
   }
 
   const summary = aChartFilterSummary(store)
@@ -87,8 +105,9 @@ export function AIDocumentationView() {
           ref={frameRef}
           title="AI report"
           className="ai-report-frame"
-          sandbox="allow-same-origin allow-scripts allow-modals"
+          sandbox="allow-same-origin allow-modals"
           srcDoc={analysis.reportHtml}
+          onLoad={wireTocLinks}
         />
 
         {showPrompt && (

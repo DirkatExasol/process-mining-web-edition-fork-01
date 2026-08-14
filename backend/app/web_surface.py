@@ -731,9 +731,10 @@ def build_surface_app(
         """Whether a user-directory (LDAP) server is configured and currently reachable.
 
         Pre-auth, for the login panel's availability LED. When no directory is configured
-        it reports ``configured: false`` so the client shows nothing.
+        — or an admin has hidden the LED — it reports ``configured: false`` so the client
+        shows nothing.
         """
-        if not store.ldap_enabled:
+        if not store.ldap_enabled or not store.ldap_show_status_on_login:
             return JSONResponse({"configured": False, "available": False})
 
         now = time.monotonic()

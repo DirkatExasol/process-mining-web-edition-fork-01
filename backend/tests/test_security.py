@@ -342,6 +342,24 @@ def test_ldap_admin_login_flag_round_trips_and_requires_enabled(security):
     assert store.ldap_admin_public()["hasBindPassword"] is False
 
 
+def test_ldap_show_status_on_login_defaults_on_and_round_trips(security):
+    store = security.store
+    # Default on, so the availability LED keeps appearing unless an admin hides it.
+    assert store.ldap_show_status_on_login is True
+    assert store.ldap_admin_public()["showStatusOnLogin"] is True
+
+    store.set_ldap_config(
+        {"enabled": True, "serverURI": "ldap://x", "showStatusOnLogin": False}
+    )
+    assert store.ldap_show_status_on_login is False
+    assert store.ldap_admin_public()["showStatusOnLogin"] is False
+
+    # A payload that omits the flag (e.g. a password-only update) keeps it at the default
+    # rather than silently turning the LED back on.
+    store.set_ldap_config({"enabled": True, "showStatusOnLogin": True})
+    assert store.ldap_show_status_on_login is True
+
+
 def test_provision_ldap_user_creates_then_refreshes(security):
     store = security.store
     u = store.provision_ldap_user("alice", email="alice@example.com", display_name="Alice A")

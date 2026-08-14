@@ -29,6 +29,14 @@ _SEVERITY_LABEL = {
 }
 
 
+def _cell(value: object) -> str:
+    """Neutralise a value for a Markdown pipe-table cell: strip newlines (which would break
+    the row and let following text escape the table) and bare '|' (which splits columns).
+    Cell content is HTML-escaped separately by the renderer; this keeps a DB-derived step
+    name from breaking the table structure."""
+    return str(value).replace("\r", " ").replace("\n", " ").replace("|", "/").strip()
+
+
 def notes_section(notes: list[ProcessNote]) -> str:
     """HTML for the Notes chapter: two tables (Open / Resolved), each sorted by severity
     (most severe first, then most recent). Returns '' when there are no notes."""
@@ -219,7 +227,7 @@ def conformance_section(
                 status = "— No norm"
             else:
                 status = "❌ VIOLATION" if e["violation"] else "✅ Compliant"
-            table += f"| {e['from']} | {e['to']} | {act} | {nrm} | {dlt} | {status} |\n"
+            table += f"| {_cell(e['from'])} | {_cell(e['to'])} | {act} | {nrm} | {dlt} | {status} |\n"
 
         parts.append(
             f"### {metric.value}\n\n"
@@ -262,7 +270,7 @@ def happy_path_section(
             rating = "❌  Low (< 0.30)"
         routes = [r for r in happy_path_routes(path.nodes) if len(r) >= 2]
         routes_str = "1 (linear)" if len(routes) <= 1 else f"{len(routes)} routes"
-        rows += f"| {path.name} | {routes_str} | {score_str} | {rating} |\n"
+        rows += f"| {_cell(path.name)} | {routes_str} | {score_str} | {rating} |\n"
 
     table = (
         "| Happy Path | Routes | Conformance | Rating |\n"
