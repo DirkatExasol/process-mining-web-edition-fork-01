@@ -53,6 +53,7 @@ import { migrateHappyPath } from './graph/happyPath'
 import { sankeySvg as sankeySvgString } from './flow/sankeySvg'
 import { authenticateWithPasskey } from './passkey'
 import type { SavedAction } from './actions/types'
+import type { AggregateLink } from './aggregate/types'
 
 export type ABSide = 'a' | 'b'
 
@@ -151,6 +152,8 @@ export interface AppState {
   actionsEnabled: boolean
   /** Saved actions for the open (connection, project), enabled-only — listed in node menus. */
   projectActions: SavedAction[]
+  /** Aggregate links for the open project — a Σ step drills down into its detail project. */
+  projectAggregates: AggregateLink[]
   /** Set when the last sign-out was due to inactivity, so the login screen can say so. */
   signedOutForInactivity: boolean
 
@@ -355,6 +358,7 @@ export interface AppActions {
   currentFilterSnapshot: () => FilterSnapshot
   resetFilters: () => void
   loadProjectActions: () => Promise<void>
+  loadProjectAggregates: () => Promise<void>
   reloadGraph: () => Promise<void>
   reloadGraphForDay: (day: string) => Promise<string | null>
   reloadABSide: (side: ABSide, from: string, to: string) => Promise<void>
@@ -477,6 +481,7 @@ const INITIAL_STATE: AppState = {
   idleTimeoutMins: 0,
   actionsEnabled: false,
   projectActions: [],
+  projectAggregates: [],
   signedOutForInactivity: false,
 
   connections: [],
@@ -1257,6 +1262,8 @@ export const useStore = create<Store>((set, get) => {
 
         // Load this project's saved node-menu actions (no-op unless the feature is on).
         void get().loadProjectActions()
+        // Load this project's aggregate links (for Σ drill-down).
+        void get().loadProjectAggregates()
 
         // Seed the other chart modes with the same window and real bounds.
         const seed = defaultChartState(fromDate, toDate, {
@@ -1498,6 +1505,22 @@ export const useStore = create<Store>((set, get) => {
         set({ projectActions: r.actions.filter((a) => a.enabled) })
       } catch {
         set({ projectActions: [] }) // never block the chart on this
+      }
+    },
+
+    loadProjectAggregates: async () => {
+      const s = get()
+      const connId = s.connection.activeProfileId
+      const projectId = s.selectedProject?.projectId
+      if (!connId || !projectId) {
+        set({ projectAggregates: [] })
+        return
+      }
+      try {
+        const r = await api.listAggregates(projectId, connId)
+        set({ projectAggregates: r.aggregates })
+      } catch {
+        set({ projectAggregates: [] }) // never block the chart on this
       }
     },
 

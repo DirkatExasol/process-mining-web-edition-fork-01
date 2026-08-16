@@ -52,6 +52,7 @@ describe('actionMatchesNode', () => {
     availability: { allNodes, steps },
     show: { kind: 'logEntries', limit: 1, metrics: [], forLast: null },
     from: { selectors: ['THIS'] },
+    target: null,
     sort: null,
     where: null,
   })
@@ -63,5 +64,14 @@ describe('actionMatchesNode', () => {
   it('a step list matches only listed nodes', () => {
     expect(actionMatchesNode(spec(false, ['PAYMENT']), 'PAYMENT')).toBe(true)
     expect(actionMatchesNode(spec(false, ['PAYMENT']), 'LOGIN')).toBe(false)
+  })
+
+  it('tolerates sigma glyph, case and whitespace on aggregate steps', () => {
+    // Node is the Greek Σ (U+03A3); availability may use ∑ (U+2211), lower case, or spaces.
+    expect(actionMatchesNode(spec(false, ['∑ Payment']), 'Σ Payment')).toBe(true)
+    expect(actionMatchesNode(spec(false, ['σ payment']), 'Σ Payment')).toBe(true)
+    expect(actionMatchesNode(spec(false, ['  Σ   Payment ']), 'Σ Payment')).toBe(true)
+    // But a genuinely different step still does not match.
+    expect(actionMatchesNode(spec(false, ['∑ Refund']), 'Σ Payment')).toBe(false)
   })
 })

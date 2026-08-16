@@ -78,6 +78,58 @@ FROM
   })
 })
 
+describe('parseAction — SHOW FLOWCHART (cross-project)', () => {
+  it('parses a flowchart with a connection::project target, preserving case & spaces', () => {
+    const spec = ok(`AVAILABILITY
+\tPAYMENT
+SHOW
+\tFLOWCHART IN SEPARATE PANEL
+FROM
+\t01 - Exasol Nano @ Macbook Pro::Airport Passenger Flow Analysis`)
+    expect(spec.availability.steps).toEqual(['PAYMENT'])
+    expect(spec.show.kind).toBe('flowchart')
+    expect(spec.from.selectors).toEqual([])
+    expect(spec.target).toEqual({
+      connection: '01 - Exasol Nano @ Macbook Pro',
+      project: 'Airport Passenger Flow Analysis',
+    })
+  })
+
+  it('accepts a bare FLOWCHART keyword', () => {
+    const spec = ok('AVAILABILITY ALL NODES\nSHOW FLOWCHART\nFROM ConnA::Proj B')
+    expect(spec.show.kind).toBe('flowchart')
+    expect(spec.target).toEqual({ connection: 'ConnA', project: 'Proj B' })
+  })
+
+  it('accepts FLOWCHART … FOR with one or more metrics', () => {
+    const spec = ok('AVAILABILITY ALL NODES\nSHOW FLOWCHART IN SEPARATE PANEL FOR Count, Avg Time\nFROM ConnA::Proj B')
+    expect(spec.show.kind).toBe('flowchart')
+    expect(spec.show.metrics).toEqual(['COUNT', 'AVG TIME'])
+  })
+
+  it('accepts FOR before IN SEPARATE PANEL and ALL METRICS shorthand', () => {
+    const a = ok('AVAILABILITY ALL NODES\nSHOW FLOWCHART FOR Count IN SEPARATE PANEL\nFROM ConnA::Proj B')
+    expect(a.show.metrics).toEqual(['COUNT'])
+    const b = ok('AVAILABILITY ALL NODES\nSHOW FLOWCHART FOR ALL METRICS\nFROM ConnA::Proj B')
+    expect(b.show.metrics.length).toBe(7)
+  })
+
+  it('flags an unknown FLOWCHART metric', () => {
+    const e = parseAction('AVAILABILITY ALL NODES\nSHOW FLOWCHART FOR Bananas\nFROM ConnA::Proj B').errors
+    expect(e.some((x) => /Unknown metric "BANANAS"/.test(x.message))).toBe(true)
+  })
+
+  it('requires a target for FLOWCHART', () => {
+    const e = parseAction('AVAILABILITY ALL NODES\nSHOW FLOWCHART IN SEPARATE PANEL\nFROM NODE(THIS)').errors
+    expect(e.some((x) => /FLOWCHART needs FROM/.test(x.message))).toBe(true)
+  })
+
+  it('rejects a connection::project target for non-flowchart shows', () => {
+    const e = parseAction('AVAILABILITY ALL NODES\nSHOW LAST 1 LOG ENTRY\nFROM ConnA::ProjB').errors
+    expect(e.some((x) => /only valid with SHOW FLOWCHART/.test(x.message))).toBe(true)
+  })
+})
+
 describe('parseAction — keyword equivalences & case', () => {
   it('treats NODE≡NODES and ENTRY≡ENTRIES and is case-insensitive on keywords', () => {
     const spec = ok(`availability all nodes

@@ -672,6 +672,14 @@ const processMap: HelpTopic = {
         p('Steps sharing a BELONGS_TO value are wrapped in a dashed, coloured group box with a name pill. The box tint and border are tuned per theme so the group stays clearly visible in both light and dark mode. The +/− badge on the box collapses or expands it — collapsed groups sum connection counts and weight-average the times. “Groups start” in Configuration controls whether groups load Expanded, Collapsed, or in their last Persisted state.'),
       ],
     },
+    {
+      heading: 'Aggregates (developers)',
+      body: [
+        p('Developers can abstract a sub-process into a single Σ super-step. Shift-drag (or ⌘/Ctrl-click) to select a set of interconnected steps on the map; a “Σ Create aggregate” button appears once two or more are selected.'),
+        p('The dialog checks that the selection is one interconnected group (no isolated step), then creates two new projects — the originals are untouched: a high-level project where the group is one Σ node (its black-box metrics computed by the normal engine), and a detail project holding just that sub-process. Each can be written to the same schema, a new schema, or a different connection.'),
+        tip('In the high-level project, the Σ node’s menu offers ⤵ Drill down to open its detail project.'),
+      ],
+    },
   ],
 }
 
@@ -1598,8 +1606,8 @@ const actions: HelpTopic = {
         p('Each action is a few clauses. Keywords are case-insensitive, and NODE/NODES and ENTRY/ENTRIES are interchangeable:'),
         ul(
           'AVAILABILITY — where the action appears: ALL NODES, or a comma-separated list of step names (e.g. LOGIN, LOGOUT, PAYMENT).',
-          'SHOW — LAST [N] LOG ENTRIES (N defaults to 1), or TRANSITION TABLE WITH one or more metrics: "COUNT", "%JOURNEY%", "%OUTGOING%", "AVG TIME", "MIN TIME", "MAX TIME", "STD DEV" (short forms like AVG/MIN/MAX/STDDEV/PERCENTAGE also work), or TRANSITION TABLE WITH ALL METRICS for every metric at once.',
-          'FROM — NODE(…) relative to the clicked node: THIS, PREVIOUS, FOLLOWING, ALL FOLLOWING, ALL PREVIOUS (combine them, e.g. NODE(THIS, ALL FOLLOWING)).',
+          'SHOW — LAST [N] LOG ENTRIES (N defaults to 1); TRANSITION TABLE WITH one or more metrics: "COUNT", "%JOURNEY%", "%OUTGOING%", "AVG TIME", "MIN TIME", "MAX TIME", "STD DEV" (short forms like AVG/MIN/MAX/STDDEV/PERCENTAGE also work, or ALL METRICS for every metric); or FLOWCHART IN SEPARATE PANEL to open another project’s process map — optionally FOR one or more metrics (e.g. "FLOWCHART IN SEPARATE PANEL FOR Count, Avg Time", or FOR ALL METRICS) to let the panel switch the edge metric.',
+          'FROM — for log entries / transition tables: NODE(…) relative to the clicked node — THIS, PREVIOUS, FOLLOWING, ALL FOLLOWING, ALL PREVIOUS (combine them, e.g. NODE(THIS, ALL FOLLOWING)). For a flowchart: a <connection>::<project> target.',
           'SORT — ASCENDING or DESCENDING (log entries by time; default most-recent-first).',
           'WHERE — an optional filter; this version supports EVENT_ID :: [id, id, …].',
         ),

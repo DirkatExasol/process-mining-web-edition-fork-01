@@ -25,8 +25,8 @@
 <thead><tr><th>Clause</th><th>Meaning</th></tr></thead>
 <tbody>
 <tr><td><code>AVAILABILITY</code></td><td>Where the action appears in node menus: <code>ALL NODES</code>, or a comma-separated list of step names (e.g. <code>LOGIN, LOGOUT, PAYMENT</code>).</td></tr>
-<tr><td><code>SHOW</code></td><td>What to display: <code>LAST [N] LOG ENTRIES</code> (N defaults to 1), or <code>TRANSITION TABLE WITH &hellip;</code> listing one or more metrics (see below).</td></tr>
-<tr><td><code>FROM</code></td><td><code>NODE(&hellip;)</code> relative to the clicked node: <code>THIS</code>, <code>PREVIOUS</code>, <code>FOLLOWING</code>, <code>ALL FOLLOWING</code>, <code>ALL PREVIOUS</code> &mdash; combine them, e.g. <code>NODE(THIS, ALL FOLLOWING)</code>.</td></tr>
+<tr><td><code>SHOW</code></td><td>What to display: <code>LAST [N] LOG ENTRIES</code> (N defaults to 1); <code>TRANSITION TABLE WITH &hellip;</code> listing one or more metrics (see below); or <code>FLOWCHART IN SEPARATE PANEL</code> to open another project&rsquo;s process map &mdash; optionally <code>FOR</code> one or more metrics to make the panel&rsquo;s edge metric switchable.</td></tr>
+<tr><td><code>FROM</code></td><td>For log entries and transition tables: <code>NODE(&hellip;)</code> relative to the clicked node &mdash; <code>THIS</code>, <code>PREVIOUS</code>, <code>FOLLOWING</code>, <code>ALL FOLLOWING</code>, <code>ALL PREVIOUS</code> (combine them, e.g. <code>NODE(THIS, ALL FOLLOWING)</code>). For a flowchart: a target <code>&lt;connection&gt;::&lt;project&gt;</code>.</td></tr>
 <tr><td><code>SORT</code></td><td>Optional. <code>ASCENDING</code> or <code>DESCENDING</code> (log entries by time; the default is most recent first).</td></tr>
 <tr><td><code>WHERE</code></td><td>Optional filter. This version supports <code>EVENT_ID :: [id, id, &hellip;]</code> (the <code>::</code> reads as &ldquo;is one of&rdquo;).</td></tr>
 </tbody>
@@ -54,6 +54,26 @@ SHOW
     FOR LAST 50 LOG ENTRIES
 FROM
     NODE(THIS, ALL FOLLOWING)</pre>
+
+<p>A <b>flowchart</b> action opens another project&rsquo;s full process map in a panel over the current one, scoped to the chart&rsquo;s current date range (all other filters are dropped, since the target project has its own steps). The <code>FROM</code> names the target as <code>&lt;connection&gt;::&lt;project&gt;</code> &mdash; the connection and project names exactly as they appear to you:</p>
+
+<pre class="code">AVAILABILITY
+    PAYMENT
+SHOW
+    FLOWCHART IN SEPARATE PANEL
+FROM
+    01 - Exasol Nano @ Macbook Pro::Airport Passenger Flow Analysis</pre>
+
+<p>The target must be a connection <b>assigned to you</b>; if it is the one you are already on the map loads from your live session, otherwise the server opens it briefly with its stored credentials. The panel is a fully interactive process map (zoom, pan, hover) &mdash; a read-only cross-reference into a related process.</p>
+
+<p>Add <code>FOR</code> plus one or more comma-separated metrics to let the panel switch the edge metric &mdash; a dropdown appears above the map. Use any of <code>Count</code>, <code>%JOURNEY%</code>, <code>%OUTGOING%</code>, <code>AVG TIME</code>, <code>MIN TIME</code>, <code>MAX TIME</code>, <code>STD DEV</code> (short forms work too), or <code>ALL METRICS</code> for every metric. The <code>FOR</code> clause may come before or after <code>IN SEPARATE PANEL</code>:</p>
+
+<pre class="code">AVAILABILITY
+    PAYMENT
+SHOW
+    FLOWCHART IN SEPARATE PANEL FOR Count, Avg Time
+FROM
+    01 - Exasol Nano @ Macbook Pro::Airport Passenger Flow Analysis</pre>
 
 <h2 id="act-availability">25.4 Availability &mdash; where an action appears</h2>
 

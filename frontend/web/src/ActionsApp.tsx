@@ -68,7 +68,7 @@ export function ActionsApp() {
     return (
       <>
         <ThemeSync />
-        <LoginView subtitle="Actions" onSignedIn={initAfterAuth} />
+        <LoginView subtitle="Action Designer" onSignedIn={initAfterAuth} />
       </>
     )
   }

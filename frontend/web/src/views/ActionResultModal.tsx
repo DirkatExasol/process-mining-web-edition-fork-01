@@ -1,7 +1,9 @@
-/** Shows the result of running a node-menu action — a log-entry table or a transition
- *  table — inline over the process map. Opened from the FlowChart node menu. */
+/** Shows the result of running a node-menu action — a log-entry table, a transition
+ *  table, or a full process map (flowchart) — inline over the process map. Opened from
+ *  the FlowChart node menu. */
 
 import { ActionResultTable } from '../components/ActionResultTable'
+import { ActionFlowchart } from '../components/ActionFlowchart'
 import { Sheet, Spinner } from '../components/ui'
 import type { ActionRunResult } from '../actions/types'
 
@@ -18,6 +20,8 @@ export function ActionResultModal({
   error: string | null
   onClose: () => void
 }) {
+  const isFlowchart = result?.kind === 'flowchart' && result.graph
+
   return (
     <Sheet title={title} icon="⚡" wide onClose={onClose}>
       {busy && (
@@ -27,7 +31,21 @@ export function ActionResultModal({
         </div>
       )}
       {error && <p style={{ color: 'var(--red)' }}>{error}</p>}
-      {!busy && !error && result && (
+
+      {!busy && !error && result && isFlowchart && result.graph && (
+        <>
+          <p className="fg-secondary" style={{ marginTop: 0, fontSize: 13 }}>
+            Process map{result.title ? ` · ${result.title}` : ''}
+            {result.journeyCount != null && ` · ${result.journeyCount.toLocaleString()} journeys`}
+            {result.dateScoped === false
+              ? ' · full range (no data in the current date window)'
+              : ' · for the current date range'}
+          </p>
+          <ActionFlowchart result={result} height="min(70vh, 640px)" />
+        </>
+      )}
+
+      {!busy && !error && result && !isFlowchart && (
         <>
           <p className="fg-secondary" style={{ marginTop: 0, fontSize: 13 }}>
             {result.kind === 'transitionTable' ? 'Transition table' : 'Log entries'}

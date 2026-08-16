@@ -37,6 +37,7 @@ import type {
 } from './types'
 import type { LoginAppearance } from './loginAppearance'
 import type { ActionRunResult, ActionSpec, SavedAction } from './actions/types'
+import type { AggregateLink, CreateAggregateBody, CreateAggregateResult } from './aggregate/types'
 
 /** The signed-in user payload returned by password, passkey and MFA sign-in. */
 export interface AuthUser {
@@ -451,6 +452,14 @@ export const api = {
       resolvedSteps: string[]
     },
   ) => post<{ sql: string }>(`/api/projects/${enc(projectId)}/actions/preview-sql`, body),
+
+  // ── aggregates (collapse connected steps into a Σ super-step) ─────────────
+  createAggregate: (projectId: string, body: CreateAggregateBody) =>
+    post<CreateAggregateResult>(`/api/projects/${enc(projectId)}/aggregate`, body),
+  listAggregates: (projectId: string, connectionId: string) =>
+    get<{ aggregates: AggregateLink[] }>(
+      `/api/projects/${enc(projectId)}/aggregates?connectionId=${enc(connectionId)}`,
+    ),
 
   // ── settings ─────────────────────────────────────────────────────────────
   settings: () => get<Record<string, unknown>>('/api/settings'),

@@ -9,12 +9,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { describeAction } from '../actions/describe'
+import { insertAvailabilityStep } from '../actions/editAvailability'
 import { formatSql } from '../actions/formatSql'
 import { parseAction } from '../actions/parseAction'
 import { resolveScope } from '../actions/resolveScope'
 import type { ActionRunResult, SavedAction } from '../actions/types'
 import { useStore } from '../store'
 import type { AssignedConnection } from '../types'
+import { ActionFlowchart } from './ActionFlowchart'
 import { AuthFooter } from './AuthFooter'
 import { Logo } from './Logo'
 import { SectionHeader } from './SectionHeader'
@@ -74,6 +76,7 @@ export function ActionsBuilder({ onShowHelp }: { onShowHelp: () => void }) {
   const [name, setName] = useState('')
   const [script, setScript] = useState(TEMPLATE)
   const [testNode, setTestNode] = useState('')
+  const [pickStep, setPickStep] = useState('')
   const [sql, setSql] = useState('')
   const [result, setResult] = useState<ActionRunResult | null>(null)
   const [busy, setBusy] = useState(false)
@@ -101,6 +104,11 @@ export function ActionsBuilder({ onShowHelp }: { onShowHelp: () => void }) {
   useEffect(() => {
     if (steps.length && !steps.includes(testNode)) setTestNode(steps[0])
   }, [steps, testNode])
+
+  // Default the AVAILABILITY step picker to the first available step.
+  useEffect(() => {
+    if (steps.length && !steps.includes(pickStep)) setPickStep(steps[0])
+  }, [steps, pickStep])
 
   // Live SQL preview (debounced) for the current spec + context node.
   const sqlTimer = useRef<number | undefined>(undefined)
@@ -448,6 +456,28 @@ export function ActionsBuilder({ onShowHelp }: { onShowHelp: () => void }) {
                   whiteSpace: 'pre',
                 }}
               />
+              {/* Step picker → inserts the exact node name into AVAILABILITY, so the
+                  awkward Σ of aggregate steps never has to be typed by hand. */}
+              <div className="row" style={{ gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', margin: '8px 0 2px' }}>
+                <div className="field" style={{ maxWidth: 260, margin: 0 }}>
+                  <label>Add step to AVAILABILITY</label>
+                  <select value={pickStep} onChange={(e) => setPickStep(e.target.value)}>
+                    {steps.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  className="btn"
+                  disabled={!pickStep}
+                  onClick={() => setScript((prev) => insertAvailabilityStep(prev, pickStep))}
+                  title="Insert this step's exact name into the AVAILABILITY clause"
+                >
+                  ＋ Add to AVAILABILITY
+                </button>
+              </div>
               <p className="fg-secondary" style={{ fontSize: 12, margin: '4px 0' }}>
                 Keywords: {KEYWORDS}
               </p>
@@ -516,7 +546,12 @@ export function ActionsBuilder({ onShowHelp }: { onShowHelp: () => void }) {
                     Test runs against the project&rsquo;s current default filters; in the app the action uses whatever
                     filters the viewer has set.
                   </p>
-                  {result && (
+                  {result && result.kind === 'flowchart' && result.graph && (
+                    <div style={{ marginTop: 8 }}>
+                      <ActionFlowchart result={result} height={420} />
+                    </div>
+                  )}
+                  {result && result.kind !== 'flowchart' && (
                     <div style={{ marginTop: 8 }}>
                       <ActionResultTable result={result} />
                     </div>

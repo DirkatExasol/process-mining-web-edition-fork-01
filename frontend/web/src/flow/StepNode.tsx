@@ -8,6 +8,7 @@ import {
   namedColor,
 } from '../graph/colors'
 import { formatTimeOnly } from '../graph/format'
+import { AggregatePickContext } from './aggregatePickContext'
 import { FlowFocusContext } from './focusContext'
 import type { StepInfo } from '../types'
 
@@ -52,6 +53,10 @@ function StepNodeComponent({ id, data, dragging }: NodeProps) {
   const isFocused = focus?.node === id
   const dimmed = focus != null && !focus.nodes.has(id)
 
+  // Aggregate "pick steps" mode — ring the chosen steps.
+  const pick = useContext(AggregatePickContext)
+  const isPicked = pick.active && pick.picked.has(id)
+
   const background = groupProxy ? groupProxy.color : namedColor(step.bgColor)
   const foreground = groupProxy ? '#FFFFFF' : namedColor(step.fgColor)
 
@@ -74,7 +79,7 @@ function StepNodeComponent({ id, data, dragging }: NodeProps) {
     <div
       className={`step-node${dragging ? ' lifted' : ''}${
         hasDescription || step.eventTime ? ' split' : ''
-      }${dimmed ? ' dimmed' : ''}${isFocused ? ' focused' : ''}`}
+      }${dimmed ? ' dimmed' : ''}${isFocused ? ' focused' : ''}${isPicked ? ' agg-picked' : ''}`}
       style={{
         width: nodeW,
         height: nodeH,

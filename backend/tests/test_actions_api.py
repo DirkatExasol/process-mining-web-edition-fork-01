@@ -141,6 +141,41 @@ def test_transition_table_accepts_all_metrics(backend):
     assert r.status_code == 200
 
 
+def test_flowchart_action_saves_with_a_target(backend):
+    app, store = backend
+    _user(store, "dev", developer=True)
+    cid = _conn(store, assignments=["dev"])
+    client = TestClient(app)
+    spec = _spec(
+        show={"kind": "flowchart", "limit": 0, "metrics": [], "forLast": None},
+        **{"from": {"selectors": []}},
+    )
+    spec["target"] = {"connection": "01 - Exasol Nano", "project": "Airport Passenger Flow Analysis"}
+    r = client.post(
+        "/api/projects/APF/actions",
+        json={"connectionId": cid, "name": "Cross map", "spec": spec},
+        headers={"X-PMW-User": "dev"},
+    )
+    assert r.status_code == 200
+    # Round-trips the target back on the saved action.
+    assert r.json()["spec"]["target"]["project"] == "Airport Passenger Flow Analysis"
+
+
+def test_flowchart_action_requires_a_target(backend):
+    app, store = backend
+    _user(store, "dev", developer=True)
+    cid = _conn(store, assignments=["dev"])
+    client = TestClient(app)
+    spec = _spec(show={"kind": "flowchart", "limit": 0, "metrics": [], "forLast": None})
+    # No target → 400.
+    r = client.post(
+        "/api/projects/APF/actions",
+        json={"connectionId": cid, "name": "bad", "spec": spec},
+        headers={"X-PMW-User": "dev"},
+    )
+    assert r.status_code == 400
+
+
 def test_transition_table_rejects_unknown_metric(backend):
     app, store = backend
     _user(store, "dev", developer=True)

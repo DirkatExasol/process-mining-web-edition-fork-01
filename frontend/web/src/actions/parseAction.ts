@@ -18,6 +18,7 @@ import {
   type ActionMetric,
   type ActionShow,
   type ActionSpec,
+  type ActionTarget,
   type ActionWhere,
   type ParseError,
   type ParseResult,
@@ -135,33 +136,58 @@ function parseShow(value: string, line: number, errors: ParseError[]): ActionSho
       head = c.slice(0, forMatch.index).trim()
     }
     const withMatch = head.match(/^TRANSITION TABLE(?:\s+WITH\s+(.+))?$/)
-    const metrics: ActionMetric[] = []
-    if (withMatch && withMatch[1]) {
-      const body = withMatch[1].replace(/["']/g, '').trim()
-      if (body === 'ALL METRICS' || body === 'ALL METRIC') {
-        // Shorthand for every metric, in the canonical order.
-        metrics.push(...ACTION_METRICS)
-      } else {
-        for (const token of withMatch[1].split(',')) {
-          const m = token.replace(/["']/g, '').trim()
-          if (!m) continue
-          const canonical = METRIC_ALIASES[m]
-          if (canonical) {
-            if (!metrics.includes(canonical)) metrics.push(canonical)
-          } else {
-            errors.push({ line, message: `Unknown transition metric "${m}". Supported: ${ACTION_METRICS.join(', ')}, or ALL METRICS.` })
-          }
-        }
-      }
-    }
+    const metrics =
+      withMatch && withMatch[1] ? parseMetricList(withMatch[1], line, errors, 'transition metric') : []
     if (!metrics.length) metrics.push('COUNT')
     return { kind: 'transitionTable', limit: 0, metrics, forLast }
   }
+  // FLOWCHART [IN SEPARATE PANEL] [FOR <metric, metric, …>] — a full process map of
+  // another project. The optional FOR lists which edge metrics the panel offers to
+  // switch between (default: Count only).
+  if (c.startsWith('FLOWCHART')) {
+    const noPanel = c.replace(/\bIN SEPARATE PANEL\b/, ' ').replace(/\s+/g, ' ').trim()
+    const m = noPanel.match(/^FLOWCHART(?:\s+FOR\s+(.+))?$/)
+    if (m) {
+      const metrics = m[1] ? parseMetricList(m[1], line, errors) : []
+      return { kind: 'flowchart', limit: 0, metrics, forLast: null }
+    }
+  }
   errors.push({
     line,
-    message: 'SHOW must be "LAST [N] LOG ENTRIES" or "TRANSITION TABLE WITH …".',
+    message:
+      'SHOW must be "LAST [N] LOG ENTRIES", "TRANSITION TABLE WITH …" or "FLOWCHART [IN SEPARATE PANEL] [FOR <metrics>]".',
   })
   return { kind: 'logEntries', limit: 1, metrics: [], forLast: null }
+}
+
+/** Parse a comma-separated metric list (shared by TRANSITION TABLE WITH and FLOWCHART
+ *  FOR). Accepts the "ALL METRICS" shorthand. `body` is already canon()'d (upper-cased). */
+function parseMetricList(
+  body: string,
+  line: number,
+  errors: ParseError[],
+  noun = 'metric',
+): ActionMetric[] {
+  const metrics: ActionMetric[] = []
+  const clean = body.replace(/["']/g, '').trim()
+  if (clean === 'ALL METRICS' || clean === 'ALL METRIC') {
+    metrics.push(...ACTION_METRICS) // every metric, in the canonical order
+    return metrics
+  }
+  for (const token of body.split(',')) {
+    const m = token.replace(/["']/g, '').trim()
+    if (!m) continue
+    const canonical = METRIC_ALIASES[m]
+    if (canonical) {
+      if (!metrics.includes(canonical)) metrics.push(canonical)
+    } else {
+      errors.push({
+        line,
+        message: `Unknown ${noun} "${m}". Supported: ${ACTION_METRICS.join(', ')}, or ALL METRICS.`,
+      })
+    }
+  }
+  return metrics
 }
 
 const SELECTORS: Record<string, Selector> = {
@@ -172,12 +198,29 @@ const SELECTORS: Record<string, Selector> = {
   'ALL PREVIOUS': 'ALL_PREVIOUS',
 }
 
-function parseFrom(value: string, line: number, errors: ParseError[]): Selector[] {
+interface FromResult {
+  selectors: Selector[]
+  target: ActionTarget | null
+}
+
+function parseFrom(value: string, line: number, errors: ParseError[]): FromResult {
+  // A "<connection>::<project>" target (for SHOW FLOWCHART). Case is preserved — these
+  // are real connection/project names, so they are NOT canonicalised.
+  const raw = value.trim()
+  if (raw.includes('::')) {
+    const idx = raw.indexOf('::')
+    const connection = raw.slice(0, idx).trim()
+    const project = raw.slice(idx + 2).trim()
+    if (!connection || !project) {
+      errors.push({ line, message: 'FROM must be "<connection>::<project>" (both parts required).' })
+    }
+    return { selectors: [], target: { connection, project } }
+  }
   const c = canon(value)
   const m = c.match(/^NODE\s*\((.*)\)$/)
   if (!m) {
-    errors.push({ line, message: 'FROM must be NODE(THIS | PREVIOUS | FOLLOWING | ALL FOLLOWING | ALL PREVIOUS, …).' })
-    return []
+    errors.push({ line, message: 'FROM must be NODE(THIS | PREVIOUS | FOLLOWING | ALL FOLLOWING | ALL PREVIOUS, …), or "<connection>::<project>" for a flowchart.' })
+    return { selectors: [], target: null }
   }
   const selectors: Selector[] = []
   for (const token of m[1].split(',')) {
@@ -191,7 +234,7 @@ function parseFrom(value: string, line: number, errors: ParseError[]): Selector[
     }
   }
   if (!selectors.length) errors.push({ line, message: 'FROM NODE(...) needs at least one selector.' })
-  return selectors
+  return { selectors, target: null }
 }
 
 function parseSort(value: string, line: number, errors: ParseError[]): 'ASC' | 'DESC' | null {
@@ -244,9 +287,21 @@ export function parseAction(script: string): ParseResult {
     ? parseAvailability(avail.value, avail.line, errors)
     : { allNodes: false, steps: [] }
   const showSpec = show ? parseShow(show.value, show.line, errors) : null
-  const selectors = from ? parseFrom(from.value, from.line, errors) : []
+  const fromRes: FromResult = from
+    ? parseFrom(from.value, from.line, errors)
+    : { selectors: [], target: null }
   const sortSpec = sort ? parseSort(sort.value, sort.line, errors) : null
   const whereSpec = where ? parseWhere(where.value, where.line, errors) : null
+
+  // FLOWCHART needs a <connection>::<project> target; the other shows need NODE(...).
+  if (showSpec && from) {
+    if (showSpec.kind === 'flowchart' && !fromRes.target) {
+      errors.push({ line: from.line, message: 'SHOW FLOWCHART needs FROM "<connection>::<project>".' })
+    }
+    if (showSpec.kind !== 'flowchart' && fromRes.target) {
+      errors.push({ line: from.line, message: 'FROM "<connection>::<project>" is only valid with SHOW FLOWCHART; use FROM NODE(...).' })
+    }
+  }
 
   if (errors.length || !showSpec) return { spec: null, errors }
 
@@ -254,7 +309,8 @@ export function parseAction(script: string): ParseResult {
     spec: {
       availability,
       show: showSpec,
-      from: { selectors },
+      from: { selectors: fromRes.selectors },
+      target: fromRes.target,
       sort: sortSpec,
       where: whereSpec,
     },

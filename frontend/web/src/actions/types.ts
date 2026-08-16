@@ -2,6 +2,8 @@
 // spec (the AST that is sent to the backend and translated to SQL), and the shapes
 // returned when an action runs. See parseAction.ts for the grammar.
 
+import type { ProcessGraph, TransitionMetric } from '../types'
+
 /** A node selector, relative to the node an action is run from ("THIS"). */
 export type Selector =
   | 'THIS'
@@ -10,7 +12,14 @@ export type Selector =
   | 'ALL_FOLLOWING'
   | 'ALL_PREVIOUS'
 
-export type ShowKind = 'logEntries' | 'transitionTable'
+export type ShowKind = 'logEntries' | 'transitionTable' | 'flowchart'
+
+/** A cross-project target: "SHOW FLOWCHART … FROM <connection>::<project>" loads that
+ *  project's process map in a separate panel (scoped to the current date range). */
+export interface ActionTarget {
+  connection: string
+  project: string
+}
 
 /** Transition-table metrics — the same set the chart offers (canonical tokens). */
 export const ACTION_METRICS = [
@@ -52,6 +61,8 @@ export interface ActionSpec {
   availability: ActionAvailability
   show: ActionShow
   from: { selectors: Selector[] }
+  /** For "SHOW FLOWCHART … FROM <connection>::<project>": the target project to load. */
+  target: ActionTarget | null
   /** Log-entry ordering by EVENT_TIME; null means the default (DESC = most recent). */
   sort: 'ASC' | 'DESC' | null
   where: ActionWhere | null
@@ -77,11 +88,24 @@ export interface SavedAction {
   enabled: boolean
 }
 
-/** Result of running an action — a generic table the UI renders as-is. */
+/** Result of running an action. logEntries/transitionTable fill columns+rows; a
+ *  flowchart fills graph+journeyCount for a process map rendered in a panel. */
 export interface ActionRunResult {
   kind: ShowKind
   columns: string[]
   rows: (string | number | null)[][]
   /** How many context nodes the query was scoped to (for the results header). */
   nodeCount?: number
+  /** flowchart: the target project's process map, scoped to the current date range. */
+  graph?: ProcessGraph
+  journeyCount?: number
+  metric?: TransitionMetric
+  /** flowchart: the edge metrics the panel may switch between (SHOW FLOWCHART … FOR …).
+   *  One entry ⇒ no picker; empty/absent ⇒ Count only. */
+  metrics?: TransitionMetric[]
+  /** flowchart: a human title for the panel, e.g. "Airport Passenger Flow Analysis". */
+  title?: string
+  /** flowchart: true if scoped to the chart's date range, false if it fell back to the
+   *  target project's full range (because the date window had no overlapping data). */
+  dateScoped?: boolean
 }

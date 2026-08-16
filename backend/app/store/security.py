@@ -1500,6 +1500,56 @@ class SecurityStore:
             self._set_config("actions", json.dumps(rows))
             self._conn.commit()
 
+    # ── Aggregate links (Σ super-step → detail project, per (connection, project)) ──
+
+    def _aggregates_raw(self) -> list[dict]:
+        with self._lock:
+            raw = self._get_config("aggregates")
+        try:
+            data = json.loads(raw) if raw else []
+        except json.JSONDecodeError:
+            data = []
+        return data if isinstance(data, list) else []
+
+    def aggregates_for(self, connection_id: str, project_id: str) -> list[dict]:
+        """Aggregate links whose HIGH-LEVEL project is this (connection, project) — used
+        by the app to offer 'drill down' on a Σ step."""
+        cid, pid = (connection_id or "").strip(), (project_id or "").strip()
+        return [
+            dict(r)
+            for r in self._aggregates_raw()
+            if r.get("connectionId") == cid and r.get("projectId") == pid
+        ]
+
+    def add_aggregate_link(self, link: dict) -> dict:
+        """Record a Σ step's drill-down target. Keyed by (connectionId, projectId, sigmaStep)
+        where connectionId/projectId identify the HIGH-LEVEL project holding the Σ node."""
+        cid = (link.get("connectionId") or "").strip()
+        pid = (link.get("projectId") or "").strip()
+        sigma = (link.get("sigmaStep") or "").strip()
+        record = {
+            "connectionId": cid,
+            "projectId": pid,
+            "sigmaStep": sigma,
+            "detailConnectionId": (link.get("detailConnectionId") or "").strip(),
+            "detailProjectId": (link.get("detailProjectId") or "").strip(),
+            "createdAt": _now(),
+        }
+        rows = [
+            r
+            for r in self._aggregates_raw()
+            if not (
+                r.get("connectionId") == cid
+                and r.get("projectId") == pid
+                and r.get("sigmaStep") == sigma
+            )
+        ]
+        rows.append(record)
+        with self._lock:
+            self._set_config("aggregates", json.dumps(rows))
+            self._conn.commit()
+        return record
+
     # ── users ─────────────────────────────────────────────────────────────────
 
     def _row_to_user(self, row: sqlite3.Row) -> User:

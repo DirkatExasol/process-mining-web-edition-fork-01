@@ -80,6 +80,21 @@
 
   <div class="warn"><strong>Warning</strong> When the chart's data source is a <b>simulation</b> slot (Sim-A or Sim-B), the source is read-only: <b>Require in journeys</b> and <b>Exclude from journeys</b> are hidden from the popover and only the description and notes items remain. A red notice at the top right of the canvas states this — "Sim-A: simulation data is read-only — interactive filtering, drill-down and step editing are not available."</div>
 
+  <h2 id="aggregates">9.9 Aggregates (developers)</h2>
+
+  <p>Developers can abstract a connected sub-process into a single <b>Σ</b> super-step. <b>Shift-drag</b> a rubber-band across the map (or <b>⌘/Ctrl-click</b> nodes) to select a set of interconnected steps; a <b>Σ&nbsp;Create&nbsp;aggregate</b> button appears once two or more are selected.</p>
+
+  <p>The dialog first checks that the selection is a single interconnected group — a step with no connection to the others is rejected. You then name the Σ step and two new projects (the originals are never modified):</p>
+
+  <dl>
+    <dt>High-level project</dt>
+    <dd>A full copy of the map where each journey's run through the group collapses into one <b>Σ</b> event. The normal engine then computes the Σ node's black-box metrics — its frequency, the time spent inside the group, and the incoming/outgoing edges to the rest of the map — while internal transitions disappear.</dd>
+    <dt>Detail project</dt>
+    <dd>Only the selected steps' events, so the sub-process can be opened on its own and drilled into.</dd>
+  </dl>
+
+  <p>Each output can be written to the <b>same schema</b>, a <b>new schema</b> (created for you), or a <b>different connection</b> — the event data is copied over. In the high-level project, the Σ node's menu offers <b>⤵ Drill down</b> to open its detail project.</p>
+
   <h3 id="ch9-drag">Dragging nodes</h3>
 
   <p>Nodes can be dragged freely. They snap to a 20&nbsp;px grid, and the new position is written to storage only when you release the pointer, not continuously during the drag.</p>

@@ -28,6 +28,7 @@ import {
 import { EdgeColorWizard } from './EdgeColorWizard'
 import { actionMatchesNode } from '../actions/describe'
 import type { SavedAction } from '../actions/types'
+import type { AggregateLink } from '../aggregate/types'
 import {
   GRID_SIZE,
   NODE_W,
@@ -52,6 +53,7 @@ import {
   type StepInfo,
   type TransitionMetric,
 } from '../types'
+import { AggregatePickContext } from './aggregatePickContext'
 import { computeFocus, FlowFocusContext, type FlowFocus } from './focusContext'
 import { GroupBoxNode, type GroupBoxData } from './GroupBoxNode'
 import { MARKER_H, MARKER_W, MarkerNode } from './MarkerNode'
@@ -123,6 +125,12 @@ export interface FlowChartProps {
    *  whose AVAILABILITY matches the clicked node. */
   actionItems?: SavedAction[]
   onRunAction?: (action: SavedAction, node: string) => void
+  /** When set, a floating "Σ Create aggregate" button appears once ≥2 real step nodes
+   *  are selected (shift-drag / ⌘-click). Developers only — the caller gates this. */
+  onCreateAggregate?: (steps: string[]) => void
+  /** Σ drill-down: a node whose name matches a link's sigmaStep gets a "Drill down" item. */
+  aggregateLinks?: AggregateLink[]
+  onDrillDown?: (link: AggregateLink) => void
 }
 
 interface MenuState {
@@ -183,6 +191,27 @@ function FlowChartInner(props: FlowChartProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [descriptionNode, setDescriptionNode] = useState<string | null>(null)
+  // Aggregate "pick steps" mode. A self-contained selection we control (ReactFlow's own
+  // multi-select proved unreliable here): a toggle turns the map into a picker, plain
+  // clicks add/remove steps, and an action bar creates or cancels.
+  const [aggregateMode, setAggregateMode] = useState(false)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const pickValue = useMemo(
+    () => ({ active: aggregateMode, picked }),
+    [aggregateMode, picked],
+  )
+  const togglePicked = useCallback((id: string) => {
+    setPicked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+  const exitAggregateMode = useCallback(() => {
+    setAggregateMode(false)
+    setPicked(new Set())
+  }, [])
   const [zoom, setZoom] = useState(1)
   const [showColorWizard, setShowColorWizard] = useState(false)
   const [showTable, setShowTable] = useState(false)
@@ -857,6 +886,7 @@ function FlowChartInner(props: FlowChartProps) {
   return (
     <div className={`flow-wrap${focus ? ' has-focus' : ''}`} ref={wrapRef}>
       <FlowFocusContext.Provider value={focus}>
+      <AggregatePickContext.Provider value={pickValue}>
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}
@@ -872,8 +902,14 @@ function FlowChartInner(props: FlowChartProps) {
         onNodeMouseLeave={endFocus}
         onNodeClick={(event, node) => {
           endFocus()
-          if (!onNodeAction) return
           if (node.id.startsWith('box:') || virtualGroupOf(node.id)) return
+          // In aggregate pick mode a click toggles the step's membership — no menu.
+          if (aggregateMode) {
+            event.stopPropagation()
+            togglePicked(node.id)
+            return
+          }
+          if (!onNodeAction) return
           setMenu({ kind: 'node', node: node.id, x: event.clientX, y: event.clientY })
         }}
         onPaneClick={() => {
@@ -893,6 +929,7 @@ function FlowChartInner(props: FlowChartProps) {
       >
         <Background variant={BackgroundVariant.Dots} gap={GRID_SIZE} size={1} />
       </ReactFlow>
+      </AggregatePickContext.Provider>
       </FlowFocusContext.Provider>
 
       {isLoading && (
@@ -904,6 +941,54 @@ function FlowChartInner(props: FlowChartProps) {
       {props.notice && (
         <div className="flow-notice" role="status">
           {props.notice}
+        </div>
+      )}
+
+      {props.onCreateAggregate && !aggregateMode && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 12,
+            left: 12,
+            zIndex: 6,
+          }}
+        >
+          <button
+            className="btn"
+            onClick={() => {
+              setMenu(null)
+              setAggregateMode(true)
+            }}
+            title="Select interconnected steps to collapse into one Σ super-step"
+          >
+            Σ Select steps to aggregate
+          </button>
+        </div>
+      )}
+
+      {props.onCreateAggregate && aggregateMode && (
+        <div className="agg-actionbar" role="toolbar">
+          <span className="agg-actionbar-title">Σ Aggregate</span>
+          <span className="agg-actionbar-count">
+            {picked.size === 0
+              ? 'Click connected steps to select them'
+              : `${picked.size} step${picked.size === 1 ? '' : 's'} selected`}
+          </span>
+          <button
+            className="btn primary"
+            disabled={picked.size < 2}
+            onClick={() => props.onCreateAggregate?.([...picked])}
+            title={
+              picked.size < 2
+                ? 'Select at least two connected steps'
+                : 'Collapse the selected steps into one Σ super-step'
+            }
+          >
+            Create aggregate
+          </button>
+          <button className="btn" onClick={exitAggregateMode}>
+            Cancel
+          </button>
         </div>
       )}
 
@@ -1056,6 +1141,22 @@ function FlowChartInner(props: FlowChartProps) {
                 ✎ Show Notes ({noteCounts.get(`node:${menu.node}`) ?? 0})
               </button>
             )}
+            {(() => {
+              const link = (props.aggregateLinks ?? []).find((l) => l.sigmaStep === menu.node)
+              if (!link || !props.onDrillDown) return null
+              return (
+                <button
+                  className="p-item"
+                  style={{ color: 'var(--accent)' }}
+                  onClick={() => {
+                    props.onDrillDown?.(link)
+                    setMenu(null)
+                  }}
+                >
+                  ⤵ Drill down
+                </button>
+              )
+            })()}
             {(() => {
               const node = menu.node as string
               const matches = (props.actionItems ?? []).filter((a) =>

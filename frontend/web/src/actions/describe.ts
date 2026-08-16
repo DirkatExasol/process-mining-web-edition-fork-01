@@ -17,13 +17,38 @@ function joinPhrases(items: string[]): string {
   return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`
 }
 
+/** Normalise a step name for matching an action's AVAILABILITY to a clicked node.
+ *  Tolerant on purpose: aggregate steps are named with the Greek capital sigma
+ *  "Σ" (U+03A3), which is awkward to type — users reach for the n-ary summation
+ *  "∑" (U+2211), a lowercase σ, or a stray space. Fold those together, along with
+ *  case and collapsible whitespace, so a reasonable attempt matches. */
+function normStep(s: string): string {
+  return s
+    .normalize('NFKC')
+    .replace(/[∑σς]/g, 'Σ') // ∑, σ, ς → Σ
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
 /** True if an action with this spec should be offered on `node`. */
 export function actionMatchesNode(spec: ActionSpec, node: string): boolean {
-  return spec.availability.allNodes || spec.availability.steps.includes(node)
+  if (spec.availability.allNodes) return true
+  const target = normStep(node)
+  return spec.availability.steps.some((s) => normStep(s) === target)
 }
 
 /** A one-sentence plain-English restatement of what the action will show. */
 export function describeAction(spec: ActionSpec): string {
+  if (spec.show.kind === 'flowchart') {
+    const t = spec.target
+    const metrics = spec.show.metrics.length
+      ? ` The panel lets you switch the edge metric between ${spec.show.metrics.join(', ')}.`
+      : ''
+    return t
+      ? `Open the process map of “${t.project}” (${t.connection}) in a separate panel, for the chart's current date range.${metrics}`
+      : `Open a process map in a separate panel.${metrics}`
+  }
   const scope = joinPhrases(spec.from.selectors.map((s) => SELECTOR_PHRASES[s])) || 'this node'
   let what: string
   if (spec.show.kind === 'logEntries') {

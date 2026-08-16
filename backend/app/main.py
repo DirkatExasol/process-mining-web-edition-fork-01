@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse
 
 from . import licensing
 from . import log_events as logx
-from .api import actions, connections, features, integration, projects
+from .api import actions, aggregates, connections, features, integration, projects
 from .config import LICENSE_GRACE_SECS, LICENSE_POLL_SECS, REQUIRE_PROXY_AUTH
 from .db.manager import db, registry, reset_current_user, set_current_user
 from .store.crypto import proxy_auth_secret
@@ -196,6 +196,7 @@ app.include_router(projects.router)
 app.include_router(features.router)
 app.include_router(integration.router)
 app.include_router(actions.router)
+app.include_router(aggregates.router)
 
 
 @app.get("/api/health")

@@ -12,7 +12,9 @@ import { useNoteHandlers } from './useNoteHandlers'
 import { api } from '../api'
 import { resolveScope } from '../actions/resolveScope'
 import type { ActionRunResult, SavedAction } from '../actions/types'
+import type { AggregateLink } from '../aggregate/types'
 import { ActionResultModal } from './ActionResultModal'
+import { AggregateDialog } from './AggregateDialog'
 
 export function ChartView({
   side,
@@ -40,6 +42,33 @@ export function ChartView({
     busy: boolean
     error: string | null
   } | null>(null)
+
+  // Aggregate designer: developers can collapse a connected step selection into a Σ step.
+  const canAggregate = store.authIsDeveloper || store.authIsAdmin
+  const [aggregateMembers, setAggregateMembers] = useState<string[] | null>(null)
+
+  const handleDrillDown = async (link: AggregateLink) => {
+    if (link.detailConnectionId !== store.connection.activeProfileId) {
+      store.showAlert({
+        title: 'Detail on another connection',
+        message: `This Σ step's detail lives on a different connection. Connect to it and open project “${link.detailProjectId}”.`,
+        primaryLabel: 'OK',
+      })
+      return
+    }
+    let project = store.projects.find((p) => p.projectId === link.detailProjectId)
+    if (!project) {
+      await store.loadProjects()
+      project = useStore.getState().projects.find((p) => p.projectId === link.detailProjectId)
+    }
+    if (project) await store.selectProject(project)
+    else
+      store.showAlert({
+        title: 'Detail project not found',
+        message: `Project “${link.detailProjectId}” isn't listed here — it may live in a different schema.`,
+        primaryLabel: 'OK',
+      })
+  }
 
   const runNodeAction = async (action: SavedAction, node: string) => {
     const connId = store.connection.activeProfileId ?? ''
@@ -217,6 +246,9 @@ export function ChartView({
               onEdgeNote={notes.openEdgeNotes}
               actionItems={actionItems}
               onRunAction={(action, node) => void runNodeAction(action, node)}
+              onCreateAggregate={canAggregate ? (steps) => setAggregateMembers(steps) : undefined}
+              aggregateLinks={store.projectAggregates}
+              onDrillDown={(link) => void handleDrillDown(link)}
             />
           )}
         </div>
@@ -243,6 +275,29 @@ export function ChartView({
           busy={actionModal.busy}
           error={actionModal.error}
           onClose={() => setActionModal(null)}
+        />
+      )}
+
+      {aggregateMembers && store.selectedProject && (
+        <AggregateDialog
+          members={aggregateMembers}
+          transitions={store.processGraph.transitions}
+          projectId={store.selectedProject.projectId}
+          connectionId={store.connection.activeProfileId ?? ''}
+          projectTitle={store.selectedProject.title}
+          onClose={() => setAggregateMembers(null)}
+          onDone={(result) => {
+            setAggregateMembers(null)
+            void store.loadProjects()
+            const here = result.highLevelConnectionId === store.connection.activeProfileId
+            store.showAlert({
+              title: 'Aggregate created',
+              message: here
+                ? `Created the high-level project (Σ ${result.sigmaStep}) and its detail project in this connection's schema. If you don't see them in the Projects list, refresh — and note they only appear here when you left the schema blank (same schema). If you targeted a new schema, connect to that schema to open them.`
+                : `Created the high-level project (Σ ${result.sigmaStep}) and its detail project on another connection/schema. Connect to that connection's schema to open them — they won't appear in this Projects list.`,
+              primaryLabel: 'OK',
+            })
+          }}
         />
       )}
     </div>
