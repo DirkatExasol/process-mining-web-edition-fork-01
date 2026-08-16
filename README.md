@@ -918,6 +918,32 @@ one or type to narrow the list. Steps sharing a `BELONGS_TO` value are wrapped i
 a dashed group box whose tint and border are tuned per theme so it stays clearly
 visible in both light and dark mode.
 
+## Aggregates (Σ high-level maps, developers)
+
+Developers can abstract a busy process map into a **high-level map** whose sub-processes
+are collapsed into **Σ super-steps**. On the map, **Σ Select steps to aggregate** enters a
+pick mode: click a connected group of steps, **＋ Add group** to bank it (banked steps are
+ringed and locked, so a step belongs to only one aggregate), and repeat for as many groups
+as needed. **Create map** builds **one** high-level project holding every Σ node, plus **one
+detail project per group** — each with its own name and its own destination (same schema, a
+new schema, or a different connection). The originals are untouched.
+
+The high-level map is materialised by **run-collapsing** each journey: a maximal run through
+one group's members becomes a single Σ event (breaking between different groups), so the
+normal directly-follows engine computes each Σ node's black-box metrics — frequency, time
+inside the group, and the incoming/outgoing edges — for free. A Σ step inherits its members'
+shared `BELONGS_TO` swimlane. JOURNEYS are bulk-loaded with pyexasol's parallel HTTP `IMPORT`
+(one statement, one commit), falling back to batched inserts if the transport is unavailable.
+
+Each Σ node's menu offers **⤵ Drill down** into its detail project. A drilled-in detail
+project (id `aggd_…`) is shown as a **flowchart only — no Sankey** — with a **← Return to
+high-level map** button. To grow a map later, open it, pick more original steps and choose
+**Add to map**: the server re-collapses the source with the union of all groups (the map
+stays one project) and writes only the new detail. Backend: `db/materialize.py`
+(`collapse_high_level_multi`, `materialize_aggregate_set`), `api/aggregates.py`
+(`POST …/aggregate-set`, `POST …/aggregate-set/add`), aggregate-set storage in
+`store/security.py`.
+
 ## License
 
 See [`LICENSE`](LICENSE) for the full license text.

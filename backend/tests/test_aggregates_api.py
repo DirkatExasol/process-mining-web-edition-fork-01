@@ -100,6 +100,61 @@ def test_list_aggregates_empty(backend):
     assert r.status_code == 200 and r.json()["aggregates"] == []
 
 
+def _group(sigma, members, name="Detail"):
+    return {"sigmaName": sigma, "members": members, "detail": {"name": name, "targetConnectionId": "", "targetSchema": ""}}
+
+
+def _set_body(cid, groups):
+    return {"connectionId": cid, "highLevel": {"name": "High", "targetConnectionId": "", "targetSchema": ""}, "aggregates": groups}
+
+
+def test_set_create_rejects_overlapping_members(backend):
+    app, store = backend
+    _user(store, "dev", developer=True)
+    cid = _conn(store, assignments=["dev"])
+    client = TestClient(app)
+    body = _set_body(cid, [_group("Σ1", ["A", "B"]), _group("Σ2", ["B", "C"])])  # B in both
+    r = client.post("/api/projects/P/aggregate-set", json=body, headers={"X-PMW-User": "dev"})
+    assert r.status_code == 400 and "only one aggregate" in r.json()["detail"]
+
+
+def test_set_create_needs_developer(backend):
+    app, store = backend
+    _user(store, "pat", power=True)
+    cid = _conn(store, assignments=["pat"])
+    client = TestClient(app)
+    r = client.post("/api/projects/P/aggregate-set", json=_set_body(cid, [_group("Σ1", ["A", "B"])]), headers={"X-PMW-User": "pat"})
+    assert r.status_code == 403
+
+
+def test_add_to_missing_set_is_404(backend):
+    app, store = backend
+    _user(store, "dev", developer=True)
+    cid = _conn(store, assignments=["dev"])
+    client = TestClient(app)
+    body = {"connectionId": cid, "aggregates": [_group("Σ1", ["A", "B"])]}
+    r = client.post("/api/projects/nope/aggregate-set/add", json=body, headers={"X-PMW-User": "dev"})
+    assert r.status_code == 404
+
+
+def test_aggregate_set_roundtrips_in_store(backend):
+    _app, store = backend
+    rec = store.save_aggregate_set({
+        "sourceConnectionId": "c1", "sourceProjectId": "P",
+        "highLevelConnectionId": "c1", "highLevelProjectId": "agg_1",
+        "highLevelSchema": "MINING", "highLevelTitle": "High",
+        "aggregates": [{"sigmaStep": "Σ1", "members": ["A", "B"], "detailConnectionId": "c1", "detailProjectId": "d1", "detailSchema": "MINING", "detailTitle": "D"}],
+    })
+    assert rec["createdAt"] and rec["updatedAt"]
+    assert store.aggregate_set_by_source("c1", "P")["highLevelProjectId"] == "agg_1"
+    assert store.aggregate_set_by_high_level("c1", "agg_1")["sourceProjectId"] == "P"
+    # upsert by source: a second save with an extra aggregate replaces, keeps createdAt.
+    rec["aggregates"].append({"sigmaStep": "Σ2", "members": ["C", "D"], "detailConnectionId": "c1", "detailProjectId": "d2", "detailSchema": "MINING", "detailTitle": "D2"})
+    rec2 = store.save_aggregate_set(rec)
+    assert rec2["createdAt"] == rec["createdAt"]
+    assert len(store.aggregate_set_by_source("c1", "P")["aggregates"]) == 2
+
+
 def test_aggregate_link_roundtrips_in_store(backend):
     _app, store = backend
     store.add_aggregate_link(

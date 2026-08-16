@@ -21,10 +21,17 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from .demo_data import _insert_journeys_sql as _demo_insert_journeys  # noqa: F401 (kept for parity)
 from .demo_data import _sq
 
-_BATCH = 1000
+# JOURNEYS columns we populate (SAMPLE_SET keeps its 'ORIGINAL' default).
+_JOURNEY_COLUMNS = [
+    "PROJECT_ID", "EVENT_ID", "STEP", "STEP_ID", "EVENT_TIME", "META_1", "META_2", "META_3",
+]
+# EVENT_TIME is read pre-formatted as 'YYYY-MM-DD HH24:MI:SS'; the bulk IMPORT parses
+# it against this session timestamp format.
+_TS_FORMAT = "YYYY-MM-DD HH24:MI:SS"
+# Fallback batch size for INSERT … VALUES (used only if HTTP-transport IMPORT fails).
+_BATCH = 2000
 
 
 @dataclass
@@ -53,31 +60,53 @@ class StepRow:
 # ── pure transforms (unit-testable, no DB) ────────────────────────────────────
 
 
-def collapse_high_level(
-    events: list[SourceEvent], members: set[str], sigma: str
-) -> list[SourceEvent]:
-    """Collapse each journey's maximal consecutive run of member steps into ONE Σ event.
+@dataclass(frozen=True)
+class AggGroup:
+    """One aggregate: the set of member steps and the Σ super-step they collapse into."""
 
-    Assumes ``events`` are ordered by (event_id, event_time, step_id). Non-member events
-    pass through unchanged; a Σ event keeps the run's first event's time/step_id/meta."""
+    members: frozenset[str]
+    sigma: str
+
+
+def collapse_high_level_multi(
+    events: list[SourceEvent], groups: list[AggGroup]
+) -> list[SourceEvent]:
+    """Collapse SEVERAL aggregates at once into one high-level event stream.
+
+    Each journey's maximal consecutive run of steps belonging to the *same* aggregate is
+    folded into one Σ event for that aggregate; the run breaks when the owning aggregate
+    changes (to a different aggregate, or to a non-member step). Member sets across groups
+    must be disjoint. Assumes ``events`` ordered by (event_id, event_time, step_id)."""
+    owner: dict[str, str] = {}
+    for g in groups:
+        for m in g.members:
+            owner[m] = g.sigma
     out: list[SourceEvent] = []
     last_eid: str | None = None
-    in_run = False
+    cur_sigma: str | None = None  # the Σ of the run in progress, or None outside any run
     for e in events:
         if e.event_id != last_eid:
             last_eid = e.event_id
-            in_run = False
-        if e.step in members:
-            if in_run:
-                continue  # same run — folded into the Σ event already emitted
-            in_run = True
+            cur_sigma = None
+        sig = owner.get(e.step)
+        if sig is not None:
+            if cur_sigma == sig:
+                continue  # same aggregate run — folded into the Σ event already emitted
+            cur_sigma = sig
             out.append(
-                SourceEvent(e.event_id, sigma, e.step_id, e.event_time, e.meta1, e.meta2, e.meta3)
+                SourceEvent(e.event_id, sig, e.step_id, e.event_time, e.meta1, e.meta2, e.meta3)
             )
         else:
-            in_run = False
+            cur_sigma = None
             out.append(e)
     return out
+
+
+def collapse_high_level(
+    events: list[SourceEvent], members: set[str], sigma: str
+) -> list[SourceEvent]:
+    """Single-aggregate collapse (see :func:`collapse_high_level_multi`)."""
+    return collapse_high_level_multi(events, [AggGroup(frozenset(members), sigma)])
 
 
 def filter_detail(events: list[SourceEvent], members: set[str]) -> list[SourceEvent]:
@@ -86,8 +115,15 @@ def filter_detail(events: list[SourceEvent], members: set[str]) -> list[SourceEv
 
 
 def sigma_step_row(sigma: str, members: set[str], steps: list[StepRow]) -> StepRow:
-    """A synthetic STEPS row for the Σ super-step; score = sum of member scores."""
+    """A synthetic STEPS row for the Σ super-step; score = sum of member scores.
+
+    The Σ step inherits the members' BELONGS_TO group when they all share one (ignoring
+    members without a group), so the super-step stays inside the same swimlane/grouping
+    on the high-level map. If the members span more than one group, it gets none."""
     total = sum((s.score or 0) for s in steps if s.step in members)
+    groups = {(s.belongs_to or "").strip() for s in steps if s.step in members}
+    groups.discard("")
+    belongs_to = next(iter(groups)) if len(groups) == 1 else ""
     return StepRow(
         step=sigma,
         description=f"Aggregate of {len(members)} steps.",
@@ -96,7 +132,7 @@ def sigma_step_row(sigma: str, members: set[str], steps: list[StepRow]) -> StepR
         score=total or None,
         shape="rectangle",
         end_of_process=False,
-        belongs_to="",
+        belongs_to=belongs_to,
     )
 
 
@@ -118,7 +154,19 @@ def _steps_insert_sqls(project_id: str, steps: list[StepRow]) -> list[str]:
     return out
 
 
-def _journeys_insert_sql(project_id: str, rows: list[SourceEvent]) -> str:
+def _journey_rows(project_id: str, events: list[SourceEvent]):
+    """Yield JOURNEYS rows (in _JOURNEY_COLUMNS order) for the bulk IMPORT."""
+    for e in events:
+        yield (project_id, e.event_id, e.step, e.step_id, e.event_time, e.meta1, e.meta2, e.meta3)
+
+
+def _lit(value: str | None) -> str:
+    return "NULL" if value is None else f"'{_sq(str(value))}'"
+
+
+def _journeys_insert_values(project_id: str, rows: list[SourceEvent]) -> str:
+    """A batched INSERT … VALUES for JOURNEYS — the slow fallback when HTTP IMPORT is
+    unavailable (e.g. the Exasol cluster cannot open a data channel to this host)."""
     vals = ",\n  ".join(
         f"('{_sq(project_id)}', '{_sq(r.event_id)}', '{_sq(r.step)}', "
         f"{'NULL' if r.step_id is None else int(r.step_id)}, "
@@ -130,10 +178,6 @@ def _journeys_insert_sql(project_id: str, rows: list[SourceEvent]) -> str:
         "INSERT INTO JOURNEYS (PROJECT_ID, EVENT_ID, STEP, STEP_ID, EVENT_TIME, "
         f"META_1, META_2, META_3) VALUES\n  {vals}"
     )
-
-
-def _lit(value: str | None) -> str:
-    return "NULL" if value is None else f"'{_sq(str(value))}'"
 
 
 # ── read the source ───────────────────────────────────────────────────────────
@@ -181,6 +225,7 @@ def _read_source(run_sql, schema: str, project_id: str) -> tuple[list[SourceEven
 
 
 def _write_project(
+    raw,
     run_sql,
     *,
     schema: str,
@@ -217,8 +262,24 @@ def _write_project(
     )
     for sql in _steps_insert_sqls(project_id, steps):
         run_sql(sql)
-    for offset in range(0, len(events), _BATCH):
-        run_sql(_journeys_insert_sql(project_id, events[offset : offset + _BATCH]))
+
+    # Bulk-load JOURNEYS — the large table — via Exasol's parallel HTTP IMPORT instead of
+    # thousands of INSERT … VALUES round trips. One statement, one commit; pyexasol
+    # CSV-encodes the rows (correct quoting for commas/quotes/newlines for free). If the
+    # HTTP transport is unavailable (the cluster can't reach this host), a failed IMPORT
+    # rolls back cleanly, so we fall back to batched INSERTs — slower but always works.
+    if events:
+        run_sql(f"ALTER SESSION SET NLS_TIMESTAMP_FORMAT = '{_TS_FORMAT}'")
+        try:
+            raw.import_from_iterable(
+                _journey_rows(project_id, events),
+                (schema, "JOURNEYS"),
+                import_params={"columns": _JOURNEY_COLUMNS},
+            )
+        except Exception:  # noqa: BLE001 — any transport failure falls back to VALUES
+            run_sql(f"DELETE FROM JOURNEYS WHERE PROJECT_ID = '{_sq(project_id)}'")  # clear a partial IMPORT
+            for offset in range(0, len(events), _BATCH):
+                run_sql(_journeys_insert_values(project_id, events[offset : offset + _BATCH]))
 
 
 @dataclass
@@ -257,6 +318,60 @@ def _open_conn(conn):
     return raw, run_sql
 
 
+def _write_target(tgt: "Target", steps, events, meta_titles) -> None:
+    raw, run = _open_conn(tgt.connection)
+    try:
+        _write_project(
+            raw, run,
+            schema=tgt.schema, provision=tgt.provision, project_id=tgt.project_id,
+            title=tgt.title, description="", meta_titles=meta_titles, steps=steps, events=events,
+        )
+        raw.commit()
+    finally:
+        raw.close()
+
+
+async def materialize_aggregate_set(
+    *,
+    source_connection: object,
+    source_project_id: str,
+    groups: list[AggGroup],
+    high_level: Target,
+    details: list[tuple[Target, frozenset[str]]],
+) -> dict:
+    """Read the source project once, then write ONE high-level project collapsing ALL
+    ``groups`` (a Σ super-step per group) plus a member-only detail project for each entry
+    in ``details`` (each to its own target). ``groups`` is the full set — pass every group
+    so the high-level map stays consistent; ``details`` is only the projects to (re)write
+    now (so 'add another aggregate later' re-writes the map but only the new detail)."""
+
+    def _run() -> None:
+        src_raw, src_run = _open_conn(source_connection)
+        try:
+            events, steps, meta_titles = _read_source(
+                src_run, source_connection.schema or "", source_project_id
+            )
+        finally:
+            src_raw.close()
+
+        all_members: set[str] = set().union(*[set(g.members) for g in groups]) if groups else set()
+        hi_events = collapse_high_level_multi(events, groups)
+        hi_steps = [s for s in steps if s.step not in all_members]
+        hi_steps.extend(sigma_step_row(g.sigma, set(g.members), steps) for g in groups)
+        _write_target(high_level, hi_steps, hi_events, meta_titles)
+
+        for tgt, members in details:
+            det_events = filter_detail(events, members)
+            det_steps = [s for s in steps if s.step in members]
+            _write_target(tgt, det_steps, det_events, meta_titles)
+
+    await asyncio.to_thread(_run)
+    return {
+        "highLevelProjectId": high_level.project_id,
+        "detailProjectIds": [t.project_id for t, _ in details],
+    }
+
+
 async def materialize_aggregate(
     *,
     source_connection: object,
@@ -266,46 +381,15 @@ async def materialize_aggregate(
     high_level: Target,
     detail: Target,
 ) -> dict:
-    """Read the source project once, then write the collapsed high-level project and the
-    member-only detail project to their targets. Runs off the event loop."""
-
-    def _run() -> None:
-        # 1) read the whole source project into memory.
-        src_raw, src_run = _open_conn(source_connection)
-        try:
-            events, steps, meta_titles = _read_source(
-                src_run, source_connection.schema or "", source_project_id
-            )
-        finally:
-            src_raw.close()
-
-        hi_events = collapse_high_level(events, members, sigma)
-        hi_steps = [s for s in steps if s.step not in members]
-        hi_steps.append(sigma_step_row(sigma, members, steps))
-        det_events = filter_detail(events, members)
-        det_steps = [s for s in steps if s.step in members]
-
-        # 2) write high-level and detail to their (possibly different) destinations.
-        for tgt, ev, st in ((high_level, hi_events, hi_steps), (detail, det_events, det_steps)):
-            raw, run = _open_conn(tgt.connection)
-            try:
-                _write_project(
-                    run,
-                    schema=tgt.schema,
-                    provision=tgt.provision,
-                    project_id=tgt.project_id,
-                    title=tgt.title,
-                    description="",
-                    meta_titles=meta_titles,
-                    steps=st,
-                    events=ev,
-                )
-                raw.commit()
-            finally:
-                raw.close()
-
-    await asyncio.to_thread(_run)
+    """Single-aggregate convenience wrapper over :func:`materialize_aggregate_set`."""
+    result = await materialize_aggregate_set(
+        source_connection=source_connection,
+        source_project_id=source_project_id,
+        groups=[AggGroup(frozenset(members), sigma)],
+        high_level=high_level,
+        details=[(detail, frozenset(members))],
+    )
     return {
-        "highLevelProjectId": high_level.project_id,
+        "highLevelProjectId": result["highLevelProjectId"],
         "detailProjectId": detail.project_id,
     }

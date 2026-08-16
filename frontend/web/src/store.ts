@@ -154,6 +154,9 @@ export interface AppState {
   projectActions: SavedAction[]
   /** Aggregate links for the open project — a Σ step drills down into its detail project. */
   projectAggregates: AggregateLink[]
+  /** When the current project was reached by drilling into a Σ step, the high-level map to
+   *  return to (a "Return" button). Null when not viewing a drilled-into detail project. */
+  drillReturn: { projectId: string; title: string } | null
   /** Set when the last sign-out was due to inactivity, so the login screen can say so. */
   signedOutForInactivity: boolean
 
@@ -359,6 +362,10 @@ export interface AppActions {
   resetFilters: () => void
   loadProjectActions: () => Promise<void>
   loadProjectAggregates: () => Promise<void>
+  /** Drill from a Σ step into its detail project, remembering the high-level map to return to. */
+  drillDownTo: (link: AggregateLink) => Promise<void>
+  /** Go back to the high-level map remembered by the last drill-down. */
+  returnFromDrill: () => Promise<void>
   reloadGraph: () => Promise<void>
   reloadGraphForDay: (day: string) => Promise<string | null>
   reloadABSide: (side: ABSide, from: string, to: string) => Promise<void>
@@ -482,6 +489,7 @@ const INITIAL_STATE: AppState = {
   actionsEnabled: false,
   projectActions: [],
   projectAggregates: [],
+  drillReturn: null,
   signedOutForInactivity: false,
 
   connections: [],
@@ -1107,6 +1115,8 @@ export const useStore = create<Store>((set, get) => {
         savedChartStates: {},
         isLoading: true,
         errorMessage: null,
+        // Any plain project switch leaves drill-down context; drillDownTo re-sets it after.
+        drillReturn: null,
         // reset active chart
         processGraph: EMPTY_GRAPH,
         includedSteps: [],
@@ -1522,6 +1532,45 @@ export const useStore = create<Store>((set, get) => {
       } catch {
         set({ projectAggregates: [] }) // never block the chart on this
       }
+    },
+
+    drillDownTo: async (link) => {
+      const s = get()
+      if (link.detailConnectionId !== s.connection.activeProfileId) {
+        s.showAlert({
+          title: 'Detail on another connection',
+          message: `This Σ step's detail lives on a different connection. Connect to it and open project “${link.detailProjectId}”.`,
+          primaryLabel: 'OK',
+        })
+        return
+      }
+      const from = s.selectedProject // the high-level map we're leaving
+      let project = s.projects.find((p) => p.projectId === link.detailProjectId)
+      if (!project) {
+        await get().loadProjects()
+        project = get().projects.find((p) => p.projectId === link.detailProjectId)
+      }
+      if (!project) {
+        s.showAlert({
+          title: 'Detail project not found',
+          message: `Project “${link.detailProjectId}” isn't listed here — it may live in a different schema.`,
+          primaryLabel: 'OK',
+        })
+        return
+      }
+      await get().selectProject(project) // clears drillReturn
+      if (from) set({ drillReturn: { projectId: from.projectId, title: from.title } })
+    },
+
+    returnFromDrill: async () => {
+      const ret = get().drillReturn
+      if (!ret) return
+      let project = get().projects.find((p) => p.projectId === ret.projectId)
+      if (!project) {
+        await get().loadProjects()
+        project = get().projects.find((p) => p.projectId === ret.projectId)
+      }
+      if (project) await get().selectProject(project) // clears drillReturn
     },
 
     // ── filters ───────────────────────────────────────────────────────────

@@ -25,6 +25,37 @@ export interface CreateAggregateResult {
   sigmaStep: string
 }
 
+/** One aggregate group inside a multi-aggregate set: the member steps, a Σ name, and its
+ *  own detail-project destination. */
+export interface AggregateGroupInput {
+  sigmaName: string
+  members: string[]
+  detail: AggregateOutput
+}
+
+/** Create a whole high-level map at once (several Σ groups). */
+export interface CreateAggregateSetBody {
+  connectionId: string // source connection
+  highLevel: AggregateOutput
+  aggregates: AggregateGroupInput[]
+}
+
+/** Append aggregates to an existing high-level map. */
+export interface AddAggregatesBody {
+  connectionId: string // the high-level map's connection
+  aggregates: AggregateGroupInput[]
+}
+
+export interface AggregateSetResult {
+  highLevelProjectId: string
+  highLevelConnectionId: string
+  aggregates: {
+    sigmaStep: string
+    detailConnectionId: string
+    detailProjectId: string
+  }[]
+}
+
 /** A stored Σ → detail-project link, listed for a high-level project so the app can
  *  offer drill-down on the Σ node. */
 export interface AggregateLink {

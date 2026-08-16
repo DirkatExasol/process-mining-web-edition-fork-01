@@ -1550,6 +1550,58 @@ class SecurityStore:
             self._conn.commit()
         return record
 
+    # ── Aggregate sets (the full definition per source project, for re-materialising) ──
+    #
+    # A set is the source ref + the high-level target + a list of aggregates (each with its
+    # members and its own detail target). Keyed uniquely by the SOURCE (connection, project)
+    # — one high-level map per source. Stored alongside the per-Σ drill links above so the
+    # app can offer 'add another aggregate' later (re-collapse the source with the union).
+
+    def _aggregate_sets_raw(self) -> list[dict]:
+        with self._lock:
+            raw = self._get_config("aggregate_sets")
+        try:
+            data = json.loads(raw) if raw else []
+        except json.JSONDecodeError:
+            data = []
+        return data if isinstance(data, list) else []
+
+    def aggregate_set_by_source(self, connection_id: str, project_id: str) -> dict | None:
+        cid, pid = (connection_id or "").strip(), (project_id or "").strip()
+        for r in self._aggregate_sets_raw():
+            if r.get("sourceConnectionId") == cid and r.get("sourceProjectId") == pid:
+                return dict(r)
+        return None
+
+    def aggregate_set_by_high_level(self, connection_id: str, project_id: str) -> dict | None:
+        cid, pid = (connection_id or "").strip(), (project_id or "").strip()
+        for r in self._aggregate_sets_raw():
+            if r.get("highLevelConnectionId") == cid and r.get("highLevelProjectId") == pid:
+                return dict(r)
+        return None
+
+    def save_aggregate_set(self, record: dict) -> dict:
+        """Upsert an aggregate set, keyed by its source (connection, project)."""
+        cid = (record.get("sourceConnectionId") or "").strip()
+        pid = (record.get("sourceProjectId") or "").strip()
+        now = _now()
+        existing = self.aggregate_set_by_source(cid, pid)
+        record = dict(record)
+        record["sourceConnectionId"] = cid
+        record["sourceProjectId"] = pid
+        record["createdAt"] = (existing or {}).get("createdAt", now)
+        record["updatedAt"] = now
+        rows = [
+            r
+            for r in self._aggregate_sets_raw()
+            if not (r.get("sourceConnectionId") == cid and r.get("sourceProjectId") == pid)
+        ]
+        rows.append(record)
+        with self._lock:
+            self._set_config("aggregate_sets", json.dumps(rows))
+            self._conn.commit()
+        return record
+
     # ── users ─────────────────────────────────────────────────────────────────
 
     def _row_to_user(self, row: sqlite3.Row) -> User:

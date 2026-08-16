@@ -53,9 +53,10 @@ function StepNodeComponent({ id, data, dragging }: NodeProps) {
   const isFocused = focus?.node === id
   const dimmed = focus != null && !focus.nodes.has(id)
 
-  // Aggregate "pick steps" mode — ring the chosen steps.
+  // Aggregate "pick steps" mode — ring the chosen steps (bright) and banked ones (calm).
   const pick = useContext(AggregatePickContext)
   const isPicked = pick.active && pick.picked.has(id)
+  const isBanked = pick.active && pick.banked.has(id)
 
   const background = groupProxy ? groupProxy.color : namedColor(step.bgColor)
   const foreground = groupProxy ? '#FFFFFF' : namedColor(step.fgColor)
@@ -79,7 +80,9 @@ function StepNodeComponent({ id, data, dragging }: NodeProps) {
     <div
       className={`step-node${dragging ? ' lifted' : ''}${
         hasDescription || step.eventTime ? ' split' : ''
-      }${dimmed ? ' dimmed' : ''}${isFocused ? ' focused' : ''}${isPicked ? ' agg-picked' : ''}`}
+      }${dimmed ? ' dimmed' : ''}${isFocused ? ' focused' : ''}${isPicked ? ' agg-picked' : ''}${
+        isBanked ? ' agg-banked' : ''
+      }`}
       style={{
         width: nodeW,
         height: nodeH,

@@ -675,9 +675,11 @@ const processMap: HelpTopic = {
     {
       heading: 'Aggregates (developers)',
       body: [
-        p('Developers can abstract a sub-process into a single Σ super-step. Shift-drag (or ⌘/Ctrl-click) to select a set of interconnected steps on the map; a “Σ Create aggregate” button appears once two or more are selected.'),
-        p('The dialog checks that the selection is one interconnected group (no isolated step), then creates two new projects — the originals are untouched: a high-level project where the group is one Σ node (its black-box metrics computed by the normal engine), and a detail project holding just that sub-process. Each can be written to the same schema, a new schema, or a different connection.'),
-        tip('In the high-level project, the Σ node’s menu offers ⤵ Drill down to open its detail project.'),
+        p('Developers can abstract sub-processes into Σ super-steps. Click “Σ Select steps to aggregate” (lower-left of the map) to enter pick mode, then click a set of interconnected steps. Use “＋ Add group” to bank that group and start another — banked steps are ringed and locked so a step belongs to only one aggregate. You can bank as many groups as you need.'),
+        p('“Create map” opens a dialog with one row per group (a Σ name, a detail-project name, and its own target — same schema, a new schema, or a different connection). It builds ONE high-level project holding all the Σ nodes (each Σ’s black-box metrics computed by the normal engine), plus one detail project per group. The original project is untouched.'),
+        p('To add more later, open the high-level map, enter pick mode again, select more original steps and choose “Add to map” — the map is rebuilt from its source with the new Σ step(s) added, and only the new detail project is written.'),
+        tip('Each Σ node’s menu offers ⤵ Drill down to open its detail project. A Σ step inherits the group’s BELONGS_TO swimlane when its members share one.'),
+        p('A drilled-into detail project is a black-box sub-process: it is shown as a flowchart only (no Sankey), with a ← Return to high-level map button to go straight back.'),
       ],
     },
   ],

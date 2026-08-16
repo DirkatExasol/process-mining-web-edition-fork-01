@@ -125,9 +125,13 @@ export interface FlowChartProps {
    *  whose AVAILABILITY matches the clicked node. */
   actionItems?: SavedAction[]
   onRunAction?: (action: SavedAction, node: string) => void
-  /** When set, a floating "Σ Create aggregate" button appears once ≥2 real step nodes
-   *  are selected (shift-drag / ⌘-click). Developers only — the caller gates this. */
-  onCreateAggregate?: (steps: string[]) => void
+  /** When set, the map offers an aggregate "select steps" mode (developers only — the
+   *  caller gates this). The user banks one or more connected groups of steps; on Create
+   *  the banked groups (each a list of step names) are handed back to build the map. */
+  onCreateAggregate?: (groups: string[][]) => void
+  /** True when the current project is itself a high-level aggregate map — the action bar
+   *  then reads "Add to map" (append) rather than "Create map". */
+  isHighLevelMap?: boolean
   /** Σ drill-down: a node whose name matches a link's sigmaStep gets a "Drill down" item. */
   aggregateLinks?: AggregateLink[]
   onDrillDown?: (link: AggregateLink) => void
@@ -196,21 +200,36 @@ function FlowChartInner(props: FlowChartProps) {
   // clicks add/remove steps, and an action bar creates or cancels.
   const [aggregateMode, setAggregateMode] = useState(false)
   const [picked, setPicked] = useState<Set<string>>(new Set())
+  // Groups already banked this session (each a list of step names). Their steps are locked
+  // out of further picking so a step can belong to only one aggregate.
+  const [bankedGroups, setBankedGroups] = useState<string[][]>([])
+  const bankedSet = useMemo(() => new Set(bankedGroups.flat()), [bankedGroups])
   const pickValue = useMemo(
-    () => ({ active: aggregateMode, picked }),
-    [aggregateMode, picked],
+    () => ({ active: aggregateMode, picked, banked: bankedSet }),
+    [aggregateMode, picked, bankedSet],
   )
-  const togglePicked = useCallback((id: string) => {
+  const togglePicked = useCallback(
+    (id: string) => {
+      if (bankedSet.has(id)) return // already banked into a group — locked
+      setPicked((prev) => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      })
+    },
+    [bankedSet],
+  )
+  const bankGroup = useCallback(() => {
     setPicked((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
+      if (prev.size >= 2) setBankedGroups((gs) => [...gs, [...prev]])
+      return new Set()
     })
   }, [])
   const exitAggregateMode = useCallback(() => {
     setAggregateMode(false)
     setPicked(new Set())
+    setBankedGroups([])
   }, [])
   const [zoom, setZoom] = useState(1)
   const [showColorWizard, setShowColorWizard] = useState(false)
@@ -970,21 +989,41 @@ function FlowChartInner(props: FlowChartProps) {
         <div className="agg-actionbar" role="toolbar">
           <span className="agg-actionbar-title">Σ Aggregate</span>
           <span className="agg-actionbar-count">
+            {bankedGroups.length > 0 &&
+              `${bankedGroups.length} group${bankedGroups.length === 1 ? '' : 's'} banked · `}
             {picked.size === 0
-              ? 'Click connected steps to select them'
+              ? 'click connected steps'
               : `${picked.size} step${picked.size === 1 ? '' : 's'} selected`}
           </span>
           <button
-            className="btn primary"
+            className="btn"
             disabled={picked.size < 2}
-            onClick={() => props.onCreateAggregate?.([...picked])}
+            onClick={bankGroup}
+            title="Bank this connected group and start another (a step can be in only one aggregate)"
+          >
+            ＋ Add group
+          </button>
+          <button
+            className="btn primary"
+            disabled={bankedGroups.length === 0 && picked.size < 2}
+            onClick={() => {
+              const groups = picked.size >= 2 ? [...bankedGroups, [...picked]] : bankedGroups
+              if (groups.length) {
+                props.onCreateAggregate?.(groups)
+                exitAggregateMode()
+              }
+            }}
             title={
-              picked.size < 2
-                ? 'Select at least two connected steps'
-                : 'Collapse the selected steps into one Σ super-step'
+              props.isHighLevelMap
+                ? 'Add these aggregate(s) to this high-level map'
+                : 'Build the high-level map from these aggregate group(s)'
             }
           >
-            Create aggregate
+            {props.isHighLevelMap ? 'Add to map' : 'Create map'}
+            {(() => {
+              const n = bankedGroups.length + (picked.size >= 2 ? 1 : 0)
+              return n > 0 ? ` (${n})` : ''
+            })()}
           </button>
           <button className="btn" onClick={exitAggregateMode}>
             Cancel

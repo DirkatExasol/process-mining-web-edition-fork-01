@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..db.manager import current_user, friendly_error
-from ..db.materialize import Target, materialize_aggregate
+from ..db.materialize import AggGroup, Target, materialize_aggregate, materialize_aggregate_set
 from ..store.security import store as security_store
 
 router = APIRouter(prefix="/api", tags=["aggregates"])
@@ -133,3 +133,193 @@ async def list_aggregates(project_id: str, connectionId: str = "") -> dict[str, 
     app's Σ 'drill down'. Any user assigned to the connection may read them."""
     _require_assigned(connectionId)
     return {"aggregates": security_store.aggregates_for(connectionId, project_id)}
+
+
+# ── multi-aggregate: one high-level map with several Σ steps, added to over time ──────
+
+
+class _AggregateGroup(BaseModel):
+    sigmaName: str = "Σ Aggregate"
+    members: list[str]
+    detail: _OutputTarget
+
+
+class AggregateSetBody(BaseModel):
+    connectionId: str  # source
+    highLevel: _OutputTarget
+    aggregates: list[_AggregateGroup]
+
+
+class AddAggregatesBody(BaseModel):
+    connectionId: str  # the HIGH-LEVEL connection (the set is identified by the HL project)
+    aggregates: list[_AggregateGroup]
+
+
+def _clean_members(raw: list[str]) -> set[str]:
+    return {m.strip() for m in raw if m and m.strip()}
+
+
+def _validate_groups(groups: list[_AggregateGroup], *, already: set[str]) -> list[set[str]]:
+    """Each group needs ≥2 members and a name; member sets must be disjoint from each other
+    and from ``already`` (steps used by existing aggregates on the same map)."""
+    if not groups:
+        raise HTTPException(status_code=400, detail="Add at least one aggregate.")
+    seen = set(already)
+    out: list[set[str]] = []
+    for g in groups:
+        members = _clean_members(g.members)
+        if len(members) < 2:
+            raise HTTPException(status_code=400, detail="Each aggregate needs at least two connected steps.")
+        if not g.sigmaName.strip() or not g.detail.name.strip():
+            raise HTTPException(status_code=400, detail="Every aggregate needs a Σ name and a detail project name.")
+        clash = members & seen
+        if clash:
+            raise HTTPException(
+                status_code=400,
+                detail=f"A step can belong to only one aggregate — reused: {', '.join(sorted(clash))}.",
+            )
+        seen |= members
+        out.append(members)
+    return out
+
+
+def _link_record(hi_conn_id: str, hi_pid: str, sigma: str, det_conn_id: str, det_pid: str) -> dict:
+    return {
+        "connectionId": hi_conn_id,
+        "projectId": hi_pid,
+        "sigmaStep": sigma,
+        "detailConnectionId": det_conn_id,
+        "detailProjectId": det_pid,
+    }
+
+
+@router.post("/projects/{project_id}/aggregate-set")
+async def create_aggregate_set(project_id: str, body: AggregateSetBody) -> dict[str, Any]:
+    """Create ONE high-level map for the source ``project_id`` collapsing several aggregate
+    groups (a Σ step each), plus one detail project per group (each to its own target)."""
+    _require_developer()
+    _require_assigned(body.connectionId)
+
+    if security_store.aggregate_set_by_source(body.connectionId, project_id) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This project already has a high-level map — add aggregates to it instead.",
+        )
+    if not body.highLevel.name.strip():
+        raise HTTPException(status_code=400, detail="A high-level project name is required.")
+
+    member_sets = _validate_groups(body.aggregates, already=set())
+
+    src = _resolve(body.connectionId)
+    hi_conn_id = (body.highLevel.targetConnectionId or body.connectionId).strip()
+    _require_assigned(hi_conn_id)
+    hi_conn = _resolve(hi_conn_id)
+    hi_pid = f"agg_{uuid.uuid4().hex[:12]}"
+    hi_target = Target(hi_conn, _schema_of(body.highLevel.targetSchema, hi_conn), True, hi_pid, body.highLevel.name.strip())
+
+    groups: list[AggGroup] = []
+    details: list[tuple[Target, frozenset[str]]] = []
+    stored_aggs: list[dict] = []
+    for g, members in zip(body.aggregates, member_sets):
+        det_conn_id = (g.detail.targetConnectionId or body.connectionId).strip()
+        _require_assigned(det_conn_id)
+        det_conn = _resolve(det_conn_id)
+        det_pid = f"aggd_{uuid.uuid4().hex[:12]}"
+        det_schema = _schema_of(g.detail.targetSchema, det_conn)
+        sigma = g.sigmaName.strip()
+        groups.append(AggGroup(frozenset(members), sigma))
+        details.append((Target(det_conn, det_schema, True, det_pid, g.detail.name.strip()), frozenset(members)))
+        stored_aggs.append({
+            "sigmaStep": sigma, "members": sorted(members),
+            "detailConnectionId": det_conn.id, "detailProjectId": det_pid,
+            "detailSchema": det_schema, "detailTitle": g.detail.name.strip(),
+        })
+
+    try:
+        await materialize_aggregate_set(
+            source_connection=src, source_project_id=project_id,
+            groups=groups, high_level=hi_target, details=details,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Could not build the aggregates: {friendly_error(exc)}") from exc
+
+    security_store.save_aggregate_set({
+        "sourceConnectionId": body.connectionId, "sourceProjectId": project_id,
+        "highLevelConnectionId": hi_conn.id, "highLevelProjectId": hi_pid,
+        "highLevelSchema": hi_target.schema, "highLevelTitle": hi_target.title,
+        "aggregates": stored_aggs,
+    })
+    for a in stored_aggs:
+        security_store.add_aggregate_link(
+            _link_record(hi_conn.id, hi_pid, a["sigmaStep"], a["detailConnectionId"], a["detailProjectId"])
+        )
+    return {
+        "highLevelProjectId": hi_pid, "highLevelConnectionId": hi_conn.id,
+        "aggregates": stored_aggs,
+    }
+
+
+@router.post("/projects/{project_id}/aggregate-set/add")
+async def add_to_aggregate_set(project_id: str, body: AddAggregatesBody) -> dict[str, Any]:
+    """Add one or more aggregates to the existing high-level map ``project_id`` (on
+    ``connectionId``). Re-collapses the SOURCE with the union of all groups so the map stays
+    one project, and writes only the new detail projects."""
+    _require_developer()
+    _require_assigned(body.connectionId)
+
+    aset = security_store.aggregate_set_by_high_level(body.connectionId, project_id)
+    if aset is None:
+        raise HTTPException(status_code=404, detail="No aggregate set found for this high-level map.")
+
+    existing = aset.get("aggregates") or []
+    existing_members: set[str] = set()
+    for a in existing:
+        existing_members |= _clean_members(a.get("members") or [])
+    new_member_sets = _validate_groups(body.aggregates, already=existing_members)
+
+    src = _resolve(aset["sourceConnectionId"])
+    _require_assigned(aset["sourceConnectionId"])
+    hi_conn = _resolve(aset["highLevelConnectionId"])
+    hi_target = Target(hi_conn, aset["highLevelSchema"], True, aset["highLevelProjectId"], aset["highLevelTitle"])
+
+    # All groups (existing + new) drive the high-level collapse; only new details are written.
+    groups: list[AggGroup] = [AggGroup(frozenset(_clean_members(a.get("members") or [])), a["sigmaStep"]) for a in existing]
+    details: list[tuple[Target, frozenset[str]]] = []
+    new_aggs: list[dict] = []
+    for g, members in zip(body.aggregates, new_member_sets):
+        det_conn_id = (g.detail.targetConnectionId or aset["sourceConnectionId"]).strip()
+        _require_assigned(det_conn_id)
+        det_conn = _resolve(det_conn_id)
+        det_pid = f"aggd_{uuid.uuid4().hex[:12]}"
+        det_schema = _schema_of(g.detail.targetSchema, det_conn)
+        sigma = g.sigmaName.strip()
+        groups.append(AggGroup(frozenset(members), sigma))
+        details.append((Target(det_conn, det_schema, True, det_pid, g.detail.name.strip()), frozenset(members)))
+        new_aggs.append({
+            "sigmaStep": sigma, "members": sorted(members),
+            "detailConnectionId": det_conn.id, "detailProjectId": det_pid,
+            "detailSchema": det_schema, "detailTitle": g.detail.name.strip(),
+        })
+
+    try:
+        await materialize_aggregate_set(
+            source_connection=src, source_project_id=aset["sourceProjectId"],
+            groups=groups, high_level=hi_target, details=details,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Could not add the aggregates: {friendly_error(exc)}") from exc
+
+    aset["aggregates"] = existing + new_aggs
+    security_store.save_aggregate_set(aset)
+    for a in new_aggs:
+        security_store.add_aggregate_link(
+            _link_record(hi_conn.id, aset["highLevelProjectId"], a["sigmaStep"], a["detailConnectionId"], a["detailProjectId"])
+        )
+    return {
+        "highLevelProjectId": aset["highLevelProjectId"], "highLevelConnectionId": hi_conn.id,
+        "aggregates": new_aggs,
+    }

@@ -12,9 +12,8 @@ import { useNoteHandlers } from './useNoteHandlers'
 import { api } from '../api'
 import { resolveScope } from '../actions/resolveScope'
 import type { ActionRunResult, SavedAction } from '../actions/types'
-import type { AggregateLink } from '../aggregate/types'
 import { ActionResultModal } from './ActionResultModal'
-import { AggregateDialog } from './AggregateDialog'
+import { AggregateSetDialog } from './AggregateSetDialog'
 
 export function ChartView({
   side,
@@ -45,30 +44,11 @@ export function ChartView({
 
   // Aggregate designer: developers can collapse a connected step selection into a Σ step.
   const canAggregate = store.authIsDeveloper || store.authIsAdmin
-  const [aggregateMembers, setAggregateMembers] = useState<string[] | null>(null)
+  const [aggregateGroups, setAggregateGroups] = useState<string[][] | null>(null)
 
-  const handleDrillDown = async (link: AggregateLink) => {
-    if (link.detailConnectionId !== store.connection.activeProfileId) {
-      store.showAlert({
-        title: 'Detail on another connection',
-        message: `This Σ step's detail lives on a different connection. Connect to it and open project “${link.detailProjectId}”.`,
-        primaryLabel: 'OK',
-      })
-      return
-    }
-    let project = store.projects.find((p) => p.projectId === link.detailProjectId)
-    if (!project) {
-      await store.loadProjects()
-      project = useStore.getState().projects.find((p) => p.projectId === link.detailProjectId)
-    }
-    if (project) await store.selectProject(project)
-    else
-      store.showAlert({
-        title: 'Detail project not found',
-        message: `Project “${link.detailProjectId}” isn't listed here — it may live in a different schema.`,
-        primaryLabel: 'OK',
-      })
-  }
+  // A drill-down detail project (id "aggd_…") is a black-box sub-process: no Sankey, and a
+  // Return button back to the high-level map it was reached from.
+  const isDetailProject = !!store.selectedProject?.projectId.startsWith('aggd_')
 
   const runNodeAction = async (action: SavedAction, node: string) => {
     const connId = store.connection.activeProfileId ?? ''
@@ -195,29 +175,45 @@ export function ChartView({
         )
       ) : (
         <div className="col" style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-          {/* In-canvas view switch (flowchart ↔ Sankey), like the Individual Journey's. */}
-          <div className="swim-toggle seg-toggle" role="tablist" aria-label="Chart view">
-            <button
-              className={`seg${sankey ? '' : ' sel'}`}
-              role="tab"
-              aria-selected={!sankey}
-              onClick={() => setSankey(false)}
-              title="Directed-follows flowchart (loops shown)"
-            >
-              🕸 Flowchart
-            </button>
-            <button
-              className={`seg${sankey ? ' sel' : ''}`}
-              role="tab"
-              aria-selected={sankey}
-              onClick={() => setSankey(true)}
-              title="Sankey flow (looping clusters collapsed for readability)"
-            >
-              🌊 Sankey
-            </button>
-          </div>
+          {/* A drilled-into detail project offers a Return button (back to the high-level
+              map) instead of the flowchart/Sankey switch — and never shows the Sankey. */}
+          {isDetailProject ? (
+            store.drillReturn && (
+              <div className="swim-toggle seg-toggle" role="toolbar">
+                <button
+                  className="seg sel"
+                  onClick={() => void store.returnFromDrill()}
+                  title={`Back to “${store.drillReturn.title}”`}
+                >
+                  ← Return to high-level map
+                </button>
+              </div>
+            )
+          ) : (
+            /* In-canvas view switch (flowchart ↔ Sankey), like the Individual Journey's. */
+            <div className="swim-toggle seg-toggle" role="tablist" aria-label="Chart view">
+              <button
+                className={`seg${sankey ? '' : ' sel'}`}
+                role="tab"
+                aria-selected={!sankey}
+                onClick={() => setSankey(false)}
+                title="Directed-follows flowchart (loops shown)"
+              >
+                🕸 Flowchart
+              </button>
+              <button
+                className={`seg${sankey ? ' sel' : ''}`}
+                role="tab"
+                aria-selected={sankey}
+                onClick={() => setSankey(true)}
+                title="Sankey flow (looping clusters collapsed for readability)"
+              >
+                🌊 Sankey
+              </button>
+            </div>
+          )}
 
-          {sankey ? (
+          {sankey && !isDetailProject ? (
             <SankeyChart
               graph={store.processGraph}
               metric={store.transitionMetric}
@@ -246,9 +242,10 @@ export function ChartView({
               onEdgeNote={notes.openEdgeNotes}
               actionItems={actionItems}
               onRunAction={(action, node) => void runNodeAction(action, node)}
-              onCreateAggregate={canAggregate ? (steps) => setAggregateMembers(steps) : undefined}
+              onCreateAggregate={canAggregate ? (groups) => setAggregateGroups(groups) : undefined}
+              isHighLevelMap={store.projectAggregates.length > 0}
               aggregateLinks={store.projectAggregates}
-              onDrillDown={(link) => void handleDrillDown(link)}
+              onDrillDown={(link) => void store.drillDownTo(link)}
             />
           )}
         </div>
@@ -278,23 +275,26 @@ export function ChartView({
         />
       )}
 
-      {aggregateMembers && store.selectedProject && (
-        <AggregateDialog
-          members={aggregateMembers}
+      {aggregateGroups && store.selectedProject && (
+        <AggregateSetDialog
+          groups={aggregateGroups}
           transitions={store.processGraph.transitions}
           projectId={store.selectedProject.projectId}
           connectionId={store.connection.activeProfileId ?? ''}
           projectTitle={store.selectedProject.title}
-          onClose={() => setAggregateMembers(null)}
+          addMode={store.projectAggregates.length > 0}
+          onClose={() => setAggregateGroups(null)}
           onDone={(result) => {
-            setAggregateMembers(null)
+            setAggregateGroups(null)
             void store.loadProjects()
+            void store.loadProjectAggregates()
             const here = result.highLevelConnectionId === store.connection.activeProfileId
+            const n = result.aggregates.length
             store.showAlert({
-              title: 'Aggregate created',
+              title: 'Aggregates created',
               message: here
-                ? `Created the high-level project (Σ ${result.sigmaStep}) and its detail project in this connection's schema. If you don't see them in the Projects list, refresh — and note they only appear here when you left the schema blank (same schema). If you targeted a new schema, connect to that schema to open them.`
-                : `Created the high-level project (Σ ${result.sigmaStep}) and its detail project on another connection/schema. Connect to that connection's schema to open them — they won't appear in this Projects list.`,
+                ? `Built the high-level map with ${n} new Σ step${n === 1 ? '' : 's'} and ${n === 1 ? 'its detail project' : 'their detail projects'} in this connection's schema. If you don't see them in the Projects list, refresh — they only appear here when the schema was left blank (same schema); a new schema/connection must be opened separately.`
+                : `Wrote the high-level map and ${n} detail project${n === 1 ? '' : 's'} to another connection/schema. Connect to that schema to open them — they won't appear in this Projects list.`,
               primaryLabel: 'OK',
             })
           }}

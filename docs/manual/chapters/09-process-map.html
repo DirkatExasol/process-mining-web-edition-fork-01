@@ -82,18 +82,18 @@
 
   <h2 id="aggregates">9.9 Aggregates (developers)</h2>
 
-  <p>Developers can abstract a connected sub-process into a single <b>Σ</b> super-step. <b>Shift-drag</b> a rubber-band across the map (or <b>⌘/Ctrl-click</b> nodes) to select a set of interconnected steps; a <b>Σ&nbsp;Create&nbsp;aggregate</b> button appears once two or more are selected.</p>
+  <p>Developers can abstract several connected sub-processes into <b>Σ</b> super-steps on <em>one</em> high-level map. Click <b>Σ&nbsp;Select&nbsp;steps&nbsp;to&nbsp;aggregate</b> (lower-left of the map) to enter pick mode, then click a set of interconnected steps. Choose <b>＋&nbsp;Add&nbsp;group</b> to bank that group and start another — banked steps are ringed and locked, so a step can belong to only one aggregate. Bank as many groups as you need.</p>
 
-  <p>The dialog first checks that the selection is a single interconnected group — a step with no connection to the others is rejected. You then name the Σ step and two new projects (the originals are never modified):</p>
+  <p>Choose <b>Create&nbsp;map</b> to open a dialog with one row per group. Each group is checked to be a single interconnected set (a step with no connection to the others is rejected) and takes a <b>Σ step name</b>, a <b>detail-project name</b>, and its <b>own target</b> (same schema, a new schema, or a different connection). It produces (the original project is never modified):</p>
 
   <dl>
-    <dt>High-level project</dt>
-    <dd>A full copy of the map where each journey's run through the group collapses into one <b>Σ</b> event. The normal engine then computes the Σ node's black-box metrics — its frequency, the time spent inside the group, and the incoming/outgoing edges to the rest of the map — while internal transitions disappear.</dd>
-    <dt>Detail project</dt>
-    <dd>Only the selected steps' events, so the sub-process can be opened on its own and drilled into.</dd>
+    <dt>One high-level project</dt>
+    <dd>A full copy of the map where each journey's run through each group collapses into that group's single <b>Σ</b> event. The normal engine then computes every Σ node's black-box metrics — its frequency, the time spent inside the group, and the incoming/outgoing edges to the rest of the map — while internal transitions disappear. A Σ step inherits the group's swimlane when its members share one.</dd>
+    <dt>One detail project per group</dt>
+    <dd>Only that group's events, so each sub-process can be opened on its own and drilled into.</dd>
   </dl>
 
-  <p>Each output can be written to the <b>same schema</b>, a <b>new schema</b> (created for you), or a <b>different connection</b> — the event data is copied over. In the high-level project, the Σ node's menu offers <b>⤵ Drill down</b> to open its detail project.</p>
+  <p>Each Σ node's menu offers <b>⤵ Drill down</b> to open its detail project. A drilled-into detail project is a black-box sub-process: it is shown as a <b>flowchart only — no Sankey</b> — and carries a <b>← Return to high-level map</b> button to go straight back. To add more aggregates later, open the high-level map, enter pick mode again, select more original steps and choose <b>Add&nbsp;to&nbsp;map</b> — the map is rebuilt from its source with the new Σ step(s) added, and only the new detail project is written.</p>
 
   <h3 id="ch9-drag">Dragging nodes</h3>
 
