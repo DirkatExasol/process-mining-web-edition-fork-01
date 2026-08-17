@@ -54,6 +54,7 @@ import { sankeySvg as sankeySvgString } from './flow/sankeySvg'
 import { authenticateWithPasskey } from './passkey'
 import type { SavedAction } from './actions/types'
 import type { AggregateLink } from './aggregate/types'
+import { collapseExcept, subgraphWithNeighbours, type AggMembers } from './aggregate/explode'
 
 export type ABSide = 'a' | 'b'
 
@@ -157,6 +158,19 @@ export interface AppState {
   /** When the current project was reached by drilling into a Σ step, the high-level map to
    *  return to (a "Return" button). Null when not viewing a drilled-into detail project. */
   drillReturn: { projectId: string; title: string } | null
+  /** In-place drill-down: one or more Σ nodes expanded within the high-level map, using the
+   *  ORIGINAL source graph so the revealed steps carry real, un-aggregated numbers. Null
+   *  unless a drill is active; drill up clears it. */
+  inPlaceDrill: {
+    sigmaStep: string // the most recently expanded Σ (for labelling)
+    expanded: string[] // every Σ currently expanded
+    graph: ProcessGraph // the on-screen graph (source, collapsed except `expanded`)
+    journeyCount: number | null
+    source: { graph: ProcessGraph; journeyCount: number | null; aggregates: AggMembers[] }
+  } | null
+  /** "New panel" drill-down: the member sub-process shown in a modal, with real source
+   *  numbers. Null unless the panel is open. */
+  panelDrill: { sigmaStep: string; graph: ProcessGraph; journeyCount: number | null } | null
   /** Set when the last sign-out was due to inactivity, so the login screen can say so. */
   signedOutForInactivity: boolean
 
@@ -362,10 +376,22 @@ export interface AppActions {
   resetFilters: () => void
   loadProjectActions: () => Promise<void>
   loadProjectAggregates: () => Promise<void>
+  /** Drill from a Σ step, dispatching to in-place or extra-panel per the current setting. */
+  drillDown: (link: AggregateLink) => Promise<void>
   /** Drill from a Σ step into its detail project, remembering the high-level map to return to. */
   drillDownTo: (link: AggregateLink) => Promise<void>
   /** Go back to the high-level map remembered by the last drill-down. */
   returnFromDrill: () => Promise<void>
+  /** Drill into a Σ step's detail IN-PLACE — load its graph into the current canvas. */
+  drillDownInPlace: (link: AggregateLink) => Promise<void>
+  /** Clear an in-place drill, restoring the high-level map in the canvas. */
+  drillUp: () => void
+  /** "New panel" drill-down: open the member sub-process (real source numbers) in a modal. */
+  drillDownPanel: (link: AggregateLink) => Promise<void>
+  closeDrillPanel: () => void
+  /** Re-fetch an active in-place / panel drill under the current filter (called after the
+   *  high-level map reloads, so the drilled numbers track the date window). */
+  refreshDrill: () => Promise<void>
   reloadGraph: () => Promise<void>
   reloadGraphForDay: (day: string) => Promise<string | null>
   reloadABSide: (side: ABSide, from: string, to: string) => Promise<void>
@@ -490,6 +516,8 @@ const INITIAL_STATE: AppState = {
   projectActions: [],
   projectAggregates: [],
   drillReturn: null,
+  inPlaceDrill: null,
+  panelDrill: null,
   signedOutForInactivity: false,
 
   connections: [],
@@ -1117,6 +1145,8 @@ export const useStore = create<Store>((set, get) => {
         errorMessage: null,
         // Any plain project switch leaves drill-down context; drillDownTo re-sets it after.
         drillReturn: null,
+        inPlaceDrill: null,
+        panelDrill: null,
         // reset active chart
         processGraph: EMPTY_GRAPH,
         includedSteps: [],
@@ -1573,6 +1603,124 @@ export const useStore = create<Store>((set, get) => {
       if (project) await get().selectProject(project) // clears drillReturn
     },
 
+    drillDown: async (link) => {
+      // Read the mode at click-time from the shared settings cache, so the choice can never
+      // be stale relative to a component's captured render value.
+      const mode = readSetting<string>('aggregates.drillMode', 'panel')
+      if (mode === 'inplace') await get().drillDownInPlace(link)
+      else await get().drillDownTo(link)
+    },
+
+    drillDownInPlace: async (link) => {
+      const s = get()
+      if (link.detailConnectionId !== s.connection.activeProfileId) {
+        s.showAlert({
+          title: 'Detail on another connection',
+          message: `This Σ step's detail lives on a different connection. Connect to it and open project “${link.detailProjectId}”.`,
+          primaryLabel: 'OK',
+        })
+        return
+      }
+      const connId = s.connection.activeProfileId
+      const projectId = s.selectedProject?.projectId
+      if (!connId || !projectId) return
+      set({ isLoading: true, errorMessage: null })
+      try {
+        // Expand the Σ node IN PLACE using the ORIGINAL source graph, so the revealed steps
+        // carry the same numbers as the non-aggregated flowchart. Cache the source graph so
+        // expanding further Σ nodes needs no extra round trip.
+        const current = get()
+        let source = current.inPlaceDrill?.source
+        if (!source) {
+          // Same date window / META filters as the high-level view, so the numbers match.
+          const r = await api.aggregateDrill(projectId, connId, get().currentFilterSpec())
+          source = { graph: r.graph, journeyCount: r.journeyCount, aggregates: r.aggregates }
+        }
+        const expanded = new Set(current.inPlaceDrill?.expanded ?? [])
+        expanded.add(link.sigmaStep)
+        // Σ node presentation comes from the high-level map.
+        const sigmaInfo = (sig: string) => current.processGraph.steps[sig]
+        const graph = collapseExcept(source.graph, source.aggregates, expanded, sigmaInfo)
+        set({
+          isLoading: false,
+          inPlaceDrill: {
+            sigmaStep: link.sigmaStep,
+            expanded: [...expanded],
+            graph,
+            journeyCount: source.journeyCount,
+            source,
+          },
+        })
+      } catch (e) {
+        set({ isLoading: false })
+        s.showAlert({
+          title: 'Drill-down failed',
+          message: String((e as Error).message ?? e),
+          primaryLabel: 'OK',
+        })
+      }
+    },
+
+    drillUp: () => set({ inPlaceDrill: null }),
+
+    drillDownPanel: async (link) => {
+      const s = get()
+      const connId = s.connection.activeProfileId
+      const projectId = s.selectedProject?.projectId
+      if (!connId || !projectId) return
+      set({ isLoading: true, errorMessage: null })
+      try {
+        // Same source graph as the in-place drill; show just this Σ's members in isolation
+        // with their real numbers, in a modal panel.
+        const source =
+          s.inPlaceDrill?.source ??
+          (await api.aggregateDrill(projectId, connId, get().currentFilterSpec()))
+        const agg = source.aggregates.find((a) => a.sigmaStep === link.sigmaStep)
+        // Include the incoming/outgoing edges + neighbouring steps so the sub-process is
+        // shown wired into the rest of the process (real, un-aggregated numbers).
+        const { graph } = subgraphWithNeighbours(source.graph, agg?.members ?? [])
+        set({
+          isLoading: false,
+          panelDrill: { sigmaStep: link.sigmaStep, graph, journeyCount: source.journeyCount },
+        })
+      } catch (e) {
+        set({ isLoading: false })
+        s.showAlert({
+          title: 'Drill-down failed',
+          message: String((e as Error).message ?? e),
+          primaryLabel: 'OK',
+        })
+      }
+    },
+
+    closeDrillPanel: () => set({ panelDrill: null }),
+
+    refreshDrill: async () => {
+      const s = get()
+      if (!s.inPlaceDrill && !s.panelDrill) return
+      const connId = s.connection.activeProfileId
+      const projectId = s.selectedProject?.projectId
+      if (!connId || !projectId) return
+      try {
+        const r = await api.aggregateDrill(projectId, connId, get().currentFilterSpec())
+        const source = { graph: r.graph, journeyCount: r.journeyCount, aggregates: r.aggregates }
+        const cur = get()
+        if (cur.inPlaceDrill) {
+          const expanded = new Set(cur.inPlaceDrill.expanded)
+          const sigmaInfo = (sig: string) => cur.processGraph.steps[sig]
+          const graph = collapseExcept(source.graph, source.aggregates, expanded, sigmaInfo)
+          set({ inPlaceDrill: { ...cur.inPlaceDrill, graph, journeyCount: source.journeyCount, source } })
+        }
+        if (cur.panelDrill) {
+          const agg = source.aggregates.find((a) => a.sigmaStep === cur.panelDrill!.sigmaStep)
+          const { graph } = subgraphWithNeighbours(source.graph, agg?.members ?? [])
+          set({ panelDrill: { ...cur.panelDrill, graph, journeyCount: source.journeyCount } })
+        }
+      } catch {
+        // Leave the current drill untouched if the refresh fails.
+      }
+    },
+
     // ── filters ───────────────────────────────────────────────────────────
 
     currentFilterSpec: () => {
@@ -1641,6 +1789,9 @@ export const useStore = create<Store>((set, get) => {
           transitionsMode: result.transitionsMode,
           queryMs: result.queryMs,
         })
+
+        // Keep an active drill in step with the (new) filter, so its numbers track the map.
+        void get().refreshDrill()
 
         if (get().activeChartMode === 'A/B Comparison') {
           const after = get()

@@ -29,6 +29,7 @@ import { EdgeColorWizard } from './EdgeColorWizard'
 import { actionMatchesNode } from '../actions/describe'
 import type { SavedAction } from '../actions/types'
 import type { AggregateLink } from '../aggregate/types'
+import { subgraphForMembers } from '../aggregate/explode'
 import {
   GRID_SIZE,
   NODE_W,
@@ -135,6 +136,21 @@ export interface FlowChartProps {
   /** Σ drill-down: a node whose name matches a link's sigmaStep gets a "Drill down" item. */
   aggregateLinks?: AggregateLink[]
   onDrillDown?: (link: AggregateLink) => void
+  /** Second drill-down option: load the detail into THIS canvas (in-place). */
+  onDrillDownInPlace?: (link: AggregateLink) => void
+  /** When set, the map is an in-place drill of a detail sub-process: every node's menu
+   *  offers "⤴ Drill up" to return to the high-level map. */
+  onDrillUp?: () => void
+  /** In-place EXPLODE seeding: keep the high-level map's node positions stable and only
+   *  lay out the revealed member steps in the Σ node's spot (pushing downstream nodes down
+   *  to make room), so surrounding steps/groups don't move or re-layout. */
+  explode?: {
+    baseGraph: ProcessGraph
+    baseProjectId: string
+    baseChartMode: string
+    aggregates: { sigmaStep: string; members: string[] }[]
+    expanded: string[]
+  }
 }
 
 interface MenuState {
@@ -386,10 +402,73 @@ function FlowChartInner(props: FlowChartProps) {
   const nodeH = Math.round(defaultNodeHeight(graph) * scale)
 
   const gLabelScale = groupScale || 1
-  const layout = useMemo(
-    () => computeLayout(graph, nodeH, optimisedLayout, nodeW, gLabelScale),
-    [graph, nodeH, nodeW, optimisedLayout, gLabelScale],
-  )
+  // Normalise the edge-font size against its "M" baseline so bigger edge labels get more
+  // vertical room in the auto-layout (they sit between the layers).
+  const edgeLabelScale = Math.max(1, (edgeScale || 3.375) / 3.375)
+  const explode = props.explode
+  const layout = useMemo(() => {
+    if (!explode) {
+      return computeLayout(graph, nodeH, optimisedLayout, nodeW, gLabelScale, edgeLabelScale)
+    }
+    // Explode seeding — keep the high-level map's positions; only the revealed members move.
+    const base = computeLayout(
+      explode.baseGraph, nodeH, optimisedLayout, nodeW, gLabelScale, edgeLabelScale,
+    )
+    const baseKey = projectKeys.layout(explode.baseProjectId, explode.baseChartMode)
+    const savedBase = readJSON<Record<string, Point>>(baseKey, {})
+    const basePos: Record<string, Point> = { ...base.nodePositions, ...savedBase }
+
+    // Members of each currently-expanded Σ, grouped by their Σ node.
+    const expandedSet = new Set(explode.expanded)
+    const bySigma: Record<string, string[]> = {}
+    for (const a of explode.aggregates) {
+      if (!expandedSet.has(a.sigmaStep)) continue
+      bySigma[a.sigmaStep] = a.members.filter((m) => graph.steps[m])
+    }
+
+    const pos: Record<string, Point> = {}
+    // Surrounding + still-collapsed Σ nodes keep exactly their high-level position.
+    for (const node of Object.keys(graph.steps)) {
+      if (basePos[node]) pos[node] = basePos[node]
+    }
+    // Place each expanded Σ's members as a compact sub-layout centred on the Σ's old spot,
+    // then shove everything BELOW the Σ down so the expansion inserts vertical space
+    // instead of overlapping the map underneath it.
+    for (const [sigma, members] of Object.entries(bySigma)) {
+      const at = basePos[sigma]
+      if (!at || members.length === 0) continue
+      const sub = computeLayout(
+        subgraphForMembers(graph, members), nodeH, optimisedLayout, nodeW, gLabelScale, edgeLabelScale,
+      )
+      const mp = members.map((m) => sub.nodePositions[m]).filter((p): p is Point => !!p)
+      if (mp.length === 0) continue
+      const minY = Math.min(...mp.map((p) => p.y))
+      const maxY = Math.max(...mp.map((p) => p.y))
+      const cx = mp.reduce((a, p) => a + p.x, 0) / mp.length
+      const height = maxY - minY + nodeH
+      // Extra vertical space this expansion needs beyond the single Σ node it replaces.
+      const extra = Math.max(0, height - nodeH)
+      // Push down everything strictly below the Σ node's row.
+      for (const node of Object.keys(pos)) {
+        if (node !== sigma && pos[node].y > at.y + 1) pos[node] = { ...pos[node], y: pos[node].y + extra }
+      }
+      // Now drop the members in, top-aligned to where the Σ node's top was.
+      const topY = at.y - nodeH / 2
+      for (const m of members) {
+        const p = sub.nodePositions[m]
+        if (p) pos[m] = { x: at.x + (p.x - cx), y: topY + (p.y - minY) + nodeH / 2 }
+      }
+    }
+    const xs = Object.values(pos).map((p) => p.x)
+    const ys = Object.values(pos).map((p) => p.y)
+    return {
+      nodePositions: pos,
+      canvasSize: {
+        width: Math.max(400, (xs.length ? Math.max(...xs) : 0) + nodeW),
+        height: Math.max(300, (ys.length ? Math.max(...ys) : 0) + nodeH),
+      },
+    }
+  }, [explode, graph, nodeH, nodeW, optimisedLayout, gLabelScale, edgeLabelScale])
 
   const effectiveOverrides = syncState ? syncState.nodeOverrides : overrides
 
@@ -837,6 +916,23 @@ function FlowChartInner(props: FlowChartProps) {
     fitted.current = false
   }, [projectId])
 
+  // Re-run the auto-fit whenever the SET of nodes changes (a drill-down / drill-up, or a
+  // reload that adds/removes steps) — but ONLY for a non-persisted chart. A saved or dragged
+  // layout keeps its own framing (persisted positions have priority). The re-computed
+  // auto-layout (which already reacts to `graph`) is what re-optimises the node placement;
+  // this just re-frames the viewport so the fresh layout is centred and its labels readable.
+  const nodeSig = useMemo(() => Object.keys(graph.steps).sort().join(' '), [graph.steps])
+  const prevNodeSig = useRef(nodeSig)
+  useEffect(() => {
+    if (prevNodeSig.current === nodeSig) return
+    prevNodeSig.current = nodeSig
+    if (syncState || Object.keys(overrides).length > 0) return // persisted / synced layout wins
+    window.requestAnimationFrame(() => {
+      flow.fitView({ padding: 0.12, duration: 350 })
+      setZoom(flow.getZoom())
+    })
+  }, [nodeSig, overrides, syncState, flow])
+
   const syncVersion = syncState?.version ?? 0
   useEffect(() => {
     if (!syncState?.viewport) return
@@ -928,7 +1024,8 @@ function FlowChartInner(props: FlowChartProps) {
             togglePicked(node.id)
             return
           }
-          if (!onNodeAction) return
+          // The menu opens for node actions, or (in an in-place drill) for "Drill up".
+          if (!onNodeAction && !props.onDrillUp) return
           setMenu({ kind: 'node', node: node.id, x: event.clientX, y: event.clientY })
         }}
         onPaneClick={() => {
@@ -1124,7 +1221,7 @@ function FlowChartInner(props: FlowChartProps) {
         </div>
       </div>
 
-      {menu?.kind === 'node' && menu.node && onNodeAction && (
+      {menu?.kind === 'node' && menu.node && (onNodeAction || props.onDrillUp) && (
         <>
           <div
             style={{ position: 'fixed', inset: 0, zIndex: 199 }}
@@ -1135,7 +1232,19 @@ function FlowChartInner(props: FlowChartProps) {
             style={{ left: clampX(menu.x), top: clampY(menu.y + 12) }}
           >
             <div className="p-title">{menu.node}</div>
-            {!props.readOnly && (
+            {props.onDrillUp && (
+              <button
+                className="p-item"
+                style={{ color: 'var(--accent)' }}
+                onClick={() => {
+                  props.onDrillUp?.()
+                  setMenu(null)
+                }}
+              >
+                ⤴ Drill up to high-level map
+              </button>
+            )}
+            {!props.readOnly && onNodeAction && (
               <>
                 <button
                   className="p-item"
@@ -1182,18 +1291,34 @@ function FlowChartInner(props: FlowChartProps) {
             )}
             {(() => {
               const link = (props.aggregateLinks ?? []).find((l) => l.sigmaStep === menu.node)
-              if (!link || !props.onDrillDown) return null
+              if (!link || !(props.onDrillDown || props.onDrillDownInPlace)) return null
               return (
-                <button
-                  className="p-item"
-                  style={{ color: 'var(--accent)' }}
-                  onClick={() => {
-                    props.onDrillDown?.(link)
-                    setMenu(null)
-                  }}
-                >
-                  ⤵ Drill down
-                </button>
+                <>
+                  {props.onDrillDown && (
+                    <button
+                      className="p-item"
+                      style={{ color: 'var(--accent)' }}
+                      onClick={() => {
+                        props.onDrillDown?.(link)
+                        setMenu(null)
+                      }}
+                    >
+                      ⤵ Drill down · new panel
+                    </button>
+                  )}
+                  {props.onDrillDownInPlace && (
+                    <button
+                      className="p-item"
+                      style={{ color: 'var(--accent)' }}
+                      onClick={() => {
+                        props.onDrillDownInPlace?.(link)
+                        setMenu(null)
+                      }}
+                    >
+                      ⤵ Drill down · in place
+                    </button>
+                  )}
+                </>
               )
             })()}
             {(() => {

@@ -346,6 +346,24 @@ textarea {
   background: var(--separator-soft);
 }
 
+/* The body of an open Configuration sub-section: indent it under its header (whose text
+   starts at 32px) and carry the same left guide tick down through the open content, so the
+   nested items read clearly as belonging to the sub-section above them. */
+.config-subbody {
+  position: relative;
+  padding-left: 12px;
+}
+.config-subbody::before {
+  content: '';
+  position: absolute;
+  left: 22px;
+  top: 0;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--separator-soft);
+}
+
 .divider {
   height: 1px;
   background: var(--separator-soft);

@@ -1217,7 +1217,7 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
         onToggle={() => setGroupsOpen(!groupsOpen)}
       />
       {groupsOpen && (
-        <>
+        <div className="config-subbody">
           <ToggleRow
             icon="⬚"
             label="Show step groups"
@@ -1238,7 +1238,7 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
               />
             </div>
           )}
-        </>
+        </div>
       )}
 
       <SubHeader
@@ -1248,19 +1248,21 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
         onToggle={() => setKpisOpen(!kpisOpen)}
       />
       {kpisOpen && (
-        <div className="col" style={{ padding: '0 14px 8px', gap: 0 }}>
-          {orderedIds.map((id) => (
-            <KpiToggleRow
-              key={id}
-              id={id}
-              dragging={dragging === id}
-              onDragStart={() => setDragging(id)}
-              onDragEnd={() => setDragging(null)}
-              onDropOn={() => {
-                if (dragging) reorder(dragging, id)
-              }}
-            />
-          ))}
+        <div className="config-subbody">
+          <div className="col" style={{ padding: '0 14px 8px', gap: 0 }}>
+            {orderedIds.map((id) => (
+              <KpiToggleRow
+                key={id}
+                id={id}
+                dragging={dragging === id}
+                onDragStart={() => setDragging(id)}
+                onDragEnd={() => setDragging(null)}
+                onDropOn={() => {
+                  if (dragging) reorder(dragging, id)
+                }}
+              />
+            ))}
+          </div>
         </div>
       )}
 
@@ -1271,7 +1273,7 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
         onToggle={() => setStepsOpen(!stepsOpen)}
       />
       {stepsOpen && (
-        <>
+        <div className="config-subbody">
           <ToggleRow
             icon="🗒"
             label="Show node notes"
@@ -1293,7 +1295,7 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
           <div style={{ padding: '0 20px 14px' }}>
             <StepEditor />
           </div>
-        </>
+        </div>
       )}
 
       <SubHeader
@@ -1303,7 +1305,7 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
         onToggle={() => setLayoutOpen(!layoutOpen)}
       />
       {layoutOpen && (
-        <>
+        <div className="config-subbody">
           <ToggleRow
             icon="✨"
             label="Optimise layout"
@@ -1351,7 +1353,7 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
               />
             </div>
           </div>
-        </>
+        </div>
       )}
 
       <SubHeader
@@ -1361,6 +1363,7 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
         onToggle={() => setDatesOpen(!datesOpen)}
       />
       {datesOpen && (
+        <div className="config-subbody">
         <div className="col" style={{ padding: '8px 20px', gap: 4 }}>
           <div className="row" style={{ gap: 10 }}>
             <span aria-hidden className="fg-secondary">
@@ -1385,6 +1388,7 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
             On load, show the last N days. 0 = full range. Applies next project load.
           </span>
         </div>
+        </div>
       )}
 
       {/* The report analysis prompt is editable by power users, developers and admins only
@@ -1398,18 +1402,20 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
             onToggle={() => setAiOpen(!aiOpen)}
           />
           {aiOpen && (
-            <div className="row" style={{ padding: '8px 20px', gap: 10 }}>
-              <span aria-hidden className="fg-secondary">
-                💬
-              </span>
-              <span className="t-caption fg-secondary spacer">LLM Prompt</span>
-              <button
-                className="btn small"
-                disabled={!store.selectedProject || !store.connection.activeProfileId}
-                onClick={onEditPrompt}
-              >
-                Edit
-              </button>
+            <div className="config-subbody">
+              <div className="row" style={{ padding: '8px 20px', gap: 10 }}>
+                <span aria-hidden className="fg-secondary">
+                  💬
+                </span>
+                <span className="t-caption fg-secondary spacer">LLM Prompt</span>
+                <button
+                  className="btn small"
+                  disabled={!store.selectedProject || !store.connection.activeProfileId}
+                  onClick={onEditPrompt}
+                >
+                  Edit
+                </button>
+              </div>
             </div>
           )}
         </>
@@ -1422,7 +1428,7 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
         onToggle={() => setAggOpen(!aggOpen)}
       />
       {aggOpen && (
-        <>
+        <div className="config-subbody">
           <ToggleRow
             icon="📈"
             label="Show aggregate detail projects"
@@ -1435,7 +1441,12 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
             checked={showAggConnections}
             onChange={setShowAggConnections}
           />
-        </>
+          <span className="t-caption2 fg-tertiary" style={{ padding: '4px 20px 8px' }}>
+            A Σ node&rsquo;s menu offers both drill-downs, always with the original numbers:
+            “new panel” shows the member steps as a sub-process in a panel; “in place” expands
+            the Σ node inside the map (surrounding steps stay) — collapse with Drill up.
+          </span>
+        </div>
       )}
     </div>
   )

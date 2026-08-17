@@ -17,8 +17,11 @@ import type { ProcessGraph } from '../types'
 export const NODE_W = 198
 export const NODE_H = 63
 export const NODE_H_TIMED = 70 // nodes that carry an event timestamp are taller
-export const H_GAP = 56
-export const V_GAP = 88
+// Gaps are sized so edge (transition) labels sit clearly in the space between nodes: the
+// vertical gap must clear a metric label + arrowhead, the horizontal gap keeps a node's
+// out-edge labels from colliding with its neighbour's.
+export const H_GAP = 72
+export const V_GAP = 116
 export const PADDING = 48
 export const GRID_SIZE = 20
 
@@ -53,6 +56,8 @@ export function computeLayout(
   optimised = true,
   nodeWidth: number = NODE_W,
   labelScale = 1,
+  /** ≥1 — widens the between-layer gap so larger edge labels still fit clearly. */
+  edgeLabelScale = 1,
 ): GraphLayout {
   const nodes = Object.keys(graph.steps)
   if (nodes.length === 0) {
@@ -148,7 +153,7 @@ export function computeLayout(
   // layout uniformly — otherwise big nodes with fixed small gaps crowd and overlap.
   const s = nodeWidth / NODE_W
   const hGap = H_GAP * s
-  const vGap = V_GAP * s
+  const vGap = V_GAP * s * Math.max(1, edgeLabelScale)
   const pad = PADDING * s
 
   const canvasW = maxCount * nodeWidth + Math.max(maxCount - 1, 0) * hGap + 2 * pad

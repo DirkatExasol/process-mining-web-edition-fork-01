@@ -15,8 +15,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..db.manager import current_user, friendly_error
+from ..db.manager import DatabaseManager, current_db, current_user, friendly_error
 from ..db.materialize import AggGroup, Target, materialize_aggregate, materialize_aggregate_set
+from ..db.repository import ProcessRepository
+from ..models import FilterSpec, SampleSet
 from ..store.security import store as security_store
 
 router = APIRouter(prefix="/api", tags=["aggregates"])
@@ -124,6 +126,80 @@ async def create_aggregate(project_id: str, body: AggregateBody) -> dict[str, An
         "detailConnectionId": det_conn.id,
         "sigmaStep": sigma,
         "link": link,
+    }
+
+
+class DrillBody(BaseModel):
+    connectionId: str  # the high-level map's connection
+    filter: FilterSpec = FilterSpec()  # the high-level view's current filter (date window etc.)
+
+
+def _source_filter(f: FilterSpec) -> FilterSpec:
+    """The subset of the high-level view's filter that maps IDENTICALLY onto the source
+    project: the date window and META filters (both case-level, unaffected by aggregation).
+
+    Everything else is deliberately dropped — the high-level map is a run-collapsed copy, so
+    a journey's step count, total duration and score are all smaller there than in the
+    original source. Carrying those bounds over would filter the source by measures it
+    doesn't share, skewing the numbers (e.g. the high-level's shorter max-duration bound
+    would wrongly exclude the source's longer journeys). Step-name filters (Σ …) don't exist
+    in the source either."""
+    return FilterSpec(
+        fromDate=f.fromDate,
+        toDate=f.toDate,
+        meta1=f.meta1,
+        meta2=f.meta2,
+        meta3=f.meta3,
+        sampleSet=SampleSet.original,
+    )
+
+
+async def _load_source_graph(conn, source_project_id: str, f: FilterSpec) -> tuple[Any, int]:
+    """Load the ORIGINAL source project's process graph under the same (journey-level) filter
+    as the high-level view, so the numbers match. Reuses the live session when it's already
+    on that connection, else opens a headless one."""
+    sf = _source_filter(f)
+    active = current_db()
+    if active.is_connected and active.active_profile_id == conn.id:
+        r = ProcessRepository(active)
+        r.active_sample_set = SampleSet.original
+        return await r.load_graph(source_project_id, sf), await r.load_journey_count(source_project_id, sf)
+    mgr = DatabaseManager(load_legacy_active=False)
+    try:
+        err = await mgr.connect_connection(conn)
+        if err:
+            raise HTTPException(status_code=400, detail=f"Could not open the source connection: {err}")
+        r = ProcessRepository(mgr)
+        r.active_sample_set = SampleSet.original
+        return await r.load_graph(source_project_id, sf), await r.load_journey_count(source_project_id, sf)
+    finally:
+        await mgr.disconnect()
+
+
+@router.post("/projects/{project_id}/aggregate-drill")
+async def aggregate_drill(project_id: str, body: DrillBody) -> dict[str, Any]:
+    """The ORIGINAL source project's process graph + each aggregate's member steps, so the
+    app can expand a Σ node **in place** using the real, un-aggregated numbers (the same
+    figures the non-aggregated flowchart shows). ``project_id`` is the high-level map."""
+    _require_assigned(body.connectionId)
+    aset = security_store.aggregate_set_by_high_level(body.connectionId, project_id)
+    if aset is None:
+        raise HTTPException(status_code=404, detail="No aggregate set found for this high-level map.")
+    _require_assigned(aset["sourceConnectionId"])
+    src = _resolve(aset["sourceConnectionId"])
+    try:
+        graph, journey_count = await _load_source_graph(src, aset["sourceProjectId"], body.filter)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Could not load the source map: {friendly_error(exc)}") from exc
+    return {
+        "graph": graph.model_dump(by_alias=True),
+        "journeyCount": journey_count,
+        "aggregates": [
+            {"sigmaStep": a.get("sigmaStep", ""), "members": list(a.get("members") or [])}
+            for a in (aset.get("aggregates") or [])
+        ],
     }
 
 

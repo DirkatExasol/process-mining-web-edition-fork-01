@@ -471,6 +471,14 @@ export const api = {
     get<{ aggregates: AggregateLink[] }>(
       `/api/projects/${enc(projectId)}/aggregates?connectionId=${enc(connectionId)}`,
     ),
+  /** The ORIGINAL source graph + each aggregate's members, for expanding a Σ node in place
+   *  with real (un-aggregated) numbers. projectId = the high-level map. */
+  aggregateDrill: (projectId: string, connectionId: string, filter: FilterSpec) =>
+    post<{
+      graph: ProcessGraph
+      journeyCount: number | null
+      aggregates: { sigmaStep: string; members: string[] }[]
+    }>(`/api/projects/${enc(projectId)}/aggregate-drill`, { connectionId, filter }),
 
   // ── settings ─────────────────────────────────────────────────────────────
   settings: () => get<Record<string, unknown>>('/api/settings'),

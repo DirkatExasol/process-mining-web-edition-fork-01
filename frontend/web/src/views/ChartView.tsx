@@ -1,9 +1,10 @@
 /** A-Chart / B-Chart panel — ports `aChartContent` / `bChartContent`. */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { FlowChart, type SyncState } from '../flow/FlowChart'
 import { SankeyChart } from '../flow/SankeyChart'
-import { Unavailable } from '../components/ui'
+import { Sheet, Unavailable } from '../components/ui'
+import { ActionFlowchart } from '../components/ActionFlowchart'
 import { useSetting } from '../settings'
 import { useStore } from '../store'
 import { simulationFilterNotice, type SliderMode } from '../types'
@@ -49,6 +50,23 @@ export function ChartView({
   // A drill-down detail project (id "aggd_…") is a black-box sub-process: no Sankey, and a
   // Return button back to the high-level map it was reached from.
   const isDetailProject = !!store.selectedProject?.projectId.startsWith('aggd_')
+  // In-place drill: the detail graph is shown in this canvas (high-level project stays
+  // selected). Treated like a detail view (no Sankey) with a Drill-up affordance.
+  const inPlace = store.inPlaceDrill
+  // Stable seed for the explode layout (recomputed only when the drill actually changes).
+  const explodeSeed = useMemo(
+    () =>
+      inPlace && store.selectedProject
+        ? {
+            baseGraph: store.processGraph,
+            baseProjectId: store.selectedProject.projectId,
+            baseChartMode: side === 'a' ? ('A-Chart' as const) : ('B-Chart' as const),
+            aggregates: inPlace.source.aggregates,
+            expanded: inPlace.expanded,
+          }
+        : undefined,
+    [inPlace, store.processGraph, store.selectedProject, side],
+  )
 
   const runNodeAction = async (action: SavedAction, node: string) => {
     const connId = store.connection.activeProfileId ?? ''
@@ -175,9 +193,19 @@ export function ChartView({
         )
       ) : (
         <div className="col" style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-          {/* A drilled-into detail project offers a Return button (back to the high-level
-              map) instead of the flowchart/Sankey switch — and never shows the Sankey. */}
-          {isDetailProject ? (
+          {/* A detail view (a drilled-into project, or an in-place drill) shows a drill-up /
+              return control instead of the flowchart/Sankey switch — and never shows Sankey. */}
+          {inPlace ? (
+            <div className="swim-toggle seg-toggle" role="toolbar">
+              <button
+                className="seg sel"
+                onClick={() => store.drillUp()}
+                title="Collapse the expanded aggregate(s) back to their Σ nodes"
+              >
+                ⤴ Drill up (collapse Σ)
+              </button>
+            </div>
+          ) : isDetailProject ? (
             store.drillReturn && (
               <div className="swim-toggle seg-toggle" role="toolbar">
                 <button
@@ -213,7 +241,25 @@ export function ChartView({
             </div>
           )}
 
-          {sankey && !isDetailProject ? (
+          {inPlace ? (
+            /* In-place explode: the Σ node expanded inside the high-level map. Remaining Σ
+               nodes can be expanded too; drill up (node menu or the button) collapses all. */
+            <FlowChart
+              key={`inplace:${store.selectedProject.projectId}`}
+              graph={inPlace.graph}
+              projectId={`${store.selectedProject.projectId}#explode`}
+              chartMode={side === 'a' ? 'A-Chart' : 'B-Chart'}
+              metric={store.transitionMetric}
+              journeyTotal={inPlace.journeyCount ?? 0}
+              isLoading={store.isLoading}
+              readOnly
+              notes={store.projectNotes}
+              aggregateLinks={store.projectAggregates}
+              onDrillDownInPlace={(link) => void store.drillDownInPlace(link)}
+              onDrillUp={() => store.drillUp()}
+              explode={explodeSeed}
+            />
+          ) : sankey && !isDetailProject ? (
             <SankeyChart
               graph={store.processGraph}
               metric={store.transitionMetric}
@@ -245,7 +291,8 @@ export function ChartView({
               onCreateAggregate={canAggregate ? (groups) => setAggregateGroups(groups) : undefined}
               isHighLevelMap={store.projectAggregates.length > 0}
               aggregateLinks={store.projectAggregates}
-              onDrillDown={(link) => void store.drillDownTo(link)}
+              onDrillDown={(link) => void store.drillDownPanel(link)}
+              onDrillDownInPlace={(link) => void store.drillDownInPlace(link)}
             />
           )}
         </div>
@@ -299,6 +346,44 @@ export function ChartView({
             })
           }}
         />
+      )}
+
+      {store.panelDrill && (
+        <Sheet
+          title={`${store.panelDrill.sigmaStep} — sub-process`}
+          icon="Σ"
+          wide
+          onClose={() => store.closeDrillPanel()}
+        >
+          <p className="fg-secondary" style={{ marginTop: 0, fontSize: 13 }}>
+            The steps inside this aggregate and their incoming / outgoing connections, with
+            real (un-aggregated) numbers.
+          </p>
+          <p className="fg-secondary" style={{ marginTop: 0, fontSize: 13 }}>
+            🗓{' '}
+            <strong>
+              {store.fromDate && store.toDate
+                ? store.fromDate === store.toDate
+                  ? store.fromDate
+                  : `${store.fromDate} – ${store.toDate}`
+                : 'Full date range'}
+            </strong>
+            {store.panelDrill.journeyCount != null && ` · ${store.panelDrill.journeyCount} journeys`}
+          </p>
+          <div style={{ height: '60vh', minHeight: 320 }}>
+            <ActionFlowchart
+              result={{
+                kind: 'flowchart',
+                columns: [],
+                rows: [],
+                graph: store.panelDrill.graph,
+                journeyCount: store.panelDrill.journeyCount ?? 0,
+                title: store.panelDrill.sigmaStep,
+              }}
+              height="100%"
+            />
+          </div>
+        </Sheet>
       )}
     </div>
   )

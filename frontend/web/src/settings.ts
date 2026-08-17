@@ -64,6 +64,10 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   // Configuration → Aggregations.
   'aggregates.showProjects': false,
   'aggregates.showConnections': false,
+  // Drill-down style for a Σ node: 'panel' opens the detail as its own project (with a
+  // Return button); 'inplace' swaps the detail graph into the current canvas (drill up via
+  // a node action).
+  'aggregates.drillMode': 'panel',
   'achart.controlsExpanded': true,
   'bchart.controlsExpanded': true,
   'compliance.controlsExpanded': true,
