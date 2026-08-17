@@ -305,10 +305,16 @@ function ConnectionsList({
   onEdit?: (conn: ManagedConnection) => void
 }) {
   const store = useStore()
-  const sorted = useMemo(
-    () => [...store.connections].sort((a, b) => a.name.localeCompare(b.name)),
-    [store.connections],
-  )
+  // "Aggregate Connections" setting = visibility of connections that hold ONLY aggregate
+  // detail data. Source / high-level connections are always visible, as is the active one.
+  const [showAggConns] = useSetting<boolean>('aggregates.showConnections')
+  const sorted = useMemo(() => {
+    const all = [...store.connections].sort((a, b) => a.name.localeCompare(b.name))
+    if (showAggConns) return all
+    return all.filter(
+      (c) => !c.aggregateDetailOnly || store.connection.activeProfileId === c.id,
+    )
+  }, [store.connections, showAggConns, store.connection.activeProfileId])
   // Connections this power user owns and may edit, keyed by id.
   const manageableById = useMemo(
     () => new Map(store.manageableConnections.map((c) => [c.id, c])),
@@ -361,7 +367,14 @@ function ConnectionsList({
               ⛁
             </span>
             <div className="card-body">
-              <span className="card-title">{conn.name || '(unnamed)'}</span>
+              <span className="card-title">
+                {conn.hasAggregates && (
+                  <span className="agg-sigma-tag" title="Holds aggregate (Σ) projects">
+                    Σ
+                  </span>
+                )}
+                {conn.name || '(unnamed)'}
+              </span>
               {conn.comment && <span className="card-sub">{conn.comment}</span>}
               <span className="card-sub">
                 Database: {conn.host || '(no host)'}:{conn.port}
@@ -419,8 +432,29 @@ function ConnectionsList({
 
 // ── Projects ─────────────────────────────────────────────────────────────────
 
+/** A project id marks an aggregate: "agg_" = a high-level Σ map, "aggd_" = a detail map. */
+function aggregateKind(projectId: string): 'high' | 'detail' | null {
+  if (projectId.startsWith('aggd_')) return 'detail'
+  if (projectId.startsWith('agg_')) return 'high'
+  return null
+}
+
 function ProjectsList({ onSelected }: { onSelected: () => void }) {
   const store = useStore()
+  // "Aggregate Projects" setting = visibility of aggregate DETAIL projects. High-level maps
+  // (and normal projects) are always visible; the currently-open project is never hidden.
+  const [showAggDetails] = useSetting<boolean>('aggregates.showProjects')
+  const projects = useMemo(
+    () =>
+      showAggDetails
+        ? store.projects
+        : store.projects.filter(
+            (p) =>
+              aggregateKind(p.projectId) !== 'detail' ||
+              store.selectedProject?.projectId === p.projectId,
+          ),
+    [store.projects, showAggDetails, store.selectedProject],
+  )
 
   if (!store.connection.isConnected) {
     return (
@@ -448,8 +482,9 @@ function ProjectsList({ onSelected }: { onSelected: () => void }) {
 
   return (
     <div className="card-list" style={{ maxHeight: 240 }}>
-      {store.projects.map((project) => {
+      {projects.map((project) => {
         const selected = store.selectedProject?.projectId === project.projectId
+        const agg = aggregateKind(project.projectId)
         return (
           <button
             key={project.projectId}
@@ -463,7 +498,17 @@ function ProjectsList({ onSelected }: { onSelected: () => void }) {
               📈
             </span>
             <div className="card-body">
-              <span className="card-title">{project.title}</span>
+              <span className="card-title">
+                {agg && (
+                  <span
+                    className="agg-sigma-tag"
+                    title={agg === 'high' ? 'High-level aggregate map' : 'Aggregate detail (drill-down)'}
+                  >
+                    Σ{agg === 'detail' ? '↳' : ''}
+                  </span>
+                )}
+                {project.title}
+              </span>
               {project.description && (
                 <span className="card-sub">{project.description}</span>
               )}
@@ -1118,6 +1163,11 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
   const [layoutOpen, setLayoutOpen] = useSetting<boolean>('sidebar.configLayoutExpanded')
   const [datesOpen, setDatesOpen] = useSetting<boolean>('sidebar.configDatesExpanded')
   const [aiOpen, setAiOpen] = useSetting<boolean>('sidebar.configAiExpanded')
+  const [aggOpen, setAggOpen] = useSetting<boolean>('sidebar.configAggregationsExpanded')
+  const [showAggProjects, setShowAggProjects] = useSetting<boolean>('aggregates.showProjects')
+  const [showAggConnections, setShowAggConnections] = useSetting<boolean>(
+    'aggregates.showConnections',
+  )
   const [kpiOrder, setKpiOrder] = useSetting<string>('kpi.order')
   const [dragging, setDragging] = useState<string | null>(null)
 
@@ -1362,6 +1412,29 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
               </button>
             </div>
           )}
+        </>
+      )}
+
+      <SubHeader
+        icon="Σ"
+        title="Aggregations"
+        open={aggOpen}
+        onToggle={() => setAggOpen(!aggOpen)}
+      />
+      {aggOpen && (
+        <>
+          <ToggleRow
+            icon="📈"
+            label="Show aggregate detail projects"
+            checked={showAggProjects}
+            onChange={setShowAggProjects}
+          />
+          <ToggleRow
+            icon="⛁"
+            label="Show aggregate detail connections"
+            checked={showAggConnections}
+            onChange={setShowAggConnections}
+          />
         </>
       )}
     </div>

@@ -680,6 +680,7 @@ const processMap: HelpTopic = {
         p('To add more later, open the high-level map, enter pick mode again, select more original steps and choose “Add to map” — the map is rebuilt from its source with the new Σ step(s) added, and only the new detail project is written.'),
         tip('Each Σ node’s menu offers ⤵ Drill down to open its detail project. A Σ step inherits the group’s BELONGS_TO swimlane when its members share one.'),
         p('A drilled-into detail project is a black-box sub-process: it is shown as a flowchart only (no Sankey), with a ← Return to high-level map button to go straight back.'),
+        p('Aggregate projects (and connections holding them) are marked with a Σ in the sidebar. Under Configuration → Aggregations you can hide the aggregate detail projects and detail-only connections to declutter — the high-level map (and any connection holding it or the source) always stays visible, as does whatever you have open.'),
       ],
     },
   ],

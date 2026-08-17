@@ -1580,6 +1580,37 @@ class SecurityStore:
                 return dict(r)
         return None
 
+    def _agg_loc(self, conn_id: str, schema: str | None = None) -> tuple[str, str] | None:
+        """A (host, schema) location, resolving the connection's host (and its own schema
+        when ``schema`` is None). Lower-cased for a tolerant match."""
+        conn = self.get_connection((conn_id or "").strip(), with_secrets=False)
+        if conn is None:
+            return None
+        sch = schema if schema is not None else (conn.schema or "")
+        return ((conn.host or "").strip().lower(), (sch or "").strip().lower())
+
+    def aggregate_locations(self) -> dict[str, set[tuple[str, str]]]:
+        """(host, schema) locations grouped by role across all stored aggregate sets:
+        ``source`` (the original), ``high`` (the high-level Σ map) and ``detail`` (the
+        drill-down projects). Used to mark aggregate-bearing connections and to decide which
+        may be hidden — a detail-only connection is hideable; a source/high-level one is not
+        (mirroring 'a high-level map is always visible; details may be hidden')."""
+        src: set[tuple[str, str]] = set()
+        high: set[tuple[str, str]] = set()
+        detail: set[tuple[str, str]] = set()
+        for s in self._aggregate_sets_raw():
+            loc = self._agg_loc(s.get("sourceConnectionId", ""))
+            if loc:
+                src.add(loc)
+            loc = self._agg_loc(s.get("highLevelConnectionId", ""), s.get("highLevelSchema", ""))
+            if loc:
+                high.add(loc)
+            for a in s.get("aggregates") or []:
+                loc = self._agg_loc(a.get("detailConnectionId", ""), a.get("detailSchema", ""))
+                if loc:
+                    detail.add(loc)
+        return {"source": src, "high": high, "detail": detail}
+
     def save_aggregate_set(self, record: dict) -> dict:
         """Upsert an aggregate set, keyed by its source (connection, project)."""
         cid = (record.get("sourceConnectionId") or "").strip()

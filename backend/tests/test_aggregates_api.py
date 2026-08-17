@@ -155,6 +155,44 @@ def test_aggregate_set_roundtrips_in_store(backend):
     assert len(store.aggregate_set_by_source("c1", "P")["aggregates"]) == 2
 
 
+def test_aggregate_locations_group_by_role(backend):
+    _app, store = backend
+    cid = _conn(store, assignments=[])  # host db.example.com, schema MINING
+    store.save_aggregate_set({
+        "sourceConnectionId": cid, "sourceProjectId": "P",
+        "highLevelConnectionId": cid, "highLevelProjectId": "agg_1",
+        "highLevelSchema": "MINING", "highLevelTitle": "High",
+        "aggregates": [{"sigmaStep": "Σ1", "members": ["A", "B"], "detailConnectionId": cid, "detailProjectId": "d1", "detailSchema": "AGG_DETAIL", "detailTitle": "D"}],
+    })
+    loc = store.aggregate_locations()
+    assert ("db.example.com", "mining") in loc["source"]  # source uses the conn's own schema
+    assert ("db.example.com", "mining") in loc["high"]
+    assert ("db.example.com", "agg_detail") in loc["detail"]
+
+
+def test_connection_flags_source_marked_but_not_hideable(backend):
+    """A connection whose schema holds the high-level/source is marked but never hidden; a
+    separate connection pointing only at the detail schema is marked AND hideable."""
+    app, store = backend
+    _user(store, "dev", developer=True)
+    src = _conn(store, assignments=["dev"])  # schema MINING (source + high-level here)
+    det = store.upsert_connection({
+        "name": "Detail", "host": "db.example.com", "port": 8563, "username": "svc",
+        "schema": "AGG_DETAIL", "password": "s3cret", "llmURL": "", "llmModel": "", "llmKey": "",
+        "assignments": ["dev"],
+    }).id
+    store.save_aggregate_set({
+        "sourceConnectionId": src, "sourceProjectId": "P",
+        "highLevelConnectionId": src, "highLevelProjectId": "agg_1",
+        "highLevelSchema": "MINING", "highLevelTitle": "High",
+        "aggregates": [{"sigmaStep": "Σ1", "members": ["A", "B"], "detailConnectionId": det, "detailProjectId": "d1", "detailSchema": "AGG_DETAIL", "detailTitle": "D"}],
+    })
+    client = TestClient(app)
+    conns = {c["id"]: c for c in client.get("/api/connections", headers={"X-PMW-User": "dev"}).json()}
+    assert conns[src]["hasAggregates"] and not conns[src]["aggregateDetailOnly"]  # source: shown, kept
+    assert conns[det]["hasAggregates"] and conns[det]["aggregateDetailOnly"]  # detail-only: hideable
+
+
 def test_aggregate_link_roundtrips_in_store(backend):
     _app, store = backend
     store.add_aggregate_link(

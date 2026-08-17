@@ -1324,6 +1324,18 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
   </div><!-- /tab-integration -->
 
   <div class="tabpanel" id="tab-actions">
+  <!-- TEMPORARY: "Experimental" hazard banner for the Actions feature. Remove this whole
+       block (down to the matching end-comment) when Actions leaves experimental status. -->
+  <div style="position:relative; margin:0 0 14px; border-radius:8px; overflow:hidden;
+       background:repeating-linear-gradient(45deg, #111 0 22px, #f2c200 22px 44px);
+       padding:16px 0; text-align:center;">
+    <span style="display:inline-block; background:rgba(0,0,0,.82); color:#f2c200;
+         font-weight:800; letter-spacing:3px; text-transform:uppercase; font-size:15px;
+         padding:7px 24px; border-radius:6px; border:1px solid rgba(242,194,0,.65);">
+      &#9888; Experimental
+    </span>
+  </div>
+  <!-- END TEMPORARY experimental banner -->
   <div class="card">
     <h2>Actions</h2>
     <p class="muted" style="margin-top:0">

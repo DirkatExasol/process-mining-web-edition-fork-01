@@ -23,6 +23,11 @@ export interface AssignedConnection {
   schema: string
   hasLLM: boolean
   llmURL: string | null
+  /** True when this connection's schema holds aggregate (Σ) projects (high-level or detail). */
+  hasAggregates?: boolean
+  /** True when it holds only aggregate DETAIL projects (not a source or high-level) — so it
+   *  may be hidden by the "show aggregate connections" setting. */
+  aggregateDetailOnly?: boolean
 }
 
 /** A connection a *power* user owns and may edit from the app (admin_public shape;

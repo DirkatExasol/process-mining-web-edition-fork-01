@@ -32,7 +32,20 @@ def _request_user(request: Request) -> str | None:
 def list_connections(request: Request) -> list[dict]:
     """Connections assigned to the signed-in user (secrets stripped)."""
     user = _request_user(request)
-    return [c.user_public() for c in security_store.connections_for_user(user)]
+    # Aggregate-bearing (host, schema) locations, by role. A connection is marked when its
+    # schema holds an aggregate output (high-level or detail); it is *hideable* only when it
+    # holds detail(s) and is neither a source nor a high-level connection — mirroring "a
+    # high-level map is always visible; details may be hidden".
+    loc = security_store.aggregate_locations()
+    keep = loc["source"] | loc["high"]
+    out: list[dict] = []
+    for c in security_store.connections_for_user(user):
+        d = c.user_public()
+        here = ((c.host or "").strip().lower(), (c.schema or "").strip().lower())
+        d["hasAggregates"] = here in loc["high"] or here in loc["detail"]
+        d["aggregateDetailOnly"] = here in loc["detail"] and here not in keep
+        out.append(d)
+    return out
 
 
 @router.post("/connections/{conn_id}/connect", response_model=ConnectionStatus)

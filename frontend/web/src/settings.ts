@@ -57,6 +57,13 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   'sidebar.configLayoutExpanded': true,
   'sidebar.configDatesExpanded': true,
   'sidebar.configAiExpanded': true,
+  'sidebar.configAggregationsExpanded': true,
+  // Aggregations: visibility of aggregate DETAIL projects / detail-only connections.
+  // Both default OFF (hidden) to keep the lists clean — high-level maps, source/high-level
+  // connections and the open/active item always stay visible. Toggle on under
+  // Configuration → Aggregations.
+  'aggregates.showProjects': false,
+  'aggregates.showConnections': false,
   'achart.controlsExpanded': true,
   'bchart.controlsExpanded': true,
   'compliance.controlsExpanded': true,
