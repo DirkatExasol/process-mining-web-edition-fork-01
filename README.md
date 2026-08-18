@@ -51,7 +51,7 @@ Developer ► Integration Console (:8100 / :8463) ──► data-source configur
 Developer ► Actions (:8110 / :8473) ──► author node-menu actions (DSL → filter-guided SQL; run from the app)
 ```
 
-<img src="docs/experimental-banner.svg" alt="Experimental" width="100%">
+![Experimental](docs/experimental-banner.png)
 
 > [!WARNING]
 > Until further notice, **"Actions" are experimental and subject to frequent changes.**
