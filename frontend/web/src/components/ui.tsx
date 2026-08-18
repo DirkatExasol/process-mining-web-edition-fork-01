@@ -307,6 +307,7 @@ export function Sheet({
   title,
   icon,
   wide = false,
+  resizable = false,
   onClose,
   footer,
   children,
@@ -314,6 +315,8 @@ export function Sheet({
   title: string
   icon?: string
   wide?: boolean
+  /** Let the user drag the bottom-right corner to resize the dialog. */
+  resizable?: boolean
   onClose: () => void
   footer?: ReactNode
   children: ReactNode
@@ -329,7 +332,7 @@ export function Sheet({
   return (
     <div className="scrim" onClick={onClose}>
       <div
-        className={`sheet${wide ? ' wide' : ''}`}
+        className={`sheet${wide ? ' wide' : ''}${resizable ? ' resizable' : ''}`}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

@@ -7,7 +7,7 @@ import { Sheet, Unavailable } from '../components/ui'
 import { ActionFlowchart } from '../components/ActionFlowchart'
 import { useSetting } from '../settings'
 import { useStore } from '../store'
-import { simulationFilterNotice, type SliderMode } from '../types'
+import { simulationFilterNotice, TRANSITION_METRICS, type SliderMode } from '../types'
 import { ChartControls } from './ChartControls'
 import { useNoteHandlers } from './useNoteHandlers'
 import { api } from '../api'
@@ -352,7 +352,7 @@ export function ChartView({
         <Sheet
           title={`${store.panelDrill.sigmaStep} — sub-process`}
           icon="Σ"
-          wide
+          resizable
           onClose={() => store.closeDrillPanel()}
         >
           <p className="fg-secondary" style={{ marginTop: 0, fontSize: 13 }}>
@@ -370,7 +370,7 @@ export function ChartView({
             </strong>
             {store.panelDrill.journeyCount != null && ` · ${store.panelDrill.journeyCount} journeys`}
           </p>
-          <div style={{ height: '60vh', minHeight: 320 }}>
+          <div style={{ flex: 1, minHeight: 0 }}>
             <ActionFlowchart
               result={{
                 kind: 'flowchart',
@@ -379,8 +379,11 @@ export function ChartView({
                 graph: store.panelDrill.graph,
                 journeyCount: store.panelDrill.journeyCount ?? 0,
                 title: store.panelDrill.sigmaStep,
+                metric: store.transitionMetric,
+                metrics: [...TRANSITION_METRICS],
               }}
               height="100%"
+              fitOnResize
             />
           </div>
         </Sheet>

@@ -22,9 +22,12 @@ const METRIC_ICONS: Record<TransitionMetric, string> = {
 export function ActionFlowchart({
   result,
   height,
+  fitOnResize = false,
 }: {
   result: ActionRunResult
   height: number | string
+  /** Re-fit the flowchart to the container when it is resized (e.g. a resizable panel). */
+  fitOnResize?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [ready, setReady] = useState(false)
@@ -73,6 +76,7 @@ export function ActionFlowchart({
           journeyTotal={result.journeyCount ?? 0}
           readOnly
           allowTransitionTable={false}
+          fitOnResize={fitOnResize}
         />
       )}
     </div>

@@ -2003,6 +2003,17 @@ textarea.text-input {
   width: min(900px, 100%);
 }
 
+/* A resizable dialog: drag the bottom-right corner. Starts large enough for a flowchart. */
+.sheet.resizable {
+  resize: both;
+  width: min(1040px, 94vw);
+  height: min(82vh, 860px);
+  max-width: 96vw;
+  max-height: 92vh;
+  min-width: 460px;
+  min-height: 340px;
+}
+
 .sheet-head {
   display: flex;
   align-items: center;

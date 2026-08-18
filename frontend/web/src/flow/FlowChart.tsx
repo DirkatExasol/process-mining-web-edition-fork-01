@@ -141,6 +141,8 @@ export interface FlowChartProps {
   /** When set, the map is an in-place drill of a detail sub-process: every node's menu
    *  offers "⤴ Drill up" to return to the high-level map. */
   onDrillUp?: () => void
+  /** Re-fit the view whenever the chart container is resized (for a resizable panel). */
+  fitOnResize?: boolean
   /** In-place EXPLODE seeding: keep the high-level map's node positions stable and only
    *  lay out the revealed member steps in the Σ node's spot (pushing downstream nodes down
    *  to make room), so surrounding steps/groups don't move or re-layout. */
@@ -915,6 +917,31 @@ function FlowChartInner(props: FlowChartProps) {
   useEffect(() => {
     fitted.current = false
   }, [projectId])
+
+  // Re-fit to the container when it is resized (opt-in, e.g. a resizable panel). Debounced
+  // to the next frame so a drag-resize keeps the whole chart in view without jitter.
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!props.fitOnResize || !el) return
+    let raf = 0
+    let first = true
+    const ro = new ResizeObserver(() => {
+      if (first) {
+        first = false // the observer fires once on attach — the initial fit already handled it
+        return
+      }
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        flow.fitView({ padding: 0.12, duration: 150 })
+        setZoom(flow.getZoom())
+      })
+    })
+    ro.observe(el)
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+    }
+  }, [props.fitOnResize, flow])
 
   // Re-run the auto-fit whenever the SET of nodes changes (a drill-down / drill-up, or a
   // reload that adds/removes steps) — but ONLY for a non-persisted chart. A saved or dragged
