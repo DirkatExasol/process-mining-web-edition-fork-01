@@ -51,6 +51,11 @@ Developer ► Integration Console (:8100 / :8463) ──► data-source configur
 Developer ► Actions (:8110 / :8473) ──► author node-menu actions (DSL → filter-guided SQL; run from the app)
 ```
 
+<img src="docs/experimental-banner.svg" alt="Experimental" width="100%">
+
+> [!WARNING]
+> Until further notice, **"Actions" are experimental and subject to frequent changes.**
+
 The GUI, admin and integration surfaces share one sign-in stack (password, TOTP
 two-factor, WebAuthn passkey) and the same TLS mode + active certificate.
 
