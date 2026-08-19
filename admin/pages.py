@@ -941,7 +941,8 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       </div><!-- /ctab-db -->
 
       <div class="ctabpanel" id="ctab-llm">
-        <h2 style="font-size:13px">LLM (optional)</h2>
+        <h2 style="font-size:13px">LLM override (optional)</h2>
+        <p class="subtle" style="margin-top:0">Overrides the global <strong>Default language model</strong> (Reporting tab) for AI features on <em>this</em> connection. Leave blank to use the default. Edits apply on the next report — no reconnect needed.</p>
         <div class="field"><label>Server URL</label><input type="text" id="c_llmUrl" placeholder="https://api.openai.com/v1"></div>
         <div class="field"><label>Model</label><input type="text" id="c_llmModel" placeholder="gpt-4o"></div>
         <div class="field"><label>API key <span class="subtle" id="c_llmKeyHint"></span></label>
@@ -1218,10 +1219,10 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
   <div class="tabpanel" id="tab-reporting">
   <div class="card">
     <h2>AI Reporting</h2>
-    <p class="muted" style="margin-top:0">The high-gloss AI report analyses the transition table with a language model, then assembles the findings — plus the Sankey, Happy Path and Conformance sections — into a styled, printable document. These settings are separate from the per-connection LLM the app uses for the interactive documentation.</p>
+    <p class="muted" style="margin-top:0">The high-gloss AI report analyses the transition table with a language model, then assembles the findings — plus the Sankey, Happy Path and Conformance sections — into a styled, printable document.</p>
 
-    <h2 style="font-size:14px; margin-top:18px">Report language model</h2>
-    <p class="subtle" style="margin-top:0">Leave the server URL blank to fall back to the LLM configured on the connection. OpenAI-compatible endpoint (a <code>/v1</code>-style base URL).</p>
+    <h2 style="font-size:14px; margin-top:18px">Default language model</h2>
+    <p class="subtle" style="margin-top:0">The LLM used for AI features on every connection — <strong>unless a connection defines its own LLM, which overrides this default</strong> (set that under Connections). OpenAI-compatible endpoint (a <code>/v1</code>-style base URL). Leave the server URL blank to require each connection to bring its own.</p>
     <div class="col" style="gap:10px; max-width:560px; margin-top:10px">
       <div class="field"><label>Server URL</label><input type="text" id="rep_llmUrl" placeholder="https://api.openai.com/v1"></div>
       <div class="field"><label>Model</label><input type="text" id="rep_llmModel" placeholder="gpt-4o"></div>

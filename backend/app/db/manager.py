@@ -82,7 +82,6 @@ class DatabaseManager:
         self.last_error: str | None = None
         # Set when connected via an admin-defined connection (the current model).
         self._active_db_server: DatabaseServer | None = None
-        self._active_llm_server: LLMServer | None = None
         # Whether the active connection opts into reading transitions from the
         # pre-materialised TRANSITIONS_RAW table (ProcessRepository reads this).
         self.use_materialized_transitions = False
@@ -169,8 +168,13 @@ class DatabaseManager:
 
     @property
     def active_llm_server(self) -> LLMServer | None:
+        """The active connection's OWN LLM, read live (never a connect-time snapshot),
+        so an admin edit lands on the next use without a reconnect. Admin-connection path
+        reads the security store; the legacy path reads the profile's LLM server."""
         if self._active_db_server is not None:  # admin-connection path
-            return self._active_llm_server
+            from ..services.llm_config import connection_llm_server
+
+            return connection_llm_server(self.active_profile_id)
         return self.llm_server(self.active_profile)
 
     @property
@@ -266,8 +270,10 @@ class DatabaseManager:
         self._conn = conn
         self.is_connected = True
         self._active_db_server = None
-        self._active_llm_server = None
-        self.is_llm_reachable = await check_llm_reachable(self.llm_server(profile))
+        # Reachability reflects the EFFECTIVE LLM (own → global default), resolved live.
+        from ..services.llm_config import resolve_llm
+
+        self.is_llm_reachable = await check_llm_reachable(resolve_llm(self).as_server())
         return None
 
     async def connect_connection(self, conn_def) -> str | None:
@@ -286,17 +292,6 @@ class DatabaseManager:
             fingerprint=conn_def.fingerprint,
             minRSAKeySizeBits=conn_def.min_rsa_bits,
             **{"schema": conn_def.schema},
-        )
-        llm = (
-            LLMServer(
-                id=conn_def.id,
-                name=f"{conn_def.name} LLM",
-                serverURL=conn_def.llm_url,
-                apiKey=conn_def.llm_api_key,
-                model=conn_def.llm_model,
-            )
-            if conn_def.llm_url.strip()
-            else None
         )
 
         await self.disconnect()
@@ -320,11 +315,14 @@ class DatabaseManager:
         self._conn = exa
         self.is_connected = True
         self._active_db_server = server
-        self._active_llm_server = llm
         self.use_materialized_transitions = bool(
             getattr(conn_def, "use_materialized_transitions", False)
         )
-        self.is_llm_reachable = await check_llm_reachable(llm)
+        # Reachability reflects the EFFECTIVE LLM (this connection's own override, else the
+        # global default), resolved live from the store — not a snapshot of conn_def.
+        from ..services.llm_config import resolve_llm
+
+        self.is_llm_reachable = await check_llm_reachable(resolve_llm(self).as_server())
         return None
 
     async def test_server(self, server: DatabaseServer, password: str) -> str | None:
@@ -356,7 +354,6 @@ class DatabaseManager:
                 self.is_connected = False
                 self.is_llm_reachable = False
                 self._active_db_server = None
-                self._active_llm_server = None
                 self.use_materialized_transitions = False
                 # A different connection may have different STEPS for the same
                 # project id — never carry the cache across connections.

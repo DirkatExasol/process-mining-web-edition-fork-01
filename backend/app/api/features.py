@@ -25,6 +25,7 @@ from ..models import (
     TransitionMetric,
 )
 from ..services import docgen, llm as llm_service, report as report_service, simulation
+from ..services.llm_config import resolve_llm
 from ..services.analytics import (
     happy_path_conformance,
     path_diverse_sample,
@@ -447,24 +448,19 @@ async def documentation(
     # prompt/style of a connection they are actually connected to (and thus assigned).
     conn_id = current_db().active_profile_id or ""
 
-    # The report uses its OWN admin-configured LLM if set; otherwise it falls back to the
-    # connection's LLM (the one the interactive app uses).
-    report_cfg = security_store.report_config(with_secret=True)
-    if report_cfg["llmUrl"].strip():
-        llm_url = report_cfg["llmUrl"]
-        llm_key = report_cfg.get("llmKey", "")
-        llm_model = report_cfg["llmModel"]
-    else:
-        server = current_db().active_llm_server
-        if server is None or not server.serverURL.strip():
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "No LLM server configured for reports. Set one in the admin "
-                    "Reporting tab, or select an LLM on your connection."
-                ),
-            )
-        llm_url, llm_key, llm_model = server.serverURL, server.apiKey, server.model
+    # Resolve the effective LLM once, in one place: the active connection's own LLM
+    # overrides the global default (admin → Reporting); both are read live from the store
+    # so an edited model takes effect on the next report without a reconnect.
+    resolved = resolve_llm(current_db())
+    if not resolved.configured:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No LLM configured for reports. Set a default in the admin Reporting "
+                "tab, or give this connection its own LLM."
+            ),
+        )
+    llm_url, llm_key, llm_model = resolved.url, resolved.key, resolved.model
 
     r = repo(request.filter.sampleSet)
 
@@ -590,6 +586,7 @@ async def documentation(
                 "user": request.preparedFor,
                 "source": "transition table underlying the process flow chart",
                 "generatedAt": datetime.now().strftime("%d %b %Y"),
+                "llm": f"{llm_model} · {resolved.label}" if llm_model else resolved.label,
             },
             style=style,
             title=title,
@@ -604,6 +601,8 @@ async def documentation(
         "error": error,
         "prompt": prompt,
         "model": llm_model or None,
+        "llmSource": resolved.source,
+        "llmLabel": resolved.label,
         "generatedAt": datetime.now(),
         # Kept for backward compatibility with the current client while it migrates.
         "journeyPathsSummary": paths_section,

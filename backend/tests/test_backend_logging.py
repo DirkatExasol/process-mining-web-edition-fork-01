@@ -174,7 +174,6 @@ def test_database_connection_error_is_logged(logstore, monkeypatch):
     mgr.is_llm_reachable = False
     mgr.last_error = None
     mgr._active_db_server = None
-    mgr._active_llm_server = None
 
     def _boom(server, password):
         raise RuntimeError("connection refused")
