@@ -31,6 +31,13 @@ import type { SavedAction } from '../actions/types'
 import type { AggregateLink } from '../aggregate/types'
 import { subgraphForMembers } from '../aggregate/explode'
 import {
+  boundsFromCenter,
+  boundsFromRect,
+  computeGuides,
+  type HLine,
+  type VLine,
+} from './alignGuides'
+import {
   GRID_SIZE,
   NODE_W,
   computeLayout,
@@ -65,6 +72,10 @@ import type { Node as RFNode } from '@xyflow/react'
 
 const nodeTypes = { step: StepNode, groupBox: GroupBoxNode, marker: MarkerNode }
 const edgeTypes = { metric: MetricEdge }
+
+// How close (in SCREEN pixels, at any zoom) an edge must come to a neighbour's edge before
+// an alignment guide appears and the node snaps to it.
+const GUIDE_SCREEN_PX = 7
 
 const GROUP_PREFIX = '__group__'
 const collapsedNodeId = (group: string) => `${GROUP_PREFIX}${group}`
@@ -212,6 +223,13 @@ function FlowChartInner(props: FlowChartProps) {
   )
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [menu, setMenu] = useState<MenuState | null>(null)
+  // Alignment guides shown while dragging a step or group: the lines are kept in flow
+  // coordinates and projected to screen space at render time with the live viewport.
+  const [guides, setGuides] = useState<{
+    vertical: VLine[]
+    horizontal: HLine[]
+    vp: Viewport
+  } | null>(null)
   const [descriptionNode, setDescriptionNode] = useState<string | null>(null)
   // Aggregate "pick steps" mode. A self-contained selection we control (ReactFlow's own
   // multi-select proved unreliable here): a toggle turns the map into a picker, plain
@@ -829,6 +847,18 @@ function FlowChartInner(props: FlowChartProps) {
     (changes: NodeChange[]) => {
       let next: Record<string, Point> | null = null
       let dragEnded = false
+      let dragging = false
+      // The item being dragged this gesture, tracked so alignment guides can measure it
+      // against everything else and snap it into line. Either one group box…
+      let movingGroup: {
+        name: string
+        box: { x: number; y: number; width: number; height: number }
+        members: Record<string, Point> // origin (pre-drag) centres
+        dx: number
+        dy: number
+      } | null = null
+      // …or one or more free step nodes (raw, pre-snap centres).
+      const movingNodes: Record<string, Point> = {}
 
       for (const change of changes) {
         if (change.type !== 'position' || !change.position) continue
@@ -836,6 +866,7 @@ function FlowChartInner(props: FlowChartProps) {
         // change of a gesture (and undefined for programmatic moves) — either way
         // that is when the result should be written through to storage.
         if (change.dragging !== true) dragEnded = true
+        else dragging = true
         const id = change.id
 
         if (id.startsWith('box:')) {
@@ -866,17 +897,97 @@ function FlowChartInner(props: FlowChartProps) {
           for (const [member, base] of Object.entries(snapshot.members)) {
             next[member] = snap({ x: base.x + dx, y: base.y + dy })
           }
+          movingGroup = { name: group, box: box.rect, members: snapshot.members, dx, dy }
           if (!change.dragging) delete dragOrigins.current[id]
           continue
         }
 
         if (id.startsWith('start:') || id.startsWith('end:')) continue
 
-        next ??= { ...effectiveOverrides }
-        next[id] = snap({
+        const center = {
           x: change.position.x + nodeW / 2,
           y: change.position.y + nodeH / 2,
-        })
+        }
+        movingNodes[id] = center
+        next ??= { ...effectiveOverrides }
+        next[id] = snap(center)
+      }
+
+      // ── Alignment guides ──────────────────────────────────────────────
+      // While a drag is live, measure the moving item's six edges (left / centre-x /
+      // right, top / centre-y / bottom) against every other node and group box; draw a
+      // guide where they line up and snap the item onto the nearest match.
+      if (dragging && next && (movingGroup || Object.keys(movingNodes).length)) {
+        const excluded = new Set<string>()
+        let moving: ReturnType<typeof boundsFromCenter> | null = null
+        if (movingGroup) {
+          moving = boundsFromRect(
+            movingGroup.box.x + movingGroup.dx,
+            movingGroup.box.y + movingGroup.dy,
+            movingGroup.box.width,
+            movingGroup.box.height,
+          )
+          for (const m of Object.keys(movingGroup.members)) excluded.add(m)
+          excluded.add(collapsedNodeId(movingGroup.name))
+        } else {
+          const ids = Object.keys(movingNodes)
+          for (const id of ids) excluded.add(id)
+          let l = Infinity
+          let t = Infinity
+          let r = -Infinity
+          let b = -Infinity
+          for (const id of ids) {
+            const c = movingNodes[id]
+            l = Math.min(l, c.x - nodeW / 2)
+            r = Math.max(r, c.x + nodeW / 2)
+            t = Math.min(t, c.y - nodeH / 2)
+            b = Math.max(b, c.y + nodeH / 2)
+          }
+          moving = { left: l, cx: (l + r) / 2, right: r, top: t, cy: (t + b) / 2, bottom: b }
+        }
+
+        const targets = []
+        for (const name of positionedIds) {
+          if (excluded.has(name)) continue
+          const c = positions[name]
+          if (c) targets.push(boundsFromCenter(c.x, c.y, nodeW, nodeH))
+        }
+        for (const box of boxes) {
+          if (box.name === movingGroup?.name) continue
+          targets.push(boundsFromRect(box.rect.x, box.rect.y, box.rect.width, box.rect.height))
+        }
+
+        // Detect alignment in a constant SCREEN band (≈7px) rather than a fixed number of
+        // flow units — otherwise, zoomed out, the band shrinks to a sub-pixel sliver and the
+        // guides almost never appear. Dividing by the live zoom keeps the feel identical at
+        // every zoom level.
+        const vp = flow.getViewport()
+        const threshold = GUIDE_SCREEN_PX / (vp.zoom || 1)
+        const g = computeGuides(moving, targets, threshold)
+        if (g.snapDx || g.snapDy) {
+          if (movingGroup) {
+            for (const [member, base] of Object.entries(movingGroup.members)) {
+              next[member] = {
+                x: g.snapDx ? base.x + movingGroup.dx + g.snapDx : next[member].x,
+                y: g.snapDy ? base.y + movingGroup.dy + g.snapDy : next[member].y,
+              }
+            }
+          } else {
+            for (const [id, raw] of Object.entries(movingNodes)) {
+              next[id] = {
+                x: g.snapDx ? raw.x + g.snapDx : next[id].x,
+                y: g.snapDy ? raw.y + g.snapDy : next[id].y,
+              }
+            }
+          }
+        }
+        setGuides(
+          g.vertical.length || g.horizontal.length
+            ? { vertical: g.vertical, horizontal: g.horizontal, vp }
+            : null,
+        )
+      } else if (dragEnded) {
+        setGuides(null)
       }
 
       // Persist to storage only when the gesture ends (change.dragging === false),
@@ -890,9 +1001,11 @@ function FlowChartInner(props: FlowChartProps) {
       collapsedGroups,
       commitOverrides,
       effectiveOverrides,
+      flow,
       nodeH,
       nodeW,
       nodesInGroup,
+      positionedIds,
       positions,
     ],
   )
@@ -1074,6 +1187,29 @@ function FlowChartInner(props: FlowChartProps) {
       </ReactFlow>
       </AggregatePickContext.Provider>
       </FlowFocusContext.Provider>
+
+      {guides && (
+        <svg className="align-guides" aria-hidden>
+          {guides.vertical.map((l, i) => (
+            <line
+              key={`v${i}`}
+              x1={l.x * guides.vp.zoom + guides.vp.x}
+              x2={l.x * guides.vp.zoom + guides.vp.x}
+              y1={l.y1 * guides.vp.zoom + guides.vp.y}
+              y2={l.y2 * guides.vp.zoom + guides.vp.y}
+            />
+          ))}
+          {guides.horizontal.map((l, i) => (
+            <line
+              key={`h${i}`}
+              x1={l.x1 * guides.vp.zoom + guides.vp.x}
+              x2={l.x2 * guides.vp.zoom + guides.vp.x}
+              y1={l.y * guides.vp.zoom + guides.vp.y}
+              y2={l.y * guides.vp.zoom + guides.vp.y}
+            />
+          ))}
+        </svg>
+      )}
 
       {isLoading && (
         <div className="loading-pill row">

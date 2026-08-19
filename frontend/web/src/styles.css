@@ -1136,6 +1136,27 @@ textarea.text-input {
   display: none;
 }
 
+/* Alignment guides while dragging a step or group — a full-canvas overlay above the
+   flow, drawn in screen pixels. Non-interactive so it never eats pointer events. The
+   high z-index keeps the lines on top of node cards so they stay visible mid-drag. */
+.align-guides {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 50;
+  overflow: visible;
+  /* A white glow under the line lifts it off dark node cards and busy backgrounds. */
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.95));
+}
+.align-guides line {
+  stroke: #ff179b;
+  stroke-width: 2;
+  stroke-linecap: round;
+  shape-rendering: geometricPrecision;
+}
+
 /* Highly visible marking for a step picked in aggregate "select steps" mode: a thick
    accent ring, a soft halo, and a gentle pulse so the selection reads at a glance. */
 .step-node.agg-picked {
