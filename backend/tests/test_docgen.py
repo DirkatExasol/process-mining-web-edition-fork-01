@@ -102,6 +102,26 @@ def test_conformance_section_empty_without_norms():
     assert docgen.conformance_section(_graph(), {}, TransitionMetric.count) == ""
 
 
+def test_conformance_section_norm_is_minimum_flips_the_verdict():
+    graph = _graph()
+    # A→B is 100% of A's outgoing traffic. Against a 50% CEILING that is a violation;
+    # against a 50% FLOOR (norm_is_minimum=True) it is compliant — and vice versa a
+    # floor above the actual becomes the violation.
+    md_max = docgen.conformance_section(graph, {"Count": {"A->B": 50.0}}, TransitionMetric.count)
+    assert "VIOLATION" in md_max and "read as **maximums**" in md_max
+
+    md_min = docgen.conformance_section(
+        graph, {"Count": {"A->B": 50.0}}, TransitionMetric.count, norm_is_minimum=True
+    )
+    assert "VIOLATION" not in md_min and "1 compliant" in md_min
+    assert "read as **minimums**" in md_min
+
+    md_min_hi = docgen.conformance_section(
+        graph, {"Count": {"A->B": 120.0}}, TransitionMetric.count, norm_is_minimum=True
+    )
+    assert "1 violation(s)" in md_min_hi  # 100% actual < 120% floor → violation
+
+
 def test_happy_path_section_warns_when_none_defined():
     md = docgen.happy_path_section([], [])
     assert "No Happy Paths defined" in md

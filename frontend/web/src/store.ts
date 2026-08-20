@@ -2562,6 +2562,9 @@ export const useStore = create<Store>((set, get) => {
           promptTemplate: s.llmPromptTemplate,
           targetNorms: s.targetNorms,
           targetMetric: s.targetMetric,
+          // The report's gap analysis judges norms the same way the Conformance
+          // view currently does (ceiling by default, floor when toggled).
+          normIsMinimum: readSetting<boolean>('compliance.normIsMinimum'),
           happyPaths: s.happyPaths,
           notes: s.projectNotes,
           connectionId: s.connection.activeProfileId ?? '',

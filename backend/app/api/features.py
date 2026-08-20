@@ -425,6 +425,9 @@ class DocumentationRequest(BaseModel):
     promptTemplate: str = DEFAULT_LLM_PROMPT
     targetNorms: dict[str, dict[str, float]] = {}
     targetMetric: TransitionMetric = TransitionMetric.count
+    # Mirrors the Conformance view's "Norm is a minimum" toggle so the report's gap
+    # analysis judges edges the same way the live view does.
+    normIsMinimum: bool = False
     happyPaths: list[HappyPath] = []
     # The project's notes — rendered as a report chapter (open/resolved, by severity).
     notes: list[ProcessNote] = []
@@ -476,7 +479,7 @@ async def documentation(
     _paths_html, paths_section = docgen.journey_paths_section(paths)
 
     conformance_md = docgen.conformance_section(
-        request.graph, request.targetNorms, request.targetMetric
+        request.graph, request.targetNorms, request.targetMetric, request.normIsMinimum
     )
     try:
         variants = await r.load_journey_paths(project_id, request.filter, 500)

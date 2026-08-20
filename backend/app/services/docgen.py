@@ -161,8 +161,11 @@ def conformance_section(
     graph: ProcessGraph,
     target_norms: dict[str, dict[str, float]],
     target_metric: TransitionMetric,
+    norm_is_minimum: bool = False,
 ) -> str:
-    """Gap analysis per metric that has norms defined."""
+    """Gap analysis per metric that has norms defined. ``norm_is_minimum`` mirrors the
+    Conformance view's toggle: False = norms are ceilings (violation when actual > norm),
+    True = norms are floors (violation when actual < norm)."""
     normed = {k: v for k, v in target_norms.items() if v}
     if not normed:
         return ""
@@ -205,12 +208,19 @@ def conformance_section(
                     "actual": actual,
                     "norm": norm,
                     "delta": delta,
-                    "violation": None if delta is None else delta > 0,
+                    "violation": None
+                    if delta is None
+                    else (delta < 0 if norm_is_minimum else delta > 0),
                 }
             )
 
+        # Violations first, worst gap on top: for ceilings the worst is the most
+        # positive delta, for floors the most negative one.
         entries.sort(
-            key=lambda e: (0 if e["violation"] is True else 1, -(e["delta"] or 0.0))
+            key=lambda e: (
+                0 if e["violation"] is True else 1,
+                (e["delta"] or 0.0) if norm_is_minimum else -(e["delta"] or 0.0),
+            )
         )
 
         violations = sum(1 for e in entries if e["violation"] is True)
@@ -235,7 +245,14 @@ def conformance_section(
             f"{no_norm} without norm.\n\n{table}"
         )
 
-    return "\n\n## Conformance Check – Gap Analysis\n\n" + "\n".join(parts)
+    reading = (
+        "Norms are read as **minimums** — an edge violates when its actual value falls "
+        "below the norm."
+        if norm_is_minimum
+        else "Norms are read as **maximums** — an edge violates when its actual value "
+        "exceeds the norm."
+    )
+    return f"\n\n## Conformance Check – Gap Analysis\n\n{reading}\n\n" + "\n".join(parts)
 
 
 def happy_path_section(

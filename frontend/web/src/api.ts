@@ -394,6 +394,7 @@ export const api = {
       promptTemplate: string
       targetNorms: Record<string, Record<string, number>>
       targetMetric: TransitionMetric
+      normIsMinimum?: boolean
       happyPaths: HappyPath[]
       notes?: ProcessNote[]
       connectionId?: string
