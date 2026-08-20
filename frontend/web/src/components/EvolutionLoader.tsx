@@ -79,6 +79,10 @@ const STAGES: readonly Pose[] = [
 /** Torso half-widths along the spine: hip, belly, shoulder. */
 const TORSO_W: readonly [number, number, number] = [6.0, 7.2, 6.4]
 
+/** Shoe profile in ankle-local coordinates (origin = ankle, toe pointing right). */
+const SHOE_D =
+  'M-3 2.3 L7.7 2.3 Q9 2.3 8.6 0.9 Q8 -0.7 5.9 -1.1 L0.8 -2 Q-2.5 -2.6 -3 -0.4 Z'
+
 const HOLD_MS = 420 // pose rests briefly so each stage registers…
 const MORPH_MS = 850 // …then flows into the next
 const SEG_MS = HOLD_MS + MORPH_MS
@@ -130,6 +134,8 @@ export function EvolutionLoader() {
       armB: el('armB'),
       legF: el('legF'),
       legB: el('legB'),
+      shoeF: el('shoeF'),
+      shoeB: el('shoeB'),
       phone: el('phone'),
     }
     if (Object.values(parts).some((p) => !p)) return
@@ -157,6 +163,11 @@ export function EvolutionLoader() {
       for (const key of ['armF', 'armB', 'legF', 'legB'] as const) {
         parts[key]!.setAttribute('d', polyline(mixPts(a[key], b[key], t)))
       }
+      // Shoes ride the ankles (last leg point) — yes, the ape wears them too.
+      const ankleF = mixPts(a.legF, b.legF, t)[2]
+      const ankleB = mixPts(a.legB, b.legB, t)[2]
+      parts.shoeF!.setAttribute('transform', `translate(${ankleF[0]} ${ankleF[1]})`)
+      parts.shoeB!.setAttribute('transform', `translate(${ankleB[0]} ${ankleB[1]})`)
       // The phone rides the front hand (last armF point).
       const hand = mixPts(a.armF, b.armF, t)[2]
       parts.phone!.setAttribute('transform', `translate(${hand[0]} ${hand[1]}) rotate(-14)`)
@@ -203,6 +214,7 @@ export function EvolutionLoader() {
         {/* limbs behind the body */}
         <path data-part="armB" className="evo-arm evo-back" />
         <path data-part="legB" className="evo-leg evo-back" />
+        <path data-part="shoeB" className="evo-back" d={SHOE_D} fill="currentColor" stroke="none" />
         {/* the body: filled tapered torso with rounded hip/shoulder caps + neck */}
         <path data-part="torso" fill="currentColor" stroke="none" />
         <circle data-part="hipCap" fill="currentColor" stroke="none" />
@@ -211,6 +223,7 @@ export function EvolutionLoader() {
         <circle data-part="head" r="7.4" fill="currentColor" stroke="none" />
         {/* limbs in front of the body */}
         <path data-part="legF" className="evo-leg" />
+        <path data-part="shoeF" d={SHOE_D} fill="currentColor" stroke="none" />
         <path data-part="armF" className="evo-arm" />
         {/* the smartphone, anchored to the front hand */}
         <g data-part="phone" opacity="0">
