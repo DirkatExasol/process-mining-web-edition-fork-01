@@ -946,15 +946,21 @@ function FlowChartInner(props: FlowChartProps) {
           moving = { left: l, cx: (l + r) / 2, right: r, top: t, cy: (t + b) / 2, bottom: b }
         }
 
+        // Guide only against peers of the SAME kind: a dragged group aligns to other
+        // groups, a dragged node aligns to other nodes. Mixing both at once is more lines
+        // than the eye can use.
         const targets = []
-        for (const name of positionedIds) {
-          if (excluded.has(name)) continue
-          const c = positions[name]
-          if (c) targets.push(boundsFromCenter(c.x, c.y, nodeW, nodeH))
-        }
-        for (const box of boxes) {
-          if (box.name === movingGroup?.name) continue
-          targets.push(boundsFromRect(box.rect.x, box.rect.y, box.rect.width, box.rect.height))
+        if (movingGroup) {
+          for (const box of boxes) {
+            if (box.name === movingGroup.name) continue
+            targets.push(boundsFromRect(box.rect.x, box.rect.y, box.rect.width, box.rect.height))
+          }
+        } else {
+          for (const name of positionedIds) {
+            if (excluded.has(name)) continue
+            const c = positions[name]
+            if (c) targets.push(boundsFromCenter(c.x, c.y, nodeW, nodeH))
+          }
         }
 
         // Detect alignment in a constant SCREEN band (≈7px) rather than a fixed number of
