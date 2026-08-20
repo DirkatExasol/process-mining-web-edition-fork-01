@@ -1,4 +1,7 @@
-# syntax=docker/dockerfile:1
+# NOTE: deliberately NO `# syntax=docker/dockerfile:1` directive — it forces BuildKit
+# to resolve the frontend image from Docker Hub on every build, which breaks offline /
+# restricted-network builds. Only standard Dockerfile features are used, so the
+# built-in frontend is sufficient.
 #
 # Process Mining Demonstrator — single image running all five services (compute
 # backend, GUI server, admin interface, integration console, Actions surface) via
