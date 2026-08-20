@@ -77,7 +77,7 @@ const STAGES: readonly Pose[] = [
 /* STAGES-END */
 
 /** Torso half-widths along the spine: hip, belly, shoulder. */
-const TORSO_W: readonly [number, number, number] = [4.6, 5.4, 5.0]
+const TORSO_W: readonly [number, number, number] = [6.0, 7.2, 6.4]
 
 const HOLD_MS = 420 // pose rests briefly so each stage registers…
 const MORPH_MS = 850 // …then flows into the next
@@ -208,7 +208,7 @@ export function EvolutionLoader() {
         <circle data-part="hipCap" fill="currentColor" stroke="none" />
         <circle data-part="shoulderCap" fill="currentColor" stroke="none" />
         <path data-part="neck" className="evo-neck" />
-        <circle data-part="head" r="6.6" fill="currentColor" stroke="none" />
+        <circle data-part="head" r="7.4" fill="currentColor" stroke="none" />
         {/* limbs in front of the body */}
         <path data-part="legF" className="evo-leg" />
         <path data-part="armF" className="evo-arm" />
