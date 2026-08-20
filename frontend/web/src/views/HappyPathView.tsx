@@ -251,7 +251,10 @@ export function HappyPathView() {
               graph={store.processGraph}
               projectId={store.selectedProject.projectId}
               chartMode="HappyPath"
-              metric={store.transitionMetric}
+              // Force 'Journey %' so the actual-process edges read as a share of all
+              // journeys — the same measure the ideal-path diagram shows on each step
+              // card (coverage = journeys through the step) — instead of the global metric.
+              metric="Journey %"
               journeyTotal={store.journeyCount ?? 0}
               isLoading={store.isLoading}
               onNodeAction={(node, action) => store.handleNodeAction(node, action)}
