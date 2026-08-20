@@ -3301,12 +3301,12 @@ textarea.text-input {
 }
 
 /* ── The AI-Reporting easter egg: the March of Progress (EvolutionLoader) ─────
-   Five figures appear in sequence — crawl → knuckle-walk → hunched → upright →
-   smartphone — then the loop restarts. One shared 7s timeline; each figure's
-   visibility window is baked into its own keyframes so the stagger survives
-   infinite looping. Theme-aware via currentColor. */
+   ONE figure morphs through the stages of evolution — crawl → knuckle-walk →
+   hunched → upright → smartphone — then devolves back and the cycle repeats.
+   The pose interpolation is driven by rAF in the component; here only the look.
+   Theme-aware via currentColor. */
 .evo {
-  width: min(420px, 80vw);
+  width: min(220px, 60vw);
   color: var(--primary);
   overflow: visible;
 }
@@ -3322,44 +3322,6 @@ textarea.text-input {
   stroke-width: 2 !important;
   opacity: 0.3;
 }
-.evo-fig {
-  opacity: 0;
-}
-.evo-f1 { animation: evo-w1 7s linear infinite; }
-.evo-f2 { animation: evo-w2 7s linear infinite; }
-.evo-f3 { animation: evo-w3 7s linear infinite; }
-.evo-f4 { animation: evo-w4 7s linear infinite; }
-.evo-f5 { animation: evo-w5 7s linear infinite; }
-@keyframes evo-w1 {
-  0%, 3%   { opacity: 0; transform: translateY(7px); }
-  8%       { opacity: 1; transform: translateY(0); }
-  86%      { opacity: 1; }
-  94%, 100% { opacity: 0; }
-}
-@keyframes evo-w2 {
-  0%, 13%  { opacity: 0; transform: translateY(7px); }
-  18%      { opacity: 1; transform: translateY(0); }
-  86%      { opacity: 1; }
-  94%, 100% { opacity: 0; }
-}
-@keyframes evo-w3 {
-  0%, 23%  { opacity: 0; transform: translateY(7px); }
-  28%      { opacity: 1; transform: translateY(0); }
-  86%      { opacity: 1; }
-  94%, 100% { opacity: 0; }
-}
-@keyframes evo-w4 {
-  0%, 33%  { opacity: 0; transform: translateY(7px); }
-  38%      { opacity: 1; transform: translateY(0); }
-  86%      { opacity: 1; }
-  94%, 100% { opacity: 0; }
-}
-@keyframes evo-w5 {
-  0%, 43%  { opacity: 0; transform: translateY(7px); }
-  48%      { opacity: 1; transform: translateY(0); }
-  86%      { opacity: 1; }
-  94%, 100% { opacity: 0; }
-}
 /* The phone screen glows — evolution's final light source. */
 .evo-screen {
   fill: var(--blue, #3a9bff);
@@ -3370,6 +3332,5 @@ textarea.text-input {
   to   { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .evo-fig { animation: none; opacity: 1; }
   .evo-screen { animation: none; }
 }
