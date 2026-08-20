@@ -3318,6 +3318,10 @@ textarea.text-input {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+.evo .evo-leg { stroke-width: 5.6; }
+.evo .evo-neck { stroke-width: 5; }
+/* limbs on the far side of the body sit a shade lighter for depth */
+.evo .evo-back { opacity: 0.62; }
 .evo-ground {
   stroke-width: 2 !important;
   opacity: 0.3;
