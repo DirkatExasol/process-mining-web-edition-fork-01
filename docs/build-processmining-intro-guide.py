@@ -6,11 +6,17 @@ Like the Drill-Down guide, every illustration is a small CSS-drawn mock — no
 screenshots — so the single .html file is fully self-contained.
 Run:  python3 docs/build-processmining-intro-guide.py
 """
+import base64
 import html
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "Process-Mining-Introduction.html"
+
+# App logo (frontend/web/public/logo.svg) embedded as a data-URI favicon, so the
+# browser tab shows the suite's icon while the page stays fully self-contained.
+_LOGO_SVG = (ROOT / "frontend" / "web" / "public" / "logo.svg").read_text(encoding="utf-8")
+FAVICON = "data:image/svg+xml;base64," + base64.b64encode(_LOGO_SVG.encode("utf-8")).decode("ascii")
 
 # Each chapter: (title, body_html, mock_html | None, bullets: list[str] | None, tip_html | None).
 # body/mock/bullets/tip are passed through as HTML (only the title is escaped).
@@ -283,6 +289,7 @@ def render() -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>What is Process Mining?</title>
+<link rel="icon" type="image/svg+xml" href="{FAVICON}">
 <style>{CSS}</style>
 </head>
 <body>

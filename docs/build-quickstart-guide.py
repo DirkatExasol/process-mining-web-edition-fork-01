@@ -9,6 +9,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SHOTS = ROOT / "docs" / "manual" / "screenshots"
 OUT = ROOT / "docs" / "Work-Bench-Quick-Start.html"
 
+# App logo (frontend/web/public/logo.svg) embedded as a data-URI favicon, so the
+# browser tab shows the suite's icon while the page stays fully self-contained.
+_LOGO_SVG = (ROOT / "frontend" / "web" / "public" / "logo.svg").read_text(encoding="utf-8")
+FAVICON = "data:image/svg+xml;base64," + base64.b64encode(_LOGO_SVG.encode("utf-8")).decode("ascii")
+
 
 def data_uri(name: str) -> str:
     b = (SHOTS / name).read_bytes()
@@ -215,6 +220,7 @@ def render() -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Work-Bench Quick-Start</title>
+<link rel="icon" type="image/svg+xml" href="{FAVICON}">
 <style>{CSS}</style>
 </head><body>
 <header class="hero"><div class="hero-inner">

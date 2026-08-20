@@ -77,7 +77,7 @@ export function IntegrationApp() {
     return (
       <>
         <ThemeSync />
-        <LoginView subtitle="Integration" onSignedIn={initAfterAuth} />
+        <LoginView subtitle="Integration Console" onSignedIn={initAfterAuth} />
       </>
     )
   }
