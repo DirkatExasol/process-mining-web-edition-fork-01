@@ -46,6 +46,8 @@ COPY actions/ ./actions/
 COPY frontend/ ./frontend/
 # Bundled demo logs — seeded into the integration files sandbox on first run.
 COPY examples/ ./examples/
+# Self-contained training guides — served by the GUI server at /guides/….
+COPY docs/ ./docs/
 COPY run.sh ./run.sh
 RUN chmod +x run.sh
 

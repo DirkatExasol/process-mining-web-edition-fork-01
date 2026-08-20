@@ -70,7 +70,10 @@
     width:238px; padding:26px 20px 20px; border-radius:20px; text-decoration:none; color:var(--ink);
     background:var(--card); border:1px solid var(--card-line);
     backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
-    box-shadow:0 18px 40px rgba(4,8,18,.45), inset 0 1px 0 rgba(255,255,255,.08);
+    /* Two shadow layers — a tight contact shadow plus a big, far-dropped one — read
+       as real altitude over the backdrop. */
+    box-shadow:0 10px 18px rgba(4,8,18,.4), 0 34px 70px rgba(0,0,0,.62),
+      inset 0 1px 0 rgba(255,255,255,.1);
     transition:transform .25s ease, box-shadow .25s ease, border-color .25s ease;
     animation:bob 6s ease-in-out infinite;
     overflow:hidden;
@@ -78,10 +81,11 @@
   .app:nth-child(1){animation-delay:0s}
   .app:nth-child(2){animation-delay:1.1s}
   .app:nth-child(3){animation-delay:2.2s}
-  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
-  .app:hover{transform:translateY(-10px) scale(1.025); border-color:rgba(255,255,255,.32);
-    box-shadow:0 26px 60px rgba(4,8,18,.6), 0 0 0 1px rgba(255,255,255,.06),
-      0 0 42px var(--glow, rgba(58,155,255,.35)); animation-play-state:paused}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-11px)}}
+  .app:hover{transform:translateY(-16px) scale(1.03); border-color:rgba(255,255,255,.32);
+    box-shadow:0 16px 26px rgba(4,8,18,.42), 0 52px 100px rgba(0,0,0,.7),
+      0 0 0 1px rgba(255,255,255,.06),
+      0 0 52px var(--glow, rgba(58,155,255,.4)); animation-play-state:paused}
   /* sheen sweep on hover */
   .app::after{content:""; position:absolute; top:0; left:-80%; width:55%; height:100%;
     background:linear-gradient(105deg,transparent, rgba(255,255,255,.16), transparent);
@@ -125,6 +129,33 @@
   .app .open{position:absolute; top:12px; right:14px; font-size:13px; color:var(--soft);
     opacity:0; transform:translateX(-4px); transition:.25s ease}
   .app:hover .open{opacity:1; transform:none}
+
+  /* ── third row: training guides (compact cards, no arrows) ── */
+  .guides{width:min(980px,100%); margin-top:64px; z-index:1}
+  .guides-head{display:flex; align-items:center; gap:12px; margin-bottom:16px}
+  .guides-head .line{flex:1; height:1px;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.22),transparent)}
+  .guides-head .label{font-size:12.5px; font-weight:700; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--soft)}
+  .guide-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(212px,1fr)); gap:14px}
+  .guide{
+    display:flex; align-items:center; gap:12px; padding:13px 15px; border-radius:14px;
+    text-decoration:none; color:var(--ink);
+    background:rgba(18,24,38,.5); border:1px solid var(--card-line);
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    box-shadow:0 6px 12px rgba(4,8,18,.38), 0 20px 44px rgba(0,0,0,.55),
+      inset 0 1px 0 rgba(255,255,255,.08);
+    transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+  }
+  .guide:hover{transform:translateY(-8px); border-color:rgba(255,255,255,.3);
+    box-shadow:0 10px 18px rgba(4,8,18,.4), 0 32px 64px rgba(0,0,0,.62),
+      0 0 30px rgba(58,155,255,.26)}
+  .guide .g-tile{flex:0 0 auto; width:38px; height:38px; border-radius:11px; display:grid;
+    place-items:center; background:linear-gradient(135deg,#2e3d63,#22304f);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.22)}
+  .guide .g-tile svg{width:20px; height:20px; fill:none; stroke:#9db8ef; stroke-width:2;
+    stroke-linecap:round; stroke-linejoin:round}
+  .guide .g-title{font-size:13.5px; font-weight:650; line-height:1.3}
 
   footer{margin-top:44px; color:rgba(234,240,250,.55); font-size:12.5px; text-align:center;
     z-index:1}
@@ -225,6 +256,15 @@
     </div>
   </div>
 
+  <section class="guides">
+    <div class="guides-head">
+      <span class="line"></span>
+      <span class="label">Training &amp; Documentation</span>
+      <span class="line"></span>
+    </div>
+    <div class="guide-grid" id="guide-grid"></div>
+  </section>
+
   <footer>Process Mining Demonstrator · Suite Launcher</footer>
 </div>
 
@@ -276,6 +316,53 @@
         document.body.classList.add("custom-bg");
       }
     }).catch(function () { /* keep the built-in gradient backdrop */ });
+  })();
+
+  /* ── third row: the self-contained training guides, served by the GUI server at
+     /guides/… . The list comes from /guides/index.json so future guides appear
+     automatically; a built-in list covers the fetch failing (e.g. older server). */
+  (function fillGuides() {
+    var FALLBACK = [
+      { file: "Installation-Guide.html", title: "Installation Guide" },
+      { file: "Process-Mining-Introduction.html", title: "What is Process Mining?" },
+      { file: "Work-Bench-Quick-Start.html", title: "Work-Bench Quick-Start" },
+      { file: "Administration-Quick-Start.html", title: "Administration Quick-Start" },
+      { file: "Drill-Down-Quick-Start.html", title: "Drill-Down Quick-Start" },
+      { file: "Process-Similarity-Explained.html", title: "Process Similarity Explained" },
+      { file: "Simulation-Explained.html", title: "Simulation Explained" },
+      { file: "Conformance-Explained.html", title: "Conformance Check Explained" }
+    ];
+    var BOOK = '<svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15.5H6.5A2.5 2.5 0 0 0 4 21z"/><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20"/><path d="M9 7.5h7M9 11h7"/></svg>';
+
+    function renderList(list) {
+      var grid = document.getElementById("guide-grid");
+      grid.innerHTML = "";
+      list.forEach(function (g) {
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.html$/.test(g.file)) return;
+        var a = document.createElement("a");
+        a.className = "guide";
+        a.href = "/guides/" + g.file;
+        a.target = "_blank";
+        a.rel = "noopener";
+        var tile = document.createElement("span");
+        tile.className = "g-tile";
+        tile.innerHTML = BOOK;
+        var title = document.createElement("span");
+        title.className = "g-title";
+        title.textContent = g.title || g.file.replace(/\.html$/, "").replace(/-/g, " ");
+        a.appendChild(tile);
+        a.appendChild(title);
+        grid.appendChild(a);
+      });
+    }
+
+    renderList(FALLBACK);
+    fetch("/guides/index.json").then(function (r) {
+      if (!r.ok) throw new Error();
+      return r.json();
+    }).then(function (list) {
+      if (Array.isArray(list) && list.length) renderList(list);
+    }).catch(function () { /* keep the fallback list */ });
   })();
 
   /* ── floating arrows: Admin → each second-row app, then Integration → Action

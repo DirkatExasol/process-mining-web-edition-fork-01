@@ -17,3 +17,6 @@ data
 Dockerfile
 docker-compose.yml
 .dockerignore
+# Guides are served from docs/, but the manual sources + PDF are heavy and unused.
+docs/manual
+docs/*.pdf

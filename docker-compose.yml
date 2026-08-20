@@ -54,6 +54,9 @@ services:
           ignore:
             - node_modules/
             - dist/
+        # Training guides served at /guides/… by the GUI server.
+        - path: ./docs
+          action: rebuild
         # Dependency / build / entrypoint definitions.
         - path: ./requirements.txt
           action: rebuild

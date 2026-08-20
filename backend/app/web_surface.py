@@ -93,6 +93,7 @@ def build_surface_app(
     denied_message: str | None = None,
     disabled_check: Callable[[], bool] | None = None,
     disabled_message: str = "This console is currently disabled by the administrator.",
+    guides_dir: Path | None = None,
 ) -> FastAPI:
     """Build a browser-facing surface (SPA + auth + /api proxy) for one audience.
 
@@ -100,6 +101,10 @@ def build_surface_app(
     in / keep a session on this surface. ``denied_message`` is returned (403) when a
     valid password login is refused by the predicate. ``disabled_check`` (optional),
     when it returns True, makes the whole surface serve a "disabled" response.
+    ``guides_dir`` (optional) serves the self-contained training guides in that
+    directory at ``/guides/<name>.html`` plus a ``/guides/index.json`` listing, so
+    the launcher (and anything else) can link them over HTTP/HTTPS instead of the
+    file system.
     """
 
     # ── Per-surface proxy client ──────────────────────────────────────────────
@@ -889,6 +894,42 @@ def build_surface_app(
         if user is not None:
             _set_session_cookie(response, request, user.username, keep_issued_at=True)
         return response
+
+    # ── Training guides (must register BEFORE the SPA catch-all) ─────────────
+    # The self-contained HTML guides are public training material (like the sign-in
+    # page itself); only strictly-named top-level .html files are ever served, so
+    # builder scripts, manual sources or traversal names can never leak.
+    if guides_dir is not None:
+        import re as _re
+
+        guide_name_ok = _re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.html$").match
+        title_rx = _re.compile(r"<title>(.*?)</title>", _re.IGNORECASE | _re.DOTALL)
+
+        @app.get("/guides/index.json")
+        async def guides_index() -> JSONResponse:
+            """List the available guides (file + tab title) for the launcher."""
+            entries = []
+            if guides_dir.is_dir():
+                for f in sorted(guides_dir.glob("*.html")):
+                    if not guide_name_ok(f.name):
+                        continue
+                    try:
+                        head = f.read_text(encoding="utf-8", errors="replace")[:8000]
+                    except OSError:
+                        continue
+                    m = title_rx.search(head)
+                    title_text = (m.group(1).strip() if m else f.stem.replace("-", " "))
+                    entries.append({"file": f.name, "title": title_text})
+            return JSONResponse(entries)
+
+        @app.get("/guides/{name}")
+        async def guide(name: str) -> Response:
+            if not guide_name_ok(name) or "/" in name or ".." in name:
+                return Response(status_code=404)
+            candidate = (guides_dir / name).resolve()
+            if candidate.parent != guides_dir.resolve() or not candidate.is_file():
+                return Response(status_code=404)
+            return FileResponse(candidate, media_type="text/html")
 
     if (dist_dir / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=dist_dir / "assets"), name="assets")

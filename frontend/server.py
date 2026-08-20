@@ -40,4 +40,7 @@ app = build_surface_app(
     dist_dir=DIST_DIR,
     index_html=INDEX_HTML,
     role_predicate=lambda user: True,  # any enabled user (enablement checked upstream)
+    # The self-contained training guides (docs/*.html), served at /guides/… so the
+    # launcher links them over HTTP/HTTPS instead of the file system.
+    guides_dir=Path(__file__).resolve().parents[1] / "docs",
 )
