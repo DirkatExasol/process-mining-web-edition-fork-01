@@ -896,87 +896,102 @@ const processSimilarity: HelpTopic = {
         code('cost_T(v) = missing_edges / total_edges_in_variant'),
         p('A “missing edge” is a consecutive step pair in the variant that does not appear as a transition in the graph. If all transitions exist, cost = 0 (perfect fit). If half are missing, cost = 0.5. A variant with only one step (no edges) is skipped.'),
         p('This is a practical approximation of formal process-mining alignment. It runs in linear time per variant and requires no external solver, making it fast enough to run automatically on every panel reload.'),
-        tip('The variant set is capped at 500 per side (1 000 combined). When the cap is exceeded the badge is hidden rather than showing a misleading score computed from a biased sample.'),
+        p('One property follows directly: each side’s variants always replay perfectly on the graph mined from the same journeys (cost = 0 on their home side). Any misfit is therefore one-sided, which makes Q_var behave as a strict structural test — 1.0 when every variant’s edges exist in both graphs, 0.0 as soon as any variant uses an edge the other side lacks. The examples below show how Q_nodes and Q_cov then differentiate the score.'),
+        tip('The variant set is capped at 500 per side (1 000 combined). When the cap is exceeded the badge is hidden rather than showing a misleading score computed from a biased sample. All example numbers below are verified outputs of the actual implementation.'),
       ],
     },
     {
-      heading: 'Example 1 — nearly identical segments',
+      heading: 'Example 1 — shared core, one exclusive path',
       body: [
-        p('A-Chart shows European orders; B-Chart shows North American orders. Both regions follow almost the same checkout process.'),
+        p('A-Chart shows European orders; B-Chart shows North American orders. 90 % of all journeys take the shared main route; 10 % (EU only) redeem a coupon on the way.'),
         code(
-          `Variant A  (90 % of journeys, both sides):
+          `Main route  (90 % of combined journeys, both sides):
   Browse → Cart → Pay → Confirm
   Edges exist in both graphs → cost_A = 0,  cost_B = 0
 
-Variant B  (10 % of journeys, EU only):
-  Browse → Cart → Coupon → Pay → Confirm
-  All edges in A-graph; Coupon→Pay missing in B-graph
-  cost_A = 0,  cost_B = 1/4 = 0.25`,
+Coupon route  (10 %, EU only):
+  Browse → Cart → Coupon → Pay → Confirm   (4 edges)
+  All edges in A-graph → cost_A = 0
+  Cart→Coupon and Coupon→Pay missing in B-graph
+  cost_B = 2/4 = 0.50`,
         ),
-        p('Weighting by frequency, Variant A (90 %) agrees perfectly while Variant B (10 %) diverges:'),
+        p('The only misfitting variant is one-sided (A explains it, B cannot), so Q_var collapses; the valuable steps and 90 % of the traffic still agree:'),
         code(
-          `Weighted Q_var ≈ 0.90 × 1.0 + 0.10 × 0.0 = 0.90
+          `Q_var   = 0.00   (the coupon misfit is entirely one-sided)
 
-Assume scored steps: Pay = +10, Confirm = +10 (both graphs)
-Q_nodes ≈ 0.95  (Coupon step has no score, so its absence barely matters)
-Q_cov   = 0.90  (90 % of frequency fits both perfectly)
+Scored steps: Pay = +10, Confirm = +10 — present in BOTH variants
+  main route:   visit_A = visit_B = 1.0        → min = max = 20
+  coupon route: visit_A = 1.0, visit_B = 0.50  → min = 10, max = 20
+Q_nodes = (0.90×20 + 0.10×10) / (1.00×20) = 0.95
+Q_cov   = 0.90   (90 % of frequency fits both perfectly)
 
-Q = 0.4 × 0.90 + 0.4 × 0.95 + 0.2 × 0.90
-  = 0.36 + 0.38 + 0.18 = 0.92  → green`,
+Q = 0.4×0.00 + 0.4×0.95 + 0.2×0.90 = 0.56  → blue`,
         ),
-        tip('A score of 0.92 correctly reflects that EU and North America are very similar processes — only the coupon path distinguishes them.'),
+        tip('A blue mid-range score with healthy shared volume is the signature of “same core process, side-specific extras”. Q_var reacts decisively to the exclusive path, while Q_nodes and Q_cov keep the score well above red.'),
       ],
     },
     {
       heading: 'Example 2 — same period, different quality paths',
       body: [
-        p('A-Chart shows the standard process (no failures); B-Chart shows the same date range filtered to orders that included a “Pay Failed” step. These are structurally different populations.'),
+        p('A-Chart shows successfully confirmed orders; B-Chart shows the same date range filtered to orders with a “Pay Failed” step — equally many journeys on each side. These are structurally different populations.'),
         code(
-          `Variant A  (100 % of A-side): Browse → Cart → Pay → Confirm
-  All edges in A-graph (cost_A = 0)
-  'Pay → Confirm' missing from B-graph  (cost_B = 1/3 ≈ 0.33)
+          `Variant A  (100 % of A-side, 50 % combined):
+  Browse → Cart → Pay → Confirm   (3 edges)
+  cost_A = 0;  Pay→Confirm missing from B-graph → cost_B = 1/3
 
-Variant B  (100 % of B-side): Browse → Cart → Pay → Pay Failed → Refund
-  'Pay → Confirm' missing from A-graph  (cost_A = 1/3 ≈ 0.33)
-  All edges in B-graph  (cost_B = 0)
+Variant B  (100 % of B-side, 50 % combined):
+  Browse → Cart → Pay → Pay Failed → Refund   (4 edges)
+  cost_B = 0;  Pay→Pay Failed and Pay Failed→Refund missing
+  from A-graph → cost_A = 2/4 = 0.50
 
-Scored steps: Pay = +5, Confirm = +10, Pay Failed = −10, Refund = −5`,
+Scored steps: Pay = +5, Confirm = +10, Pay Failed = −10, Refund = −5
+(absolute values are used as weights)`,
         ),
         code(
           `Q_var   = 0.00   (each side fits only its own variant)
-Q_nodes ≈ 0.45   (high-value steps differ between the two populations)
+
+Q_nodes: variant A carries Pay+Confirm (weight 15),
+         variant B carries Pay+Failed+Refund (weight 20):
+  variant A: visit_A = 1.0, visit_B = 2/3  → min = 10,  max = 15
+  variant B: visit_B = 1.0, visit_A = 0.5  → min = 10,  max = 20
+  Q_nodes = (0.5×10 + 0.5×10) / (0.5×15 + 0.5×20) ≈ 0.57
+
 Q_cov   = 0.00   (neither variant fits both graphs perfectly)
 
-Q = 0.4×0.00 + 0.4×0.45 + 0.2×0.00 = 0.18  → red`,
+Q = 0.4×0.00 + 0.4×0.57 + 0.2×0.00 = 0.23  → red`,
         ),
-        p('A score of 0.18 correctly signals strong divergence — the happy-path and failure-path populations are fundamentally different processes.'),
+        p('A score of 0.23 correctly signals strong divergence — the happy-path and failure-path populations are fundamentally different processes. Q_nodes stays moderate only because both share the journey up to Pay.'),
       ],
     },
     {
       heading: 'Example 3 — before and after a process change',
       body: [
-        p('A-Chart shows January (before a redesign); B-Chart shows February (after). The redesign merged two slow approval steps into one. Most variants are shared but with different graph structure.'),
+        p('A-Chart shows January (before a redesign); B-Chart shows February (after). The redesign removed a Review step. 70 % of combined journeys take the new route (shared), 30 % the old Review route (January only).'),
         code(
-          `Shared variant (70 %): Browse → Submit → Approve → Complete
+          `New route (70 %): Browse → Submit → Approve → Complete
   Both graphs contain these edges → cost_A = 0, cost_B = 0
 
-Old variant (30 %, Jan only): Browse → Submit → Review → Approve → Complete
-  cost_A = 0  (all edges in Jan graph)
-  'Submit→Review' and 'Review→Approve' missing from Feb graph
+Old route (30 %, Jan only):
+  Browse → Submit → Review → Approve → Complete   (4 edges)
+  cost_A = 0  (all edges in the Jan graph)
+  Submit→Review and Review→Approve missing from the Feb graph
   cost_B = 2/4 = 0.50
 
-Scored steps: Approve = +8, Complete = +10`,
+Scored steps: Approve = +8, Complete = +10 — in both variants`,
         ),
         code(
-          `Weighted Q_var = 0.70×1.0 + 0.30×0.0 = 0.70
-Q_nodes ≈ 0.82   (Review step has no score, so its absence barely hurts)
+          `Q_var   = 0.00   (the old route is a one-sided misfit)
+
+Q_nodes: new route: visit_A = visit_B = 1.0       → min = max = 18
+         old route: visit_A = 1.0, visit_B = 0.5  → min = 9, max = 18
+  Q_nodes = (0.70×18 + 0.30×9) / (1.00×18) = 0.85
+
 Q_cov   = 0.70   (70 % of frequency fits both graphs perfectly)
 
-Q = 0.4×0.70 + 0.4×0.82 + 0.2×0.70
-  = 0.28 + 0.33 + 0.14 = 0.75  → green`,
+Q = 0.4×0.00 + 0.4×0.85 + 0.2×0.70 = 0.48  → blue`,
         ),
-        p('A score of 0.75 reflects that the two periods are broadly similar — the core path is unchanged — but the old Review step creates a measurable divergence. Green signals the processes are still recognisably the same, while a value below 0.90 confirms the redesign did introduce a structural difference.'),
-        tip('Use this pattern to validate process changes: a Q that stays near 1 after a change means little behavioural effect; a Q that drops toward 0.5 or below confirms a meaningful structural shift.'),
+        p('A blue 0.48 tells the true story: the redesign did change the structure (the old Review route no longer replays on February’s graph), while the scored steps and most of the traffic behave the same. As the old route’s share fades in later periods, Q_cov and Q_nodes rise and the score climbs toward green — reaching 1.0 once every remaining variant fits both graphs.'),
+        tip('Use this pattern to validate process changes: Q = 1.0 means no structural difference at all; a mid-range blue confirms a real structural shift with a shared core; red means the two periods barely share behaviour.'),
       ],
     },
     {
@@ -984,8 +999,8 @@ Q = 0.4×0.70 + 0.4×0.82 + 0.2×0.70
       body: [
         ul(
           'Green: Q ≥ 0.70 — the two processes are behaviourally similar.',
-          'Blue: 0.30 ≤ Q < 0.70 — moderate similarity; some paths are shared, others differ.',
-          'Red: Q < 0.30 — strong divergence; fundamentally different behaviour.',
+          'Blue: 0.30 < Q < 0.70 — moderate similarity; some paths are shared, others differ.',
+          'Red: Q ≤ 0.30 — strong divergence; fundamentally different behaviour.',
         ),
         warn('Process Similarity is a relative indicator, not an absolute benchmark. It depends on which steps have SCORE values — if none do, Q_nodes defaults to 1.0 and only Q_var and Q_cov contribute. It is also sensitive to the route limit.'),
         ul(
