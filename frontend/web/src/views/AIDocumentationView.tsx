@@ -5,6 +5,7 @@
  * path conformance, conformance gaps, user comments, analysis parameters). */
 
 import { useRef, useState } from 'react'
+import { EvolutionLoader } from '../components/EvolutionLoader'
 import { Sheet, Unavailable } from '../components/ui'
 import { aChartFilterSummary, useStore } from '../store'
 
@@ -61,7 +62,8 @@ export function AIDocumentationView() {
   if (store.isLLMAnalyzing) {
     return (
       <div className="center-fill">
-        <span className="spinner large" />
+        {/* The March-of-Progress easter egg — evolution ends with a smartphone. */}
+        <EvolutionLoader />
         <span>AI is analyzing</span>
         <span className="t-caption fg-tertiary" style={{ maxWidth: 420, textAlign: 'center' }}>
           {summary}
