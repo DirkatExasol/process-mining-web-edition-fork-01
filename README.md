@@ -108,17 +108,24 @@ Environment overrides: `PMW_BACKEND_PORT`, `PMW_FRONTEND_PORT`,
 
 ## Running with Docker
 
-A single image runs all three services; persisted state lives in a host `./data`
+A single image runs all the services; persisted state lives in a host `./data`
 directory (relative to the compose file):
 
 ```bash
 docker compose up -d --build
 ```
 
-App → <http://localhost:8080>, admin → <http://localhost:8090>. The compose file
-publishes `8080`/`8443` (app HTTP/HTTPS) and `8090`/`8453` (admin HTTP/HTTPS); the
-HTTPS ports activate once TLS is enabled in the admin. The compute backend stays
-internal to the container.
+App → <http://localhost:18080>, admin → <http://localhost:18090>, integration
+console → <http://localhost:18100>, Actions → <http://localhost:18110>. By
+default the compose file maps the host ports at **+10000** from the container
+ports (`18080:8080`, `18090:8090`, … plus the matching HTTPS pairs
+`18443:8443`, `18453:8453`, `18463:8463`, `18473:8473`) so they don't clash
+with other local services — but that is only a default: **you can map any free
+host port** to the container ports by editing the `ports:` entries in
+`docker-compose.yml` (the left-hand side is the host port, e.g. `80:8080`).
+Avoid host port **10080** — Chrome, Firefox and Safari block it as a restricted
+port, so pages served there never load. The HTTPS ports activate once TLS is
+enabled in the admin. The compute backend stays internal to the container.
 
 - **Persistence** — everything the app must keep (the `settings`/`security`
   SQLite databases, the Fernet `secret.key`, TLS certificates and the GUI PID)

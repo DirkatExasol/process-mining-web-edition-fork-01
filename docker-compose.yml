@@ -6,17 +6,19 @@ services:
     # tini as PID 1 → clean signal handling / no zombie processes.
     init: true
     restart: unless-stopped
-    # Host ports are offset by +2000 from the container ports (e.g. 10080→8080) so
+    # Host ports are offset by +10000 from the container ports (e.g. 18080→8080) so
     # they don't clash with other local services — notably phpldapadmin on host 8080.
+    # (The former +2000 offset landed the app on host port 10080, which Chrome,
+    # Firefox and Safari BLOCK as a restricted port — never map to 10080.)
     ports:
-      - "10080:8080"   # main application (HTTP)
-      - "10443:8443"   # main application (HTTPS — active once TLS is enabled in admin)
-      - "10090:8090"   # admin interface (HTTP)
-      - "10453:8453"   # admin interface (HTTPS — active once TLS is enabled in admin)
-      - "10100:8100"   # integration console (HTTP — power users / developers / admins)
-      - "10463:8463"   # integration console (HTTPS — active once TLS is enabled in admin)
-      - "10110:8110"   # Actions surface (HTTP — developers / admins; off until enabled in admin)
-      - "10473:8473"   # Actions surface (HTTPS — active once TLS is enabled in admin)
+      - "18080:8080"   # main application (HTTP)
+      - "18443:8443"   # main application (HTTPS — active once TLS is enabled in admin)
+      - "18090:8090"   # admin interface (HTTP)
+      - "18453:8453"   # admin interface (HTTPS — active once TLS is enabled in admin)
+      - "18100:8100"   # integration console (HTTP — power users / developers / admins)
+      - "18463:8463"   # integration console (HTTPS — active once TLS is enabled in admin)
+      - "18110:8110"   # Actions surface (HTTP — developers / admins; off until enabled in admin)
+      - "18473:8473"   # Actions surface (HTTPS — active once TLS is enabled in admin)
     environment:
       # First-run bootstrap admin — override the default password (recommended).
       # PMW_DEFAULT_ADMIN_USER: "Administrator"
