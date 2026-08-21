@@ -93,9 +93,11 @@ python3.13 -m venv .venv
 ./run.sh            # backend :8000 + GUI :8080/:8443 + admin :8090 + integration :8100 + actions :8110
 ```
 
-Then open the app at <http://127.0.0.1:8080>, the admin interface at
-<http://127.0.0.1:8090>, and (for developers / admins) the integration console
-at <http://127.0.0.1:8100>. For frontend development with hot reload:
+Then open the **[Launcher](#-the-launcher--your-starting-point)** —
+<http://127.0.0.1:8080/launcher.html> — your one-stop entry to every surface and
+all the docs. (Direct links: app <http://127.0.0.1:8080>, admin
+<http://127.0.0.1:8090>, integration console <http://127.0.0.1:8100>.) For
+frontend development with hot reload:
 
 ```bash
 ./run.sh --dev      # backend :8000 + admin :8090 + Vite dev server :5173
@@ -115,8 +117,11 @@ directory (relative to the compose file):
 docker compose up -d --build
 ```
 
-App → <http://localhost:18080>, admin → <http://localhost:18090>, integration
-console → <http://localhost:18100>, Actions → <http://localhost:18110>. By
+Then open the **[Launcher](#-the-launcher--your-starting-point)** at
+<http://localhost:18080/launcher.html> — the one-stop entry to every surface and
+all the docs. Direct links: app → <http://localhost:18080>, admin →
+<http://localhost:18090>, integration console → <http://localhost:18100>,
+Actions → <http://localhost:18110>. By
 default the compose file maps the host ports at **+10000** from the container
 ports (`18080:8080`, `18090:8090`, … plus the matching HTTPS pairs
 `18443:8443`, `18453:8453`, `18463:8463`, `18473:8473`) so they don't clash
@@ -139,6 +144,37 @@ enabled in the admin. The compute backend stays internal to the container.
   monitors the source directories and rebuilds the image when they change. The
   build stays cheap because Docker's layer cache is the real "needs rebuilding?"
   check — untouched layers are reused, so only the affected parts rebuild.
+
+## 🚀 The Launcher — your starting point
+
+> [!TIP]
+> **After installation, open the Launcher — it is the one place that ties the whole
+> suite together.** From a single, shiny page you reach every surface and all the
+> documentation, with no need to remember individual ports.
+
+```
+http://127.0.0.1:8080/launcher.html          # native (or https://…:8443)
+http://localhost:18080/launcher.html         # Docker (or https://…:18443)
+```
+
+The Launcher is served by the main application (no separate service or port) and
+shows:
+
+- **The four surfaces** as floating cards — **Administration** (the control room),
+  **Integration Console**, **Action Builder** and **Work-Bench** — each linking
+  straight to its sign-in, with animated arrows showing how they relate
+  (Admin governs all; data flows Integration → Action Builder → Work-Bench).
+- **Training & Documentation** — every self-contained HTML guide plus the full
+  **PDF manual**, served over HTTP/HTTPS so they open in a tab (no file:// needed).
+- Your **admin-configured background** and the current **version**.
+
+The links adapt to wherever the Launcher is opened (native, Docker, HTTP or HTTPS),
+so the same page works in every deployment.
+
+> [!NOTE]
+> If your deployment runs in **HTTPS-only** TLS mode, use the HTTPS URL
+> (`https://…:8443/launcher.html`, or `…:18443` under Docker) — the plain-HTTP
+> ports are not bound in that mode.
 
 ## First use
 
