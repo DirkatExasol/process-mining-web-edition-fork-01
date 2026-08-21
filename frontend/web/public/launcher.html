@@ -156,6 +156,14 @@
   .guide .g-tile svg{width:20px; height:20px; fill:none; stroke:#9db8ef; stroke-width:2;
     stroke-linecap:round; stroke-linejoin:round}
   .guide .g-title{font-size:13.5px; font-weight:650; line-height:1.3}
+  /* the PDF manual card — warm accent so it reads as a different kind of resource */
+  .guide-pdf .g-tile{background:linear-gradient(135deg,#e2574c,#b3372c)}
+  .guide-pdf .g-tile svg{stroke:#fff}
+  .guide-pdf:hover{box-shadow:0 10px 18px rgba(4,8,18,.4), 0 32px 64px rgba(0,0,0,.62),
+    0 0 30px rgba(226,87,76,.32)}
+  .guide .g-badge{margin-left:auto; flex:0 0 auto; font-size:10px; font-weight:800;
+    letter-spacing:.06em; color:#ff9d94; border:1px solid rgba(226,87,76,.5);
+    border-radius:6px; padding:2px 6px; background:rgba(226,87,76,.12)}
 
   footer{margin-top:44px; color:rgba(234,240,250,.55); font-size:12.5px; text-align:center;
     z-index:1}
@@ -322,36 +330,48 @@
      /guides/… . The list comes from /guides/index.json so future guides appear
      automatically; a built-in list covers the fetch failing (e.g. older server). */
   (function fillGuides() {
+    // Self-contained HTML guides (sorted by the server — a numeric filename prefix
+    // gives the logical order) followed by the PDF manual at the very end.
     var FALLBACK = [
-      { file: "Installation-Guide.html", title: "Installation Guide" },
-      { file: "Process-Mining-Introduction.html", title: "What is Process Mining?" },
-      { file: "Work-Bench-Quick-Start.html", title: "Work-Bench Quick-Start" },
-      { file: "Administration-Quick-Start.html", title: "Administration Quick-Start" },
-      { file: "Drill-Down-Quick-Start.html", title: "Drill-Down Quick-Start" },
-      { file: "Process-Similarity-Explained.html", title: "Process Similarity Explained" },
-      { file: "Simulation-Explained.html", title: "Simulation Explained" },
-      { file: "Conformance-Explained.html", title: "Conformance Check Explained" }
+      { file: "Installation-Guide.html", title: "Installation Guide", type: "html" },
+      { file: "Process-Mining-Introduction.html", title: "What is Process Mining?", type: "html" },
+      { file: "Work-Bench-Quick-Start.html", title: "Work-Bench Quick-Start", type: "html" },
+      { file: "Administration-Quick-Start.html", title: "Administration Quick-Start", type: "html" },
+      { file: "Drill-Down-Quick-Start.html", title: "Drill-Down Quick-Start", type: "html" },
+      { file: "Process-Similarity-Explained.html", title: "Process Similarity Explained", type: "html" },
+      { file: "Simulation-Explained.html", title: "Simulation Explained", type: "html" },
+      { file: "Conformance-Explained.html", title: "Conformance Check Explained", type: "html" },
+      { file: "Process-Mining-Demonstrator-Manual.pdf", title: "Full Manual (PDF)", type: "pdf" }
     ];
     var BOOK = '<svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15.5H6.5A2.5 2.5 0 0 0 4 21z"/><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20"/><path d="M9 7.5h7M9 11h7"/></svg>';
+    // A document-with-folded-corner glyph for the PDF, plus a "PDF" wordmark.
+    var DOC = '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M8.5 13.5h7M8.5 16.5h5"/></svg>';
 
     function renderList(list) {
       var grid = document.getElementById("guide-grid");
       grid.innerHTML = "";
       list.forEach(function (g) {
-        if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.html$/.test(g.file)) return;
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.(html|pdf)$/.test(g.file)) return;
+        var isPdf = g.type === "pdf" || /\.pdf$/i.test(g.file);
         var a = document.createElement("a");
-        a.className = "guide";
+        a.className = "guide" + (isPdf ? " guide-pdf" : "");
         a.href = "/guides/" + g.file;
         a.target = "_blank";
         a.rel = "noopener";
         var tile = document.createElement("span");
         tile.className = "g-tile";
-        tile.innerHTML = BOOK;
+        tile.innerHTML = isPdf ? DOC : BOOK;
         var title = document.createElement("span");
         title.className = "g-title";
-        title.textContent = g.title || g.file.replace(/\.html$/, "").replace(/-/g, " ");
+        title.textContent = g.title || g.file.replace(/\.(html|pdf)$/i, "").replace(/-/g, " ");
         a.appendChild(tile);
         a.appendChild(title);
+        if (isPdf) {
+          var badge = document.createElement("span");
+          badge.className = "g-badge";
+          badge.textContent = "PDF";
+          a.appendChild(badge);
+        }
         grid.appendChild(a);
       });
     }

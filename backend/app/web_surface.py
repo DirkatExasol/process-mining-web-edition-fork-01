@@ -101,10 +101,10 @@ def build_surface_app(
     in / keep a session on this surface. ``denied_message`` is returned (403) when a
     valid password login is refused by the predicate. ``disabled_check`` (optional),
     when it returns True, makes the whole surface serve a "disabled" response.
-    ``guides_dir`` (optional) serves the self-contained training guides in that
-    directory at ``/guides/<name>.html`` plus a ``/guides/index.json`` listing, so
-    the launcher (and anything else) can link them over HTTP/HTTPS instead of the
-    file system.
+    ``guides_dir`` (optional) serves the training material in that directory — the
+    self-contained ``.html`` guides and the ``.pdf`` manual — at ``/guides/<name>``
+    plus a ``/guides/index.json`` listing, so the launcher (and anything else) can
+    link them over HTTP/HTTPS instead of the file system.
     """
 
     # ── Per-surface proxy client ──────────────────────────────────────────────
@@ -902,12 +902,15 @@ def build_surface_app(
     if guides_dir is not None:
         import re as _re
 
-        guide_name_ok = _re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.html$").match
+        guide_name_ok = _re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(html|pdf)$").match
         title_rx = _re.compile(r"<title>(.*?)</title>", _re.IGNORECASE | _re.DOTALL)
+        _MEDIA = {"html": "text/html", "pdf": "application/pdf"}
 
         @app.get("/guides/index.json")
         async def guides_index() -> JSONResponse:
-            """List the available guides (file + tab title) for the launcher."""
+            """List the available guides for the launcher — self-contained HTML guides
+            first (sorted by filename, so a numeric prefix gives the logical order),
+            then the PDF manual(s) last. Each entry carries its `type`."""
             entries = []
             if guides_dir.is_dir():
                 for f in sorted(guides_dir.glob("*.html")):
@@ -919,7 +922,13 @@ def build_surface_app(
                         continue
                     m = title_rx.search(head)
                     title_text = (m.group(1).strip() if m else f.stem.replace("-", " "))
-                    entries.append({"file": f.name, "title": title_text})
+                    entries.append({"file": f.name, "title": title_text, "type": "html"})
+                for f in sorted(guides_dir.glob("*.pdf")):
+                    if not guide_name_ok(f.name):
+                        continue
+                    entries.append(
+                        {"file": f.name, "title": f.stem.replace("-", " "), "type": "pdf"}
+                    )
             return JSONResponse(entries)
 
         @app.get("/guides/{name}")
@@ -929,7 +938,8 @@ def build_surface_app(
             candidate = (guides_dir / name).resolve()
             if candidate.parent != guides_dir.resolve() or not candidate.is_file():
                 return Response(status_code=404)
-            return FileResponse(candidate, media_type="text/html")
+            media = _MEDIA.get(name.rsplit(".", 1)[-1].lower(), "application/octet-stream")
+            return FileResponse(candidate, media_type=media)
 
     if (dist_dir / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=dist_dir / "assets"), name="assets")

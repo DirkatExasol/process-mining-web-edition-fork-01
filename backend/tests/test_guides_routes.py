@@ -39,6 +39,7 @@ def surface(tmp_path, monkeypatch):
     )
     (guides / "build-my-guide.py").write_text("print('never served')", encoding="utf-8")
     (guides / "notes.txt").write_text("nope", encoding="utf-8")
+    (guides / "The-Manual.pdf").write_bytes(b"%PDF-1.4 fake pdf bytes")
 
     dist = tmp_path / "dist"
     dist.mkdir()
@@ -57,9 +58,19 @@ def surface(tmp_path, monkeypatch):
         yield client
 
 
-def test_guides_index_lists_titles(surface):
+def test_guides_index_lists_html_then_pdf(surface):
     body = surface.get("/guides/index.json").json()
-    assert body == [{"file": "My-Guide.html", "title": "My Guide"}]
+    assert body == [
+        {"file": "My-Guide.html", "title": "My Guide", "type": "html"},
+        {"file": "The-Manual.pdf", "title": "The Manual", "type": "pdf"},
+    ]
+
+
+def test_pdf_is_served_with_pdf_media_type(surface):
+    r = surface.get("/guides/The-Manual.pdf")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/pdf")
+    assert r.content.startswith(b"%PDF")
 
 
 def test_guide_is_served_without_auth(surface):

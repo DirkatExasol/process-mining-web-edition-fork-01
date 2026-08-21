@@ -17,6 +17,6 @@ data
 Dockerfile
 docker-compose.yml
 .dockerignore
-# Guides are served from docs/, but the manual sources + PDF are heavy and unused.
+# Guides are served from docs/. The manual *sources* are heavy and unused at
+# runtime, but the built PDF manual IS served by the launcher, so keep it.
 docs/manual
-docs/*.pdf
