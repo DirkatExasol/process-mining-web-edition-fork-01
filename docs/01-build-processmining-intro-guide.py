@@ -11,7 +11,7 @@ import html
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-OUT = ROOT / "docs" / "Process-Mining-Introduction.html"
+OUT = ROOT / "docs" / "01-Process-Mining-Introduction.html"
 
 # App logo (frontend/web/public/logo.svg) embedded as a data-URI favicon, so the
 # browser tab shows the suite's icon while the page stays fully self-contained.
