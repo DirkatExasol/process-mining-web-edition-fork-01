@@ -26,7 +26,7 @@ def _read_app_version() -> str:
             return first_line[:120]
     except (OSError, IndexError):
         pass
-    return "V0.95  - Milford Sound"
+    return "V0.97  - Milford Sound"
 
 
 APP_VERSION = _read_app_version()

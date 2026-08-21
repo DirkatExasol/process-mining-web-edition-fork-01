@@ -53,6 +53,10 @@ COPY examples/ ./examples/
 COPY docs/ ./docs/
 COPY run.sh ./run.sh
 RUN chmod +x run.sh
+# Release label shown on the sign-in panels — read at runtime from /app/VERSION
+# (config.py's PROJECT_ROOT). Without this the container falls back to the stale
+# built-in default and every deployment shows the wrong version.
+COPY VERSION ./VERSION
 
 # Drop in the SPA built in stage 1 (so run.sh finds dist and never needs Node).
 COPY --from=web /web/dist ./frontend/web/dist
