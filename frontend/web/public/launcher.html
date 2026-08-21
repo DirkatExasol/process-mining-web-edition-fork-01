@@ -351,11 +351,15 @@
       var grid = document.getElementById("guide-grid");
       grid.innerHTML = "";
       list.forEach(function (g) {
-        if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.(html|pdf)$/.test(g.file)) return;
-        var isPdf = g.type === "pdf" || /\.pdf$/i.test(g.file);
+        // Accept any single-segment .html/.pdf name (spaces / numeric prefixes are
+        // fine); reject only traversal, hidden and control-char names.
+        var f = g.file || "";
+        if (!f || f.charAt(0) === "." || /[\/\\]/.test(f) || f.indexOf("..") >= 0 ||
+            !/\.(html|pdf)$/i.test(f)) return;
+        var isPdf = g.type === "pdf" || /\.pdf$/i.test(f);
         var a = document.createElement("a");
         a.className = "guide" + (isPdf ? " guide-pdf" : "");
-        a.href = "/guides/" + g.file;
+        a.href = "/guides/" + encodeURIComponent(f);
         a.target = "_blank";
         a.rel = "noopener";
         var tile = document.createElement("span");

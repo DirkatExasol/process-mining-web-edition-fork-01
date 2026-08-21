@@ -40,6 +40,10 @@ def surface(tmp_path, monkeypatch):
     (guides / "build-my-guide.py").write_text("print('never served')", encoding="utf-8")
     (guides / "notes.txt").write_text("nope", encoding="utf-8")
     (guides / "The-Manual.pdf").write_bytes(b"%PDF-1.4 fake pdf bytes")
+    # a numeric-prefixed, space-containing name (how guides get logical ordering)
+    (guides / "01 - Intro.html").write_text(
+        "<!doctype html><title>Intro</title>hi", encoding="utf-8"
+    )
 
     dist = tmp_path / "dist"
     dist.mkdir()
@@ -61,9 +65,15 @@ def surface(tmp_path, monkeypatch):
 def test_guides_index_lists_html_then_pdf(surface):
     body = surface.get("/guides/index.json").json()
     assert body == [
+        {"file": "01 - Intro.html", "title": "Intro", "type": "html"},
         {"file": "My-Guide.html", "title": "My Guide", "type": "html"},
         {"file": "The-Manual.pdf", "title": "The Manual", "type": "pdf"},
     ]
+
+
+def test_numeric_prefixed_name_with_spaces_is_served(surface):
+    r = surface.get("/guides/01 - Intro.html")
+    assert r.status_code == 200 and "Intro" in r.text
 
 
 def test_pdf_is_served_with_pdf_media_type(surface):

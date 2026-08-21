@@ -902,9 +902,24 @@ def build_surface_app(
     if guides_dir is not None:
         import re as _re
 
-        guide_name_ok = _re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.(html|pdf)$").match
         title_rx = _re.compile(r"<title>(.*?)</title>", _re.IGNORECASE | _re.DOTALL)
         _MEDIA = {"html": "text/html", "pdf": "application/pdf"}
+
+        def guide_name_ok(name: str) -> bool:
+            """A single path segment ending in .html/.pdf. Spaces and normal
+            punctuation are allowed (guides may be renamed with numeric prefixes,
+            e.g. "01 - Intro.html"); only traversal, hidden and control-char names
+            are refused. The route additionally pins the resolved path inside
+            guides_dir, so this is the outer of two independent guards."""
+            return (
+                bool(name)
+                and not name.startswith(".")
+                and "/" not in name
+                and "\\" not in name
+                and ".." not in name
+                and not any(ord(c) < 0x20 for c in name)
+                and name.lower().endswith((".html", ".pdf"))
+            )
 
         @app.get("/guides/index.json")
         async def guides_index() -> JSONResponse:
