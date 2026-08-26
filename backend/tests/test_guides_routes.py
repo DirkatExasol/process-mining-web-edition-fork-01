@@ -88,6 +88,12 @@ def test_guide_is_served_without_auth(surface):
     assert r.status_code == 200
     assert "My Guide" in r.text
     assert r.headers["content-type"].startswith("text/html")
+    assert r.headers["x-content-type-options"] == "nosniff"
+
+
+def test_guides_responses_set_nosniff(surface):
+    assert surface.get("/guides/index.json").headers["x-content-type-options"] == "nosniff"
+    assert surface.get("/guides/The-Manual.pdf").headers["x-content-type-options"] == "nosniff"
 
 
 def test_only_html_files_are_served(surface):

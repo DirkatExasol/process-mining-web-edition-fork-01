@@ -904,6 +904,8 @@ def build_surface_app(
 
         title_rx = _re.compile(r"<title>(.*?)</title>", _re.IGNORECASE | _re.DOTALL)
         _MEDIA = {"html": "text/html", "pdf": "application/pdf"}
+        # Never let a browser MIME-sniff a served guide into something executable.
+        _NOSNIFF = {"X-Content-Type-Options": "nosniff"}
 
         def guide_name_ok(name: str) -> bool:
             """A single path segment ending in .html/.pdf. Spaces and normal
@@ -944,7 +946,7 @@ def build_surface_app(
                     entries.append(
                         {"file": f.name, "title": f.stem.replace("-", " "), "type": "pdf"}
                     )
-            return JSONResponse(entries)
+            return JSONResponse(entries, headers=_NOSNIFF)
 
         @app.get("/guides/{name}")
         async def guide(name: str) -> Response:
@@ -954,7 +956,7 @@ def build_surface_app(
             if candidate.parent != guides_dir.resolve() or not candidate.is_file():
                 return Response(status_code=404)
             media = _MEDIA.get(name.rsplit(".", 1)[-1].lower(), "application/octet-stream")
-            return FileResponse(candidate, media_type=media)
+            return FileResponse(candidate, media_type=media, headers=_NOSNIFF)
 
     if (dist_dir / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=dist_dir / "assets"), name="assets")
