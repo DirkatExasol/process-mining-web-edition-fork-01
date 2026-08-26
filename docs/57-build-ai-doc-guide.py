@@ -255,7 +255,7 @@ def render() -> str:
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI supported Documentation</title>
+<title>57 - AI supported Documentation</title>
 <link rel="icon" type="image/svg+xml" href="{FAVICON}">
 <style>{CSS}</style>
 </head>
