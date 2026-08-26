@@ -12,6 +12,7 @@ import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "10-Installation-Guide.html"
+_BUILDER = pathlib.Path(__file__).name
 
 # App logo (frontend/web/public/logo.svg) embedded as a data-URI favicon, so the
 # browser tab shows the suite's icon while the page stays fully self-contained.
@@ -299,10 +300,12 @@ def render() -> str:
 
     beyond_items = "\n".join(f"      <li>{b}</li>" for b in BEYOND)
     return f"""<!doctype html>
+<!-- Generated documentation page — open this file in a WEB BROWSER.
+     It is NOT a script; to rebuild it run:  python3 docs/{_BUILDER} -->
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Installation Guide</title>
+<title>10 - Installation Guide</title>
 <link rel="icon" type="image/svg+xml" href="{FAVICON}">
 <style>{CSS}</style>
 </head>

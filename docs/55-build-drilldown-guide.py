@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Generate the self-contained HTML quick-start guide for drilling into Σ aggregates.
+"""Generate the self-contained HTML guide for Σ aggregates & drill-down: how a
+developer CREATES aggregates (collapse connected steps into a Σ super-step) and how
+anyone DRILLS DOWN / UP into them.
 
-Unlike the Work-Bench / Administration guides, this one needs no screenshots — each step
-carries a small CSS-drawn mock of the UI — so the single .html file is fully self-contained.
-Run:  python3 docs/build-drilldown-guide.py
+Every illustration is a small CSS-drawn mock of the UI — no screenshots — so the
+single .html file is fully self-contained.
+Run:  python3 docs/55-build-drilldown-guide.py
 """
 import base64
 import html
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-OUT = ROOT / "docs" / "Drill-Down-Quick-Start.html"
+OUT = ROOT / "docs" / "55-Drill-Down-Quick-Start.html"
+_BUILDER = pathlib.Path(__file__).name
 
 # App logo (frontend/web/public/logo.svg) embedded as a data-URI favicon, so the
 # browser tab shows the suite's icon while the page stays fully self-contained.
@@ -21,15 +24,95 @@ FAVICON = "data:image/svg+xml;base64," + base64.b64encode(_LOGO_SVG.encode("utf-
 # body/mock/bullets/tip are passed through as HTML (only the title is escaped).
 STEPS = [
     (
+        "What an aggregate is — and who builds one",
+        "An <b>aggregate</b> collapses a connected set of steps into a single <b>Σ</b> "
+        "super-step, so a busy map reads at a glance. Building one is a <b>developer</b> task; "
+        "it produces a <b>high-level project</b> (the map carrying the Σ step) plus a "
+        "<b>detail project</b> that keeps the real sub-process for drilling. The originals "
+        "are never touched.",
+        """<div class="mock"><div class="row" style="gap:12px">
+      <div class="flow"><span class="node">Security</span><span class="arrow">→</span>
+        <span class="node">Passport</span><span class="arrow">→</span><span class="node">Boarding</span></div>
+      <span class="big-arrow">⇒</span>
+      <span class="sig">Σ Security &amp; Boarding <small>Σ</small></span>
+    </div><p class="cap">Three connected steps become one Σ super-step on the high-level map —
+      the detail is kept for drill-down.</p></div>""",
+        None,
+        '<span class="k">Numbers stay honest.</span> The Σ step’s counts and times are computed '
+        "from the real events (a run of member-steps becomes one Σ event), so the high-level map "
+        "and the detail always tell the same story.",
+    ),
+    (
+        "Enter aggregate mode",
+        "Open a process map as a <b>developer</b>. In the <b>lower-left corner</b> of the canvas, "
+        "click <b>Σ Select steps to aggregate</b> to switch the map into <b>pick mode</b> — plain "
+        "clicks now select steps instead of opening menus.",
+        """<div class="mock">
+      <button class="btn">Σ Select steps to aggregate</button>
+      <p class="cap">Only developers and admins see this button. Click it again (or <kbd>Esc</kbd>)
+        to leave pick mode without creating anything.</p></div>""",
+        None,
+        None,
+    ),
+    (
+        "Pick a connected set of steps",
+        "Click the steps you want to collapse. They must be <b>interconnected</b> — each reachable "
+        "from another in the set. Picked steps are highlighted, and an action bar shows the count.",
+        """<div class="mock">
+      <div class="flow"><span class="node">Check-in</span><span class="arrow">→</span>
+        <span class="node pick">Security</span><span class="arrow">→</span>
+        <span class="node pick">Passport</span><span class="arrow">→</span>
+        <span class="node pick">Boarding</span><span class="arrow">→</span>
+        <span class="node">Gate</span></div>
+      <div class="bar">
+        <span class="bar-t">Σ Aggregate</span>
+        <span class="bar-c">3 steps selected</span>
+        <span class="btn sm">＋ Add group</span>
+        <span class="btn sm primary">Create map (1)</span>
+      </div>
+      <p class="cap">Highlighted = picked. Click a step again to deselect.</p></div>""",
+        [
+            "<b>Several aggregates at once.</b> Click <b>＋ Add group</b> to bank the current group "
+            "and start another — a step can belong to only one aggregate.",
+            "<b>Already on a high-level map?</b> The button reads <b>Add to map</b>, adding more "
+            "Σ steps to the map you have open.",
+        ],
+        '<span class="k">Connected only.</span> If a picked step isn’t linked to the rest, the app '
+        "flags it — an aggregate has to be one contiguous sub-process.",
+    ),
+    (
+        "Name it, choose where it lives → Create",
+        "Click <b>Create map</b> to open the dialog. Name the new <b>high-level project</b>; for "
+        "each group, name the <b>Σ super-step</b> and its <b>detail project</b>, and pick the "
+        "<b>target</b> — the same schema, a brand-new schema, or a different connection.",
+        """<div class="mock"><div class="dialog">
+      <div class="d-title">Create high-level map</div>
+      <div class="field"><span class="lab">High-level project</span><span class="in">Airport (aggregated)</span></div>
+      <div class="field"><span class="lab">Σ step name</span><span class="in">Σ Security &amp; Boarding</span></div>
+      <div class="field"><span class="lab">Detail project</span><span class="in">Airport — Security &amp; Boarding</span></div>
+      <div class="field"><span class="lab">Target</span>
+        <span class="seg"><span class="on">Same schema</span><span>New schema</span><span>Other connection</span></span></div>
+      <div class="d-actions"><span class="btn sm">Cancel</span><span class="btn sm primary">Create</span></div>
+    </div></div>""",
+        [
+            "The <b>high-level project</b> holds the map with the Σ step(s); each <b>detail "
+            "project</b> holds the real sub-process for drilling.",
+            "Write them to the <b>same schema</b>, a <b>new schema</b> (named here), or a "
+            "<b>different connection</b> — handy for sharing a curated high-level view.",
+        ],
+        '<span class="k">Then open it.</span> The new high-level project appears in the Projects '
+        "list marked with a <b>Σ</b>. Open it — and everything below is the drill-down it enables.",
+    ),
+    (
         "Spot a Σ aggregate step",
-        "On a high-level process map, aggregated sub-processes appear as a single accent-coloured "
-        "step whose name starts with <b>Σ</b>. In the left <b>Projects</b> list, aggregate maps are "
+        "On the high-level map, aggregated sub-processes appear as a single accent-coloured step "
+        "whose name starts with <b>Σ</b>. In the left <b>Projects</b> list, aggregate maps are "
         "marked with a <b>Σ</b> too.",
         """<div class="mock"><div class="row">
       <span class="node">Check-in</span><span class="arrow">→</span>
       <span class="sig">Σ Security &amp; Boarding <small>Σ</small></span>
       <span class="arrow">→</span><span class="node">Gate</span>
-    </div><p class="cap">The <b>Σ</b> step stands in for several real steps that were grouped together.</p></div>""",
+    </div><p class="cap">The <b>Σ</b> step stands in for the real steps that were grouped together.</p></div>""",
         None,
         None,
     ),
@@ -82,21 +165,22 @@ STEPS = [
         "<b>✕</b> or <kbd>Esc</kbd> to return to the map.",
     ),
     (
-        "“In place” — expand inside the map",
+        "“In place” — expand inside the map, and Drill up",
         "Choose <b>Drill down · in place</b> to burst the Σ step open <b>within the current map</b>: "
         "its real steps replace the Σ node and connect to the same neighbours, while everything else "
-        "stays exactly where it was.",
+        "stays exactly where it was. To collapse it again, use <b>⤴ Drill up</b>.",
         """<div class="mock"><div class="row">
       <span class="node">Check-in</span><span class="arrow">→</span>
       <span class="node">Security</span><span class="arrow">→</span>
       <span class="node">Passport</span><span class="arrow">→</span>
       <span class="node">Boarding</span><span class="arrow">→</span>
       <span class="node">Gate</span>
-    </div><p class="cap">The Σ node is gone — its steps are now part of the map, in its place.</p></div>""",
+    </div><p class="cap">The Σ node is gone — its steps are now part of the map, in its place.
+      <b>⤴ Drill up</b> (above the map, or any step’s menu) collapses them back into Σ.</p></div>""",
         [
             "Surrounding steps and their group boxes <b>don’t move</b>; only the expanded part changes.",
-            "Other Σ steps stay collapsed — you can expand <b>several</b> of them.",
-            "To collapse back, use <b>⤴ Drill up</b> — the button above the map, or any step’s menu.",
+            "Other Σ steps stay collapsed — you can expand <b>several</b> of them independently.",
+            "<b>⤴ Drill up</b> re-collapses the exploded steps back into their Σ super-step.",
         ],
         '<span class="k">Which one?</span> Use <b>in place</b> to keep the surrounding context while '
         "you look inside; use <b>new panel</b> to focus on just the sub-process.",
@@ -116,12 +200,15 @@ STEPS = [
 ]
 
 BEYOND = [
+    "<b>Aggregates vs groups.</b> A <i>group</i> (coloured box) just visually clusters steps on a "
+    "map; an <i>aggregate</i> collapses connected steps into a drillable <b>Σ</b> super-step. The "
+    "new Σ step inherits the members’ group, so grouping and aggregating stay consistent.",
     "<b>Drill down is read-only.</b> You’re inspecting the real process — nothing is changed.",
     "<b>Show or hide aggregates.</b> Under <b>Configuration → Aggregations</b> you can hide the "
     "aggregate detail projects/connections from the sidebar to keep it tidy; the high-level map "
     "always stays visible.",
-    "<b>Who builds aggregates.</b> Creating Σ super-steps is a developer task; anyone who can open "
-    "the map can drill into them.",
+    "<b>Who does what.</b> Creating Σ super-steps is a developer task; anyone who can open the map "
+    "can drill into them.",
 ]
 
 CSS = """
@@ -143,7 +230,7 @@ header.hero{background:linear-gradient(135deg,var(--accent),var(--accent2));colo
 .chip{display:inline-block;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);
   padding:4px 12px;border-radius:999px;font-size:13px;font-weight:600;letter-spacing:.3px}
 h1{font-size:30px;line-height:1.2;margin:14px 0 8px;font-weight:800}
-.hero p{margin:0;max-width:640px;color:rgba(255,255,255,.92);font-size:16px}
+.hero p{margin:0;max-width:660px;color:rgba(255,255,255,.92);font-size:16px}
 .lead{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 22px;
   margin:0 0 30px;color:var(--soft)}
 .lead b{color:var(--ink)}
@@ -175,6 +262,7 @@ kbd{background:var(--card);border:1px solid var(--line);border-bottom-width:2px;
 .sig{display:inline-flex;align-items:center;gap:6px;background:var(--sigma);color:#fff;
   font-weight:800;border-radius:9px;padding:8px 14px}
 .sig small{background:rgba(255,255,255,.22);border-radius:5px;padding:0 5px;font-weight:700}
+.big-arrow{color:var(--soft);font-size:20px;font-weight:700}
 .menu{width:270px;border:1px solid var(--line);border-radius:10px;overflow:hidden;
   background:var(--card);box-shadow:0 10px 26px rgba(20,30,50,.16);font-size:14px}
 .menu .t{padding:8px 12px;font-weight:700;border-bottom:1px solid var(--line);background:rgba(0,0,0,.02)}
@@ -185,12 +273,36 @@ kbd{background:var(--card);border:1px solid var(--line);border-bottom-width:2px;
 .flow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px}
 .node{border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--card);font-weight:600}
 .node.ctx{opacity:.7;border-style:dashed}
+.node.pick{border-color:var(--accent);color:var(--accent);
+  box-shadow:0 0 0 2px var(--accent),0 0 0 5px rgba(58,109,240,.22)}
 .arrow{color:var(--soft);font-weight:700}
 .lbl{color:var(--soft);font-size:11px}
 .pills{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
 .pill{border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12.5px;background:var(--card)}
 .pill.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 .cap{color:var(--soft);font-size:13px;margin:6px 2px 0}
+/* buttons + action bar + dialog for the creation half */
+.btn{display:inline-block;border:1px solid var(--line);border-radius:9px;padding:8px 14px;
+  background:var(--card);font-weight:650;font-size:14px;color:var(--ink)}
+.btn.sm{padding:5px 11px;font-size:13px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;padding:8px 10px;
+  border:1px solid var(--line);border-radius:12px;background:rgba(58,109,240,.05)}
+.bar-t{font-weight:800;color:var(--sigma)}
+.bar-c{color:var(--soft);font-size:13px;margin-right:auto}
+.dialog{width:min(420px,100%);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+  box-shadow:0 12px 30px rgba(20,30,50,.16);background:var(--card)}
+.dialog .d-title{padding:11px 14px;font-weight:750;border-bottom:1px solid var(--line);
+  background:rgba(0,0,0,.02)}
+.field{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--line)}
+.field .lab{flex:0 0 130px;color:var(--soft);font-size:13px}
+.field .in{flex:1;border:1px solid var(--line);border-radius:7px;padding:5px 9px;font-size:13px;
+  background:var(--bg)}
+.seg{display:flex;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:12.5px}
+.seg span{padding:5px 10px;border-right:1px solid var(--line)}
+.seg span:last-child{border-right:0}
+.seg span.on{background:var(--accent);color:#fff}
+.d-actions{display:flex;justify-content:flex-end;gap:8px;padding:11px 14px}
 @media (prefers-color-scheme:dark){
   :root{--bg:#14171c;--card:#1d2127;--ink:#e7eaee;--soft:#a3adba;--line:#2c333c;
     --tipbg:#182338;--tipink:#cdd9f5;--warnbg:#2a2213;--warnink:#e9d3ac}
@@ -224,29 +336,32 @@ def render() -> str:
 
     beyond_items = "\n".join(f"      <li>{b}</li>" for b in BEYOND)
     return f"""<!doctype html>
+<!-- Generated documentation page — open this file in a WEB BROWSER.
+     It is NOT a script; to rebuild it run:  python3 docs/{_BUILDER} -->
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Drill-Down Quick-Start</title>
+<title>55 - Aggregates & Drill-Down</title>
 <link rel="icon" type="image/svg+xml" href="{FAVICON}">
 <style>{CSS}</style>
 </head>
 <body>
 <header class="hero"><div class="hero-inner">
-  <span class="chip">Work-Bench · Quick-Start</span>
-  <h1>Drilling into a Σ aggregate</h1>
-  <p>An aggregate hides a busy part of the process behind one <b>Σ</b> super-step so the map
-     stays readable. Drilling down reveals the real steps behind it — with the same numbers
-     the full, un-aggregated map would show.</p>
+  <span class="chip">Work-Bench · Guide</span>
+  <h1>Aggregates &amp; Drill-Down</h1>
+  <p>Collapse a busy part of a process into one <b>Σ</b> super-step so the map stays readable —
+     then drill down to the real steps behind it, and drill back up. This guide covers both:
+     <b>building</b> aggregates (developers) and <b>drilling</b> into them (everyone).</p>
 </div></header>
 
 <div class="wrap">
 
   <div class="lead">
     An <b>aggregate</b> is only a way of <b>seeing</b> the process — it never changes the data.
-    Wherever a <b>Σ</b> step appears on a map, you can open it to inspect the sub-process it
-    stands for, either in a <b>separate panel</b> or expanded <b>right inside the map</b>.
-    Every figure you see matches the original flowchart for the same date range.
+    A developer collapses a connected set of steps into a <b>Σ</b> super-step (steps 1–4);
+    from then on anyone can open that Σ step to inspect the sub-process it stands for — in a
+    <b>separate panel</b> or expanded <b>right inside the map</b> (steps 5–9). Every figure
+    matches the original flowchart for the same date range.
   </div>
 
   {''.join(steps_html)}
@@ -260,7 +375,7 @@ def render() -> str:
       from that overview straight to the real detail — without ever leaving the numbers behind.</p>
   </div>
 
-  <footer>Process Mining Demonstrator · Work-Bench — Drilling into a Σ aggregate</footer>
+  <footer>Process Mining Demonstrator · Work-Bench — Aggregates &amp; Drill-Down</footer>
 </div>
 </body></html>
 """
