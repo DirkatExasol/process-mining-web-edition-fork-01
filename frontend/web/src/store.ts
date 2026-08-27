@@ -767,6 +767,16 @@ export const useStore = create<Store>((set, get) => {
     return [saved?.fromDate ?? s.fromDate, saved?.toDate ?? s.toDate]
   }
 
+  // Which A/B side the single-chart view currently shows: the A-Chart / B-Chart
+  // standalone modes map to a/b directly; A/B Comparison follows the active side.
+  const singleViewSide = (): ABSide | null => {
+    const s = get()
+    if (s.activeChartMode === 'A-Chart') return 'a'
+    if (s.activeChartMode === 'B-Chart') return 'b'
+    if (s.activeChartMode === 'A/B Comparison') return s.abActiveSide
+    return null
+  }
+
   const applySimulationToABSide = (side: ABSide) => {
     const s = get()
     const source = side === 'a' ? s.abDataSourceA : s.abDataSourceB
@@ -788,7 +798,7 @@ export const useStore = create<Store>((set, get) => {
         abGoodnessA: null,
         abVariantsA: [],
       })
-      if (s.abActiveSide === 'a') {
+      if (singleViewSide() === 'a') {
         set({
           processGraph: result.simProcessGraph,
           journeyCount: result.totalJourneys,
@@ -803,7 +813,7 @@ export const useStore = create<Store>((set, get) => {
         abGoodnessB: null,
         abVariantsB: [],
       })
-      if (s.abActiveSide === 'b') {
+      if (singleViewSide() === 'b') {
         set({
           processGraph: result.simProcessGraph,
           journeyCount: result.totalJourneys,
@@ -1454,6 +1464,8 @@ export const useStore = create<Store>((set, get) => {
       } else {
         const target = saved[mode]
         if (target) applyChartState(target)
+        // A-Chart / B-Chart single views mirror the A/B sides — honour a simulation source.
+        if (mode === 'A-Chart' || mode === 'B-Chart') reapplySimSources()
       }
 
       if (

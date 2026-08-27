@@ -465,4 +465,21 @@ describe('A/B simulation source survives view switches (regression)', () => {
     expect(useStore.getState().abGraphB).toBe(simGraph)
     expect(useStore.getState().abDataSourceB.kind).toBe('simulation')
   })
+
+  it('shows the sim graph in the standalone B-Chart view', async () => {
+    useStore.setState({
+      activeChartMode: 'A-Chart',
+      abActiveSide: 'a',
+      simResultB: simResult,
+      abDataSourceB: { kind: 'simulation', slot: 'Sim-B' },
+      abGraphB: simGraph,
+      processGraph: gA,
+      savedChartStates: { 'B-Chart': { processGraph: gA } as never } as never,
+    })
+
+    await useStore.getState().switchChartMode('B-Chart')
+
+    // The single B-Chart view renders processGraph; it must be the sim, not the tree.
+    expect(useStore.getState().processGraph).toBe(simGraph)
+  })
 })
