@@ -119,31 +119,33 @@
     <li>Edit <code>docker-compose.yml</code> and set <code>PMW_DEFAULT_ADMIN_PASSWORD</code> (and optionally <code>PMW_DEFAULT_ADMIN_USER</code>) in the <code>environment:</code> block. The lines are present but commented out, with <code>Administrator</code> and <code>"change-me"</code> placeholders.</li>
     <li>Build and start:
       <pre><code>docker compose up -d --build</code></pre></li>
-    <li>Open the admin interface at <code>http://localhost:10090</code> and sign in.</li>
-    <li>Open the main application at <code>http://localhost:10080</code>.</li>
+    <li>Open the admin interface at <code>http://localhost:18090</code> and sign in.</li>
+    <li>Open the main application at <code>http://localhost:18080</code> — or the Launcher at <code>http://localhost:18080/launcher.html</code>.</li>
   </ol>
 
-  <h3 id="inst-ports">Host port mapping — the +2000 offset</h3>
+  <h3 id="inst-ports">Host port mapping — the +10000 offset</h3>
 
-  <p>Host ports are offset by 2000 from the container ports so that they do not clash with other local services; the compose file specifically cites phpLDAPadmin occupying host port 8080.</p>
+  <p>Host ports are offset by 10000 from the container ports so that they do not clash with other local services (the compose file cites phpLDAPadmin on host port 8080). This is only the shipped default — the left-hand side of each <code>ports:</code> mapping in <code>docker-compose.yml</code> is the host port and may be remapped to any free port.</p>
 
   <table>
     <thead><tr><th>Host port</th><th>Container port</th><th>Surface</th></tr></thead>
     <tbody>
-      <tr><td>10080</td><td>8080</td><td>Main application (HTTP)</td></tr>
-      <tr><td>10443</td><td>8443</td><td>Main application (HTTPS)</td></tr>
-      <tr><td>10090</td><td>8090</td><td>Admin interface (HTTP)</td></tr>
-      <tr><td>10453</td><td>8453</td><td>Admin interface (HTTPS)</td></tr>
-      <tr><td>10100</td><td>8100</td><td>Integration console (HTTP)</td></tr>
-      <tr><td>10463</td><td>8463</td><td>Integration console (HTTPS)</td></tr>
+      <tr><td>18080</td><td>8080</td><td>Main application (HTTP)</td></tr>
+      <tr><td>18443</td><td>8443</td><td>Main application (HTTPS)</td></tr>
+      <tr><td>18090</td><td>8090</td><td>Admin interface (HTTP)</td></tr>
+      <tr><td>18453</td><td>8453</td><td>Admin interface (HTTPS)</td></tr>
+      <tr><td>18100</td><td>8100</td><td>Integration console (HTTP)</td></tr>
+      <tr><td>18463</td><td>8463</td><td>Integration console (HTTPS)</td></tr>
+      <tr><td>18110</td><td>8110</td><td>Actions surface (HTTP)</td></tr>
+      <tr><td>18473</td><td>8473</td><td>Actions surface (HTTPS)</td></tr>
     </tbody>
   </table>
 
   <div class="note"><strong>Note</strong> The HTTPS host ports do nothing until TLS is switched to <em>Optional</em> or <em>Required</em> in the admin interface. Until then only the HTTP ports answer.</div>
 
-  <div class="warn"><strong>Warning</strong> Older README text names <code>http://localhost:8080</code> and <code>http://localhost:8090</code> for Docker. That predates the +2000 offset. With the shipped compose file the correct URLs are <code>http://localhost:10080</code> and <code>http://localhost:10090</code>; the compose file is authoritative.</div>
+  <div class="warn"><strong>Warning</strong> Do not map a surface to host port <code>10080</code>: Chrome, Firefox and Safari block it as a restricted port, so a page served there never loads. The shipped compose file therefore uses the +10000 offset (host <code>18080</code>, <code>18090</code>, …); the compose file is authoritative for the URLs.</div>
 
-  <p>Container port 8000 — the compute backend — is deliberately not published. It stays private inside the container, where <code>PMW_BACKEND_HOST</code> is baked to <code>127.0.0.1</code>. The image's <code>EXPOSE</code> lists only 8080, 8443, 8090, 8453, 8100 and 8463.</p>
+  <p>Container port 8000 — the compute backend — is deliberately not published. It stays private inside the container, where <code>PMW_BACKEND_HOST</code> is baked to <code>127.0.0.1</code>. The image's <code>EXPOSE</code> lists 8080, 8443, 8090, 8453, 8100, 8463, 8110 and 8473.</p>
 
   <h3 id="inst-image">What the image contains</h3>
 

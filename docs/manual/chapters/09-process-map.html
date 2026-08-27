@@ -93,7 +93,16 @@
     <dd>Only that group's events, so each sub-process can be opened on its own and drilled into.</dd>
   </dl>
 
-  <p>Each Σ node's menu offers <b>⤵ Drill down</b> to open its detail project. A drilled-into detail project is a black-box sub-process: it is shown as a <b>flowchart only — no Sankey</b> — and carries a <b>← Return to high-level map</b> button to go straight back. To add more aggregates later, open the high-level map, enter pick mode again, select more original steps and choose <b>Add&nbsp;to&nbsp;map</b> — the map is rebuilt from its source with the new Σ step(s) added, and only the new detail project is written.</p>
+  <p>Each Σ node's menu offers <b>two ways to drill down</b>, and both show the <em>same</em> figures — the real numbers the un-aggregated map would show for the current date range, derived live from the source project:</p>
+
+  <dl>
+    <dt>⤵ Drill down · new panel</dt>
+    <dd>Opens the aggregate's real steps in a pop-up panel, wired to the steps just before and after it (drawn dashed, for context). The panel shows the date range and journey count, carries the same metric pills as the main map, and is <b>resizable</b> — drag its corner and the chart re-fits. Close it with <b>✕</b> or <kbd>Esc</kbd>.</dd>
+    <dt>⤵ Drill down · in place</dt>
+    <dd>Bursts the Σ step open <em>within the current map</em>: its real steps replace the Σ node and connect to the same neighbours, while everything else stays where it is. Several Σ steps can be expanded independently. A detail node's menu (and a button above the map) offers <b>⤴ Drill up</b> to collapse it back.</dd>
+  </dl>
+
+  <p>Drill-down is <b>read-only</b> and always follows your current <b>date window</b>, refreshing when you move the slider or apply a filter, so a Σ step's detail and the high-level map always tell the same story. To add more aggregates later, open the high-level map, enter pick mode again, select more original steps and choose <b>Add&nbsp;to&nbsp;map</b> — the map is rebuilt from its source with the new Σ step(s) added, and only the new detail project is written.</p>
 
   <h3 id="ch9-drag">Dragging nodes</h3>
 

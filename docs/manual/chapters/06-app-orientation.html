@@ -6,6 +6,10 @@
 
 <figure data-fig="app-01-shell"><figcaption>The application shell: sidebar on the left, detail pane on the right with the title capsule, toolbar, KPI strip and process map.</figcaption></figure>
 
+<h2 id="app-launcher">The Launcher — one entry point</h2>
+
+<p>Rather than remembering a port per surface, open the <b>Launcher</b> at <code>/launcher.html</code> on the application address (for example <code>http://127.0.0.1:8080/launcher.html</code>, or <code>:18080</code> under Docker). It is a single page, served by the application itself, that links to all four surfaces — <b>Administration</b>, <b>Integration Console</b>, <b>Action Builder</b> and the <b>Work-Bench</b> — with floating cards and arrows showing how they relate, and a <b>Training &amp; Documentation</b> row that opens the built-in guides and the full PDF manual over HTTP(S). Its links adapt to wherever it is opened (native or Docker, HTTP or HTTPS), and it picks up the admin-configured sign-in background and the current version. The Launcher needs no sign-in of its own; each card leads to that surface’s own login.</p>
+
 <h2 id="app-startup">Starting the application</h2>
 
 <p>The application always passes through the same sequence of states before the working surface appears. Understanding the sequence makes it obvious where you are if something stalls.</p>
