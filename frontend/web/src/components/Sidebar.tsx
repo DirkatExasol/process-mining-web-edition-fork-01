@@ -46,6 +46,9 @@ type SectionId =
 
 export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
   const store = useStore()
+  // The Projects header count must match the visible list, which hides aggregate
+  // detail projects unless this setting is on.
+  const [showAggDetailProjects] = useSetting<boolean>('aggregates.showProjects')
   const [openSection, setOpenSection] = useState<SectionId | null>('connections')
   const [showPromptEditor, setShowPromptEditor] = useState(false)
   const [showSavePreset, setShowSavePreset] = useState(false)
@@ -119,7 +122,13 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
 
         <SectionHeader
           title="Projects"
-          count={store.projects.length}
+          count={
+            visibleProjects(
+              store.projects,
+              showAggDetailProjects,
+              store.selectedProject?.projectId,
+            ).length
+          }
           open={openSection === 'projects'}
           onToggle={() => toggleSection('projects')}
           trailing={
@@ -439,20 +448,27 @@ function aggregateKind(projectId: string): 'high' | 'detail' | null {
   return null
 }
 
+/** The projects shown in the sidebar list — aggregate DETAIL projects are hidden unless
+ *  "Show aggregate detail projects" is on (the currently-open project is never hidden).
+ *  The list AND the header count must use this so the badge matches the rows. */
+export function visibleProjects<T extends { projectId: string }>(
+  projects: readonly T[],
+  showAggDetails: boolean,
+  selectedId: string | undefined,
+): T[] {
+  if (showAggDetails) return [...projects]
+  return projects.filter(
+    (p) => aggregateKind(p.projectId) !== 'detail' || selectedId === p.projectId,
+  )
+}
+
 function ProjectsList({ onSelected }: { onSelected: () => void }) {
   const store = useStore()
   // "Aggregate Projects" setting = visibility of aggregate DETAIL projects. High-level maps
   // (and normal projects) are always visible; the currently-open project is never hidden.
   const [showAggDetails] = useSetting<boolean>('aggregates.showProjects')
   const projects = useMemo(
-    () =>
-      showAggDetails
-        ? store.projects
-        : store.projects.filter(
-            (p) =>
-              aggregateKind(p.projectId) !== 'detail' ||
-              store.selectedProject?.projectId === p.projectId,
-          ),
+    () => visibleProjects(store.projects, showAggDetails, store.selectedProject?.projectId),
     [store.projects, showAggDetails, store.selectedProject],
   )
 
