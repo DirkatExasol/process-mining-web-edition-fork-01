@@ -814,6 +814,16 @@ export const useStore = create<Store>((set, get) => {
     void get().refreshABSimilarity()
   }
 
+  // Re-apply the in-memory simulation graph to any A/B side pointing at a
+  // simulation. Callers that rebuild abGraphA/B from saved (observed) chart state
+  // MUST run this afterward, or a sim-sourced side silently reverts to the observed
+  // graph while its 'simulation' data source (and read-only notice) stay in place.
+  const reapplySimSources = () => {
+    const st = get()
+    if (st.abDataSourceA.kind === 'simulation') applySimulationToABSide('a')
+    if (st.abDataSourceB.kind === 'simulation') applySimulationToABSide('b')
+  }
+
   return {
     ...INITIAL_STATE,
 
@@ -1435,6 +1445,7 @@ export const useStore = create<Store>((set, get) => {
           abGoodnessB: b?.processGoodness ?? null,
         })
         if (a) applyChartState(a)
+        reapplySimSources()
         void get().refreshABSimilarity()
       } else if (mode === 'Statistics') {
         // Statistics always inherits Chart A's filter state.
@@ -1515,6 +1526,8 @@ export const useStore = create<Store>((set, get) => {
           abGoodnessB: after.processGoodnessScore,
         })
       }
+      // A sim-sourced side must keep its in-memory graph across the active-side switch.
+      reapplySimSources()
     },
 
     setABMetric: (metric, side) => {

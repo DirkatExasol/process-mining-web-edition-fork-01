@@ -433,3 +433,36 @@ describe('restoreLastSession (resume where you left off)', () => {
     expect(selectSpy).toHaveBeenCalledWith(projectA)
   })
 })
+
+describe('A/B simulation source survives view switches (regression)', () => {
+  const gA = { steps: { 'Check-in': { step: 'Check-in' }, Gate: { step: 'Gate' } }, transitions: [
+    { fromStep: 'Check-in', toStep: 'Gate', occurrences: 10 },
+  ] } as never
+  const simGraph = { steps: { Security: { step: 'Security' }, Gate: { step: 'Gate' } }, transitions: [
+    { fromStep: 'Security', toStep: 'Gate', occurrences: 7 },
+  ] } as never
+  const simResult = {
+    events: [], variants: [], cycleTimes: [], simProcessGraph: simGraph, totalJourneys: 7,
+    avgCycleTimeSecs: 1, minCycleTimeSecs: 1, maxCycleTimeSecs: 1, stdDevCycleTimeSecs: 0,
+  } as never
+
+  it('keeps the sim graph on B after entering A/B Comparison', async () => {
+    // B points at a stored simulation (excluding Check-in); A/B currently shows the
+    // observed B-Chart graph in the saved state.
+    useStore.setState({
+      activeChartMode: 'Simulation',
+      abActiveSide: 'a',
+      simResultB: simResult,
+      abDataSourceB: { kind: 'simulation', slot: 'Sim-B' },
+      abGraphB: simGraph,
+      savedChartStates: { 'B-Chart': { processGraph: gA } as never } as never,
+    })
+
+    await useStore.getState().switchChartMode('A/B Comparison')
+
+    // The regression: switchChartMode rebuilt abGraphB from the saved observed graph,
+    // reverting B to the full tree while its data source stayed 'simulation'.
+    expect(useStore.getState().abGraphB).toBe(simGraph)
+    expect(useStore.getState().abDataSourceB.kind).toBe('simulation')
+  })
+})
