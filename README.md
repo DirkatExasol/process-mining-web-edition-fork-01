@@ -7,7 +7,9 @@
 [![Python](https://img.shields.io/badge/python-3.13%20%7C%203.14-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Exasol|database](https://img.shields.io/badge/Exasol-database-blue.svg)](https://www.exasol.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+  
 
+  
 **A web-based, multiuser environment for Process Mining for demonstration purposes.  
 Includes main application, admin and datasource integration.**
 
