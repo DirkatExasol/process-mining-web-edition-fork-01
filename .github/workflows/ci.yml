@@ -54,12 +54,14 @@ jobs:
       - uses: actions/checkout@v5
       - name: gitleaks
         # Pinned Docker image (no Node action, no fragile binary download).
+        # -w /repo + `--source .` keep reported paths relative so they match the
+        # .gitleaks.toml path allowlist; --config loads that config explicitly.
         # --no-git scans the checked-out files (avoids the container's git
         # "dubious ownership" error on the mounted workspace); a leak → exit 1.
         run: |
-          docker run --rm -v "${{ github.workspace }}:/repo" \
+          docker run --rm -w /repo -v "${{ github.workspace }}:/repo" \
             ghcr.io/gitleaks/gitleaks:v8.18.4 \
-            detect --source /repo --no-git --no-banner --redact
+            detect --source . --config .gitleaks.toml --no-git --no-banner --redact
 
   backend:
     name: Backend tests (pytest)
