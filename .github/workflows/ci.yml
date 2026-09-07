@@ -41,9 +41,8 @@ jobs:
           find backend/app backend/tests -name '*.py' -print0 | xargs -0 python3 -m py_compile
 
       - name: Dependency audit (pip-audit)
-        # Advisory-only: reports known CVEs in the pinned runtime deps without
-        # gating merges (continue-on-error). Treat a finding as a signal to bump.
-        continue-on-error: true
+        # Hard gate: fails the build on any known CVE in the pinned runtime deps.
+        # A finding means a dependency needs bumping (see requirements.txt).
         run: |
           pip install --user pip-audit
           python3 -m pip_audit -r requirements.txt --progress-spinner=off
