@@ -1,0 +1,7 @@
+# Development & test dependencies (installed on top of requirements.txt)
+-r requirements.txt
+pytest==9.1.1
+pytest-asyncio==1.4.0
+# starlette.testclient (Starlette 1.x) uses httpx2 and warns if only the older
+# httpx is present. Test-only — production code still uses httpx (requirements.txt).
+httpx2==2.9.1

@@ -1,0 +1,315 @@
+<section class="chapter" id="ch-admin-logging-backup" data-title="Administration: Logging, Backup and Customisation" data-num="15">
+
+<h1><span class="chnum">15</span> Administration: Logging, Backup and Customisation</h1>
+
+<p class="chintro">This chapter covers the last four tabs of the admin interface: <b>Logging</b>, <b>Backup</b>, <b>Customize</b> and <b>Integration</b>. Between them they answer four separate operational questions — what the product recorded and how you read it back, what survives a rebuild of the machine and how you restore it, what the sign-in pages look like, and whether the integration console exists at all. Everything described here lives on the admin interface (<code>http://&lt;host&gt;:8090</code> or <code>https://&lt;host&gt;:8453</code>) and everything here requires an administrator account.</p>
+
+<div class="role">Requires: <b>Administrator</b> — every tab, control and procedure in this chapter.</div>
+
+<h2 id="log-what">The log: one file, three writers</h2>
+
+<p>There is exactly one structured log. The main application, the admin interface and the integration console all write into it, so a single view shows a user's sign-in, the SQL the backend then ran on their behalf, and the certificate an administrator activated an hour earlier. The <b>Logging</b> tab is the reader for that file: it configures what gets recorded, filters what you see, and exports or clears what has accumulated.</p>
+
+<p>All timestamps in the viewer, in the row popup and in downloaded log files are rendered in the <b>display timezone</b> set under <b>App Control &rarr; Timezone</b>. Changing that setting re-renders every timestamp immediately; it does not rewrite the stored entries and it needs no restart.</p>
+
+<figure data-fig="admin-07-logging"><figcaption>The Logging tab: the configuration banner at the top, the filter row beneath it, and the paged entry table.</figcaption></figure>
+
+<h3 id="log-ladder">The severity ladder</h3>
+
+<p>Severities are not ranked by urgency in this product. They form a <b>ladder</b> — <b>INFO &rarr; USAGE &rarr; WARN &rarr; ERROR &rarr; DEBUG</b> — and the <b>Max level logged</b> setting is cumulative from the top: choosing a level records that severity <em>and every level before it</em>. This is why DEBUG, which would be the quietest level in many products, is the loudest one here.</p>
+
+<table>
+<thead><tr><th>Setting</th><th>Records</th><th>Use it when</th></tr></thead>
+<tbody>
+<tr><td><b>INFO</b></td><td>INFO only</td><td>You want nothing but the routine trail and can accept losing warnings and errors.</td></tr>
+<tr><td><b>USAGE</b></td><td>INFO + USAGE</td><td>You are interested in who used what, and not in faults.</td></tr>
+<tr><td><b>WARN</b></td><td>INFO + USAGE + WARN</td><td>You want destructive administrative actions on record.</td></tr>
+<tr><td><b>ERROR</b> <em>(default)</em></td><td>INFO + USAGE + WARN + ERROR</td><td>Normal operation. Everything except SQL traces.</td></tr>
+<tr><td><b>DEBUG</b></td><td>Everything, including full SQL traces</td><td>Diagnosing a query or a performance problem, for a bounded period.</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> <b>DEBUG</b> records every SQL statement the backend issues. On a busy installation this fills the live log quickly, and because only the newest ten archive files are kept, a long DEBUG session can push older history out of the archive altogether. Switch to DEBUG for a specific investigation and switch back afterwards.</div>
+
+<h3 id="log-config">Setting the level and the rotation size</h3>
+
+<ol class="steps">
+<li>Open the <b>Logging</b> tab.</li>
+<li>In the configuration banner, choose a value in <b>Max level logged</b>. The caption restates the rule: records this severity and everything above it in the ladder.</li>
+<li>Set <b>New file after [N] MB</b> — the size at which the live log rotates. Accepted range is <b>1</b> to <b>1000</b> MB; the default is <b>5</b> MB. The server additionally enforces a 50&nbsp;KB floor internally, so a rotation can never be triggered by a nearly empty file.</li>
+<li>Click <b>Save</b>. The toast <em>&ldquo;Logging config saved&rdquo;</em> confirms it. The change applies to what is written from that moment on; it does not retroactively add or remove entries.</li>
+</ol>
+
+<h3 id="log-tags">Tags, and how they differ from operations</h3>
+
+<p>Every entry carries an <b>operation</b> (what part of the product wrote it) and, optionally, a <b>tag</b>. Tags are cross-cutting labels: they are independent of both severity and operation, and they exist so that you can pull one kind of activity out of a mixed log with a single click.</p>
+
+<dl>
+<dt>USER</dt><dd>Every deliberate <em>user action</em> — a successful state-changing request (create, update, delete, connect, run an import, change a setting…) made by a signed-in user, recorded at <b>USAGE</b>. Filter to <b>USER</b> for an audit trail of what users did. Reads and background polls are not actions and stay at <b>DEBUG</b>. These come from the compute backend, the single point every application and integration action passes through, so an action is logged once, not once per proxy.</dd>
+<dt>DATA</dt><dd>Data-load events. Because a data import is also a user action, its entries carry both <b>DATA</b> and <b>USER</b>.</dd>
+<dt>SQL</dt><dd>SQL traces. These belong to the DEBUG rung of the ladder, so they only appear when <b>Max level logged</b> is DEBUG.</dd>
+<dt>BACKUP/RESTORE</dt><dd>Every backup and restore action — exports, server-side runs, inspections, restores and their failures.</dd>
+</dl>
+
+<p>The <b>All tags</b> dropdown is populated from the tags actually present in the current log, so a tag that has never been written does not appear as an option. Untagged entries show <b>&mdash;</b> in the Tag column.</p>
+
+<p>The table below lists every operation that appears in the <b>All operations</b> dropdown and the tag it carries.</p>
+
+<table>
+<thead><tr><th>Operation</th><th>What it records</th><th>Tag</th></tr></thead>
+<tbody>
+<tr><td><code>login</code></td><td>Sign-ins on any of the three surfaces</td><td>&mdash;</td></tr>
+<tr><td><code>logout</code></td><td>Sign-outs</td><td>&mdash;</td></tr>
+<tr><td><code>page</code></td><td>Page requests served</td><td>&mdash;</td></tr>
+<tr><td><code>config</code></td><td>Configuration changes made in the admin interface</td><td>&mdash;</td></tr>
+<tr><td><code>license</code></td><td>Licence upload and removal</td><td>&mdash;</td></tr>
+<tr><td><code>tls</code></td><td>Certificate generation, upload, activation and deletion; TLS mode changes</td><td>&mdash;</td></tr>
+<tr><td><code>connection</code></td><td>Database connection saves, deletions, project deletions and connection tests</td><td>&mdash;</td></tr>
+<tr><td><code>llm-test</code></td><td>LLM reachability tests from the connection editor</td><td>&mdash;</td></tr>
+<tr><td><code>ldap</code></td><td>Directory settings saves and directory tests</td><td>&mdash;</td></tr>
+<tr><td><code>backup</code></td><td>Backup exports, server-side runs, inspections and restores</td><td><b>BACKUP/RESTORE</b></td></tr>
+<tr><td><code>customize</code></td><td>Login-page background changes</td><td>&mdash;</td></tr>
+<tr><td><code>restart</code></td><td>Restart requests issued from App Control</td><td>&mdash;</td></tr>
+<tr><td><code>materialize</code></td><td>Rebuilds of a connection's pre-materialised <code>TRANSITIONS_RAW</code> table</td><td>&mdash;</td></tr>
+<tr><td><code>sql</code></td><td>SQL statement traces with their execution time</td><td><b>SQL</b></td></tr>
+<tr><td colspan="3"><em>Data-load activity is tagged</em> <b>DATA</b> <em>regardless of the operation that produced it.</em></td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> Destructive actions are deliberately recorded at <b>WARN</b> so they stand out in a log that is otherwise dominated by routine traffic. This covers user and connection deletions, project deletions, certificate deletions, restores, rebuild-token generation and revocation, and clearing the log itself. Certificate generation, upload and activation are recorded at INFO; backup exports and inspections at USAGE.</div>
+
+<h3 id="log-read">Reading and filtering the log</h3>
+
+<p>The filter row sits between the configuration banner and the table. All filters apply to the <em>whole</em> log, not just the page on screen, and any change to a filter returns you to page 1.</p>
+
+<table>
+<thead><tr><th>Control</th><th>Behaviour</th></tr></thead>
+<tbody>
+<tr><td><b>Severity chips</b></td><td>One toggle per level, multi-select. The display default is <b>INFO and USAGE selected</b>; WARN, ERROR and DEBUG entries are hidden until you toggle them on. Selecting every chip is the same as &ldquo;show all&rdquo;.</td></tr>
+<tr><td><b>Client IP</b></td><td>Free-text match on the originating address.</td></tr>
+<tr><td><b>All operations</b></td><td>Dropdown built from the operations present in the log.</td></tr>
+<tr><td><b>All tags</b></td><td>Dropdown built from the tags present in the log.</td></tr>
+<tr><td><b>Search message</b></td><td>Free-text search over the message, accepting regular expressions and wildcards. Debounced by roughly 300&nbsp;ms as you type.</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> The severity chips are a <em>view</em> filter only. They never change what is recorded — that is solely the <b>Max level logged</b> setting. An entry hidden by a chip is still in the file; an entry never recorded cannot be brought back by any chip.</div>
+
+<p>The table shows Date, Time, Severity (colour pill: INFO blue, USAGE green, WARN orange, ERROR red, DEBUG grey), Tag, Client IP, User and Message. Every row is exactly one line and long messages are ellipsised, so the table stays readable at a glance.</p>
+
+<ol class="steps">
+<li>Click any row to open the <b>Log entry</b> popup with the complete entry: Date, Time, Severity, Client IP, User, Operation, Tag and the full message.</li>
+<li>For an <code>sql</code> entry the statement is <b>pretty-printed</b> in the popup, and its execution time — parsed from the <code>SQL (12.3 ms):</code> prefix of the message — is shown as a separate <b>Execution time</b> field.</li>
+<li>Press <kbd>Esc</kbd> or click <b>Close</b> to dismiss the popup.</li>
+</ol>
+
+<p>Paging controls sit below the table: <b>Per page</b> offers 10, <b>25</b> (default), 50 and 100, with <b>&laquo; First</b>, <b>&lsaquo; Prev</b>, <b>Next &rsaquo;</b> and <b>Last &raquo;</b>, a &ldquo;start–end of total&rdquo; readout and &ldquo;Page X / Y&rdquo;. When nothing matches, the table shows <em>&ldquo;No matching log entries.&rdquo;</em> and the pager reads &ldquo;No entries&rdquo;. <b>&#8635; Refresh</b> re-reads the log without clearing your filters.</p>
+
+<h3 id="log-export">Exporting a filtered view</h3>
+
+<ol class="steps">
+<li>Set the severity chips, operation, tag, client IP and search text so the table shows exactly the entries you want.</li>
+<li>Click <b>&#8595; Download</b>. The browser saves the <em>currently filtered</em> view as <code>pmw-log.log</code>, up to a maximum of <b>5000</b> entries.</li>
+</ol>
+
+<div class="tip"><strong>Tip</strong> Because the export follows the filter, the fastest way to hand a specific incident to support is to search for the message text or filter by client IP first, then download. Timestamps in the exported file use the configured display timezone, so state that timezone when you send the file on.</div>
+
+<h3 id="log-archive">Rotation, archives and clearing</h3>
+
+<p>When the live log passes the configured size it is rotated out to <code>data/logs/pmw-&lt;timestamp&gt;.log</code>. Only the <b>newest ten</b> archive files are kept; older ones are deleted. Archives are plain files on the server — copy them off the machine if you need history beyond that window, and include <code>data/logs/</code> in your filesystem-level backups, because the product's own backup file does not contain the log.</p>
+
+<ol class="steps">
+<li>Click <b>Clear</b> (danger) in the filter row.</li>
+<li>Confirm the dialogue: <em>&ldquo;Clear the live log? — This empties the current log (rotated archive files are kept).&rdquo;</em></li>
+<li>The live log is emptied. The clearing action is itself written into the now-empty log at <b>WARN</b>, so the record of who cleared it survives.</li>
+</ol>
+
+<h3 id="log-secrets">What the log never contains</h3>
+
+<p>Log entries name the action, the actor and the affected object — never the secret involved. This is deliberate, and it is worth knowing precisely, because it defines what a leaked log can and cannot expose:</p>
+
+<ul>
+<li>Passwords are never written. A password change is recorded as <em>&ldquo;changed their password — other sessions invalidated&rdquo;</em>.</li>
+<li>Database passwords, LLM API keys and directory bind passwords are not written by connection tests, LDAP tests or saves; those entries record the operation and its outcome only.</li>
+<li>Rebuild tokens are shown in the browser once at generation and stored only as a hash; the log records that a token was generated or revoked, at WARN, and not its value.</li>
+<li>The backup encryption password is never written. A backup export records the include-set and whether the resulting file was <b>encrypted</b> or <b>PLAINTEXT</b> — the fact, not the password.</li>
+<li>Two-factor secrets are stored encrypted and recovery codes only as hashes, so neither can appear in a log message.</li>
+</ul>
+
+<h2 id="backup">Backup</h2>
+
+<p>The <b>Backup</b> tab does two independent jobs: it produces backup files (on demand or on a schedule) and it restores from one. Both halves share the same include options and the same encryption password.</p>
+
+<figure data-fig="admin-08-backup"><figcaption>The Backup tab: the backup card with its include options, encryption password and schedule, and the Restore card below it.</figcaption></figure>
+
+<h3 id="backup-contents">What a backup contains</h3>
+
+<p>A backup captures <b>everything except the event data itself</b>, as a single JSON file that is byte-compatible with the main application's own backup format. Concretely it holds:</p>
+
+<ul>
+<li>database connections and their server settings;</li>
+<li>filter presets;</li>
+<li>happy paths;</li>
+<li>target norms;</li>
+<li>saved node layouts;</li>
+<li>LLM prompt templates;</li>
+<li>application preferences and settings.</li>
+</ul>
+
+<div class="warn"><strong>Warning</strong> The mined data — projects, journeys, steps, metas and notes — lives in the customer database, not in the product, and is therefore <b>not</b> in the backup. A backup restores your configuration onto a working installation; it does not reconstruct an event log. Back the database up separately, by whatever means your database administrator uses.</div>
+
+<h3 id="backup-secrets">Include options and the encryption password</h3>
+
+<table>
+<thead><tr><th>Control</th><th>Default</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><b>Include database usernames</b></td><td>checked</td><td>Writes the connection usernames into the file.</td></tr>
+<tr><td><b>Include database passwords</b></td><td>checked</td><td>Writes the stored connection passwords into the file.</td></tr>
+<tr><td><b>Include LLM API keys</b></td><td>checked</td><td>Writes the stored LLM API keys into the file.</td></tr>
+<tr><td><b>Encryption password (AES-256-GCM)</b></td><td>none set</td><td>Encrypts the whole file. Shows the hint <em>&ldquo;(set — leave blank to keep it; also reused for downloads)&rdquo;</em> once a password is stored, and <em>&ldquo;(none set — required for automatic backups)&rdquo;</em> otherwise.</td></tr>
+</tbody>
+</table>
+
+<p>Whenever secrets are included and no password is typed or stored, the card shows the inline warning <em>&ldquo;⚠ Secrets will be written in plain text unless you set an encryption password.&rdquo;</em> A standing note explains the trade-off for unattended operation: for automatic backups the password is stored <b>encrypted</b> on the server so the schedule can run without you.</p>
+
+<div class="warn"><strong>Warning</strong> A backup can only be restored with the password it was written with. There is no recovery path. Store the password somewhere independent of the machine that holds the backups — if you lose it, every encrypted backup you hold is unreadable.</div>
+
+<h3 id="backup-download">Downloading a backup</h3>
+
+<ol class="steps">
+<li>Open the <b>Backup</b> tab and set the three include checkboxes as required.</li>
+<li>Type an <b>Encryption password</b>, or leave the field blank to reuse the password already stored on the server.</li>
+<li>Click <b>&#8595; Download backup</b>. The file is saved as <code>ProcessMining-Backup-YYYY-MM-DD.json</code>.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> A blank password field is not the same as &ldquo;no encryption&rdquo;. If an automatic-backup password is stored, downloads silently reuse it and are encrypted too. To produce a genuinely unencrypted file you must have no stored password at all.</div>
+
+<h3 id="backup-now">Running a backup on the server</h3>
+
+<ol class="steps">
+<li>Set the include options and, if needed, the password.</li>
+<li>Click <b>Run backup on server now</b>.</li>
+<li>The file is written into <code>data/backups/</code> immediately, using the typed password or the stored one, and the toast reports <em>&ldquo;Backup written on server: &lt;file&gt;&rdquo;</em>.</li>
+</ol>
+
+<p>If neither a typed nor a stored password exists, the run fails with <em>&ldquo;Set a backup password first.&rdquo;</em> Manual server-side runs appear in the status line marked &ldquo;· manual&rdquo;.</p>
+
+<h3 id="backup-auto">Automatic backups</h3>
+
+<p>Automatic backups are written on a schedule while the admin server is running, saved under <code>data/backups/</code>, with older files pruned beyond the retention count.</p>
+
+<ol class="steps">
+<li>Set an <b>Encryption password</b> and save it — enabling the schedule without one is refused with HTTP 400 <em>&ldquo;Set a backup password before enabling automatic backups.&rdquo;</em></li>
+<li>Tick <b>Enable automatic backups</b>.</li>
+<li>Choose a <b>Frequency</b> and fill in the fields it reveals (see the table below).</li>
+<li>Check the live line — <em>&ldquo;Runs: &lt;cron&gt; — &lt;human summary&gt;&rdquo;</em>, for example &ldquo;Every day at 02:00&rdquo; — to confirm the schedule reads as you intended.</li>
+<li>Set <b>Keep newest backups</b>: the retention count, minimum 1, default <b>30</b>.</li>
+<li>Click <b>Save schedule</b>. The toast <em>&ldquo;Backup schedule saved&rdquo;</em> confirms it; an unparsable cron expression is rejected with 400 <em>&ldquo;Invalid schedule: &lt;reason&gt;&rdquo;</em>.</li>
+</ol>
+
+<table>
+<thead><tr><th>Frequency</th><th>Fields shown</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><b>Every hour</b></td><td>Minute (0–59)</td><td>Fires once an hour at that minute.</td></tr>
+<tr><td><b>Every day</b></td><td>Hour (0–23), Minute (0–59)</td><td>Summarised as &ldquo;Every day at 02:00&rdquo;.</td></tr>
+<tr><td><b>Every week</b></td><td>Weekday (Sunday–Saturday), Hour, Minute</td><td>Summarised as &ldquo;Every Monday at 02:00&rdquo;.</td></tr>
+<tr><td><b>Every month</b></td><td>Day of month (<b>1–28 only</b>), Hour, Minute</td><td>The range stops at 28 so the schedule is valid in every month, February included.</td></tr>
+<tr><td><b>Custom (cron)</b></td><td>Cron expression</td><td>Five fields: minute hour day-of-month month weekday. Placeholder <code>0 2 * * *</code>.</td></tr>
+</tbody>
+</table>
+
+<p>The status line under the schedule reports one of: <em>&ldquo;Last backup: &lt;when&gt; — &lt;file&gt; (N KB)&rdquo;</em>, a red <em>&ldquo;Last attempt failed: &lt;error&gt; — &lt;when&gt;&rdquo;</em>, or <em>&ldquo;No backup has run yet.&rdquo;</em></p>
+
+<div class="note"><strong>Note — how the scheduler actually runs</strong> The scheduler lives <b>inside the admin server process</b>. If the admin interface is stopped, no automatic backups are written, and none are caught up afterwards. It wakes every 15 seconds and fires at most once per minute when the cron expression matches the wall clock of the <b>display timezone</b> configured under App Control — so &ldquo;daily at 02:00&rdquo; means 02:00 in that timezone, and changing the timezone moves the schedule. Files are named <code>pmw-backup-YYYYMMDD-HHMMSS-&lt;microseconds&gt;.json</code>; retention pruning deletes the oldest files beyond the keep-count. A scheduled tick that finds no stored password records the failure <em>&ldquo;No backup password is set.&rdquo;</em></div>
+
+<h3 id="restore">Restoring from a backup</h3>
+
+<p>Restore is a three-stage flow: load the file, review what it holds, then choose what to apply. The intro states the consequence plainly — this overwrites the corresponding settings.</p>
+
+<ol class="steps">
+<li>In the <b>Restore</b> card, choose a file with <b>Backup file</b> (<code>.json</code>). It is inspected automatically as soon as it is selected.</li>
+<li>If the file is encrypted, type its password into <b>Password (if the backup is encrypted)</b> and click <b>Inspect</b> again.</li>
+<li>Read the <b>Backup contents</b> summary: <em>Created</em>, <em>Connections: N</em>, <em>Projects with settings: N</em>, an <em>Includes</em> line (usernames or &mdash;, passwords or &ldquo;no passwords&rdquo;, API keys or &ldquo;no API keys&rdquo;) and — most importantly — <b>Overwrites:</b> the names of the connections that will be replaced.</li>
+<li>Untick anything you do not want applied. The options, all checked by default, are: <b>App settings &amp; preferences</b>, <b>Connections &amp; servers</b>, <b>Usernames</b>, <b>LLM API keys</b>, <b>Database passwords</b>, <b>Saved node layouts</b>, <b>Target norms</b>, <b>Happy paths</b>, <b>Filter presets</b>.</li>
+<li>Click <b>Restore</b> (danger) and confirm: <em>&ldquo;Restore the selected items from this backup? — This overwrites the current settings.&rdquo;</em> The toast <em>&ldquo;Backup restored&rdquo;</em> confirms completion.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> Read the <b>Overwrites:</b> line before you restore. Those checkboxes are the <em>only</em> granularity available — you cannot restore a single connection, or merge one backup's presets into another's. A connection named in that line is replaced wholesale by the version in the file.</div>
+
+<table>
+<thead><tr><th>Message</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>&ldquo;This backup is encrypted — enter its password and Inspect again.&rdquo;</td><td>The file is AES-256-GCM encrypted; supply the password.</td></tr>
+<tr><td>A decryption failure</td><td>The password is wrong for this file.</td></tr>
+<tr><td>&ldquo;The backup file format is invalid or corrupted.&rdquo;</td><td>Not a readable backup file.</td></tr>
+<tr><td>&ldquo;Backup file is too large.&rdquo;</td><td>Above the decoded cap of roughly 18&nbsp;MB.</td></tr>
+<tr><td>&ldquo;Invalid file content.&rdquo;</td><td>The upload could not be decoded.</td></tr>
+<tr><td>&ldquo;Choose a backup file first&rdquo;</td><td>Restore or Inspect was pressed with no file selected.</td></tr>
+</tbody>
+</table>
+
+<h3 id="backup-logging">What backup and restore write to the log</h3>
+
+<p>Every action in this tab is tagged <b>BACKUP/RESTORE</b>, so filtering the Logging tab by that tag gives you the complete backup history in one view:</p>
+
+<table>
+<thead><tr><th>Action</th><th>Severity</th><th>Recorded detail</th></tr></thead>
+<tbody>
+<tr><td>Export (download or server run)</td><td>USAGE</td><td>The include-set, and whether the file was <b>encrypted</b> or <b>PLAINTEXT</b></td></tr>
+<tr><td>Inspect</td><td>USAGE</td><td>That a backup file was inspected</td></tr>
+<tr><td>Restore</td><td><b>WARN</b></td><td>The restore options that were selected</td></tr>
+<tr><td>Any failure</td><td>WARN / ERROR</td><td>The reason for the failure</td></tr>
+</tbody>
+</table>
+
+<h2 id="customize">Customize: the login-page background</h2>
+
+<p>The <b>Customize</b> tab holds branding and appearance settings for the application and the admin interface; its header notes that more options are to come. Today it contains one section, <b>Login Page</b>, which sets the background for <em>both</em> sign-in pages — the main application's and the admin interface's — from a single choice.</p>
+
+<figure data-fig="admin-09-customize"><figcaption>The Customize tab: the three background options with the live preview panel beneath them.</figcaption></figure>
+
+<table>
+<thead><tr><th>Option</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><b>Default theme colour</b> <em>(default)</em></td><td>Keeps the built-in theme colour, which follows the viewer's light / dark mode.</td></tr>
+<tr><td><b>Solid colour</b></td><td>Reveals a colour picker and a hex field that stay in sync. The server validates the value: <em>&ldquo;Color must be a #rrggbb hex value&rdquo;</em>.</td></tr>
+<tr><td><b>Background image</b></td><td>Reveals a file input accepting <b>PNG, JPEG, GIF, WebP or SVG</b> — or you can drag an image straight onto the preview.</td></tr>
+</tbody>
+</table>
+
+<ol class="steps">
+<li>Open the <b>Customize</b> tab and select one of the three radio options.</li>
+<li>For <b>Solid colour</b>, pick a colour or type a <code>#rrggbb</code> value.</li>
+<li>For <b>Background image</b>, choose a file or drag one onto the preview. The toast <em>&ldquo;Image ready — click Save to store it&rdquo;</em> confirms the image has been prepared.</li>
+<li>Check the <b>Preview</b> box, which renders a mock <b>Sign in</b> panel over your chosen background.</li>
+<li>Click <b>Save</b>. The result line reads <em>&ldquo;Saved — new sign-ins use it immediately.&rdquo;</em> and a toast confirms &ldquo;Login background saved&rdquo;. No restart is needed; the next render of either sign-in page picks it up.</li>
+</ol>
+
+<p>Images are processed in the browser before upload. A file over <b>30&nbsp;MB</b> is rejected outright (<em>&ldquo;Image file is too large (max 30 MB)&rdquo;</em>). Raster images are scaled to a <b>2560&nbsp;px</b> long edge and re-encoded as WebP, with JPEG as a fallback, so an ordinary photograph fits comfortably. <b>SVG is kept exactly as supplied</b> and may therefore be animated. The stored image is capped server-side at roughly <b>3&nbsp;MB</b> (<em>&ldquo;Image is too large (max ~3 MB)&rdquo;</em>). Other validation messages are <em>&ldquo;Choose a background image first&rdquo;</em> and <em>&ldquo;Choose a valid background image first&rdquo;</em>.</p>
+
+<div class="note"><strong>Note</strong> Over a background <b>image</b> the sign-in panel becomes 50&nbsp;% translucent so the picture shows through. A solid colour or the default theme colour keeps the panel opaque. Check legibility in the preview before saving — a busy photograph can make the username and password fields hard to read.</div>
+
+<p>Background changes are logged under operation <code>customize</code>, naming the new background as &ldquo;a solid colour (#…)&rdquo;, &ldquo;an uploaded background image&rdquo; or &ldquo;the default theme colour&rdquo;.</p>
+
+<h2 id="integration-switch">Integration: turning the console on and off</h2>
+
+<p>The <b>Integration</b> tab is the master switch for the integration console — the fourth surface, used to configure data sources. This tab decides whether that surface exists; what you do inside it is covered in its own chapter.</p>
+
+<figure data-fig="admin-10-integration"><figcaption>The Integration tab: the enable checkbox, the launcher status pill and the resulting endpoints.</figcaption></figure>
+
+<p>The card describes the console as a separate surface for configuring data sources, reachable only by <b>power users</b>, <b>developers</b> and <b>administrators</b>, and points you to the <b>Users</b> tab to grant the Developer role per user.</p>
+
+<ol class="steps">
+<li>Open the <b>Integration</b> tab.</li>
+<li>Tick or untick <b>Enable the integration console</b>. The toast reads <em>&ldquo;Integration console enabled — restart to apply&rdquo;</em> or <em>&ldquo;Integration console disabled — restart to apply&rdquo;</em>.</li>
+<li>Go to the <b>App Control</b> tab and click <b>&#8635; Restart app server</b>. Until you do, the setting is stored but has no effect.</li>
+<li>Return to the <b>Integration</b> tab and check the status pill — <b>launcher running</b> or <b>launcher not detected</b> — and the endpoints listed beneath it.</li>
+</ol>
+
+<p>The status area lists the console's addresses: <b>HTTP</b> <code>http://&lt;host&gt;:8100</code> and <b>HTTPS</b> <code>https://&lt;host&gt;:8463</code>, the latter only when the TLS mode is Optional or Required. Both default to the admin ports plus ten and can be overridden by environment variables. The console follows the same TLS mode and shares the same active certificate as the application and the admin interface; both are changed in the <b>TLS / SSL</b> tab.</p>
+
+<div class="warn"><strong>Warning — the restart fan-out</strong> There is only one restart button, and it restarts <b>three</b> things: the application, then the integration console, then the admin interface itself. Anyone using the application is briefly disconnected. Because the admin interface restarts too, this page may stop responding mid-request — and if you also changed the TLS mode, the admin interface moves between <code>http://&lt;host&gt;:8090</code> and <code>https://&lt;host&gt;:8453</code>, so you must reconnect on the new address. The launcher status pill is best-effort: &ldquo;launcher not detected&rdquo; immediately after a restart may simply mean the process has not written its PID file yet.</div>
+
+<div class="tip"><strong>Tip</strong> Group your changes. TLS mode, certificate activation and the integration on/off switch all wait for the same restart, so make all of them first and restart once, rather than restarting after each.</div>
+
+</section>

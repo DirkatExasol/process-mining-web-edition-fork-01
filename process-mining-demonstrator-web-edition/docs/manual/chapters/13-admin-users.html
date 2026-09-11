@@ -1,0 +1,332 @@
+<section class="chapter" id="ch-admin-users" data-title="Administration: Users and Permissions" data-num="13">
+<h1><span class="chnum">13</span> Administration: Users and Permissions</h1>
+
+<p class="chintro">This chapter describes the <b>Users</b> tab of the administration interface: how you create accounts, what each of the three roles (Administrator, Power user, Developer) actually grants, how you enable, disable, unlock and delete accounts, how you reset passwords, and how you allow passkeys and two-factor authentication for individual users or for everybody at once. It also sets out the three global access controls that live on the same tab — whether the main application requires a sign-in at all, when idle sessions are signed out, and after how many failed sign-ins an account is disabled. It is written for administrators. Every action described here requires an administrator account, because the administration interface admits nobody else.</p>
+
+<div class="role">Requires: <b>Administrator</b></div>
+
+<h2 id="ch13-open">13.1 Opening the Users tab</h2>
+
+<p>The administration interface runs on its own port, separate from the main application: <code>http://&lt;host&gt;:8090</code> or, when TLS is switched on, <code>https://&lt;host&gt;:8453</code>. Only administrators may sign in. Local administrator accounts always work — this is deliberate, so that a directory outage can never lock you out of your own server. Directory (LDAP) accounts reach this interface only when <b>Also allow directory sign-in to this admin interface</b> is ticked in the <b>Directory (LDAP)</b> tab <em>and</em> the account has been promoted to administrator here.</p>
+
+<ol class="steps">
+  <li>Open the administration interface and sign in.</li>
+  <li>Select the <b>Users</b> tab in the tab strip (the order is App Control · TLS / SSL · <b>Users</b> · Database Connections · Directory (LDAP) · Logging · Backup · Customize · Integration).</li>
+  <li>The card header reads &ldquo;Only enabled users will be allowed to sign in to the main application.&rdquo;</li>
+</ol>
+
+<figure data-fig="admin-04-users"><figcaption>The Users tab: the three global access controls, the filter and search row with the all-users Passkey and 2FA master checkboxes, and the per-user cards below.</figcaption></figure>
+
+<div class="note"><strong>Note</strong> On a fresh installation the built-in account <b>Administrator</b> exists with the password <b>Administrator</b> (the username can be changed with the environment variable <code>PMW_DEFAULT_ADMIN_USER</code>). Until that password is changed, every page of the administration dashboard carries the banner &ldquo;⚠️ The <b>Administrator</b> account is still using its default password. Change it now in <b>👤 Profile</b> (top right).&rdquo; Changing the password clears the banner permanently.</div>
+
+<h2 id="ch13-global">13.2 The three global access controls</h2>
+
+<p>Three banners sit above the user list. They apply to the installation as a whole, not to a single account. Each takes effect as soon as it is applied — no restart is needed.</p>
+
+<h3 id="ch13-require-signin">13.2.1 Require sign-in for the main application</h3>
+
+<p>A checkbox that applies instantly (toast &ldquo;Access updated&rdquo;). The hint under it reads &ldquo;Users must sign in.&rdquo; when on, and &ldquo;The app is open — no sign-in required.&rdquo; when off. The default is <b>on</b>.</p>
+
+<p>With the box ticked, every visitor to the main application meets the sign-in panel and every <code>/api/*</code> call requires a session; without one the server answers 401 &ldquo;Authentication required.&rdquo; Only the health probe is open.</p>
+
+<p>With the box cleared the application runs in <b>open mode</b>: it loads with no sign-in panel and, importantly, with <b>no user identity at all</b>. Per-user settings and filter presets then share a single profile, notes have no author, the sidebar footer (name, Two-factor, Passkeys, Sign out) disappears, the idle auto sign-out stops running, and every power-user and administrator feature is hidden in the browser and refused by the server, because there is no identity to check a role against.</p>
+
+<div class="warn"><strong>Warning</strong> Open mode is a single-user convenience, not a permission level. Turning sign-in off does not make everyone a power user — it makes everyone anonymous, and anonymous callers get 403 from the power-user endpoints. The integration console and the administration interface ignore this toggle entirely; both always require a sign-in.</div>
+
+<h3 id="ch13-idle">13.2.2 Auto sign-out after N minutes of inactivity</h3>
+
+<p>A number field (0&ndash;1440) with a <b>Save</b> button. This is the <b>main application's</b> idle timeout. The hint reads &ldquo;Idle sessions are signed out after N min.&rdquo; when N is greater than zero, and &ldquo;Disabled — sessions never time out on inactivity.&rdquo; at 0.</p>
+
+<p>In the main application an invisible watcher observes mouse movement, mouse buttons, key presses, touches, scrolling and the wheel. After N idle minutes it signs the user out, and the sign-in panel shows the orange notice &ldquo;You were signed out due to inactivity.&rdquo; While the user is active the browser pings the session endpoint (at most every 15&ndash;60 seconds) so that the server-side sliding window stays open even when no other request is made.</p>
+
+<div class="note"><strong>Note</strong> The same value also governs the <b>integration console's</b> server-side session window, but that surface has no client-side watcher. An idle developer is not bounced to the login screen; their session simply expires, and they discover it when their next action fails. The <b>administration interface</b> has its own, separate setting in <b>App Control → Admin session</b>; the value here does not affect it.</div>
+
+<h3 id="ch13-lockout">13.2.3 Disable an account after N failed sign-in attempts</h3>
+
+<p>A number field (0&ndash;100) with <b>Save</b> (toast &ldquo;Failed-sign-in lockout updated&rdquo;). The hint reads &ldquo;Accounts (incl. the Administrator) are disabled after N failed sign-ins.&rdquo; or, at 0, &ldquo;Disabled — accounts are never locked on failed sign-ins.&rdquo; Fresh installations default to <b>3</b>.</p>
+
+<p>The counter records <b>consecutive wrong-password attempts</b> against a local account, pooled across all three surfaces — application, integration console and administration interface share one store. A successful sign-in resets it. The following never count towards it:</p>
+
+<ul>
+  <li>wrong two-factor codes (a mistyped or expired code can never disable an account),</li>
+  <li>failed passkey ceremonies,</li>
+  <li>directory (LDAP) accounts, which have no local password,</li>
+  <li>attempts against an account that is already disabled.</li>
+</ul>
+
+<p>A locked account shows a red <b>locked</b> pill (tooltip &ldquo;Disabled after too many failed sign-ins — Unlock to restore.&rdquo;) and its action button reads <b>Unlock</b>. A lockout also lifts itself after <b>15 minutes</b>; the expiry is applied lazily at the next sign-in attempt, so simply trying again after the window works. That 15-minute period is fixed — only the threshold is configurable in the interface.</p>
+
+<div class="warn"><strong>Warning</strong> Despite the hint's wording, the <b>built-in Administrator is counted but never automatically locked</b>. It is the break-glass account; its protection is the per-IP throttle and slow password hashing, not a lockout. Other administrator accounts do lock normally. If your only non-built-in administrator locks itself out and you cannot wait out the window, restart the server with <code>PMW_RESET_LOCKOUTS=1</code> to clear every lockout in the installation.</div>
+
+<table>
+  <thead><tr><th>Control</th><th>Range</th><th>Default</th><th>Scope</th></tr></thead>
+  <tbody>
+    <tr><td>Require sign-in for the main application</td><td>on / off</td><td>on</td><td>Main application only</td></tr>
+    <tr><td>Auto sign-out after N minutes of inactivity</td><td>0&ndash;1440 (0 = off)</td><td>—</td><td>Main application (client watcher) and integration console (server window)</td></tr>
+    <tr><td>Disable an account after N failed sign-in attempts</td><td>0&ndash;100 (0 = off)</td><td>3</td><td>All local accounts, all three surfaces</td></tr>
+  </tbody>
+</table>
+
+<h2 id="ch13-list">13.3 Finding and reading a user card</h2>
+
+<p>Above the list sit the filter chips <b>All</b> / <b>Local</b> / <b>LDAP</b>, each showing a live count, and a search box &ldquo;Search users by name…&rdquo; that matches the username or the display name. When nothing matches, the list shows &ldquo;No matching users.&rdquo;</p>
+
+<p>Each user occupies a two-line card:</p>
+
+<dl>
+  <dt>Line 1</dt>
+  <dd>The username (with the smaller display name beside it for directory users), a source pill reading <b>local</b> or <b>LDAP</b>, the role badge, the access pill (<b>enabled</b> in green, <b>disabled</b> or <b>locked</b> in red), and the two per-user checkboxes <b>Passkey</b> and <b>2FA</b>.</dd>
+  <dt>Line 2</dt>
+  <dd>&ldquo;Last sign-in: &lt;date&gt;&rdquo; (or an em dash when the account has never signed in), followed by the action buttons described in the rest of this chapter.</dd>
+</dl>
+
+<p>The role badge condenses the additive role flags into one label. The base segment is <em>admin</em> if the user is an administrator, otherwise <em>power</em>, otherwise <em>user</em>; administrators always show a second segment (<em>power</em> or <em>user</em>) so that you can see whether they also hold power privileges; the <em>dev</em> segment is appended as an add-on. A user with more than one role gets a single animated gradient pill such as <code>admin&middot;power</code> or <code>admin&middot;user&middot;dev</code>; a single role is a plain pill. The tooltip spells the roles out, for example &ldquo;Roles: administrator, power user (manages own connections), developer (integration console)&rdquo; or simply &ldquo;Regular user&rdquo;.</p>
+
+<h2 id="ch13-create">13.4 Creating a user</h2>
+
+<div class="role">Requires: <b>Administrator</b></div>
+
+<ol class="steps">
+  <li>On the <b>Users</b> tab, expand the collapsed <b>Add a user</b> section at the foot of the list.</li>
+  <li>Type the <b>Username</b>. It must be unique among local accounts.</li>
+  <li>Type an initial <b>Password</b>. There is no confirmation field here, so type carefully; you can always reset it afterwards.</li>
+  <li>Tick <b>Administrator</b> only if this account is to administer the server. Leave it clear for everybody else.</li>
+  <li>Select <b>Create user</b>. The new account appears in the list as enabled, with no roles beyond the one you ticked.</li>
+  <li>If the account also needs the power or developer privileges, grant them from the buttons on the new card (see <a href="#ch13-roles">13.5</a>). There is no checkbox for them at creation time.</li>
+</ol>
+
+<table>
+  <thead><tr><th>Message</th><th>Cause</th></tr></thead>
+  <tbody>
+    <tr><td>Username is required.</td><td>The username field was left empty.</td></tr>
+    <tr><td>Password is required.</td><td>The password field was left empty. Accounts are never created without a password.</td></tr>
+    <tr><td>A user named '&lt;x&gt;' already exists.</td><td>A local account of that name is already present. Search the list for it rather than creating a variant.</td></tr>
+  </tbody>
+</table>
+
+<div class="note"><strong>Note</strong> You do not create directory users here. An LDAP account appears in the list automatically after its first successful sign-in, provisioned as a plain, enabled user. From that moment it behaves like any other row: you can grant it roles, allow passkeys and two-factor, assign database connections, disable it or delete it. Administrator rights are <em>never</em> granted by the directory — a local administrator must promote the account here.</div>
+
+<h2 id="ch13-roles">13.5 Roles and what each one grants</h2>
+
+<p>Roles are <b>independent, additive flags</b>, not a ladder. A user can hold any combination of Administrator, Power and Developer; the implicit base is the plain user. In the main application's sidebar footer the identity is labelled with the <em>highest</em> role held (Admin &gt; Power user &gt; Developer &gt; User), which is a display convenience only — the underlying flags are checked individually.</p>
+
+<h3 id="ch13-role-admin">13.5.1 Administrator</h3>
+
+<p>Grants access to this administration interface and everything in it: users and permissions, TLS certificates, the directory configuration, logging, backups and restores, the licence, customisation, and switching the integration console on or off. An administrator also manages <b>all</b> database connections, not merely their own, and has the power-user analysis features in the main application.</p>
+
+<p>Grant or revoke it with <b>Make admin</b> / <b>Remove admin</b> on the user's card.</p>
+
+<h3 id="ch13-role-power">13.5.2 Power user</h3>
+
+<p>A main-application privilege. Power users create and manage <b>their own</b> database connections from the application sidebar, and they get the advanced-analysis views — <b>Conformance Check</b>, <b>Happy Path</b> and <b>Simulation</b> — which are hidden from the view menu for plain users. They may also use journey <b>sampling</b> (creating and deleting representative subsets and A/B sources); the server refuses it for anyone else with &ldquo;Journey sampling is available to power users and administrators only.&rdquo;</p>
+
+<p>Grant or revoke it with <b>Make power</b> / <b>Remove power</b>.</p>
+
+<h3 id="ch13-role-dev">13.5.3 Developer</h3>
+
+<p>Purely an additional access grant to the <b>integration console</b> (the separate surface on <code>:8100</code> / <code>:8463</code>). It does not include any power-user feature, although developers, like power users, may manage their own database connections. A user who holds only the Developer role sees the ordinary main application, plus the integration console.</p>
+
+<p>Grant or revoke it with <b>Make developer</b> / <b>Remove developer</b>. Both actions are recorded in the shared log as &ldquo;granted/revoked the Developer role for '&lt;user&gt;'&rdquo;.</p>
+
+<h3 id="ch13-matrix">13.5.4 Capability matrix</h3>
+
+<p>Use this table as the reference when deciding which flags an account needs.</p>
+
+<table>
+  <thead><tr><th>Capability</th><th>Plain user</th><th>Power</th><th>Developer</th><th>Admin</th></tr></thead>
+  <tbody>
+    <tr><td>Sign in to the main application (enabled account)</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+    <tr><td>Sign in to the integration console</td><td>No (403)</td><td>No (403)</td><td>Yes</td><td>Yes</td></tr>
+    <tr><td>Sign in to the administration interface</td><td>No</td><td>No</td><td>No</td><td>Yes</td></tr>
+    <tr><td>Use database connections assigned to them</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+    <tr><td>Create and manage their own database connections</td><td>No</td><td>Yes</td><td>Yes</td><td>Yes (manages all)</td></tr>
+    <tr><td>Conformance Check, Happy Path, Simulation</td><td>No (hidden)</td><td>Yes</td><td>No (unless also Power)</td><td>Yes</td></tr>
+    <tr><td>Journey sampling (subsets, A/B sources)</td><td>No</td><td>Yes</td><td>No (server refuses)</td><td>Yes</td></tr>
+    <tr><td>Notes (create and comment)</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+    <tr><td>Enrol a passkey; set up two-factor</td><td colspan="4">Only if you allow it per user — these flags are role-independent</td></tr>
+    <tr><td>Manage users, TLS, LDAP, backups, licence, customisation, integration on/off</td><td>No</td><td>No</td><td>No</td><td>Yes</td></tr>
+  </tbody>
+</table>
+
+<h3 id="ch13-role-live">13.5.5 Role changes take effect immediately</h3>
+
+<p>Every request re-validates the session against the live user record, so a role change does not wait for the user to sign out. Revoking the Developer role from someone who is working in the integration console drops them, on their very next request, to a full-page <b>Access denied</b> screen reading &ldquo;The integration console is available to developers and administrators only. Ask an administrator to grant you the Developer role.&rdquo; with a <b>⏻ Sign out</b> button. Anything they were driving from that console is no longer theirs to start, stop or monitor there. Revoking the administrator role ends their administration session the same way; revoking the power role removes the advanced views and refuses their sampling calls from that moment on.</p>
+
+<div class="warn"><strong>Warning</strong> Revoke a role only when you are prepared for work in flight to be interrupted. There is no grace period and no warning shown to the user before the change lands.</div>
+
+<div class="note"><strong>Note</strong> The server refuses any change that would leave the installation without an administrator: &ldquo;This would leave no enabled administrator. Promote or enable another admin first.&rdquo; Promote or enable the replacement before demoting or disabling the incumbent.</div>
+
+<h2 id="ch13-enable">13.6 Enabling, disabling and unlocking accounts</h2>
+
+<div class="role">Requires: <b>Administrator</b></div>
+
+<p>Only enabled users may sign in to the main application. The card's first action button reads <b>Disable</b> for an enabled account, <b>Enable</b> for one you disabled, and <b>Unlock</b> when the account was disabled by the failed-sign-in lockout rather than by you.</p>
+
+<ol class="steps">
+  <li>Find the account with the search box or the <b>All</b> / <b>Local</b> / <b>LDAP</b> chips.</li>
+  <li>Select <b>Disable</b> to bar the account, or <b>Enable</b> / <b>Unlock</b> to restore it.</li>
+  <li>Check the access pill afterwards: <b>enabled</b> (green), <b>disabled</b> or <b>locked</b> (red).</li>
+</ol>
+
+<p>Disabling is immediate and retroactive: the account's live sessions are re-validated on their next request and die, on all three surfaces at once. A user whose password is correct but whose account you disabled is told exactly that — &ldquo;This account has been disabled. Contact an administrator.&rdquo; — while someone typing a wrong password only ever sees the generic &ldquo;Invalid username or password.&rdquo; The specific reason is revealed only after the password has been proved, so that the messages cannot be used to discover which accounts exist.</p>
+
+<div class="tip"><strong>Tip</strong> Disabling and re-enabling an account clears its failed-sign-in counter, so it doubles as a manual reset when someone has been fumbling their password but is not yet locked out.</div>
+
+<h2 id="ch13-password">13.7 Resetting a password</h2>
+
+<div class="role">Requires: <b>Administrator</b></div>
+
+<ol class="steps">
+  <li>Find the user's card. The <b>Reset password</b> button is shown for <b>local users only</b> — it is hidden on LDAP rows, because those accounts have no local password.</li>
+  <li>Select <b>Reset password</b>. The browser prompts &ldquo;New password for &lt;user&gt;:&rdquo;.</li>
+  <li>Type the new password and confirm the prompt. An empty value is refused with &ldquo;Password is required.&rdquo;</li>
+  <li>Communicate the password to the user by a channel other than the one you are administering.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> Any password change bumps the user's session epoch, which invalidates <b>every</b> outstanding session token for that user on all three surfaces. Someone whose password you reset while they are working is silently signed out at their next request and must sign in again with the new password. This is the intended behaviour for a compromised account; it is a surprise if you meant it as a courtesy.</div>
+
+<div class="note"><strong>Note</strong> Administrators change their <em>own</em> password in the <b>👤 Profile</b> overlay (top right), not here. That path is the one exception to the rule above: the current session is re-issued in the same response, so the administrator making the change stays signed in while all of their other sessions are invalidated. The log records &ldquo;changed their password — other sessions invalidated&rdquo;.</div>
+
+<h2 id="ch13-passkeys">13.8 Allowing passkeys</h2>
+
+<p>A passkey (Touch ID, Windows Hello, a security key) is an <b>alternative</b> to the password, never a replacement: the password always remains a fallback. Users cannot enrol one until you allow it. The master row above the list carries the caption &ldquo;Passkey and two-factor are optional alternatives/additions to the password (which always works).&rdquo;</p>
+
+<h3 id="ch13-passkey-user">13.8.1 Allowing a passkey for one user</h3>
+
+<ol class="steps">
+  <li>Find the user's card.</li>
+  <li>Tick the <b>Passkey</b> checkbox on line 1 (tooltip &ldquo;Allow this user to enrol and sign in with a passkey&rdquo;). The change applies at once.</li>
+  <li>Tell the user to open <b>🔑 Passkeys</b> in the application sidebar footer — or, for an administrator, <b>👤 Profile → Passkeys</b> — name the device and select <b>Add a passkey</b>.</li>
+</ol>
+
+<h3 id="ch13-passkey-all">13.8.2 The all-users master toggle</h3>
+
+<p>The <b>All users:</b> row offers a <b>Passkey</b> checkbox (tooltip &ldquo;Allow every user to enrol and sign in with a passkey&rdquo;). It is shown as ticked only when <em>every</em> user currently holds the permission, and toggling it writes the flag for all existing users at once (toast &ldquo;Passkeys allowed/disabled for all users&rdquo;).</p>
+
+<div class="note"><strong>Note</strong> The master toggle is a bulk edit, not a default. It changes the users who exist at the moment you click it; accounts created afterwards start without the permission and need their own tick.</div>
+
+<h3 id="ch13-passkey-consequences">13.8.3 Consequences and prerequisites</h3>
+
+<ul>
+  <li><b>Revoking the permission blocks passkey sign-in immediately.</b> It is checked at every step of the ceremony, and the management controls disappear from the user's interface. The registered credentials are not what is checked at sign-in time — the permission is — so revocation is an effective, instant kill switch.</li>
+  <li>A passkey registered on a host works on <b>all surfaces of that host</b>: application, integration console and administration interface share the relying-party identifier (the hostname without the port).</li>
+  <li>Passkeys require a WebAuthn-capable browser, a <b>secure context</b> (HTTPS, or localhost) and a <b>real hostname</b>. WebAuthn rejects bare IP addresses and single-label hosts. Reached by IP, the sign-in button and the management controls hide themselves and the user sees &ldquo;Passkeys need a hostname, not an IP address. Reach the server by its name over HTTPS — e.g. its &lsquo;.local&rsquo; name — instead of its IP, then try again.&rdquo;</li>
+  <li>Sign-in is <b>username-first</b>: the user types their username, then selects <b>🔑 Sign with Passkey</b>. There is no one-click, usernameless flow.</li>
+  <li>If the application and the administration interface live on different sub-domains, set <code>PMW_PASSKEY_RP_ID</code> to the shared parent domain and list the expected origins in <code>PMW_PASSKEY_ORIGINS</code>.</li>
+</ul>
+
+<div class="warn"><strong>Warning</strong> A passkey sign-in <b>satisfies two-factor by itself</b> and skips the code step, even for users who are enrolled in TOTP. If your policy is &ldquo;always a one-time code&rdquo;, do not allow passkeys.</div>
+
+<h2 id="ch13-2fa">13.9 Allowing two-factor authentication</h2>
+
+<p>Two-factor authentication is a time-based one-time code (TOTP) layered <em>on top of</em> the password. Two independent facts govern it per user: whether you have <b>allowed</b> it, and whether the user has <b>enrolled</b> (confirmed a code from their authenticator app). One secret protects all three surfaces.</p>
+
+<h3 id="ch13-2fa-allow">13.9.1 Allowing 2FA for one user or for everybody</h3>
+
+<ol class="steps">
+  <li>Find the user's card and tick the <b>2FA</b> checkbox on line 1 (tooltip &ldquo;Allow this user to set up two-factor (TOTP)&rdquo;), or</li>
+  <li>tick the <b>2FA</b> checkbox in the <b>All users:</b> master row to write the flag for every existing user at once (toast &ldquo;Two-factor allowed/disabled for all users&rdquo;).</li>
+  <li>Tell the user what will happen at their next sign-in (see below). No further administrator action is needed.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> Allowing 2FA is the same thing as <b>requiring</b> it. A user who is allowed but not yet enrolled cannot decline: their next sign-in — on the application, the integration console or the administration interface — halts after the password and forces enrolment. The caption changes to &ldquo;Set up two-factor to continue&rdquo;, a QR code appears with the text &ldquo;Two-factor is required for your account. Scan this with an authenticator app (Google Authenticator, 1Password…), then enter the 6-digit code.&rdquo;, and no session is issued until a correct code confirms the authenticator. Nothing is stored server-side until then, so there are no half-enrolled accounts.</div>
+
+<p>Immediately after a successful enrolment the user is shown <b>10 recovery codes</b>, once, under the heading &ldquo;Save your recovery codes&rdquo; with the text &ldquo;Each works once if you lose your authenticator. They won't be shown again.&rdquo; Each code works exactly once, anywhere a TOTP code is accepted. They are stored only as salted hashes: <b>you cannot view or recover them for a user</b>, and regenerating a set invalidates the previous one entirely.</p>
+
+<h3 id="ch13-2fa-lost">13.9.2 Resetting 2FA for a user who lost their authenticator</h3>
+
+<p>There is no administrator command that resets an enrolment while preserving it. The supported recovery path is to withdraw the permission, let the user back in with their password alone, then restore the permission so that they enrol afresh.</p>
+
+<ol class="steps">
+  <li>Ask the user first whether they still have an unused <b>recovery code</b> — entering one at the code step signs them in without any administrator involvement.</li>
+  <li>If not, find their card and <b>untick</b> the <b>2FA</b> checkbox. Password-only sign-in works again from that moment.</li>
+  <li>Have the user sign in and, from the sidebar, open <b>🔒 Two-factor</b> and select <b>Turn off</b>, entering a current code if they can — this deletes the stale secret and its recovery codes. If they cannot produce a code, leave the enrolment in place and continue.</li>
+  <li>Re-tick the <b>2FA</b> checkbox on their card when they are ready to enrol the new device.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> Un-ticking <b>2FA</b> does <b>not</b> delete the enrolment — it only relaxes the login gate. Re-ticking the box re-arms the <em>same</em> authenticator instantly, with no new enrolment step. If the old authenticator is in the wrong hands, have the user turn two-factor off from their own sheet (which does delete the secret and the recovery codes) before you re-allow it, or reset their password as well.</div>
+
+<div class="note"><strong>Note</strong> A user cannot silently strip their own two-factor: turning it off requires a current code or a recovery code, so a hijacked session cannot remove the second factor. Wrong codes are throttled per source IP but <b>never</b> count towards the account lockout — a mistyped code can never disable an account.</div>
+
+<h2 id="ch13-delete">13.10 Deleting a user</h2>
+
+<div class="role">Requires: <b>Administrator</b></div>
+
+<ol class="steps">
+  <li>Find the user's card.</li>
+  <li>Select the danger button <b>Delete</b>.</li>
+  <li>Confirm the dialogue <code>Delete user "&lt;name&gt;"?</code>.</li>
+</ol>
+
+<p>Deleting an account also deletes its passkeys and its recovery codes, and any live session it holds fails on its next request. Deleting a directory user removes the local row only; the account still exists in the directory and will be re-created as a plain, enabled user the next time it signs in successfully — with every role, permission and connection assignment gone. Prefer <b>Disable</b> when you want the account kept but barred.</p>
+
+<div class="warn"><strong>Warning</strong> Deletion is not offered as reversible anywhere in the interface, and the deletion is recorded in the shared log at WARN severity so that it stands out during an audit.</div>
+
+<h2 id="ch13-builtin">13.11 The built-in Administrator</h2>
+
+<p>The bootstrap account is protected in the interface and again on the server, so the protection holds even for a hand-crafted request:</p>
+
+<table>
+  <thead><tr><th>Attempted action</th><th>Server response</th></tr></thead>
+  <tbody>
+    <tr><td>Disable it</td><td>The built-in Administrator account cannot be disabled.</td></tr>
+    <tr><td>Remove its administrator role</td><td>The built-in Administrator account must remain an administrator.</td></tr>
+    <tr><td>Delete it</td><td>The built-in Administrator account cannot be deleted.</td></tr>
+  </tbody>
+</table>
+
+<p>Its card therefore shows only the <b>Passkey</b> and <b>2FA</b> checkboxes, <b>Reset password</b>, an <b>Unlock</b> button if it is ever flagged as locked, and the note <b>built-in admin</b> (tooltip &ldquo;The built-in administrator cannot be disabled, demoted or deleted.&rdquo;).</p>
+
+<div class="tip"><strong>Tip</strong> Treat the built-in Administrator as a break-glass credential: give it a long, unique password, store that password where your organisation stores emergency credentials, and do the day-to-day administration from a named personal administrator account so that the log attributes every change to a person.</div>
+
+<h2 id="ch13-least-privilege">13.12 Working to least privilege</h2>
+
+<p>The role flags are independent precisely so that you can grant the narrowest useful set. The following practices follow from the behaviour described above.</p>
+
+<dl>
+  <dt>Start every account as a plain user</dt>
+  <dd>Creating a user without the <b>Administrator</b> tick and adding <b>Make power</b> or <b>Make developer</b> only when a concrete task requires it costs one extra click and avoids the far more common mistake of a whole team holding administrator rights.</dd>
+
+  <dt>Do not use Administrator as a synonym for &ldquo;experienced&rdquo;</dt>
+  <dd>The advanced-analysis views and journey sampling come from the <b>power</b> flag, not from the administrator flag. An analyst who needs Conformance Check, Happy Path and Simulation needs <b>Make power</b> — nothing more.</dd>
+
+  <dt>Grant Developer only for the integration console</dt>
+  <dd>It confers no power features. If a data engineer also needs sampling or the advanced views, grant both flags explicitly rather than reaching for the administrator role.</dd>
+
+  <dt>Keep at least two administrators</dt>
+  <dd>The server refuses to leave you with none (&ldquo;This would leave no enabled administrator. Promote or enable another admin first.&rdquo;), but a single administrator who forgets their password and is not the built-in account is an avoidable outage: other administrator accounts <em>do</em> lock after the configured number of failed attempts.</dd>
+
+  <dt>Prefer Disable to Delete</dt>
+  <dd>Disabling bars the account and kills its sessions at once while preserving its roles, connection assignments and history. Delete when the person has left for good.</dd>
+
+  <dt>Decide the second factor as a policy, not per person</dt>
+  <dd>Because a passkey sign-in skips the code step, allowing both passkeys and 2FA for the same population means the effective second factor is whichever the user chooses. If a code is mandatory in your organisation, allow 2FA and leave passkeys off.</dd>
+
+  <dt>Review the list periodically</dt>
+  <dd>Use the <b>LDAP</b> chip to see which directory accounts have signed in at least once and now hold local roles, and the &ldquo;Last sign-in&rdquo; line to spot dormant accounts. Directory users keep their locally granted roles until you remove them, even if the directory entry changes.</dd>
+</dl>
+
+<h2 id="ch13-effect">13.13 Quick reference: what each control does the moment you use it</h2>
+
+<table>
+  <thead><tr><th>Action</th><th>Immediate effect</th></tr></thead>
+  <tbody>
+    <tr><td>Create user</td><td>Account exists and is enabled; it may sign in to the main application straight away.</td></tr>
+    <tr><td>Make admin / Remove admin</td><td>Access to the administration interface begins or ends on the next request; a removed administrator's admin session dies at once.</td></tr>
+    <tr><td>Make power / Remove power</td><td>Advanced-analysis views and journey sampling appear or disappear; the server refuses sampling for a demoted user from that moment.</td></tr>
+    <tr><td>Make developer / Remove developer</td><td>Integration-console access begins or ends on the next request; a revoked user is dropped to the &ldquo;Access denied&rdquo; screen. Logged as granting/revoking the Developer role.</td></tr>
+    <tr><td>Disable</td><td>Sign-in barred; all live sessions on all three surfaces die on their next request.</td></tr>
+    <tr><td>Enable / Unlock</td><td>Sign-in restored and the failed-sign-in counter cleared.</td></tr>
+    <tr><td>Reset password</td><td>Every session of that user on every surface is invalidated; the user must sign in again with the new password.</td></tr>
+    <tr><td>Passkey checkbox on</td><td>The user may enrol and sign in with a passkey (given HTTPS and a hostname).</td></tr>
+    <tr><td>Passkey checkbox off</td><td>Passkey sign-in is blocked immediately and the management controls disappear.</td></tr>
+    <tr><td>2FA checkbox on</td><td>Two-factor becomes mandatory: the next sign-in forces enrolment, or asks for a code if already enrolled.</td></tr>
+    <tr><td>2FA checkbox off</td><td>Password-only sign-in works again; the enrolled secret is retained and re-arms if you tick the box again.</td></tr>
+    <tr><td>All-users Passkey / 2FA checkbox</td><td>Writes the flag for every user that exists now; later accounts are unaffected.</td></tr>
+    <tr><td>Delete</td><td>The account, its passkeys and its recovery codes are removed; the action is logged at WARN.</td></tr>
+  </tbody>
+</table>
+
+<div class="note"><strong>Note</strong> Every action on this tab is written to the shared structured log, visible in the <b>Logging</b> tab, with the client IP and the acting administrator's username. Destructive actions are logged at WARN severity by design so that they stand out among the routine entries.</div>
+
+</section>

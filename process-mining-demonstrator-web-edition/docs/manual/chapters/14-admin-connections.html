@@ -1,0 +1,429 @@
+<section class="chapter" id="ch-admin-connections" data-title="Administration: Database Connections and Directory" data-num="14">
+<h1><span class="chnum">14</span> Administration: Database Connections and Directory</h1>
+
+<p class="chintro">This chapter covers the two administration tabs that decide <em>where</em> the application reads its data from and <em>who</em> is allowed to sign in from outside: <strong>Database Connections</strong> and <strong>Directory (LDAP)</strong>. It explains every field of the connection editor, the TLS options for the database link, how to attach an OpenAI-compatible LLM server and what the built-in SSRF guard will and will not allow, how to list and delete projects, how the optional pre-materialized transitions table works and how to keep it fresh from a scheduler, and how to configure directory sign-in so that directory accounts merge cleanly with local ones. It is written for the person who administers the installation; ordinary users never see these screens.</p>
+
+<div class="role">Requires: <b>Administrator</b> — both tabs live in the admin interface (HTTP :8090, HTTPS :8453) and are reachable only by accounts with the administrator role.</div>
+
+<h2 id="conn-overview">14.1 The Database Connections tab</h2>
+
+<p>A <em>connection</em> is a named definition of one Exasol database — host, port, credentials, schema, TLS settings — together with an optional LLM server and a list of the users who may use it. The tab header states the model in one sentence: &ldquo;Define a database (and optional LLM) server, then assign it to the users who may use it. Each user sees only the connections assigned to them in the main application.&rdquo;</p>
+
+<p>Two facts follow from that model and are worth internalising before you edit anything:</p>
+
+<ul>
+<li>Connections are <strong>defined centrally and assigned individually</strong>. A user who is not assigned a connection cannot select it, and a direct attempt is refused with &ldquo;This connection is not available to you.&rdquo;</li>
+<li>Every signed-in user gets their <strong>own</strong> database session against the connection. Users never share a live session, so one user's query can never see another user's transaction. Anonymous mode (sign-in disabled) shares a single session bucket.</li>
+</ul>
+
+<figure data-fig="admin-05-database-connections"><figcaption>The Database Connections tab: the connection list with host, LLM status and assignments.</figcaption></figure>
+
+<h3 id="conn-list">14.1.1 The connection list</h3>
+
+<table>
+<thead><tr><th>Column</th><th>Shows</th></tr></thead>
+<tbody>
+<tr><td>Name</td><td>The connection name in bold, with its optional comment underneath.</td></tr>
+<tr><td>Host</td><td><code>host:port</code>.</td></tr>
+<tr><td>LLM</td><td>A green <b>yes</b> pill when an LLM server URL or API key is stored, otherwise &ldquo;&mdash;&rdquo;.</td></tr>
+<tr><td>Assigned to</td><td>The assigned usernames, comma-separated, or <b>nobody</b>.</td></tr>
+<tr><td>Edit</td><td>Opens the connection editor.</td></tr>
+</tbody>
+</table>
+
+<p>When nothing is defined yet the table shows a single row: &ldquo;No connections defined yet.&rdquo;</p>
+
+<ol class="steps">
+<li>Open the admin interface and select the <b>Database Connections</b> tab.</li>
+<li>Click <b>+ New connection</b>. The editor opens with Port <b>8563</b>, Certificate mode <b>Verify</b> and Minimum RSA key size <b>2048</b> pre-filled.</li>
+<li>Fill in the Database sub-tab (see 14.2), tick the users who may use the connection, and click <b>Save</b>.</li>
+</ol>
+
+<h3 id="conn-editor">14.1.2 The connection editor</h3>
+
+<p>The editor has three inner tabs &mdash; <b>Database</b>, <b>LLM</b> and <b>Projects</b> &mdash; and a common footer with <b>Save</b> (primary), <b>Test connection</b>, <b>Cancel</b>, and, for an already-saved connection, <b>Delete</b> (danger).</p>
+
+<p>The <b>Projects</b> tab button is disabled while the connection is unsaved; its tooltip reads &ldquo;Save the connection first to list its projects.&rdquo; After a successful save the editor reloads with fresh data and the Projects tab unlocks. Saving without a name is refused with the toast &ldquo;Name is required.&rdquo; Deleting asks <code>Delete connection "&lt;name&gt;"?</code> and is recorded in the log at WARN severity, together with the connection's rebuild token and materialization status, which are deleted with it.</p>
+
+<figure data-fig="admin-09-connection-editor"><figcaption>The connection editor with its Database, LLM and Projects inner tabs.</figcaption></figure>
+
+<div class="warn"><strong>Warning</strong> Saving <em>any</em> change to a connection, changing its assignments, or deleting it immediately drops every live session currently using it. Affected users must reconnect. This is deliberate: a revoked assignment has to take effect at once rather than at the end of someone's working day. If a user's connect happens to be in flight while you save, they receive &ldquo;This connection changed during sign-in. Please reconnect.&rdquo;</div>
+
+<h2 id="conn-database">14.2 The Database sub-tab</h2>
+
+<h3 id="conn-fields">14.2.1 Fields</h3>
+
+<table>
+<thead><tr><th>Field</th><th>Default / placeholder</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Name</td><td>&ldquo;e.g. Production Exasol&rdquo;</td><td>Required. Shown to users in the main application.</td></tr>
+<tr><td>Comment</td><td>&ldquo;optional&rdquo;</td><td>Free text, displayed under the name in the list.</td></tr>
+<tr><td>Host</td><td>&ldquo;db.example.com&rdquo;</td><td>Exasol host name or address.</td></tr>
+<tr><td>Port</td><td>8563</td><td>The Exasol default; used everywhere a port field appears.</td></tr>
+<tr><td>Username</td><td>&mdash;</td><td>The database account the application uses.</td></tr>
+<tr><td>Schema</td><td>&ldquo;optional&rdquo;</td><td>Optional for connecting, but <em>required</em> for provisioning, for listing or deleting projects and for rebuilding transitions.</td></tr>
+<tr><td>Password</td><td>bullets</td><td>Write-only. When a password is stored the label reads &ldquo;(set &mdash; leave blank to keep)&rdquo;. Leave blank to keep it; type to replace it.</td></tr>
+<tr><td>Use TLS</td><td>off</td><td>Reveals the three certificate fields below. Without it, the database link is not encrypted at all.</td></tr>
+<tr><td>Certificate mode</td><td>Verify (system trust store)</td><td>See 14.2.2.</td></tr>
+<tr><td>Fingerprint (SHA-256)</td><td>&ldquo;optional&rdquo;</td><td>Only meaningful in <em>Pin fingerprint</em> mode.</td></tr>
+<tr><td>Minimum RSA key size</td><td>2048</td><td>Stored and carried through every operation for compatibility with the macOS application's connection records, but <strong>not enforced</strong> by the web backend.</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> Do not present <b>Minimum RSA key size</b> to your security reviewers as an active control. The value round-trips faithfully through connect, test, provision, demo generation and rebuild, but the web backend's TLS options do not currently apply it.</div>
+
+<h3 id="conn-tls">14.2.2 Certificate modes</h3>
+
+<dl>
+<dt>Verify (system trust store)</dt>
+<dd>The default. The server certificate must chain to a trust anchor the operating system already trusts, and the host name must match.</dd>
+<dt>Pin fingerprint</dt>
+<dd>The driver pins the server certificate to the SHA-256 fingerprint you enter. Colons are stripped, and the remaining value must be pure hexadecimal, 16 to 128 characters long.</dd>
+<dt>Accept any (insecure)</dt>
+<dd>Disables certificate verification <em>and</em> host name checking. Use it only for laboratory or self-signed setups; anyone on the network path can impersonate the database.</dd>
+</dl>
+
+<p>Mode parsing is whitespace-tolerant and fails <em>closed</em>: any stored value the application does not recognise &mdash; a typo, a legacy record, restored data from an older backup &mdash; is treated as <b>Verify</b>, never as &ldquo;no verification&rdquo;.</p>
+
+<div class="warn"><strong>Warning</strong> In <em>Pin fingerprint</em> mode a blank or non-hexadecimal fingerprint refuses the connection outright with: &ldquo;This connection is set to pin a certificate fingerprint, but the fingerprint is missing or not hexadecimal. Enter the server's SHA-256 fingerprint, or change the certificate mode.&rdquo; This closes an earlier fail-open behaviour in which an unusable fingerprint silently disabled verification while the interface still claimed the certificate was pinned.</div>
+
+<h3 id="conn-provision">14.2.3 Create schema and tables</h3>
+
+<p>The banner on the Database sub-tab reads: &ldquo;Creates the schema named above and the process-mining tables (PROJECTS, JOURNEYS, STEPS, METAS, NOTES) if they don't exist, using the credentials entered here. This requires a database account permitted to <b>CREATE SCHEMA</b> and <b>CREATE TABLE</b> &mdash; only your database administrator can grant those rights; this application cannot.&rdquo;</p>
+
+<ol class="steps">
+<li>Enter Host, Port, Username, Password and, crucially, a <b>Schema</b> name. Without one the button reports &ldquo;Enter a schema name first.&rdquo;</li>
+<li>Optionally tick <b>Also build pre-materialized transitions after provisioning</b> (default off). This is available only in the admin interface.</li>
+<li>Click <b>Create schema &amp; tables</b>. The button shows &ldquo;Creating&hellip;&rdquo; while it works.</li>
+<li>Read the result. Success is green: &ldquo;Created: schema &lt;name&gt;, PROJECTS, JOURNEYS, STEPS, METAS, NOTES&rdquo;, optionally followed by &ldquo;&middot; transitions built (N pairs)&rdquo; or &ldquo;&middot; transitions build failed: &lt;error&gt;&rdquo;. Failure is red and shows the database error, or &ldquo;Could not create the schema.&rdquo;</li>
+</ol>
+
+<p>Provisioning connects <em>without</em> opening a schema (the target may not exist yet), then issues <code>CREATE SCHEMA IF NOT EXISTS</code>, <code>OPEN SCHEMA</code> and the table DDL in the order PROJECTS, JOURNEYS, STEPS, METAS, NOTES. All DDL uses <code>IF NOT EXISTS</code>, so re-running it never disturbs existing data. If a step fails, the result still lists everything that was created <em>before</em> the failure, so partial progress is visible. The schema identifier is safely double-quoted (embedded quotes are doubled), which means mixed-case and special names work &mdash; but remember that a quoted name is case-sensitive in Exasol.</p>
+
+<div class="warn"><strong>Warning</strong> Provisioning uses the password <b>as typed in the form</b>, not the stored one. On a saved connection with a blank password field it runs with an empty password and usually reports an authentication failure even though the saved connection works perfectly. Retype the password before provisioning, testing or generating demo content.</div>
+
+<div class="note"><strong>Note</strong> Because <code>IF NOT EXISTS</code> leaves pre-existing tables untouched, a JOURNEYS table that already exists does not receive the physical layout the application's DDL declares for new tables. Ask your DBA to apply it manually:
+<pre><code>ALTER TABLE JOURNEYS DISTRIBUTE BY EVENT_ID;
+ALTER TABLE JOURNEYS PARTITION BY EVENT_TIME;</code></pre>
+Distributing by EVENT_ID co-locates all events of one journey on one cluster node, so the transition query's window function and every <code>GROUP BY EVENT_ID</code> run node-local; partitioning by EVENT_TIME lets Exasol prune by date range.</div>
+
+<h3 id="conn-assign">14.2.4 Assign to users</h3>
+
+<p>The right-hand column of the Database sub-tab is headed <b>Assign to users</b> and contains a checkbox for every user account known to the installation. Its empty state is &ldquo;No users to assign.&rdquo; Only ticked users see the connection in the main application.</p>
+
+<ol class="steps">
+<li>Open the connection and tick the users who need it.</li>
+<li>Click <b>Save</b>.</li>
+<li>Tell the affected users to reconnect &mdash; the save has already dropped any live sessions on this connection.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> Directory (LDAP) users appear in this grid only after their first successful sign-in, because that is when their local record is created. Assign connections to them afterwards, exactly as for local accounts.</div>
+
+<div class="tip"><strong>Tip</strong> Power users may create and manage their own connections in the main application, and a connection they create is auto-assigned to them. As an administrator you can see and edit those connections here too &mdash; including options such as pre-materialized transitions that the in-app editor does not expose.</div>
+
+<h2 id="conn-llm">14.3 The LLM sub-tab</h2>
+
+<p>The sub-tab is labelled &ldquo;LLM (optional)&rdquo;. It attaches one OpenAI-compatible server to this connection; the AI-supported documentation features in the main application use it.</p>
+
+<table>
+<thead><tr><th>Field</th><th>Placeholder</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Server URL</td><td>https://api.openai.com/v1</td><td>The base URL of any OpenAI-compatible endpoint. Subject to the SSRF guard below.</td></tr>
+<tr><td>Model</td><td>gpt-4o</td><td>The model name sent with requests.</td></tr>
+<tr><td>API key</td><td>bullets</td><td>Write-only, like the database password: the hint &ldquo;(set &mdash; leave blank to keep)&rdquo; appears once a key is stored.</td></tr>
+</tbody>
+</table>
+
+<h3 id="conn-llm-probe">14.3.1 The reachability probe</h3>
+
+<p>Whenever a user connects, and whenever you press <b>Test connection</b>, the application issues <code>GET &lt;Server URL&gt;/models</code> with <code>Authorization: Bearer &lt;API key&gt;</code> if a key is set, using a <strong>5-second</strong> timeout. The server counts as reachable unless the request errors or answers with HTTP 500 or above &mdash; a 4xx still means a server is there. With no URL configured the LLM is simply reported as not reachable, which is not an error. Failures are recorded in the log under operation <code>llm-test</code>; the message users see is &ldquo;LLM server not reachable.&rdquo;</p>
+
+<h3 id="conn-llm-ssrf">14.3.2 The SSRF guard</h3>
+
+<p>The LLM URL is user-supplied, so the backend validates it before making any outbound request:</p>
+
+<ul>
+<li>Only <code>http://</code> and <code>https://</code> are accepted &mdash; anything else is refused with &ldquo;Only http:// and https:// URLs are allowed.&rdquo; A URL without a host gives &ldquo;The URL has no host.&rdquo;</li>
+<li>The host name is resolved and <strong>every</strong> resolved address is checked. If any one of them is disallowed the whole URL is refused: &ldquo;The URL resolves to &lt;reason&gt; (&lt;address&gt;); refused.&rdquo; A host that cannot be resolved gives &ldquo;The host could not be resolved: &lt;host&gt;&rdquo;.</li>
+<li>Always blocked: link-local and cloud-metadata addresses (including 169.254.169.254), multicast, reserved and unspecified addresses. IPv4-mapped IPv6 addresses are unwrapped before the check.</li>
+<li><strong>Loopback and private (RFC 1918) targets are allowed by default</strong>, because a local LLM server &mdash; Ollama, LM Studio, an internal vLLM &mdash; is a first-class use case. Hardened deployments set the environment variable <code>PMW_BLOCK_PRIVATE_LLM_HOSTS=1</code> to refuse those too, with the reasons &ldquo;a loopback address&rdquo; and &ldquo;a private address&rdquo;.</li>
+<li>The outbound connection is <strong>pinned to the vetted IP address</strong>, so DNS rebinding cannot swap the target between the check and the connection, while SNI and certificate verification stay bound to the real host name (internationalised host names are canonicalised first so the pin always applies). Redirects are disabled, so a 3xx response cannot bounce the request to an unvetted host.</li>
+</ul>
+
+<div class="note"><strong>Note</strong> A guard refusal is never shown to end users as an error &mdash; the LLM simply appears unreachable. The reason is written to the log as &ldquo;LLM server URL refused (SSRF guard): &hellip;&rdquo; under operation <code>llm-test</code>. If an LLM you believe to be correct stays stubbornly unreachable, look there first.</div>
+
+<h2 id="conn-test">14.4 Testing a connection</h2>
+
+<ol class="steps">
+<li>Open the connection and retype the database password (and the LLM API key if you want that half tested too).</li>
+<li>Click <b>Test connection</b> in the editor footer. The button shows &ldquo;Testing&hellip;&rdquo;.</li>
+<li>Read the result banners: &ldquo;Database: connection OK&rdquo; or &ldquo;Database: &lt;error&gt;&rdquo;; and, when an LLM URL is filled in, additionally &ldquo;LLM: reachable &mdash; N models&rdquo;, &ldquo;LLM: &lt;error&gt;&rdquo; or &ldquo;LLM server not reachable.&rdquo;</li>
+</ol>
+
+<p>The test opens and immediately closes a throwaway session, so it never disturbs anyone's active connection. Both halves are logged, under operations <code>connection</code> / <code>db-test</code> and <code>llm-test</code>. The test uses the credentials <em>as typed</em>: a blank field tests without a secret rather than falling back to the stored one.</p>
+
+<table>
+<thead><tr><th>Timeout</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>Exasol connect (socket open and login)</td><td>15 s, fixed</td></tr>
+<tr><td>Exasol socket, per statement</td><td>300 s, fixed</td></tr>
+<tr><td>LLM reachability probe</td><td>5 s</td></tr>
+<tr><td>Rebuild, provisioning, project operations</td><td>No application-level timeout; bounded only by the 300 s socket timeout per statement</td></tr>
+</tbody>
+</table>
+
+<h2 id="conn-projects">14.5 The Projects sub-tab</h2>
+
+<p>This sub-tab lists what is actually stored in the connection's schema and is the only place in the admin interface where you can remove a project's data.</p>
+
+<p>The header reads &ldquo;Projects in this schema&rdquo; with a <b>&#8635; Refresh</b> button, and the caption names the schema: &ldquo;Projects stored in <code>&lt;schema&gt;</code>, with their journey and event counts.&rdquo; The listing uses the <strong>stored</strong> connection credentials, so no retyping is required here.</p>
+
+<table>
+<thead><tr><th>Column</th><th>Shows</th></tr></thead>
+<tbody>
+<tr><td>Project</td><td>The project title in bold, with the raw project id on a second line when it differs. An untitled project shows its PROJECT_ID as the title.</td></tr>
+<tr><td>Journeys</td><td>Distinct EVENT_IDs, right-aligned and thousands-separated.</td></tr>
+<tr><td>Events</td><td>Row count, right-aligned and thousands-separated.</td></tr>
+<tr><td>Delete</td><td>Danger button; see the procedure below.</td></tr>
+</tbody>
+</table>
+
+<p>Possible states: &ldquo;Save the connection first to list its projects.&rdquo; (unsaved connection), &ldquo;Open the Projects tab to load them.&rdquo;, &ldquo;Loading projects&hellip;&rdquo;, &ldquo;No projects found in this schema.&rdquo;, or a red error &mdash; either the database error or the fallback &ldquo;Could not read projects.&rdquo;</p>
+
+<div class="note"><strong>Note</strong> The counts consider <strong>ORIGINAL data only</strong>; sample sets are excluded, so the numbers here are smaller than the raw row count of a schema that contains samples. A project is listed if it exists in <em>either</em> PROJECTS or JOURNEYS, which makes orphans on either side visible. A missing table is tolerated rather than treated as an error, so an unprovisioned schema yields an empty list.</div>
+
+<h3 id="conn-project-delete">14.5.1 Deleting a project</h3>
+
+<div class="role">Requires: <b>Administrator</b> (in the main application: ownership of the connection plus the admin, power or developer role).</div>
+
+<ol class="steps">
+<li>Open the connection, switch to <b>Projects</b> and press <b>&#8635; Refresh</b> so you are looking at current counts.</li>
+<li>Click <b>Delete</b> on the project's row.</li>
+<li>Read the confirmation carefully: <code>Delete project "&lt;id&gt;"?</code> &mdash; &ldquo;This clears its rows from PROJECTS, JOURNEYS, STEPS, METAS, NOTES and TRANSITIONS_RAW in this schema. This cannot be undone.&rdquo;</li>
+<li>Confirm. The toast reports the scale of what was removed: &ldquo;Project deleted (N events)&rdquo;. Failures surface the database error as a toast.</li>
+</ol>
+
+<p>The deletion issues <code>DELETE … WHERE PROJECT_ID = '&lt;id&gt;'</code> against each table in this order &mdash; children before the parent:</p>
+
+<table>
+<thead><tr><th>Order</th><th>Table</th><th>What is lost</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>JOURNEYS</td><td>The event log itself, <em>including every sample set</em> (no SAMPLE_SET filter is applied).</td></tr>
+<tr><td>2</td><td>STEPS</td><td>Step descriptions, colours, shapes, scores, end-of-process flags and step groups.</td></tr>
+<tr><td>3</td><td>METAS</td><td>The three meta-column titles.</td></tr>
+<tr><td>4</td><td>NOTES</td><td>Every note and comment thread attached to the project.</td></tr>
+<tr><td>5</td><td>TRANSITIONS_RAW</td><td>The pre-materialized transition pairs, if the table exists.</td></tr>
+<tr><td>6</td><td>PROJECTS</td><td>The project row itself.</td></tr>
+</tbody>
+</table>
+
+<p>Tables that are absent are <strong>skipped, not treated as errors</strong> &mdash; NOTES is created lazily and TRANSITIONS_RAW is optional, so neither is guaranteed to exist. The response lists the tables that were actually cleared. Every deletion is logged at WARN severity under operation <code>connection</code>, naming the user, the project id, the connection and the outcome.</p>
+
+<div class="warn"><strong>Warning</strong> There is no undo and no recycle bin. The application's own backups deliberately exclude event data &mdash; they capture settings, presets, layouts and connection definitions, not JOURNEYS &mdash; so a deleted project can be restored only from your database's own backups. The project's notes are destroyed with it.</div>
+
+<h2 id="conn-materialized">14.6 Pre-materialized transitions</h2>
+
+<h3 id="conn-mat-what">14.6.1 What TRANSITIONS_RAW is and why it exists</h3>
+
+<p>The process map is a directly-follows graph. Normally the application computes it <strong>live</strong> on every reload: a <code>LEAD()</code> window over JOURNEYS pairs each event with its successor (ordered by EVENT_TIME, then STEP_ID), and the result is aggregated into count, average, minimum, maximum and standard deviation of the gap per (from-step, to-step) pair. On large logs that window function dominates the query time, and it is paid again for every filter change.</p>
+
+<p><code>TRANSITIONS_RAW</code> stores the pairing <strong>once</strong>: one row per consecutive step pair, with the columns PROJECT_ID, EVENT_ID, FROM_STEP, TO_STEP, FROM_TIME, TO_TIME, DUR_SECS (the gap, precomputed in seconds) and SAMPLE_SET. When the map reads from it, the request-time query is a plain <code>GROUP BY</code> aggregate with no window function at all &mdash; in the words of the admin interface, &ldquo;much faster for interactive filtering on large logs&rdquo;.</p>
+
+<p>The table is a sixth, optional table alongside the five canonical ones. It is built with <code>CREATE OR REPLACE TABLE … AS SELECT</code> into a staging table so that every column type &mdash; critically EVENT_ID, whose type varies between deployments &mdash; is inherited from JOURNEYS exactly; a hard-coded type would make the semi-join fail with Exasol's &ldquo;Incomparable Types&rdquo; error. The pairing covers every project and every sample set in one pass, partitioning by (PROJECT_ID, SAMPLE_SET, EVENT_ID) because an EVENT_ID is only unique within one project and sample set. After the build the application applies <code>DISTRIBUTE BY EVENT_ID</code> on a best-effort basis (a failure there never aborts the rebuild &mdash; distribution is only an optimisation), counts the rows, then drops the old table and renames the staging table into place. Readers are never blocked; the swap leaves a sub-millisecond window with no live table, during which reads simply fall back to the live query.</p>
+
+<h3 id="conn-mat-flag">14.6.2 The per-connection toggle</h3>
+
+<p>The banner on the Database sub-tab carries the bold checkbox <b>Use pre-materialized transitions</b> and this explanation: &ldquo;Reads the process map from a prebuilt <code>TRANSITIONS_RAW</code> table instead of running the windowed query live &mdash; much faster for interactive filtering on large logs. It falls back to the live query until the table is built, so <b>rebuild it after each load of <code>JOURNEYS</code></b>.&rdquo;</p>
+
+<p>The flag is stored per connection and defaults to <strong>off</strong>. It is captured when a user connects <em>and re-read on every request</em>, so toggling it takes effect on the user's next reload &mdash; they do not have to reconnect. The checkbox exists only in the admin interface; the in-app connection editor used by power users does not expose it, even for connections they own.</p>
+
+<p>With the flag on, the map query reads TRANSITIONS_RAW using the same filter clauses as the live query (the table carries PROJECT_ID, SAMPLE_SET and EVENT_ID). <strong>Any</strong> read failure &mdash; table missing, never built, dropped by a DBA &mdash; is non-fatal: the application falls back to the live query so the map never breaks, and logs a warning under operation <code>materialize</code>: &ldquo;Pre-materialized transitions are enabled but reading TRANSITIONS_RAW failed for project … &mdash; falling back to the live query. Cause: …&rdquo;.</p>
+
+<h3 id="conn-mat-indicator">14.6.3 How the application indicates live versus pre-materialized</h3>
+
+<p>Users can always see which path served their map. A pill in the detail pane header (not shown in the Individual Journey view) reports the mode:</p>
+
+<table>
+<thead><tr><th>Pill</th><th>Meaning</th><th>Tooltip</th></tr></thead>
+<tbody>
+<tr><td>&#9889; Pre-materialized</td><td>The map was read from TRANSITIONS_RAW.</td><td>&ldquo;Transitions are read from the pre-materialized TRANSITIONS_RAW table.&rdquo;</td></tr>
+<tr><td>&#9888; Live (not built)</td><td>The flag is on but the table is unusable, so the live query ran instead.</td><td>&ldquo;Pre-materialized transitions are enabled for this connection, but TRANSITIONS_RAW is not built yet &mdash; running the live query meanwhile. Rebuild it in the admin interface (Connections &rarr; Rebuild now).&rdquo;</td></tr>
+<tr><td>&#8635; Live query</td><td>The flag is off; this is the normal live computation.</td><td>&ldquo;Transitions are computed live from the event log on each load.&rdquo;</td></tr>
+</tbody>
+</table>
+
+<p>The graph API reports the same information as <code>transitionsMode</code> (<code>materialized</code>, <code>live</code> or <code>fallback</code>) together with <code>queryMs</code>, the server-side wall-clock time of the database queries, which the chart footer displays as, for example, &ldquo;123 ms&rdquo; or &ldquo;1.23 s&rdquo;. Comparing that figure before and after a rebuild is the simplest way to judge whether materialisation is worth it on your data.</p>
+
+<figure data-fig="app-03-achart"><figcaption>The transitions-mode pill and query time appear with the process map in the main application.</figcaption></figure>
+
+<div class="warn"><strong>Warning</strong> TRANSITIONS_RAW is a <em>snapshot</em>. It goes stale the moment JOURNEYS changes, and nothing rebuilds it automatically &mdash; not an ETL load, not demo-content generation, not creating or deleting a sample set. If the table still exists it will serve <em>stale</em> pairs without complaint; if it was never built the map shows &ldquo;&#9888; Live (not built)&rdquo;. Make a rebuild the last step of every load.</div>
+
+<h3 id="conn-mat-rebuild">14.6.4 Rebuild now</h3>
+
+<ol class="steps">
+<li>Open the connection in the admin interface and make sure a <b>Schema</b> is set &mdash; a rebuild without one fails with &ldquo;A schema name is required.&rdquo;</li>
+<li>Save the connection if you have not already; <b>Rebuild now</b> is disabled until then, with the tooltip &ldquo;Save the connection first&rdquo;.</li>
+<li>Click <b>Rebuild now</b>. The status shows &ldquo;Rebuilding&hellip; (this runs the pairing once and may take a while)&rdquo;.</li>
+<li>Wait for the result: &ldquo;Built N pairs.&rdquo; in green, or the error text in red.</li>
+</ol>
+
+<p>The last outcome is stored per connection and shown again whenever the editor is reopened, as one of:</p>
+
+<ul>
+<li>&ldquo;Not built yet &mdash; the live query is used until you rebuild.&rdquo;</li>
+<li>&ldquo;Last built: &lt;date&gt; &middot; N pairs.&rdquo;</li>
+<li>&ldquo;Last rebuild failed: &lt;error&gt;&rdquo; (red).</li>
+</ul>
+
+<p>A rebuild is idempotent and safe to repeat. Two rebuilds of the <em>same</em> connection never overlap &mdash; they would race on the staging swap &mdash; so a second concurrent call is refused with HTTP 409 &ldquo;A rebuild is already running for this connection.&rdquo; Different connections rebuild independently.</p>
+
+<div class="tip"><strong>Tip</strong> When you provision a new schema, tick <b>Also build pre-materialized transitions after provisioning</b>. The table is empty until JOURNEYS is loaded, but its structure exists immediately, so the flag can be switched on straight away and the first real rebuild has nothing to create.</div>
+
+<h3 id="conn-mat-token">14.6.5 Rebuild from a script (API) and the bearer token</h3>
+
+<p>Inside the same banner is a collapsible section headed <b>Rebuild from a script (API)</b>: &ldquo;Let a scheduler (cron / ETL) rebuild <em>this connection</em> right after loading its JOURNEYS, without an admin login. The token below is scoped to this connection only, and calls are rate-limited.&rdquo;</p>
+
+<p>The endpoint lives on the <strong>admin service</strong>, not the application:</p>
+
+<pre><code>POST /api/connections/&lt;connection-id&gt;/rebuild-transitions</code></pre>
+
+<p>It accepts either a signed-in admin session or the header <code>Authorization: Bearer &lt;token&gt;</code>, and it uses the connection's <strong>stored</strong> credentials &mdash; so the calling script never handles a database password.</p>
+
+<ol class="steps">
+<li>Save the connection. Until then the status line reads &ldquo;save the connection first&rdquo;.</li>
+<li>Expand <b>Rebuild from a script (API)</b> and click <b>Generate / rotate token</b>. Confirm the dialog: &ldquo;Generate a new token for this connection? Any existing token stops working.&rdquo;</li>
+<li>Copy the token from the panel headed &ldquo;New token (copy it now &mdash; it is not shown again):&rdquo; and store it in your scheduler's secret store.</li>
+<li>Use the &#128203; button to copy the ready-made curl example, which contains the real token while it is still visible on screen:
+<pre><code>curl -k -X POST \
+  -H "Authorization: Bearer &lt;token&gt;" \
+  "https://&lt;admin-host&gt;:8453/api/connections/&lt;connection-id&gt;/rebuild-transitions"</code></pre>
+</li>
+<li>Add that call as the final step of the ETL job that loads JOURNEYS.</li>
+</ol>
+
+<p>To rotate, repeat step 2: the new token replaces the old one instantly, so update the scheduler in the same maintenance window. To withdraw access entirely, use <b>Revoke</b> (shown only while a token is set), which confirms with &ldquo;Revoke this connection's token? A scheduler using it will stop working.&rdquo; The status line tracks the state as &ldquo;a token is set for this connection&rdquo; or &ldquo;no token set&rdquo;. Deleting the connection deletes its token as well.</p>
+
+<table>
+<thead><tr><th>Property</th><th>Behaviour</th></tr></thead>
+<tbody>
+<tr><td>Scope</td><td>A token only ever authorises the rebuild endpoint of <em>its own</em> connection.</td></tr>
+<tr><td>Storage</td><td>A 32-byte URL-safe random value; only its SHA-256 hash is stored, and it is verified in constant time. The plaintext is unrecoverable &mdash; if it is lost, rotate.</td></tr>
+<tr><td>Rate limit</td><td>60-second cooldown per connection for token callers: HTTP 429 &ldquo;Rebuild throttled &mdash; try again in Ns.&rdquo; Admin-session calls are never throttled.</td></tr>
+<tr><td>Single flight</td><td>HTTP 409 &ldquo;A rebuild is already running for this connection.&rdquo;</td></tr>
+<tr><td>Other errors</td><td>401 &ldquo;Not authenticated&rdquo; without a valid session or token; 404 &ldquo;No such connection.&rdquo;</td></tr>
+<tr><td>Auditing</td><td>Every rebuild logs &ldquo;&hellip;rebuilt materialised transitions for connection '&lt;name&gt;' (&lt;id&gt;) &mdash; ok, N pairs&rdquo; or &ldquo;&hellip;failed: &lt;error&gt;&rdquo; under operation <code>materialize</code>, with the actor recorded as the admin username or <code>api-token</code>. Token generation and revocation are logged at WARN.</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> The <code>-k</code> in the example curl skips TLS verification and exists only for installations still using a self-signed certificate. Remove it once you have installed a certificate your scheduler's host trusts. Also remember that the port in the example is the <em>admin</em> port (HTTPS 8453 / HTTP 8090 by default, overridable with <code>PMW_ADMIN_HTTPS_PORT</code> / <code>PMW_ADMIN_PORT</code>), not the application's.</div>
+
+<h2 id="ldap">14.7 Directory (LDAP)</h2>
+
+<p>The Directory tab lets the <em>main application</em> accept sign-ins from an LDAP directory using a search-and-bind flow. Its header states the merge model: &ldquo;Directory users are created here automatically on first login as plain, enabled users &mdash; grant them a role or database connections like any other user. Local accounts always keep working.&rdquo;</p>
+
+<figure data-fig="admin-06-directory-ldap"><figcaption>The Directory (LDAP) tab: server settings, the service account and the two test tools.</figcaption></figure>
+
+<h3 id="ldap-enable">14.7.1 Enabling directory sign-in</h3>
+
+<p>Three checkboxes sit in the top banner:</p>
+
+<dl>
+<dt>Enable directory sign-in for the main app</dt>
+<dd>Turns on LDAP authentication for the application itself.</dd>
+<dt>Also allow directory sign-in to this admin interface</dt>
+<dd>Extends it to the admin interface. Note the accompanying text: &ldquo;A directory account can only reach the admin interface once it has been promoted to <b>admin</b> in the Users tab. Local administrators always work regardless of this setting.&rdquo;</dd>
+<dt>Show the Authentication Server availability indicator on the login panels</dt>
+<dd>Controls the small availability LED shown below the sign-in form (see <a href="#ch05">Signing in</a>). When on (the default), both the app and admin login panels display a live green/red indicator reporting whether the directory server is reachable. Turn it off to hide that indicator from users while keeping directory sign-in working. This setting only has an effect once a directory is configured.</dd>
+</dl>
+
+<div class="warn"><strong>Warning</strong> The administrator role is never granted by the directory. Group membership, directory attributes and organisational units confer nothing; every role is granted explicitly in the Users tab. Keep at least one <em>local</em> administrator account &mdash; it is your break-glass access if the directory becomes unreachable.</div>
+
+<h3 id="ldap-server">14.7.2 Server settings</h3>
+
+<table>
+<thead><tr><th>Field</th><th>Default / placeholder</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Server URI</td><td>&ldquo;ldap://dir.example.com:389 or ldaps://dir.example.com:636&rdquo;</td><td>Plain LDAP or LDAPS.</td></tr>
+<tr><td>Use StartTLS (upgrade a plain ldap:// connection)</td><td>off</td><td>Upgrades a plain connection to TLS after connecting.</td></tr>
+<tr><td>Verify server certificate</td><td><b>on</b></td><td>Leave it on in production.</td></tr>
+<tr><td>CA certificate (PEM, optional)</td><td>&mdash;</td><td>Supply the issuing CA when the directory uses a private PKI.</td></tr>
+</tbody>
+</table>
+
+<p>The tab notes that for a laboratory you may use a plain <code>ldap://</code> URI with StartTLS off &mdash; in which case the password travels in the clear. Do not do this on a production network.</p>
+
+<h3 id="ldap-search">14.7.3 Service account and search</h3>
+
+<table>
+<thead><tr><th>Field</th><th>Default / placeholder</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Bind DN</td><td>&ldquo;cn=readonly,dc=example,dc=com&rdquo;</td><td>A read-only service account; leave blank for an anonymous bind.</td></tr>
+<tr><td>Bind password</td><td>bullets</td><td>Write-only: the hint &ldquo;(set &mdash; leave blank to keep)&rdquo; appears once stored. Unlike the database tests, a blank field here <em>reuses the stored password</em> when testing.</td></tr>
+<tr><td>Base DN</td><td>&ldquo;ou=people,dc=example,dc=com&rdquo;</td><td>The subtree searched for user entries.</td></tr>
+<tr><td>User filter</td><td><code>(uid={username})</code></td><td><code>{username}</code> is substituted with what the user typed.</td></tr>
+<tr><td>Login attribute</td><td><code>uid</code></td><td>Becomes the username inside the application.</td></tr>
+<tr><td>Email attribute</td><td><code>mail</code></td><td></td></tr>
+<tr><td>Name attribute</td><td><code>cn</code></td><td>Becomes the display name shown beside the username.</td></tr>
+</tbody>
+</table>
+
+<h3 id="ldap-test">14.7.4 Configuring and testing directory sign-in</h3>
+
+<div class="role">Requires: <b>Administrator</b></div>
+
+<ol class="steps">
+<li>Enter the <b>Server URI</b> and choose the transport: LDAPS, or plain LDAP with <b>Use StartTLS</b> ticked. Leave <b>Verify server certificate</b> on and paste the issuing CA into <b>CA certificate (PEM, optional)</b> if it is not publicly trusted.</li>
+<li>Click <b>Test server connection</b>. Success reads &ldquo;Server reachable &mdash; service bind OK&rdquo;; a failure appears as a warning with the error text.</li>
+<li>Fill in <b>Bind DN</b>, <b>Bind password</b>, <b>Base DN</b> and the <b>User filter</b>, then adjust the three attribute names if your directory does not use uid/mail/cn.</li>
+<li>In <b>Test a user login</b>, enter a real <b>Test username</b> and <b>Test password</b> and click <b>Test</b>. Three results are stacked:
+  <ul>
+    <li>&ldquo;Service bind: OK&rdquo; or &ldquo;Service bind failed: &lt;error&gt;&rdquo;</li>
+    <li>&ldquo;Search matched N entry/entries (&lt;DN&gt;)&rdquo; &mdash; informational when exactly one entry matched, a warning otherwise</li>
+    <li>&ldquo;User login: OK &mdash; &lt;username&gt; (&lt;dn&gt;)&rdquo; or a warning such as &ldquo;User login failed&rdquo;</li>
+  </ul>
+</li>
+<li>Tick <b>Enable directory sign-in for the main app</b>, and <b>Also allow directory sign-in to this admin interface</b> only if you intend directory-based administrators.</li>
+<li>Click <b>Save</b>. The toast confirms &ldquo;Directory settings saved&rdquo;.</li>
+</ol>
+
+<div class="tip"><strong>Tip</strong> If the user test reports more than one matching entry, tighten the <b>User filter</b>. A filter that can match several entries makes sign-in ambiguous, and the multi-match result is deliberately shown as a warning rather than as success.</div>
+
+<div class="note"><strong>Note</strong> <b>Test server connection</b> checks the server and the service bind alone; <b>Test a user login</b> performs the full search-and-bind for one account. Use the first to diagnose network, TLS and service-account problems, and the second to diagnose Base DN, filter and attribute problems. All saves and tests are recorded in the log under operation <code>ldap</code>.</div>
+
+<h3 id="ldap-merge">14.7.5 How directory users merge with local ones</h3>
+
+<p>Directory accounts are not pre-provisioned. A directory user becomes visible to you only after they have signed in successfully for the first time, at which point a local record is created automatically: a plain, enabled user with no roles and no connections. From then on the account behaves like any other in the Users tab, with these differences:</p>
+
+<table>
+<thead><tr><th>Aspect</th><th>Local account</th><th>Directory account</th></tr></thead>
+<tbody>
+<tr><td>Source pill in the Users list</td><td><b>local</b></td><td><b>LDAP</b>, with the display name shown beside the username</td></tr>
+<tr><td>Password</td><td>Stored by the application; <b>Reset password</b> is available</td><td>Verified by the directory; <b>Reset password</b> is hidden &mdash; change it in the directory</td></tr>
+<tr><td>Roles (admin, power, developer)</td><td>Granted in the Users tab</td><td>Granted in the Users tab &mdash; never inherited from the directory</td></tr>
+<tr><td>Passkey and two-factor permissions</td><td>Per user or via the all-users master row</td><td>Identical &mdash; both can be allowed for directory users too</td></tr>
+<tr><td>Database connections</td><td>Assigned in the Database Connections tab</td><td>Identical, once the account exists</td></tr>
+<tr><td>Enable / Disable / Unlock</td><td>Available</td><td>Available &mdash; disabling here blocks sign-in even if the directory still accepts the password</td></tr>
+</tbody>
+</table>
+
+<p>The <b>All / Local / LDAP</b> filter chips at the top of the Users tab, each with a live count, let you see the two populations separately.</p>
+
+<div class="note"><strong>Note</strong> Once a directory is configured, both sign-in pages show a small <b>directory-server LED</b> &mdash; a green or red dot with &ldquo;Directory server available&rdquo; or &ldquo;Directory server unavailable&rdquo;. It comes from a cached probe with a 20-second lifetime and never delays the page. A red dot before anyone has even typed a password usually points at the network or the service account rather than at the user.</div>
+
+<h2 id="conn-checklist">14.8 Operational checklist</h2>
+
+<table>
+<thead><tr><th>Situation</th><th>What to do</th></tr></thead>
+<tbody>
+<tr><td>A test or provisioning run fails with an authentication error on a connection you know works</td><td>Retype the password. Test, provision and demo generation use the typed value, never the stored one.</td></tr>
+<tr><td>Users report the map is slow after an ETL load</td><td>Check the pill in the detail pane. &ldquo;&#9888; Live (not built)&rdquo; means TRANSITIONS_RAW is unusable &mdash; press <b>Rebuild now</b>, then automate it with the API token.</td></tr>
+<tr><td>The map shows figures that do not match the source system</td><td>Suspect a stale TRANSITIONS_RAW. Rebuild it, or untick <b>Use pre-materialized transitions</b> to compare against the live query.</td></tr>
+<tr><td>An LLM server is configured but always shows as unreachable</td><td>Look in the Logging tab for operation <code>llm-test</code>. An SSRF-guard refusal is logged there but never shown to users.</td></tr>
+<tr><td>A scheduler's rebuild call returns 429</td><td>It is inside the 60-second per-connection cooldown. Call it once per load, not in a retry loop.</td></tr>
+<tr><td>A rebuild token was lost</td><td>It cannot be recovered &mdash; only its hash is stored. Generate a new one and update the scheduler.</td></tr>
+<tr><td>A directory user cannot be assigned a connection</td><td>They have never signed in. The local record &mdash; and therefore the assignment checkbox &mdash; is created on first successful sign-in.</td></tr>
+<tr><td>Everyone was disconnected unexpectedly</td><td>Someone saved the connection, changed its assignments or deleted it. This always drops live sessions immediately.</td></tr>
+</tbody>
+</table>
+
+</section>

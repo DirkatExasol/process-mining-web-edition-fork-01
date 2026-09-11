@@ -1,0 +1,235 @@
+<section class="chapter" id="ch-architecture" data-title="Architecture and the Four Surfaces" data-num="2">
+
+<h1><span class="chnum">2</span> Architecture and the Four Surfaces</h1>
+
+<p class="chintro">Process Mining Demonstrator — Web Edition is not one server but four independent processes: one compute backend and three browser surfaces. This chapter explains what each process does, which ports it listens on, how the browser surfaces pass your identity to the compute backend, where every piece of persistent state is written, and what happens between a click in the browser and a row coming back from Exasol. Read it before you install, before you put the product behind a proxy, and before you plan backups. It is written for administrators and for anyone who needs to reason about the product beyond a single machine.</p>
+
+<h2 id="arch-overview">The four processes at a glance</h2>
+
+<p>All four processes are started by the single launcher <code>run.sh</code> (or, in Docker, by the same script used as the image's <code>CMD</code>). They are separate operating-system processes, they can fail independently, and only one of them ever speaks to the database.</p>
+
+<table>
+<thead><tr><th>Process</th><th>Source directory</th><th>HTTP</th><th>HTTPS</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><b>Compute backend</b></td><td><code>backend/</code></td><td>—</td><td><b>8000</b> (always TLS)</td><td>Exasol access, analytics, simulation, sampling, LLM proxy, settings store, licence watchdog, the integration abstraction layer and the file-source watchdog</td></tr>
+<tr><td><b>Main application (GUI server)</b></td><td><code>frontend/</code></td><td><b>8080</b></td><td><b>8443</b></td><td>Serves the React single-page application, proxies <code>/api/*</code> to the compute backend, enforces sign-in</td></tr>
+<tr><td><b>Admin interface</b></td><td><code>admin/</code></td><td><b>8090</b></td><td><b>8453</b></td><td>TLS and certificates, users, database connections, LDAP, logging, backups, licence upload, customisation, in-place restart</td></tr>
+<tr><td><b>Integration console</b></td><td><code>integration/</code></td><td><b>8100</b></td><td><b>8463</b></td><td>Data-source configuration and imports; sign-in restricted to developers and administrators</td></tr>
+</tbody>
+</table>
+
+<h3 id="arch-backend">The compute backend (port 8000)</h3>
+
+<p>The compute backend is the only process that opens a connection to Exasol, the only one that calls a configured LLM server, and the only one that runs analytics. It listens on <b>HTTPS only</b>, on loopback by default (<code>PMW_BACKEND_HOST</code> is <code>127.0.0.1</code>), and it is never published to the browser. On start it mints an internal self-signed certificate at <code>data/certs/internal.crt</code> and <code>data/certs/internal.key</code>; that certificate exists independently of the user-facing TLS mode, so the hop from the GUI server to the backend is encrypted even when the product is otherwise served over plain HTTP.</p>
+
+<p>Because the browser never talks to the backend directly, the backend can run on a different host — ideally one close to the database. See <a href="#arch-split">Splitting the deployment</a>.</p>
+
+<div class="note"><strong>Note</strong> The backend also hosts the integration API under <code>/api/integration</code>. The integration console has no analytics engine of its own; it proxies to the same backend that the main application uses.</div>
+
+<h3 id="arch-gui">The main application (ports 8080 / 8443)</h3>
+
+<p>The GUI server delivers the compiled SPA and acts as the authenticating reverse proxy for <code>/api/*</code>. It holds the session cookie, validates it on every request, and only then forwards the call to the compute backend. Any enabled user may sign in here. Sign-in can be switched off entirely for single-user demonstrations with the <b>Require sign-in for the main application</b> checkbox in the admin <b>Users</b> tab (default: on).</p>
+
+<h3 id="arch-admin">The admin interface (ports 8090 / 8453)</h3>
+
+<div class="role">Requires: <b>Administrator</b></div>
+
+<p>The admin interface is a server-rendered application, not part of the SPA. It manages everything the other surfaces merely consume: users and roles, database connections and their assignments, TLS certificates and mode, the directory (LDAP) configuration, logging, backups, the runtime licence, sign-in page customisation, and the on/off switch for the integration console. It also owns the <b>&#8635; Restart app server</b> button that rebinds all listeners after a TLS change.</p>
+
+<p>Two properties make the admin interface the recovery surface of the whole product: it keeps running when the compute backend has stopped (so a licence can always be uploaded), and it falls back to HTTP if the configured TLS mode has no usable certificate (so a bad certificate can never lock you out).</p>
+
+<figure data-fig="admin-01-overview"><figcaption>The admin interface on its own port — a separate process, a separate session, and the only surface that can change the deployment's configuration.</figcaption></figure>
+
+<h3 id="arch-integration">The integration console (ports 8100 / 8463)</h3>
+
+<div class="role">Requires: <b>Developer</b> or <b>Administrator</b></div>
+
+<p>The integration console configures data sources and source types and runs imports into a destination connection. Its ports are derived by convention as <i>admin port + 10</i> (8090&nbsp;+&nbsp;10 and 8453&nbsp;+&nbsp;10) unless <code>PMW_INTEGRATION_PORT</code> / <code>PMW_INTEGRATION_HTTPS_PORT</code> override them, and its bind address defaults to whatever <code>PMW_ADMIN_HOST</code> is.</p>
+
+<p>Power users are refused here. A valid password from an account without the Developer or Administrator role is answered with 403 and the message <i>"You need the Developer role to use the integration console. Ask an administrator to grant it."</i> The same gate is repeated inside the compute backend on every <code>/api/integration</code> endpoint, so the restriction cannot be side-stepped by calling through the main application's proxy.</p>
+
+<p>An administrator can switch the console off completely (admin <b>Integration</b> tab, checkbox <b>Enable the integration console</b>). While it is off, browser navigations receive a 503 page titled <b>Console unavailable</b> with the text <i>"The integration console has been turned off by the administrator."</i>, and API calls receive the same text as JSON.</p>
+
+<figure data-fig="integ-01-console"><figcaption>The integration console — a third browser surface with its own port, its own session cookie and a role gate of its own.</figcaption></figure>
+
+<h2 id="arch-ports">Ports, binding and the Docker +2000 offset</h2>
+
+<p>Every port and bind address is an environment variable read by all four processes from one shared configuration module.</p>
+
+<table>
+<thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>PMW_BACKEND_HOST</code></td><td><code>127.0.0.1</code></td><td>Bind address of the compute backend. Keep it on loopback unless the backend runs on its own host.</td></tr>
+<tr><td><code>PMW_BACKEND_PORT</code></td><td><code>8000</code></td><td>Compute-backend port (HTTPS, internal certificate).</td></tr>
+<tr><td><code>PMW_FRONTEND_HOST</code></td><td><code>127.0.0.1</code> (Docker image: <code>0.0.0.0</code>)</td><td>Bind address of the GUI server.</td></tr>
+<tr><td><code>PMW_FRONTEND_PORT</code> / <code>PMW_FRONTEND_HTTPS_PORT</code></td><td><code>8080</code> / <code>8443</code></td><td>Main-application HTTP and HTTPS ports.</td></tr>
+<tr><td><code>PMW_ADMIN_HOST</code></td><td><code>127.0.0.1</code> (Docker image: <code>0.0.0.0</code>)</td><td>Bind address of the admin interface.</td></tr>
+<tr><td><code>PMW_ADMIN_PORT</code> / <code>PMW_ADMIN_HTTPS_PORT</code></td><td><code>8090</code> / <code>8453</code></td><td>Admin HTTP and HTTPS ports.</td></tr>
+<tr><td><code>PMW_INTEGRATION_HOST</code></td><td>= <code>PMW_ADMIN_HOST</code></td><td>Bind address of the integration console.</td></tr>
+<tr><td><code>PMW_INTEGRATION_PORT</code> / <code>PMW_INTEGRATION_HTTPS_PORT</code></td><td>admin port + 10 → <code>8100</code> / <code>8463</code></td><td>Integration console HTTP and HTTPS ports.</td></tr>
+</tbody>
+</table>
+
+<p>In Docker all four processes run inside <b>one image</b> (<code>process-mining-web:latest</code>, container <code>process-mining-web</code>), and the published host ports are offset by <b>+2000</b> so they do not collide with other local services:</p>
+
+<table>
+<thead><tr><th>Host port</th><th>Container port</th><th>Surface</th></tr></thead>
+<tbody>
+<tr><td><b>10080</b> / <b>10443</b></td><td>8080 / 8443</td><td>Main application (HTTP / HTTPS)</td></tr>
+<tr><td><b>10090</b> / <b>10453</b></td><td>8090 / 8453</td><td>Admin interface (HTTP / HTTPS)</td></tr>
+<tr><td><b>10100</b> / <b>10463</b></td><td>8100 / 8463</td><td>Integration console (HTTP / HTTPS)</td></tr>
+</tbody>
+</table>
+
+<p>Port 8000 is deliberately <b>not published</b>: inside the image <code>PMW_BACKEND_HOST</code> is pinned to <code>127.0.0.1</code>, and only the six surface ports are exposed. The HTTPS host ports do nothing until TLS is switched to <i>Optional</i> or <i>Required</i> in the admin interface.</p>
+
+<div class="warn"><strong>Warning</strong> The README's "Running with Docker" section still quotes <code>http://localhost:8080</code> and <code>http://localhost:8090</code>. That text predates the +2000 offset. With the shipped <code>docker-compose.yml</code> the correct addresses are <b>http://localhost:10080</b> and <b>http://localhost:10090</b>; the compose file is authoritative.</div>
+
+<h3 id="arch-dev-mode">What changes in development mode</h3>
+
+<p><code>./run.sh --dev</code> starts only the compute backend, the admin interface and the Vite dev server on <code>http://localhost:5173</code>. There is <b>no GUI server and no integration console</b> in this mode, and <code>PMW_REQUIRE_PROXY_AUTH</code> is set to <code>0</code> automatically because Vite proxies straight to the backend with no authenticating proxy in between. Everything is loopback in development; do not carry that setting into a real deployment.</p>
+
+<h2 id="arch-request-flow">How a request travels</h2>
+
+<p>The following walkthrough covers an ordinary data call in the main application — for example, loading a process map. The integration console follows exactly the same path with its own cookie and its own <code>/api</code> proxy.</p>
+
+<ol class="steps">
+<li>The browser requests a page from the GUI server on port 8080 (or 8443 when TLS is on). The SPA is served as static files; nothing about the database is involved yet.</li>
+<li>The SPA issues an API call, for example <code>GET /api/graph…</code>, to the same origin. It never addresses the compute backend directly and does not know its address.</li>
+<li>The GUI server validates the <code>pmw_session</code> cookie: signature, audience, session epoch, absolute lifetime, and the live user record (the account must still exist, still be enabled, and still hold any role the surface requires). If validation fails, the call is answered with <b>401 "Authentication required."</b> and never reaches the backend.</li>
+<li>Having established who the caller is, the proxy injects the trusted header <b><code>X-PMW-User</code></b> with the signed-in username, adds the proxy-authentication secret, and forwards the request to <code>PMW_BACKEND_URL</code> over HTTPS, verifying the backend against the pinned internal certificate.</li>
+<li>The compute backend checks the proxy-auth secret first. Only then does it read <code>X-PMW-User</code>, look the user up, apply the endpoint's own role and ownership rules (for example, "You are not allowed to manage connections." for a plain user), and select that user's private database session.</li>
+<li>The backend runs the query against Exasol on the user's own <code>pyexasol</code> session, serialised through a per-user lock, and returns JSON. The GUI server passes the response back to the browser and re-mints the session cookie so the sliding idle window stays alive.</li>
+</ol>
+
+<p>Two proxy-level failures are worth recognising on sight: <b>502 "The compute backend is not reachable. Start it with ./run.sh or check PMW_BACKEND_URL."</b> means the GUI server is up but the backend is not, and <b>504 "The compute backend timed out."</b> means the backend accepted the call but did not answer in time.</p>
+
+<h3 id="arch-proxy-auth">The trusted header and <code>PMW_REQUIRE_PROXY_AUTH</code></h3>
+
+<p>Identity is carried between the surfaces and the compute backend in one plain header, <code>X-PMW-User</code>. That is only safe because the backend refuses every <code>/api/*</code> call that does not carry the proxy-authentication secret, which only the surface processes hold. Without that check, any local process able to reach port 8000 could claim to be any user simply by setting the header.</p>
+
+<table>
+<thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>PMW_REQUIRE_PROXY_AUTH</code></td><td><code>1</code> (on)</td><td>The backend requires the proxy-auth secret on <code>/api/*</code>. <code>0</code>, <code>false</code>, <code>no</code> and <code>off</code> disable it; <code>run.sh --dev</code> sets <code>0</code> automatically.</td></tr>
+<tr><td><code>PMW_BACKEND_URL</code></td><td><code>https://127.0.0.1:8000</code></td><td>Where the surface proxies find the compute backend.</td></tr>
+<tr><td><code>PMW_BACKEND_CA</code></td><td><code>{data}/certs/internal.crt</code></td><td>CA bundle the proxy verifies the backend against. Point it at a real CA if the backend is fronted by one, or set it empty to fall back to the system trust store.</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> Never disable <code>PMW_REQUIRE_PROXY_AUTH</code> in a deployment where anything other than the surface processes can reach the backend port. With the check off, the backend trusts <code>X-PMW-User</code> unconditionally and any caller can impersonate an administrator.</div>
+
+<h3 id="arch-absent-identity">When there is no identity at all</h3>
+
+<p>If sign-in is switched off for the main application, no <code>X-PMW-User</code> header is sent. The backend treats this as a single-user deployment: per-user settings and filter presets share one profile, notes have no author, and every power-user endpoint refuses the call because there is no identity to authorise. The integration console ignores the toggle — it always requires sign-in.</p>
+
+<h2 id="arch-sessions">Sessions are per surface</h2>
+
+<p>Each surface issues its own cookie, and each cookie is bound to that surface's audience. A cookie minted by the main application is not accepted by the admin interface or the integration console, and vice versa. Signing in to one surface does not sign you in to the others.</p>
+
+<table>
+<thead><tr><th>Surface</th><th>Cookie</th><th>Audience</th><th>Default lifetime when no idle timeout is set</th></tr></thead>
+<tbody>
+<tr><td>Main application</td><td><code>pmw_session</code></td><td>app</td><td>12&nbsp;h (<code>PMW_SESSION_TTL</code>, 43200&nbsp;s)</td></tr>
+<tr><td>Integration console</td><td><code>pmw_integration</code></td><td>integration</td><td>12&nbsp;h (same variable)</td></tr>
+<tr><td>Admin interface</td><td><code>pmw_admin</code></td><td>admin</td><td>8&nbsp;h (<code>PMW_ADMIN_SESSION_TTL</code>, 28800&nbsp;s)</td></tr>
+</tbody>
+</table>
+
+<p>All three cookies are HttpOnly, <code>SameSite=Lax</code>, path <code>/</code>, and marked Secure when served over HTTPS. They are stateless and Fernet-signed: the token carries the username, the user's session epoch, the audience, and the original sign-in time, and it is re-minted on every authenticated request. Regardless of activity, a sign-in dies <b>7 days</b> after it began (<code>PMW_SESSION_MAX_LIFETIME</code>, 604800&nbsp;s).</p>
+
+<div class="note"><strong>Note</strong> Separate cookies do not mean separate sign-outs. Signing out anywhere bumps the user's session epoch server-side, which invalidates <b>every</b> outstanding token of that user on all three surfaces. Any password change or admin password reset does the same; the single exception is an administrator changing their own password in the Profile overlay, whose current admin session is re-issued in the same response.</div>
+
+<figure data-fig="app-login"><figcaption>The main application's sign-in panel. The integration console and the admin interface use the same design with a second title line — but a different cookie and a different set of permitted accounts.</figcaption></figure>
+
+<h2 id="arch-state">Where state lives</h2>
+
+<p>Everything the product must remember lives in one directory, <code>PMW_DATA_DIR</code> — <code>&lt;repo&gt;/data</code> by default, <code>/app/data</code> in the container, bind-mounted from <code>./data</code> by the shipped compose file. The directory is created on start, is entirely git-ignored, and is <b>the backup unit</b>.</p>
+
+<table>
+<thead><tr><th>Path</th><th>Contents</th></tr></thead>
+<tbody>
+<tr><td><code>settings.sqlite3</code></td><td>Application preferences per user: filter presets, happy paths, target norms, node layouts, legal-disclaimer acceptance</td></tr>
+<tr><td><code>security.sqlite3</code></td><td>Users (scrypt-hashed passwords), roles, database connections with ownership and assignments, TLS certificates and mode, LDAP configuration, passkey credentials, encrypted TOTP secrets and recovery-code hashes, lockouts, backup schedule, integration source checkpoints</td></tr>
+<tr><td><code>logs.sqlite3</code></td><td>The live structured log, shared by all four processes</td></tr>
+<tr><td><code>logs/</code></td><td>Rotated log segments exported as <code>.log</code> files (<code>DATE -- TIME -- SEVERITY -- CLIENT-IP -- USER -- TAG -- text</code>)</td></tr>
+<tr><td><code>secret.key</code></td><td>The Fernet key that encrypts every stored secret. Created atomically on first run with mode <code>0600</code> and never overwritten</td></tr>
+<tr><td><code>certs/</code></td><td><code>active.crt</code>/<code>active.key</code> for the user-facing TLS listeners, <code>internal.crt</code>/<code>internal.key</code> for the backend hop, plus stored certificates</td></tr>
+<tr><td><code>backups/</code></td><td>Timestamped AES-256-GCM encrypted <code>.json</code> envelopes, pruned beyond the configured retention count</td></tr>
+<tr><td><code>license.json</code></td><td>The uploaded Ed25519-signed runtime licence</td></tr>
+<tr><td><code>demo_grace.json</code></td><td>The one-time demo-grace marker</td></tr>
+<tr><td><code>gui.pid</code>, <code>admin.pid</code>, <code>integration.pid</code></td><td>PID files that let the admin interface restart the listeners in place with SIGHUP</td></tr>
+<tr><td><code>integration_files/</code></td><td>The sandbox that File sources may read from; the bundled <code>examples/*.log</code> are seeded here on first run</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> <code>secret.key</code> encrypts database passwords, LLM API keys, the LDAP service password, certificate private keys and the backup password. Lose it and every stored secret is unrecoverable — restoring the SQLite files alone is not enough. Back up the whole <code>data/</code> directory.</div>
+
+<h3 id="arch-exasol-state">What lives in Exasol</h3>
+
+<p>No process-mining data is stored in the <code>data/</code> directory. Projects, event logs and their annotations live in the Exasol schema named by each connection, in six tables:</p>
+
+<dl>
+<dt>PROJECTS</dt><dd>One row per project: <code>PROJECT_ID</code>, <code>TITLE</code>, <code>DESCRIPTION</code>.</dd>
+<dt>JOURNEYS</dt><dd>The event log and the only large table: one row per event step, carrying <code>PROJECT_ID</code>, <code>EVENT_ID</code> (the case identifier), <code>STEP</code>, <code>STEP_ID</code>, <code>EVENT_TIME</code>, three free-form <code>META_*</code> columns and <code>SAMPLE_SET</code>.</dd>
+<dt>STEPS</dt><dd>Per-step presentation and scoring — description, colours, shape, score, end-of-process flag and step group — edited through the app's Step editor.</dd>
+<dt>METAS</dt><dd>The business titles shown for the three META columns.</dd>
+<dt>NOTES</dt><dd>Annotations attached to a node or an edge, including a filter snapshot; created lazily the first time notes are used.</dd>
+<dt>TRANSITIONS_RAW</dt><dd>Optional. A pre-materialised directly-follows pairing that turns the map query into a plain aggregate. It is a snapshot: it goes stale as soon as JOURNEYS changes, and any read failure falls back silently to the live query.</dd>
+</dl>
+
+<p>Because analysis data is in the database and configuration is in <code>data/</code>, the two are backed up and moved independently. Restoring <code>data/</code> onto a fresh host restores users, roles, connections, certificates and settings, but not a single event.</p>
+
+<h3 id="arch-checkpoints">Integration checkpoints</h3>
+
+<p>Each integration data source keeps one read checkpoint — byte offset, file size, a signature of the file's first 64 bytes, the cumulative record count and the last error — in <code>security.sqlite3</code>. That checkpoint is <b>shared between manual imports and the file-source watchdog</b>: both triggers advance the same offset, which is exactly what stops the two from importing the same line twice. It advances only after a successful run, so a failed import re-reads the same lines on the next attempt.</p>
+
+<h2 id="arch-tls">One TLS mode for three surfaces</h2>
+
+<p>TLS is configured once, in the admin interface's <b>TLS / SSL</b> tab, and applies to the GUI server, the admin interface and the integration console together. Exactly one stored certificate is marked active and is materialised to <code>data/certs/active.crt</code> and <code>active.key</code> so the listeners can read it; certificate private keys are encrypted at rest and written with mode <code>0600</code>.</p>
+
+<table>
+<thead><tr><th>Mode</th><th>Main application</th><th>Admin interface</th><th>Integration console</th></tr></thead>
+<tbody>
+<tr><td><b>Off</b></td><td>HTTP only (:8080)</td><td>HTTP only (:8090)</td><td>HTTP only (:8100)</td></tr>
+<tr><td><b>Optional</b></td><td>:8080 + :8443</td><td>:8090 + :8453</td><td>:8100 + :8463</td></tr>
+<tr><td><b>Required</b></td><td>HTTPS only (:8443)</td><td>HTTPS only (:8453)</td><td>HTTPS only (:8463)</td></tr>
+</tbody>
+</table>
+
+<p>Changes take effect on restart. The <b>&#8635; Restart app server</b> button in <b>App Control</b> does this without a terminal: each TLS-aware launcher writes a PID file into <code>data/</code>, and the admin service sends SIGHUP so the listeners rebind with the current plan. If a mode needs a certificate but none is active, every server falls back to HTTP rather than becoming unreachable.</p>
+
+<p>All surfaces send <code>X-Frame-Options: DENY</code>, a <code>frame-ancestors 'none'</code> content-security policy, <code>X-Content-Type-Options: nosniff</code> and <code>Referrer-Policy: no-referrer</code>, plus HSTS when TLS is on.</p>
+
+<div class="warn"><strong>Warning</strong> The per-source-IP sign-in throttle keys on the socket peer address and deliberately ignores <code>X-Forwarded-For</code>. Behind a reverse proxy every client therefore shares one throttle bucket. Terminate TLS at the application itself, as <code>run.sh</code> does, unless you add trusted-proxy handling first.</div>
+
+<h2 id="arch-split">Splitting the deployment</h2>
+
+<p>Because only the GUI server talks to the compute backend, and only the compute backend talks to Exasol, the backend can be moved next to the database while the surfaces stay near the users.</p>
+
+<ol class="steps">
+<li>On the database-side host, start the compute backend with <code>PMW_BACKEND_HOST</code> set to an address the surface host can reach, and keep <code>PMW_BACKEND_PORT</code> (default 8000).</li>
+<li>Copy the backend's <code>data/certs/internal.crt</code> to the surface host, or place a real certificate in front of the backend.</li>
+<li>On the surface host, set <code>PMW_BACKEND_URL</code> to <code>https://&lt;backend-host&gt;:8000</code> and <code>PMW_BACKEND_CA</code> to the copied certificate (or to the real CA bundle; an empty value falls back to the system trust store).</li>
+<li>Leave <code>PMW_REQUIRE_PROXY_AUTH</code> at its default of <code>1</code>, and firewall port 8000 so that only the surface host can reach it.</li>
+<li>Restart both sides and confirm the backend answers on <code>/api/health</code>.</li>
+</ol>
+
+<h2 id="arch-verify">Checking that all four processes are running</h2>
+
+<ol class="steps">
+<li>Start the stack with <code>./run.sh</code> (or <code>docker compose up -d --build</code>).</li>
+<li>Read the launcher's output. A healthy start prints one line per process:
+<pre><code>&#8594; compute backend on https://127.0.0.1:8000 (TLS, internal cert)
+&#8594; admin interface (HTTP 8090 / HTTPS 8453, per TLS mode)
+&#8594; GUI server (HTTP 8080 / HTTPS 8443, per TLS mode)
+&#8594; integration console (HTTP 8100 / HTTPS 8463, per TLS mode)</code></pre></li>
+<li>Open <code>http://127.0.0.1:8080</code> (Docker: <code>http://localhost:10080</code>). If the page loads but every data call returns 502, the surfaces are up and the compute backend is not.</li>
+<li>Probe the backend directly on the host that runs it: <pre><code>curl -k https://127.0.0.1:8000/api/health</code></pre> The <code>-k</code> is required because the backend serves its internal self-signed certificate. This is the same probe the container's <code>HEALTHCHECK</code> runs every 30 seconds.</li>
+<li>Open <code>http://127.0.0.1:8090</code> for the admin interface and <code>http://127.0.0.1:8100</code> for the integration console (Docker: ports 10090 and 10100). A 503 page titled <b>Console unavailable</b> on the latter means the console is switched off in the admin <b>Integration</b> tab, not that the process failed.</li>
+<li>Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to stop everything: <code>run.sh</code> traps the signal and kills all child processes.</li>
+</ol>
+
+<div class="tip"><strong>Tip</strong> In Docker the four processes share one container and one <code>tini</code> init process, so <code>docker compose logs</code> shows all four interleaved. The container is marked healthy only when the compute backend answers its health probe — the surfaces can be serving pages while the container is still reported unhealthy.</div>
+
+</section>

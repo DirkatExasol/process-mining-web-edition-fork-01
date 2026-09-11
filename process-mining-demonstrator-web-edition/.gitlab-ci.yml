@@ -1,0 +1,117 @@
+# GitLab CI — mirror of .github/workflows/ci.yml, adapted to GitLab's
+# per-job container model. Same checks, same pinned tool versions.
+#
+# Runner notes:
+#   * All jobs except `docker-build` run as plain container images and need no
+#     special runner privileges.
+#   * `docker-build` uses Docker-in-Docker (docker:27-dind) and therefore needs
+#     a runner that allows privileged/dind. If your runners don't, give that job
+#     a matching `tags:` or swap it for Kaniko — the rest of the pipeline is
+#     unaffected.
+
+stages: [lint, test, build]
+
+# Run for merge requests and for pushes to the default branch (mirrors the
+# GitHub `pull_request` + `push: branches:[main]` triggers), without producing
+# duplicate pipelines.
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# ── lint stage ────────────────────────────────────────────────────────────────
+
+shellcheck:
+  stage: lint
+  image:
+    name: koalaman/shellcheck-alpine:v0.10.0
+    entrypoint: [""]
+  # run.sh / test.sh at --severity=warning: the only remaining note is one
+  # intentional SC2015 (`kill … || true`) in run.sh, which is info-level.
+  script:
+    - shellcheck --severity=warning run.sh test.sh
+
+hadolint:
+  stage: lint
+  image:
+    name: hadolint/hadolint:2.12.0-alpine
+    entrypoint: [""]
+  # The Dockerfile is clean at the default ruleset, so no ignores are needed.
+  script:
+    - hadolint Dockerfile
+
+python-lint:
+  stage: lint
+  image: python:3.13-slim
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  cache:
+    key: pip-audit
+    paths: [.cache/pip]
+  script:
+    # Fast structural check over all backend sources (matches the target 3.13
+    # interpreter — some modules use 3.12+ f-string syntax).
+    - python -m py_compile backend/launch.py
+    - find backend/app backend/tests -name '*.py' -print0 | xargs -0 python -m py_compile
+    # Hard gate: fails on any known CVE in the pinned runtime deps.
+    - pip install --no-cache-dir pip-audit
+    - python -m pip_audit -r requirements.txt --progress-spinner=off
+
+secrets:
+  stage: lint
+  image:
+    name: ghcr.io/gitleaks/gitleaks:v8.18.4
+    entrypoint: [""]
+  # --no-git scans the checked-out working tree; a leak → exit 1. --config loads
+  # the allowlist (a published Ed25519 public key + local-only dirs) explicitly.
+  script:
+    - gitleaks detect --source . --config .gitleaks.toml --no-git --no-banner --redact
+
+# ── test stage ────────────────────────────────────────────────────────────────
+
+backend:
+  stage: test
+  image: python:3.13-slim
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  cache:
+    key:
+      files: [requirements-dev.txt]
+    paths: [.cache/pip]
+  script:
+    - pip install -r requirements-dev.txt
+    # Same invocation as ./test.sh backend — run from backend/ so pytest.ini
+    # (testpaths=tests) and the app package resolve as they do locally.
+    - cd backend && python -m pytest
+
+frontend:
+  stage: test
+  image: node:22-slim
+  variables:
+    npm_config_cache: "$CI_PROJECT_DIR/.npm"
+  cache:
+    key:
+      files: [frontend/web/package-lock.json]
+    paths: [.npm]
+  script:
+    - cd frontend/web
+    - npm ci
+    # `npm run build` type-checks the whole project (tsc -b) and then bundles,
+    # so a type error fails CI just as it would break a real build.
+    - npm run build
+    - npm test
+
+# ── build stage ───────────────────────────────────────────────────────────────
+
+docker-build:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  # Prove the multi-stage image assembles end-to-end (Node web build → Python
+  # runtime) from a clean context — catches breakages unit tests can't.
+  # Requires a privileged/dind-capable runner (see the header note).
+  script:
+    - docker build -f Dockerfile -t process-mining-web:ci .

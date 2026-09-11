@@ -1,0 +1,204 @@
+<!doctype html>
+<!-- Generated documentation page - open this file in a WEB BROWSER.
+     It is NOT a script; to rebuild it run:  python3 docs/54-build-sampling-guide.py -->
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>54 - Sampling</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgNDggNDgiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzNhOWJmZiIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiM2YjVjZjAiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHg9IjIiIHk9IjIiIHdpZHRoPSI0NCIgaGVpZ2h0PSI0NCIgcng9IjEyIiBmaWxsPSJ1cmwoI2JnKSIvPgogIDxwYXRoIGQ9Ik0xNSAxNiBMMzMgMTYgTDI0IDM0IFoiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjYiCiAgICAgICAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBvcGFjaXR5PSIwLjkiLz4KICA8ZyBmaWxsPSIjZmZmIj4KICAgIDxjaXJjbGUgY3g9IjE1IiBjeT0iMTYiIHI9IjQuNiIvPgogICAgPGNpcmNsZSBjeD0iMzMiIGN5PSIxNiIgcj0iNC42Ii8+CiAgICA8Y2lyY2xlIGN4PSIyNCIgY3k9IjM0IiByPSI0LjYiLz4KICA8L2c+CiAgPGNpcmNsZSBjeD0iMjQiIGN5PSIxNiIgcj0iMi40IiBmaWxsPSIjZWFmM2ZmIi8+Cjwvc3ZnPgo=">
+<style>
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --ink:#1c2530; --soft:#5b6672; --line:#e5e8ec;
+  --accent:#3a6df0; --accent2:#6b5cf0; --tipbg:#eef3ff; --tipink:#2b3a63; --tipbar:#3a6df0;
+  --warnbg:#fff7ed; --warnbar:#d98324; --warnink:#5c4415; --good:#1e9e5a;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:0 20px 72px}
+header.hero{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;
+  border-radius:0 0 26px 26px;padding:44px 20px 40px;margin-bottom:34px;
+  box-shadow:0 12px 30px rgba(58,109,240,.25)}
+.hero-inner{max-width:900px;margin:0 auto;padding:0 20px}
+.chip{display:inline-block;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);
+  padding:4px 12px;border-radius:999px;font-size:13px;font-weight:600;letter-spacing:.3px}
+h1{font-size:30px;line-height:1.2;margin:14px 0 8px;font-weight:800}
+.hero p{margin:0;max-width:660px;color:rgba(255,255,255,.92);font-size:16px}
+.lead{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 22px;
+  margin:0 0 30px;color:var(--soft)}
+.lead b{color:var(--ink)}
+.step{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px 22px 8px;
+  margin:0 0 22px;box-shadow:0 1px 2px rgba(20,30,50,.04)}
+.step-head{display:flex;align-items:center;gap:14px;margin-bottom:6px}
+.num{flex:0 0 auto;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+  font-weight:800;color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+.step h2{font-size:20px;margin:0;font-weight:750}
+.step p.body{margin:2px 0 16px}
+.step ul{margin:0 0 12px;padding-left:20px;color:var(--soft)}
+.step ul li{margin:3px 0}
+.tip{background:var(--tipbg);border-left:4px solid var(--tipbar);color:var(--tipink);
+  border-radius:8px;padding:10px 14px;margin:0 0 16px;font-size:14.5px}
+.tip b{color:var(--tipink)}
+.tip .k{font-weight:700;margin-right:6px}
+.beyond{background:var(--warnbg);border:1px solid #f0d9b8;border-left:4px solid var(--warnbar);
+  color:var(--warnink);border-radius:14px;padding:20px 22px;margin:34px 0 0}
+.beyond h2{margin:0 0 8px;font-size:19px;color:#7a4d13}
+.beyond ul{margin:8px 0 0;padding-left:20px}
+.beyond li{margin:3px 0}
+.beyond .note{margin-top:12px;font-size:14.5px}
+footer{color:var(--soft);font-size:13px;text-align:center;margin-top:34px}
+code{background:var(--bg);border-radius:4px;padding:1px 5px;font-size:12.5px}
+.mock{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;
+  margin:0 0 16px;box-shadow:0 6px 18px rgba(20,30,50,.08)}
+.row{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+.cap{color:var(--soft);font-size:13px;margin:8px 2px 0}
+.big-arrow{color:var(--soft);font-size:20px;font-weight:700}
+.lab{color:var(--soft);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px}
+.node{border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--card);font-weight:600;font-size:13px}
+.node.hub{border-color:var(--accent);background:rgba(58,109,240,.08);color:var(--accent);font-weight:750}
+.node.good{border-color:rgba(30,158,90,.5);background:rgba(30,158,90,.1);color:var(--good)}
+.arrow{color:var(--soft);font-weight:700}
+/* big event-count boxes */
+.bigbox{border:1px solid var(--line);border-radius:12px;padding:14px 20px;text-align:center;background:var(--bg)}
+.bigbox.sm{background:rgba(30,158,90,.08);border-color:rgba(30,158,90,.4)}
+.bignum{font:800 24px/1 ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+.bigbox.sm .bignum{color:var(--good)}
+.biglab{color:var(--soft);font-size:12px;margin-top:4px}
+/* strategy cards */
+.strats{display:flex;gap:12px;flex-wrap:wrap}
+.strat{flex:1;min-width:210px;border:1px solid var(--line);border-radius:11px;padding:13px 15px;background:var(--card)}
+.strat .st{font-weight:800;font-size:14.5px;margin-bottom:4px}
+.strat .sd{color:var(--soft);font-size:13px}
+/* sample table */
+.mapwrap{overflow-x:auto}
+.tbl{border-collapse:collapse;width:100%;font-size:13px;min-width:440px}
+.tbl th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--soft);
+  padding:5px 10px;border-bottom:2px solid var(--line)}
+.tbl td{padding:6px 10px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+.tbl .tag{color:var(--accent);font-weight:750}
+.tbl .mut{color:var(--soft)}
+.tbl .d-ok{color:var(--good);font-weight:700}
+.tbl .d-warn{color:var(--warnbar);font-weight:700}
+/* segmented source picker */
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:12.5px}
+.seg span{padding:5px 11px;border-right:1px solid var(--line)}
+.seg span:last-child{border-right:0}
+.seg span.on{background:var(--accent);color:#fff}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#14171c;--card:#1d2127;--ink:#e7eaee;--soft:#a3adba;--line:#2c333c;
+    --tipbg:#182338;--tipink:#cdd9f5;--warnbg:#2a2213;--warnink:#e9d3ac}
+}
+@media print{
+  body{background:#fff}
+  header.hero{box-shadow:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .step,.lead,.beyond,.mock{break-inside:avoid;box-shadow:none}
+}
+</style>
+</head>
+<body>
+<header class="hero"><div class="hero-inner">
+  <span class="chip">Work-Bench · Guide</span>
+  <h1>Journey Sampling</h1>
+  <p>When an event log is too big to explore comfortably, work on a representative subset instead —
+     pick a sampling strategy, keep the process's shape, stay interactive. It is also where each A/B
+     side (and every simulation) is chosen as a data source.</p>
+</div></header>
+
+<div class="wrap">
+
+  <div class="lead">
+    <b>Sampling</b> creates up to three named, representative subsets of a large event log so
+    exploration stays fast. Choose the <b>strategy</b> that keeps what you care about (the average,
+    the timeline, or the rare paths); samples are tagged in the database and <b>shared</b> on the
+    connection. The Sampling menu is also the <b>source picker</b> for A/B Comparison — including
+    stored <b>simulations</b>.
+  </div>
+
+  <section class="step">
+  <div class="step-head"><div class="num">1</div><h2>Why sample — too many events</h2></div>
+  <p class="body">A real event log can hold <b>millions</b> of events. Loading, laying out and re-querying the full graph on every filter change turns exploration sluggish. A <b>representative subset</b> keeps the app <b>interactive</b> while preserving the process’s shape — the same main paths, the same bottlenecks, far fewer rows to move.</p>
+  <div class="mock"><div class="row" style="gap:14px">
+      <div class="bigbox"><div class="bignum">4,812,930</div><div class="biglab">events — sluggish</div></div>
+      <span class="big-arrow">⇒</span>
+      <div class="bigbox sm"><div class="bignum">50,000</div><div class="biglab">sampled — snappy</div></div>
+    </div><p class="cap">Create up to <b>three</b> named sample sets from the original data; explore
+      them like any project, then switch back to Original when you need the full picture.</p></div>
+  <div class="tip"><span class="k">Who.</span> Sampling is for <b>Power users and administrators</b> — because samples are <i>shared</i> by everyone on the connection, not a personal view.</div>
+</section><section class="step">
+  <div class="step-head"><div class="num">2</div><h2>Pick a strategy</h2></div>
+  <p class="body">How the subset is chosen shapes what you see. Three strategies trade speed against how faithfully rare behaviour survives:</p>
+  <div class="mock"><div class="strats">
+      <div class="strat"><div class="st">🎲 Random</div><div class="sd">Uniform random journeys.
+        The simplest, fastest baseline — unbiased, but <b>rare variants may be under-represented</b>.</div></div>
+      <div class="strat"><div class="st">📅 Temporal Stratified</div><div class="sd">Proportional across
+        equal <b>calendar-month buckets</b>, so the sample keeps the original’s <b>time
+        distribution</b> — for when volume varies seasonally.</div></div>
+      <div class="strat"><div class="st">🌿 Path Diversity</div><div class="sd">Coverage-maximising across
+        <b>distinct journey variants</b>, so <b>rare paths</b> are more likely to appear — for when you
+        care about the full variety of behaviour.</div></div>
+    </div></div>
+  <ul><li><b>Random</b> — a quick, faithful-to-the-average look.</li><li><b>Temporal Stratified</b> — when <i>when</i> things happened matters.</li><li><b>Path Diversity</b> — when the <i>unusual</i> routes are the point.</li></ul>
+</section><section class="step">
+  <div class="step-head"><div class="num">3</div><h2>What sampling does to the numbers</h2></div>
+  <p class="body">A sample is a statistical <b>estimate</b> of the whole. The <b>principal flow</b> — the high-frequency paths that carry most journeys — comes through <b>faithfully</b>; in the best case the differences are minor. The uncertainty concentrates exactly where it matters least: the <b>rarest</b> variants, which may wobble or drop out.</p>
+  <div class="mock"><div class="mapwrap"><table class="tbl">
+      <tr><th>Journey variant</th><th>Full log</th><th>50k sample</th><th>&Delta;</th></tr>
+      <tr><td>Login &rarr; Browse &rarr; Pay &rarr; Confirm <span class="mut">(principal)</span></td>
+        <td>62.0&nbsp;%</td><td>61.6&nbsp;%</td><td class="d-ok">&minus;0.4</td></tr>
+      <tr><td>&hellip; with a coupon</td><td>8.0&nbsp;%</td><td>7.5&nbsp;%</td><td class="d-ok">&minus;0.5</td></tr>
+      <tr><td>&hellip; rare browse-loop &times;3 <span class="mut">(long tail)</span></td>
+        <td>0.3&nbsp;%</td><td>0.1&nbsp;%</td><td class="d-warn">&minus;0.2 &middot; may vanish</td></tr>
+    </table></div><p class="cap">Common routes land within a fraction of a percent; the long tail of
+      one-off variants is where a sample blurs &mdash; which is exactly what Path Diversity protects.</p></div>
+  <ul><li>For a path taken by a share <b>p</b> of journeys, a random sample of <b>n</b> estimates it with a standard error of about <code>&radic;(p&middot;(1&minus;p)/n)</code> &mdash; so a common path is pinned down tightly, a rare one carries larger relative error.</li><li>The estimate <b>improves with size</b>: sampling error shrinks with <code>&radic;n</code>, so a bigger sample tightens every number (doubling it cuts the wobble by roughly 30&nbsp;%).</li><li>The <b>overall shape</b> &mdash; which steps connect, where the bottlenecks are &mdash; is driven by the dominant paths, so it stays recognisable even in a small sample.</li></ul>
+  <div class="tip"><span class="k">Rule of thumb.</span> For the overall shape and the dominant paths a modest sample is plenty; if a <i>rare</i> path is the subject, raise the count or use <b>Path Diversity</b>.</div>
+</section><section class="step">
+  <div class="step-head"><div class="num">4</div><h2>How samples are stored (and shared)</h2></div>
+  <p class="body">A sample isn’t a copy of your data — it’s a label. The app adds a <b>SAMPLE_SET</b> column to the JOURNEYS table (on first use) and tags the chosen journeys. The <b>original rows are never modified</b>, and deleting a sample removes <b>only its rows</b>.</p>
+  <div class="mock"><div class="mapwrap"><table class="tbl">
+      <tr><th>EVENT_ID</th><th>STEP</th><th>EVENT_TIME</th><th>SAMPLE_SET</th></tr>
+      <tr><td>a1f…</td><td>Login</td><td>09:02:11</td><td class="tag">SAMPLE_1</td></tr>
+      <tr><td>b7c…</td><td>Login</td><td>09:04:02</td><td class="tag">SAMPLE_1</td></tr>
+      <tr><td>c93…</td><td>Login</td><td>09:05:44</td><td class="mut">—</td></tr>
+    </table></div><p class="cap">The same JOURNEYS table serves Original and every sample; a filter just
+      adds “SAMPLE_SET = …”. Because they live in the database, samples are <b>shared</b> by everyone
+      on the connection — creating or deleting one changes it for all users.</p></div>
+</section><section class="step">
+  <div class="step-head"><div class="num">5</div><h2>The Sampling menu is the A/B source picker</h2></div>
+  <p class="body">The Sampling section does more than build samples: it’s where each side of <b>A/B Comparison</b> chooses <b>what to load</b>. Per side you pick the <b>Original</b> data, one of your <b>sample sets</b>, or a stored <b>Simulation</b> result — <b>Sim-A / Sim-B</b>.</p>
+  <div class="mock"><div class="row" style="gap:26px">
+      <div><div class="lab">A source</div>
+        <span class="seg"><span class="on">Original</span><span>Sample 1</span><span>Sim-A</span></span></div>
+      <div><div class="lab">B source</div>
+        <span class="seg"><span>Original</span><span>Sample 1</span><span class="on">Sim-B</span></span></div>
+    </div><p class="cap">Each slot is independent — compare a sample against Original, two samples,
+      or (below) real data against a simulation.</p></div>
+</section><section class="step">
+  <div class="step-head"><div class="num">6</div><h2>Why it matters for simulation</h2></div>
+  <p class="body">This menu is the <b>only</b> place a simulation becomes comparable. You run a Simulation (stored as <b>Sim-A</b> or <b>Sim-B</b>), then select it here as an A/B source — that’s how a <b>what-if</b> is put side by side with reality. And on a huge log, <b>sampling first</b> keeps the whole loop fast: the simulation is built from the graph you have loaded, so a snappy sample means a snappy base to simulate from.</p>
+  <div class="mock"><div class="row">
+      <span class="node">🎲 Sample (snappy base)</span><span class="arrow">→</span>
+      <span class="node hub">Run Simulation → Sim-B</span><span class="arrow">→</span>
+      <span class="node good">Select Sim-B as B source</span>
+    </div><p class="cap">Sample → simulate → compare: reality on A, the what-if on B, a similarity
+      score between them. Without the Sampling menu, a stored simulation can’t be shown.</p></div>
+  <div class="tip"><span class="k">See also.</span> The <b>Simulation</b> and <b>A/B Comparison</b> guides cover running a what-if and reading the comparison.</div>
+</section>
+
+  <div class="beyond">
+    <h2>Good to know</h2>
+    <ul>
+      <li><b>Up to three samples.</b> Keep a Random, a Temporal and a Path-Diversity sample side by side and switch between them per A/B slot.</li>
+      <li><b>Non-destructive.</b> Samples only tag rows via SAMPLE_SET; the Original data is untouched, and deleting a sample removes only its tagged rows.</li>
+      <li><b>Shared, not personal.</b> Samples live in the connection’s database, so they’re shared by everyone using it — unlike filters and presets, which are per user.</li>
+      <li><b>Needs the right.</b> Adding the SAMPLE_SET column and writing sample rows needs ALTER TABLE + INSERT on JOURNEYS — which is why sampling is a Power/Admin capability.</li>
+      <li><b>Further reading.</b> The behaviour is standard sampling statistics applied to event data — W. G. Cochran, <i>Sampling Techniques</i> (Wiley) for the theory of representative samples and sampling error; W. van der Aalst, <i>Process Mining: Data Science in Action</i> (Springer) for event logs, variants and representativeness.</li>
+    </ul>
+    <p class="note">Sample to stay fast, choose the strategy to keep what matters, and use the same
+      menu to put a sample, the original, or a simulation on each side of a comparison.</p>
+  </div>
+
+  <footer>Process Mining Demonstrator · Work-Bench — Journey Sampling</footer>
+</div>
+</body></html>

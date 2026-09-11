@@ -1,0 +1,289 @@
+<section class="chapter" id="ch-introduction" data-title="Introduction" data-num="1">
+
+<h1><span class="chnum">1</span> Introduction</h1>
+
+<p class="chintro">This chapter explains what process mining is, what the Process Mining Demonstrator — Web Edition does and, just as importantly, what it deliberately does not do. It introduces the vocabulary used throughout the manual, describes the four audiences the product serves — plain user, power user, developer and administrator — and sets out reading paths so that you can go straight to the chapters that concern you. Read it before any other chapter; every later chapter assumes the terms defined here.</p>
+
+<h2 id="intro-process-mining">1.1 What process mining is</h2>
+
+<p>Business processes leave traces. Every order, claim, application or ticket that passes through a system writes rows into a database: who or what the case was, which activity happened, and when. Process mining takes that raw record — the <b>event log</b> — and reconstructs the process as it actually ran, rather than as it was drawn on a whiteboard.</p>
+
+<p>The starting point is always the same three pieces of information per row: a <b>case identifier</b> that says which end-to-end instance the row belongs to, an <b>activity name</b> that says what happened, and a <b>timestamp</b> that says when. In this application those three columns are <code>EVENT_ID</code>, <code>STEP</code> and <code>EVENT_TIME</code> in the <code>JOURNEYS</code> table. Everything else — colours, scores, case attributes, groupings — is enrichment layered on top.</p>
+
+<p>From that log, four kinds of insight can be derived, and this product provides all four:</p>
+
+<dl>
+  <dt>Discovery</dt>
+  <dd>Sorting every case's rows by time and joining each consecutive pair produces a <b>transition</b>. Aggregating all transitions across all cases produces a <b>directly-follows graph</b>: a map in which each node is an activity and each arrow is an observed hand-over between two activities. This is the A-Chart. Nobody draws it; it is derived entirely from the data, so it shows the rework loops, shortcuts and dead ends that a designed model omits.</dd>
+
+  <dt>Variants</dt>
+  <dd>Two cases that visit exactly the same activities in exactly the same order follow the same <b>variant</b> (also called a route or path pattern). Real processes typically have a small number of very common variants and a long tail of rare ones. The Statistics view lists the distinct variants with their frequencies, which is how you separate "the way it usually goes" from "the exceptions".</dd>
+
+  <dt>Bottlenecks</dt>
+  <dd>Because every transition carries the elapsed time between its two steps, the map can be weighted by duration instead of frequency. Switching the transition metric to <b>Avg Time</b>, <b>Max Time</b> or <b>Std Dev</b> makes slow and unpredictable hand-overs visible as thick, strongly coloured arrows, and the Statistics view adds a duration histogram, step traffic and a transition heat map.</dd>
+
+  <dt>Conformance</dt>
+  <dd>Discovery tells you what happens; conformance tells you whether that is what should happen. You define the intent — a <b>Happy Path</b> (the ideal step sequence, including legitimate alternative branches) or per-edge <b>norms</b> (target values for a metric) — and the application scores the real data against it, edge by edge, and reports the gaps.</dd>
+</dl>
+
+<figure data-fig="app-03-achart"><figcaption>The A-Chart: a directly-follows graph discovered from the <code>JOURNEYS</code> table. Arrow thickness and colour encode the selected transition metric.</figcaption></figure>
+
+<p>Process mining matters because it replaces opinion with evidence. Where an interview produces "approvals usually take a day or two", an event log produces a distribution, a worst case and the exact share of cases that looped back through a rework step. That is the value this product is built to demonstrate.</p>
+
+<h2 id="intro-what-this-is">1.2 What this product is</h2>
+
+<p>The <b>Process Mining Demonstrator — Web Edition</b> is a multi-user web application that connects to an <b>Exasol</b> database, reads an event log from it, and visualises how real cases flow through the recorded process. It is the web port of a macOS application of the same name; backup files remain interchangeable between the two.</p>
+
+<p>Concretely, it offers:</p>
+
+<ul>
+  <li>Ten chart views, selected from the <b>☰</b> menu in the top-right of the main area: <b>A-Chart</b>, <b>B-Chart</b>, <b>A/B Comparison</b>, <b>Individual Journey</b>, <b>AI supported Documentation</b>, <b>Statistics</b>, <b>Conformance Check</b>, <b>Happy Path</b>, <b>Notes</b> and <b>Simulation</b>.</li>
+  <li>Journey-level filtering — date window, included and excluded steps, step count, journey time, journey score and three case-level meta attributes — with named, reusable filter presets stored per project.</li>
+  <li>Two independent process maps side by side, with a <b>Process Similarity</b> score between them, so two segments or two time periods can be compared directly.</li>
+  <li>A composite <b>Process Goodness</b> quality score, per-journey inspection with animated replay, annotation of nodes and edges with threaded notes, journey sampling, Markov-model simulation, and a Markdown report generated by an OpenAI-compatible language model.</li>
+  <li>A dedicated administration interface for users, roles, TLS, directory sign-in, logging, backups and licensing, plus a separate integration console for defining data sources and importing event data from files.</li>
+</ul>
+
+<figure data-fig="app-01-shell"><figcaption>The main application window: sidebar with Connections, Projects, Filters and Configuration on the left; chart area with the view menu and KPI strip on the right.</figcaption></figure>
+
+<h3 id="intro-scope">1.2.1 Scope: a demonstrator, not a production tool</h3>
+
+<div class="warn"><strong>Warning</strong> This application is intended for <b>demonstration and educational purposes only</b>. It is <b>not a production-ready process mining solution</b>. Do not use its output as the sole basis for operational or commercial decisions.</div>
+
+<p>That statement is not a formality; it follows from deliberate design choices which you will meet throughout this manual, and which you should know about before you rely on a number:</p>
+
+<table>
+  <thead><tr><th>Area</th><th>Deliberate limitation</th></tr></thead>
+  <tbody>
+    <tr><td>Database support</td><td>Exasol only. There is no adapter for any other database.</td></tr>
+    <tr><td>Heavy queries</td><td>Statistics and Process Goodness run under a 30-second wall-clock timeout; when it expires, the affected tile shows <b>—</b> rather than a partial result.</td></tr>
+    <tr><td>Process Similarity</td><td>Alignment cost is an edge-coverage approximation, not a formal Petri-net alignment, and the variant set is capped at 500 per side (1 000 combined). Past the cap the badge is hidden rather than showing a biased score.</td></tr>
+    <tr><td>Process Goodness</td><td>A relative indicator, not an absolute benchmark. Its constants (alpha 0.5, time penalty 0.01, gamma 0.5) are fixed and not adjustable.</td></tr>
+    <tr><td>Simulation</td><td>A first-order Markov model. History-dependent routing, case attributes, resource contention and queueing are not modelled.</td></tr>
+    <tr><td>Data import</td><td>Events are appended and <b>never de-duplicated</b>. Importing the same file twice stores its events twice; to genuinely reload a project you delete the project and import again.</td></tr>
+    <tr><td>AI documentation</td><td>Language models can produce incorrect, incomplete or misleading results. Every finding must be verified independently.</td></tr>
+  </tbody>
+</table>
+
+<p>Used as intended — to show what process mining is, to teach the concepts, and to explore a dataset on an Exasol instance — the product is complete and self-contained, including three generated demo datasets so you can produce a meaningful process map without having any event log of your own.</p>
+
+<h3 id="intro-surfaces">1.2.2 Four processes, three surfaces</h3>
+
+<p>The product is not a single server. One launcher starts four Python processes, three of which present a user interface. Knowing which is which will save you time in every later chapter.</p>
+
+<table>
+  <thead><tr><th>Process</th><th>Default HTTP</th><th>Default HTTPS</th><th>Purpose</th><th>Who signs in</th></tr></thead>
+  <tbody>
+    <tr><td><b>GUI server</b> (main application)</td><td>8080</td><td>8443</td><td>Serves the single-page application, proxies API calls to the backend, enforces sign-in</td><td>All users</td></tr>
+    <tr><td><b>Admin interface</b></td><td>8090</td><td>8453</td><td>Users, roles, TLS certificates, database connections, directory, logging, backups, licence, customisation, restart</td><td>Administrators only</td></tr>
+    <tr><td><b>Integration console</b></td><td>8100</td><td>8463</td><td>Data-source definition and event-data import</td><td>Restricted (see <a href="#intro-audiences">1.4</a>)</td></tr>
+    <tr><td><b>Compute backend</b></td><td>—</td><td>8000</td><td>Exasol access, analytics, simulation, sampling, language-model proxy, settings store, licence watchdog, import layer</td><td>No direct sign-in; not published</td></tr>
+  </tbody>
+</table>
+
+<div class="note"><strong>Note</strong> The browser only ever talks to the GUI server. The compute backend is reached through the GUI proxy over an always-on TLS connection using an internal self-signed certificate, even on loopback, and it refuses API calls that do not carry the proxy's authentication secret. The integration console's ports are derived by convention as the admin port plus ten.</div>
+
+<div class="note"><strong>Note</strong> All port numbers in this manual are the defaults for a direct installation. Under the shipped Docker Compose file, host ports are offset by <b>+2000</b>: the main application is on <b>10080</b>, the admin interface on <b>10090</b> and the integration console on <b>10100</b>. Every environment variable that changes a port is listed in the installation chapter.</div>
+
+<h3 id="intro-two-licences">1.2.3 Two different licences</h3>
+
+<p>The manual refers to a "licence" in two unrelated senses; do not confuse them.</p>
+
+<dl>
+  <dt>Software licence</dt>
+  <dd>The source code is distributed under the MIT licence. This governs your rights to the code itself.</dd>
+  <dt>Runtime licence</dt>
+  <dd>The compute backend requires a signed <code>license.json</code>, uploaded by an administrator under <b>App Control → License</b>. Without one, the application runs in <b>Demo Mode</b> for a one-time grace period (30 minutes by default), after which the backend stops itself until a licence is applied. The admin interface keeps running even then, so a licence can always be uploaded. The grace period is granted once per installation and restarting does not renew it.</dd>
+</dl>
+
+<h2 id="intro-vocabulary">1.3 Vocabulary</h2>
+
+<p>These terms are used with precise meanings throughout the manual and in the application's own screens.</p>
+
+<dl>
+  <dt>Journey (case)</dt>
+  <dd>One end-to-end instance of a process, identified by <code>EVENT_ID</code>. All rows sharing an <code>EVENT_ID</code> form one journey. "Case" and "journey" are interchangeable.</dd>
+
+  <dt>Step (event)</dt>
+  <dd>A single activity within a journey — one row in the <code>JOURNEYS</code> table. On the process map, one node per distinct step name.</dd>
+
+  <dt>Transition</dt>
+  <dd>A chronologically consecutive pair of steps within the same journey. On the map, one arrow.</dd>
+
+  <dt>Project</dt>
+  <dd>A named body of event data inside one schema, identified by <code>PROJECT_ID</code>. You select a project after connecting; all filters, layouts, presets, norms and happy paths are stored per project.</dd>
+
+  <dt>Connection</dt>
+  <dd>A stored bundle of one Exasol server (host, port, credentials, schema, TLS options) and one optional OpenAI-compatible language-model server. Connections are created by administrators or power users and assigned to individual users. You never type a database password into the main application.</dd>
+
+  <dt>Meta attributes</dt>
+  <dd>Up to three free-text, case-level columns (<code>META_1</code>–<code>META_3</code>) carrying attributes such as department, region or customer segment. Their business names come from the <code>METAS</code> table.</dd>
+
+  <dt>Variant (route)</dt>
+  <dd>A distinct sequence of steps. All journeys following the same sequence belong to the same variant.</dd>
+
+  <dt>Metric</dt>
+  <dd>The value that drives an arrow's thickness, opacity, colour and label: <b>Count</b> (the default), <b>Avg Time</b>, <b>Min Time</b>, <b>Max Time</b> or <b>Std Dev</b>. Each chart view remembers its own metric selection.</dd>
+
+  <dt>Sample set</dt>
+  <dd>A named representative subset of a project's journeys, written to a <code>SAMPLE_SET</code> column on <code>JOURNEYS</code>. Sample sets live in the database and are therefore <b>shared by everyone</b> using that connection.</dd>
+
+  <dt>Norm</dt>
+  <dd>A target value attached to one transition for one metric, used by the Conformance Check view. Stored per project and per metric.</dd>
+
+  <dt>Happy Path</dt>
+  <dd>A user-defined ideal step sequence, optionally containing named splits with alternative branches, against which real journeys are scored.</dd>
+</dl>
+
+<div class="tip"><strong>Tip</strong> The same explanations are available inside the application at any time. Press <b>⌘/</b> (or <b>Ctrl+/</b>) to open or close the Help panel; it floats above the application, can be dragged by its title bar and resized from its bottom-right corner.</div>
+
+<figure data-fig="app-19-help"><figcaption>The floating Help panel, opened with ⌘/ or Ctrl+/. Its table of contents hides administration and integration topics from users who cannot reach those surfaces.</figcaption></figure>
+
+<h2 id="intro-audiences">1.4 Who this manual is for</h2>
+
+<p>Four audiences use this product, and every chapter is written with one or more of them in mind. Where a task requires a particular permission, the chapter states it in a callout like this one:</p>
+
+<div class="role">Requires: <b>Administrator</b></div>
+
+<h3 id="intro-audience-roles">1.4.1 The four audiences</h3>
+
+<dl>
+  <dt>Plain user (Regular user)</dt>
+  <dd>The default level for every new account. A plain user explores the process: opens an assigned connection, selects a project, reads the maps and charts, applies filters and saved presets, reads and writes notes, inspects individual journeys, generates AI documentation, and adjusts personal settings such as KPI tiles, node layout, font sizes and theme. A plain user cannot create database connections and does not see the advanced-analysis views.</dd>
+
+  <dt>Power user</dt>
+  <dd>A plain user with additional in-application privileges, granted with <b>Make power</b> in the admin Users tab. Power users create, edit, delete and assign <b>their own</b> database connections from inside the main application, provision schemas, generate demo datasets, create and delete journey samples, and use the three advanced-analysis views — <b>Conformance Check</b>, <b>Happy Path</b> and <b>Simulation</b>. They manage only the connections they created.</dd>
+
+  <dt>Developer</dt>
+  <dd>An additional grant (the <b>Developer</b> checkbox in the admin Users tab), independent of the level above it. It admits the account to the <b>Integration console</b>, where data sources and their parsing rules are defined and event data is imported into a connection's schema. A Regular user who holds only the Developer grant may enter the console but gains no other elevated powers in the main application.</dd>
+
+  <dt>Administrator</dt>
+  <dd>Full control. Everything a power user can do, over <b>every</b> connection rather than only their own, plus exclusive access to the admin interface: all users and roles, TLS certificates and mode, directory (LDAP) sign-in, licensing, logging, backups, login-page customisation, and restarting the servers.</dd>
+</dl>
+
+<p>The three permission levels build on each other: Power includes Regular, and Administrator includes Power. The Developer grant is orthogonal and can be combined with any level.</p>
+
+<h3 id="intro-capabilities">1.4.2 Capability overview</h3>
+
+<p>This table is the quick answer to "may I do this?". Later chapters repeat the relevant line as a role callout at the point of use.</p>
+
+<table>
+  <thead><tr><th>Capability</th><th>Regular</th><th>Power</th><th>Developer grant</th><th>Administrator</th></tr></thead>
+  <tbody>
+    <tr><td>View process maps, charts and KPIs</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+    <tr><td>Filters, saved presets and the date window</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+    <tr><td>Read and write notes and comments</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+    <tr><td>Personal settings, layout, manual backup of preferences</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+    <tr><td>Individual Journey, Statistics, AI supported Documentation</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+    <tr><td>Advanced views: Conformance Check, Happy Path, Simulation</td><td>—</td><td>✓</td><td>—</td><td>✓</td></tr>
+    <tr><td>Journey sampling (create and delete sample sets)</td><td>—</td><td>✓</td><td>—</td><td>✓</td></tr>
+    <tr><td>Create, manage and assign own database connections</td><td>—</td><td>✓</td><td>✓ (in the console)</td><td>✓ (all connections)</td></tr>
+    <tr><td>Provision a schema and generate demo data</td><td>—</td><td>✓</td><td>—</td><td>✓</td></tr>
+    <tr><td>Integration console: source types, sources, imports</td><td>—</td><td>—</td><td>✓</td><td>✓</td></tr>
+    <tr><td>Admin interface: users, TLS, LDAP, licensing, logging, backups</td><td>—</td><td>—</td><td>—</td><td>✓</td></tr>
+  </tbody>
+</table>
+
+<div class="note"><strong>Note</strong> The in-application help text and the deployment notes differ on whether a power user without the Developer grant may sign in to the integration console: the help states that only developers and administrators may enter, while the launcher documentation lists power users as well. Anyone not permitted is refused at the console's sign-in page with a clear message, so the behaviour of your build is unambiguous the first time you try. The integration chapter treats the Developer grant as the requirement.</div>
+
+<div class="warn"><strong>Warning</strong> Roles require a signed-in identity. If an administrator turns off <b>"Require sign-in for the main application"</b> in the admin Users tab, the application runs with no user identity at all — every Power-only and Admin-only capability becomes unavailable, the Sampling section and the three advanced views disappear from the interface, and their APIs return <b>403</b>. Per-user settings and filter presets also collapse into one shared profile. There is no way to have open, sign-in-free access and the power features at the same time.</div>
+
+<figure data-fig="admin-01-overview"><figcaption>The admin interface, a separate surface on its own port with its own sign-in, admitting administrators only.</figcaption></figure>
+
+<figure data-fig="integ-01-console"><figcaption>The integration console, where source types and sources are defined and event data is imported into a connection's schema.</figcaption></figure>
+
+<h2 id="intro-organisation">1.5 How this manual is organised</h2>
+
+<p>The chapters that follow move from installing the product, through daily analysis work, to administration and data integration. They fall into five themed groups:</p>
+
+<table>
+  <thead><tr><th>Group</th><th>What it covers</th><th>Primary audience</th></tr></thead>
+  <tbody>
+    <tr><td>Installation and operations</td><td>System requirements, local and Docker installation, the four processes and their ports, the complete <code>PMW_*</code> environment-variable reference, the <code>data/</code> directory, TLS, licensing, upgrade notes</td><td>Administrator</td></tr>
+    <tr><td>Getting started</td><td>Signing in (password, passkey, two-factor), choosing a connection, selecting a project, the shape of the main window, the database schema the application expects</td><td>Everyone</td></tr>
+    <tr><td>Analysis</td><td>The chart views, filters and presets, the process map and its context actions, the KPI panel, Process Goodness, Process Similarity, statistics, notes, AI documentation, configuration</td><td>Plain user, power user</td></tr>
+    <tr><td>Advanced analysis</td><td>Conformance Check, Happy Path, Journey Sampling, Simulation</td><td>Power user, administrator</td></tr>
+    <tr><td>Administration and integration</td><td>The admin interface tab by tab — users and roles, database connections, directory sign-in, logging, backups, customisation, licence — and the integration console: source types, file sources, compound steps, imports, the watchdog and pipeline monitoring</td><td>Administrator, developer</td></tr>
+  </tbody>
+</table>
+
+<p>A troubleshooting chapter collects the symptoms users report most often, together with the permission or configuration that usually causes them.</p>
+
+<h2 id="intro-reading-paths">1.6 Reading paths</h2>
+
+<p>You do not need to read this manual from cover to cover. Pick the path that matches your role.</p>
+
+<h3 id="path-analyst">1.6.1 Business analyst or plain user</h3>
+
+<ol class="steps">
+  <li>Read this introduction, in particular the vocabulary in section 1.3 — the rest of the manual assumes the terms <em>journey</em>, <em>step</em>, <em>transition</em>, <em>variant</em> and <em>metric</em>.</li>
+  <li>Read the getting-started chapter: how to sign in, how to open a connection assigned to you, and how to select a project.</li>
+  <li>Read the chart-views chapter, then the filters and filter-presets chapters. These three cover the everyday loop: load a project, narrow it, press <b>Apply</b>, read the map.</li>
+  <li>Read the process-map chapter for navigation, node context actions and step groups, and the KPI-panel chapter for the tiles above the map.</li>
+  <li>Read Process Goodness and Process Similarity when you start comparing segments or periods; both chapters include worked numeric examples.</li>
+  <li>Read the notes chapter before you begin recording findings, and the configuration chapter when you want to change the default date window, KPI tiles, fonts or step colours.</li>
+  <li>Skip the installation, admin-interface and integration chapters entirely — nothing in them is required for analysis work.</li>
+</ol>
+
+<div class="tip"><strong>Tip</strong> If you have no data of your own and no power user to help, ask an administrator to generate one of the three demo datasets — Online Bookstore, Online Credit Application, or Flight Booking &amp; Management. Every example in the analysis chapters works against them.</div>
+
+<h3 id="path-power">1.6.2 Power user</h3>
+
+<ol class="steps">
+  <li>Follow the business-analyst path first; everything there applies to you unchanged.</li>
+  <li>Read the connections chapter's power-user sections: creating your own connections with the <b>＋</b> button, editing them with <b>✎</b>, assigning them to other users, provisioning a schema, and generating demo content.</li>
+  <li>Read the database-setup chapter so you know which database privileges each feature needs — SELECT for reading, CREATE TABLE for notes, ALTER TABLE and INSERT on <code>JOURNEYS</code> for sampling, UPDATE on <code>STEPS</code> for the step editor.</li>
+  <li>Read Journey Sampling before creating a sample: samples are written into the database and therefore change what every other user of that connection sees.</li>
+  <li>Read Conformance Check and Happy Path together — both express intent and are scored against the same filtered population.</li>
+  <li>Read Simulation last, including its limitations section.</li>
+</ol>
+
+<h3 id="path-admin">1.6.3 Administrator or operator</h3>
+
+<ol class="steps">
+  <li>Read this introduction's section 1.2.2 (the four processes) and 1.2.3 (the two licences).</li>
+  <li>Read the installation and operations chapter end to end, then perform the first-run checklist: start the stack, sign in to the admin interface, change the seeded administrator password.</li>
+  <li>Read the database-connections chapter and define at least one connection, test it, and assign it to users.</li>
+  <li>Read the users chapter: roles, the login gate, failed-sign-in lockout, passkeys and two-factor authentication. Decide these policies before inviting users, because some of them (mandatory two-factor in particular) change what happens at the next sign-in.</li>
+  <li>Read the TLS chapter and move off plain HTTP. Passkeys require a secure context and a real hostname, so this decision constrains later ones.</li>
+  <li>Read the backup chapter and enable scheduled encrypted backups; then read the operations chapter's note on backing up the whole <code>data/</code> directory, which is the only way to preserve the encryption key.</li>
+  <li>Read the licensing sections and upload the runtime licence before the demo grace period expires.</li>
+  <li>Keep the logging chapter to hand — it is the first place to look when an import, a rebuild or a connection misbehaves.</li>
+</ol>
+
+<h3 id="path-developer">1.6.4 Developer or data engineer</h3>
+
+<ol class="steps">
+  <li>Read the vocabulary in section 1.3 and the database-setup chapter, so you know the exact shape of the rows you are producing.</li>
+  <li>Read the integration-console chapter: the abstraction layer, source types and sources, and how to reach the console.</li>
+  <li>Read the source-types chapter carefully, including compound steps, helper fields and the ordering rule that the first matching rule wins.</li>
+  <li>Read the import sections on delta upload, the checkpoint, the transaction bracket and the watchdog before you run an import against real data — in particular the rule that events are appended and never de-duplicated.</li>
+  <li>Read the pipeline-monitoring chapter for the live flowchart and the ingestion KPIs, especially <b>Events skipped</b>.</li>
+  <li>If you also automate rebuilds of pre-materialized transitions, read the per-connection API-token section in the administration group.</li>
+</ol>
+
+<h2 id="intro-conventions">1.7 Conventions used in this manual</h2>
+
+<dl>
+  <dt>On-screen labels</dt>
+  <dd>Controls are named exactly as they appear, in bold — for example <b>Apply</b>, <b>Save Preset…</b>, <b>Use pre-materialized transitions</b>. Icon-only controls are given by their glyph and function, for example the <b>＋</b> button in the Connections header.</dd>
+
+  <dt>Code and identifiers</dt>
+  <dd>Table names, column names, file paths, environment variables, commands and API endpoints are set in a monospaced face, for example <code>JOURNEYS</code>, <code>PMW_DATA_DIR</code>, <code>data/backups/</code>.</dd>
+
+  <dt>Role callouts</dt>
+  <dd>A "Requires" box before a procedure names the minimum permission needed. If you do not hold it, the control described is either hidden or the request is refused.</dd>
+
+  <dt>Note, Tip and Warning</dt>
+  <dd><b>Note</b> adds context you need for the surrounding text to make sense. <b>Tip</b> is optional but saves time. <b>Warning</b> marks behaviour that can lose data, lock someone out, or produce misleading results.</dd>
+
+  <dt>Ports and URLs</dt>
+  <dd>Given as the direct-installation defaults (8080, 8090, 8100). Under Docker, add 2000 to each host port. Where TLS is enabled, substitute the HTTPS port (8443, 8453, 8463).</dd>
+
+  <dt>Spelling</dt>
+  <dd>The manual uses British spelling; the application's own labels are reproduced verbatim and therefore sometimes use American spelling, as in <b>Colorise edges by weight</b> and <b>Customize</b>.</dd>
+</dl>
+
+<div class="tip"><strong>Tip</strong> Everything described in the analysis chapters is also summarised in the in-application help, which hides administration and integration topics from accounts that cannot reach those surfaces. If a help topic you have read about is missing from your table of contents, that is the permission system telling you the feature is not available to your account.</div>
+
+</section>

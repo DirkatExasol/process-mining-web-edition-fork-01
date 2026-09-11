@@ -1,0 +1,571 @@
+<section class="chapter" id="ch-signing-in" data-title="Signing In, Sessions and Security" data-num="5">
+<h1><span class="chnum">5</span> Signing In, Sessions and Security</h1>
+
+<p class="chintro">This chapter explains how you get into the Process Mining Demonstrator and how you stay in. It covers password sign-in on all three browser surfaces — the main application, the integration console and the admin interface — together with two-factor authentication using an authenticator app, passkeys (Touch ID, Windows Hello, security keys), how long a session lasts, what happens when it ends, and what the system does after repeated failed attempts. It closes with the full role capability matrix and a catalogue of every message you may see on a sign-in screen. Read the first three sections if you only need to sign in; read the rest if you administer accounts or are troubleshooting an access problem.</p>
+
+<h2 id="ch5-surfaces">5.1 The three surfaces and who may sign in</h2>
+
+<p>The product presents three separate web surfaces. Each has its own session cookie and its own access rule. Signing in on one surface does <b>not</b> sign you in on the others: the cookies are audience-bound, so an application cookie is never accepted by the integration console or the admin panel, and vice versa.</p>
+
+<table>
+<thead><tr><th>Surface</th><th>Default ports<br>(HTTP / HTTPS)</th><th>Session cookie</th><th>Who may sign in</th><th>Is sign-in ever optional?</th></tr></thead>
+<tbody>
+<tr><td>Main application (GUI)</td><td>8080 / 8443</td><td><code>pmw_session</code></td><td>Any enabled user, in any role</td><td>Yes — controlled by <b>Require sign-in for the main application</b> (default on)</td></tr>
+<tr><td>Integration console</td><td>8100 / 8463<br>(<code>PMW_INTEGRATION_PORT</code>, <code>PMW_INTEGRATION_HTTPS_PORT</code>)</td><td><code>pmw_integration</code></td><td>Developers and administrators only; power users are refused</td><td>No — always requires sign-in</td></tr>
+<tr><td>Admin interface</td><td>8090 / 8453<br>(<code>PMW_ADMIN_PORT</code>, <code>PMW_ADMIN_HTTPS_PORT</code>)</td><td><code>pmw_admin</code></td><td>Administrators only</td><td>No</td></tr>
+</tbody>
+</table>
+
+<p>All session cookies are HttpOnly, use SameSite=Lax, are marked Secure when the surface is served over HTTPS, and are scoped to path <code>/</code>.</p>
+
+<p>The main application and the integration console share the same sign-in panel; the only visual difference is that the integration console adds a second title line, <b>Integration</b>, beneath <b>Process Mining Demonstrator</b>. The admin sign-in is rendered by the admin server itself but deliberately mirrors the same panel, with the second title line <b>Administration</b>; its page title is "Administration — Sign in".</p>
+
+<p>All three sign-in panels show a small <b>release label</b> beneath the caption (for example <em>V0.95&nbsp;&mdash;&nbsp;Milford Sound</em>). It is read from the top-level <code>VERSION</code> file — edit that one line to change the label everywhere, or override it with the <code>PMW_APP_VERSION</code> environment variable. It is display-only and never affects behaviour.</p>
+
+<div class="note"><strong>Note</strong> The first start of a new installation seeds a built-in administrator with the username <b>Administrator</b> and the password <b>Administrator</b> (both overridable with the environment variables <code>PMW_DEFAULT_ADMIN_USER</code> and <code>PMW_DEFAULT_ADMIN_PASSWORD</code>). Until that password is changed, the admin dashboard displays the banner "⚠️ The <b>Administrator</b> account is still using its default password. Change it now in <b>👤 Profile</b> (top right)." Changing the password clears the banner permanently.</div>
+
+<div class="warn"><strong>Warning</strong> An administrator can switch the integration console off entirely (Admin → <b>Integration</b> tab → <b>Enable the integration console</b>). While it is off, browser navigations to that surface receive a 503 page headed <b>Console unavailable</b> with the text "The integration console has been turned off by the administrator."; programmatic calls receive the same text as JSON.</div>
+
+<h2 id="ch5-password">5.2 Signing in with a password (application and integration console)</h2>
+
+<figure data-fig="app-login"><figcaption>The sign-in panel. The caption under the title changes with the step: "Sign in to continue", "Enter your authentication code" or "Set up two-factor to continue".</figcaption></figure>
+
+<h3 id="ch5-password-controls">What is on the panel</h3>
+
+<dl>
+<dt>Username</dt><dd>Autofocused when the panel opens. Required — the <b>Sign in</b> button stays disabled until you type something here.</dd>
+<dt>Password</dt><dd>An empty password is accepted by the form and simply fails authentication.</dd>
+<dt>Sign in</dt><dd>Primary button. Shows a spinner while the request is in flight.</dd>
+<dt>🔑 Sign with Passkey</dt><dd>Shown only when passkeys are usable in this browser (see section 5.5). Tooltip: "Sign in with a passkey (Touch ID, Windows Hello, security key…)". Also disabled until a username is entered.</dd>
+</dl>
+
+<p>Three notices can appear above the form:</p>
+<ul>
+<li>An orange <b>inactivity notice</b> — "You were signed out due to inactivity." — after an automatic idle sign-out. It is suppressed while an error is showing.</li>
+<li>An orange <b>license banner</b> when no valid license is installed: "<b>Demo Mode</b> — remaining time: N min" or "<b>No License installed</b>". It refreshes every 30 seconds.</li>
+<li>A red <b>error box</b> carrying any sign-in error (section 5.10).</li>
+</ul>
+
+<p>If a directory (LDAP) server is configured, a small LED and a label appear below the form: green <b>Directory server available</b> ("The user directory server responded to a connection test.") or red <b>Directory server unavailable</b> ("The user directory server did not respond to a connection test."). The probe result is cached for about 20 seconds. Nothing is shown when no directory is configured. An administrator can also hide this indicator entirely — even when a directory is set up — with the <b>Show the Authentication Server availability indicator on the login panels</b> switch on the Directory tab; when it is off, neither the app nor the admin sign-in panel shows the LED.</p>
+
+<div class="tip"><strong>Tip</strong> The panel background is customisable by an administrator (Admin → <b>Customize</b>): the theme default, a solid colour, or an uploaded image — over an image the panel becomes 50 % translucent. The same background applies to all three sign-in pages.</div>
+
+<h3 id="ch5-password-task">Signing in</h3>
+
+<ol class="steps">
+<li>Open the application in your browser. The sign-in panel appears.</li>
+<li>Type your <b>Username</b>.</li>
+<li>Type your <b>Password</b>.</li>
+<li>Press <b>Sign in</b> (or Enter).</li>
+<li>If your account uses two-factor authentication, the panel switches to the code step — continue with section 5.4. If two-factor is required but not yet configured, the panel switches to enrolment instead.</li>
+<li>On the first successful entry in the main application you are shown the <b>Legal Disclaimer</b> gate. Read it, tick <b>I have read and accept all terms stated above</b> — <b>Accept &amp; Continue</b> stays disabled until you do — and press <b>Accept &amp; Continue</b>.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> Pressing <b>Decline</b> on the Legal Disclaimer signs you out and returns you to the sign-in panel. Acceptance is stored in your personal settings, so the gate appears once per user, not once per session.</div>
+
+<p>When a sign-in fails, the message appears in the red box, the password field is cleared and the username is kept, so you can retype the password without retyping your name.</p>
+
+<h3 id="ch5-integration-gate">The integration console role gate</h3>
+
+<div class="role">Requires: <b>Developer</b> or <b>Administrator</b></div>
+
+<p>On the integration console the role check runs <em>before</em> any second factor. A correct password from an account that is neither a developer nor an administrator is refused with "You need the Developer role to use the integration console. Ask an administrator to grant it." — no code step is offered. Power users are refused in exactly the same way; the power role grants nothing here.</p>
+
+<p>If the Developer role is revoked while you are working, the console does not wait for your session to expire: your next request drops you to an <b>Access denied</b> screen reading "The integration console is available to developers and administrators only. Ask an administrator to grant you the Developer role.", with a <b>⏻ Sign out</b> button.</p>
+
+<h3 id="ch5-ldap">Directory (LDAP) accounts</h3>
+
+<p>When a directory server is configured and enabled, the application and integration sign-in also accept directory accounts. Local accounts are always checked <b>first</b>, so a local break-glass account can never be taken over by a directory identity that happens to share its name.</p>
+
+<p>Directory users are provisioned on their first successful sign-in as ordinary enabled local rows marked <code>ldap</code>. Administrator rights are <b>never</b> granted from the directory — a local administrator must promote the account. Directory users have no local password, so the failed-sign-in lockout counter does not apply to them, and the admin Users tab hides <b>Reset password</b> on their rows.</p>
+
+<h2 id="ch5-admin-login">5.3 Signing in to the admin interface</h2>
+
+<div class="role">Requires: <b>Administrator</b></div>
+
+<ol class="steps">
+<li>Open the admin interface (by default port 8090, or 8453 over HTTPS). Visiting <code>/</code> without a session redirects you to <code>/login</code>; visiting <code>/login</code> with a valid session redirects you to the dashboard.</li>
+<li>Enter your <b>Username</b> and <b>Password</b> and press <b>Sign in</b>.</li>
+<li>Complete the authentication code step or the forced enrolment step if your account requires them (sections 5.4.3 and 5.4.4).</li>
+<li>You arrive at the admin dashboard.</li>
+</ol>
+
+<p>To leave, press <b>Log out</b> in the top-right corner, next to <b>👤 Profile</b>. You are returned to <code>/login</code>.</p>
+
+<div class="note"><strong>Note</strong> Bad credentials and <em>valid credentials belonging to a non-administrator</em> produce the same message here: "Invalid credentials, or the account is not an administrator." This is deliberate — the page never reveals whether a username exists or which of the two conditions failed.</div>
+
+<p>Directory accounts can sign in to the admin panel only when <b>Also allow directory sign-in to this admin interface</b> is enabled <em>and</em> the account has been locally promoted to administrator. The <b>🔑 Sign with Passkey</b> button appears on this page only when the browser supports WebAuthn and you reached the panel by a usable hostname; it is hidden entirely when you reach the panel by IP address.</p>
+
+<p>Adding <code>?inactivity=1</code> to the login URL — which is what the idle watcher does — shows the same orange "You were signed out due to inactivity." notice.</p>
+
+<h2 id="ch5-2fa">5.4 Two-factor authentication (TOTP)</h2>
+
+<h3 id="ch5-2fa-model">5.4.1 How it works</h3>
+
+<p>Two-factor authentication adds a six-digit time-based one-time code on top of your password. It never replaces the password. Two independent facts govern it for each account:</p>
+
+<dl>
+<dt>Allowed</dt><dd>An administrator has ticked the per-user <b>2FA</b> checkbox in the Users tab (or the all-users master checkbox). This means two-factor <em>applies</em> to the account.</dd>
+<dt>Enrolled</dt><dd>You have scanned the QR code and confirmed a code, so a secret is stored for your account (encrypted at rest).</dd>
+</dl>
+
+<p>The login gate is <em>allowed <b>and</b> enrolled</em>. The consequences are worth understanding:</p>
+
+<table>
+<thead><tr><th>Allowed</th><th>Enrolled</th><th>What happens at your next sign-in</th></tr></thead>
+<tbody>
+<tr><td>No</td><td>No</td><td>Password only.</td></tr>
+<tr><td>Yes</td><td>No</td><td>Enrolment is <b>forced</b>. The password step succeeds but no session is issued until you finish enrolling.</td></tr>
+<tr><td>Yes</td><td>Yes</td><td>Password, then a six-digit code or a recovery code. A passkey sign-in skips the code step entirely.</td></tr>
+<tr><td>No</td><td>Yes</td><td>Password only. The secret is kept, not deleted — re-ticking <b>2FA</b> re-arms the same authenticator without re-enrolment.</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> Allowing 2FA for a user is the same as making it <b>mandatory</b> for that user. They cannot decline: their next sign-in on any surface stops after the password and forces enrolment.</div>
+
+<p>One secret protects all three surfaces. Codes are six digits on 30-second steps with one step of clock-skew tolerance either side; spaces in a typed code are ignored. Your authenticator app labels the entry with the issuer <b>Process Mining Demonstrator</b> (overridable with <code>PMW_MFA_ISSUER</code>). Any standard authenticator works — Google Authenticator, 1Password, Authy and equivalents.</p>
+
+<h3 id="ch5-2fa-setup">5.4.2 Setting up two-factor yourself</h3>
+
+<div class="role">Requires: two-factor <b>allowed</b> for your account by an administrator</div>
+
+<p>In the main application and the integration console, the sidebar footer shows a <b>🔒 Two-factor</b> button (tooltip "Manage two-factor authentication"). It is visible only when an administrator has allowed 2FA for your account.</p>
+
+<ol class="steps">
+<li>Press <b>🔒 Two-factor</b> in the sidebar footer. The <b>Two-factor authentication</b> sheet opens.</li>
+<li>Press <b>Set up authenticator</b>. A QR code appears with the instruction "Scan this with your authenticator app, then enter the 6-digit code it shows."</li>
+<li>Scan the QR code with your authenticator app. If your device cannot scan, use the line "Can't scan? Enter this key manually:" and type the key shown.</li>
+<li>Type the six-digit code your app displays into the field marked with the placeholder <b>6-digit code</b> and press <b>Confirm</b>. A wrong code gives "That code didn't match. Try again." — the QR code and secret stay valid, so you do not need to rescan.</li>
+<li>The recovery block appears, headed <b>Save your recovery codes</b>. Press <b>Copy codes</b> or write them down, then press <b>Done</b>.</li>
+</ol>
+
+<p>On the admin interface the same functions live in the <b>👤 Profile</b> overlay, section <b>Two-factor authentication</b>, with the banner states "Two-factor is on. N recovery codes left.", "Two-factor is off for your account." and "Two-factor is not enabled for your account — enable it in the Users tab first." Its buttons are <b>Set up authenticator</b>, <b>Regenerate recovery codes</b> and <b>Turn off</b>, and it confirms with the toasts "Two-factor enabled", "Recovery codes regenerated" and "Two-factor turned off".</p>
+
+<h3 id="ch5-2fa-signin">5.4.3 Signing in with a code</h3>
+
+<ol class="steps">
+<li>Enter your username and password as usual and press <b>Sign in</b>.</li>
+<li>The panel switches to the caption "Enter your authentication code" with the field <b>Authentication code</b> (placeholder "6-digit code or a recovery code").</li>
+<li>Type the current code from your authenticator app, or one of your recovery codes, and press <b>Verify</b>.</li>
+</ol>
+
+<p><b>Back</b> returns you to the username and password step and clears both the code and the password. On the admin interface the code step is a plain form with a <b>Verify</b> button and no Back button — reload <code>/login</code> to start again.</p>
+
+<div class="note"><strong>Note</strong> You have <b>5 minutes</b> after the password step to enter the code. The state is carried by a short-lived signed cookie, not a session — no session exists until the code is accepted. After 5 minutes you see "Your sign-in session expired. Start again." (the admin wording is "Your sign-in session expired. Please start again.") and must re-enter your password.</div>
+
+<div class="tip"><strong>Tip</strong> Wrong codes are throttled per source IP but <b>never</b> count towards the account lockout. A mistyped or expired code can never disable your account.</div>
+
+<h3 id="ch5-2fa-forced">5.4.4 Mandatory enrolment at sign-in</h3>
+
+<p>If an administrator has allowed 2FA for your account and you have not yet enrolled, the sign-in panel switches after the password step to the caption <b>Set up two-factor to continue</b>.</p>
+
+<ol class="steps">
+<li>Read the text "Two-factor is required for your account. Scan this with an authenticator app (Google Authenticator, 1Password…), then enter the 6-digit code." While the QR code is being fetched, a spinner shows <b>Preparing…</b></li>
+<li>Scan the QR code, or use the "Can't scan? Key:" line to enter the secret manually.</li>
+<li>Type the code into the <b>6-digit code</b> field (placeholder "123456") and press <b>Confirm &amp; sign in</b>. On the admin interface the button is the same and success leads straight to the recovery-codes page.</li>
+<li>Your session is issued, but the panel stays up for one more screen headed <b>Two-factor is on — save your recovery codes</b>. Press <b>Copy codes</b>, store them, then press <b>Continue</b> to enter the application. On the admin interface, follow the <b>Continue to the admin panel</b> link.</li>
+</ol>
+
+<p><b>Back</b> abandons enrolment and no session is issued. Nothing is stored on the server until a code confirms the authenticator, so an abandoned enrolment leaves no half-configured account behind. The QR code and secret are valid for <b>10 minutes</b>; after that you see "Setup expired. Start again."</p>
+
+<h3 id="ch5-recovery">5.4.5 Recovery codes</h3>
+
+<p>Each set contains <b>10</b> codes in the form <code>a1b2c3d4-e5f6g7h8</code> — lower case, with look-alike characters avoided. Each works exactly once. They are stored only as salted hashes, so nobody, including an administrator, can read them back.</p>
+
+<p>You may type a recovery code anywhere a TOTP code is accepted: at the sign-in code step and in the turn-off confirmation. Dashes, spaces and letter case are ignored.</p>
+
+<div class="warn"><strong>Warning</strong> Recovery codes are displayed exactly once, at setup or regeneration. Generating a new set with <b>Regenerate recovery codes</b> replaces the previous set entirely — every old code stops working immediately.</div>
+
+<h3 id="ch5-2fa-off">5.4.6 Turning two-factor off</h3>
+
+<ol class="steps">
+<li>Open the <b>Two-factor authentication</b> sheet from the sidebar footer. The status row reads "✅ Two-factor is on. N recovery code(s) left."</li>
+<li>Press <b>Turn off</b>. You are asked: "Enter your current code (or a recovery code) to turn two-factor off."</li>
+<li>Type a current code into the field (placeholder "Current code") and press <b>Confirm off</b>.</li>
+</ol>
+
+<p>The re-authentication is deliberate: it stops someone who has hijacked an open session from silently stripping the second factor. A wrong code gives "Enter your current authentication code to turn off two-factor." Turning 2FA off deletes both the secret and all remaining recovery codes. On the admin interface the equivalent control prompts "Enter your current authentication code (or a recovery code) to turn off two-factor:".</p>
+
+<h3 id="ch5-2fa-lost">5.4.7 If you lose your authenticator</h3>
+
+<p>There are two routes back in:</p>
+<ol class="steps">
+<li>Sign in with your password and enter one of your <b>recovery codes</b> at the code step.</li>
+<li>If you have no recovery codes left, ask an administrator to untick the <b>2FA</b> checkbox on your row in the Users tab. Your password alone then works again and you can re-enrol from scratch.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> There is no administrator function that resets your two-factor while preserving enrolment. Unticking the permission relaxes the requirement but leaves the old secret in place; if the administrator re-ticks it before you re-enrol, your lost authenticator is re-armed and you are back where you started. Turn 2FA off from the sheet first (which deletes the secret), then enrol again.</div>
+
+<h2 id="ch5-passkeys">5.5 Passkeys (WebAuthn)</h2>
+
+<h3 id="ch5-passkeys-model">5.5.1 What a passkey is here</h3>
+
+<p>A passkey lets you sign in with Touch ID, Windows Hello or a hardware security key instead of typing a password. It is an <em>alternative</em> to the password, never a replacement: your password always remains a fallback.</p>
+
+<div class="role">Requires: passkeys <b>allowed</b> for your account by an administrator</div>
+
+<p>An administrator controls this with a per-user <b>Passkey</b> checkbox in the Users tab and an all-users master checkbox. Both local and directory accounts may be allowed. Turning the permission off blocks passkey sign-in immediately — the check runs at every step — and hides the management controls.</p>
+
+<p>A passkey registered on a host works on <b>all surfaces of that host</b>: the application, the integration console and the admin panel share the same relying-party identifier, which is the hostname without the port.</p>
+
+<div class="warn"><strong>Warning</strong> A passkey sign-in satisfies two-factor by itself. Even for an account enrolled in TOTP, no code step is shown after a successful passkey ceremony — the passkey counts as strong authentication on its own. If your organisation requires a TOTP code on every sign-in, do not allow passkeys.</div>
+
+<h3 id="ch5-passkeys-prereq">5.5.2 Prerequisites</h3>
+
+<table>
+<thead><tr><th>Requirement</th><th>Detail</th></tr></thead>
+<tbody>
+<tr><td>Browser support</td><td>A WebAuthn-capable browser. Otherwise: "This browser does not support passkeys."</td></tr>
+<tr><td>Secure context</td><td>HTTPS, or <code>localhost</code>.</td></tr>
+<tr><td>Real hostname</td><td>WebAuthn rejects bare IP addresses and single-label hosts. Reached by IP, the buttons are hidden or disabled and you see: "Passkeys need a hostname, not an IP address. Reach the server by its name over HTTPS — e.g. its ".local" name — instead of its IP, then try again."</td></tr>
+<tr><td>Username</td><td>Sign-in is username-first: you must type your username before pressing <b>🔑 Sign with Passkey</b>. Usernameless, discoverable-credential sign-in is not used.</td></tr>
+</tbody>
+</table>
+
+<p>For deployments where the application and admin panel live on different subdomains, three environment variables tune the relying party:</p>
+
+<table>
+<thead><tr><th>Variable</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>PMW_PASSKEY_RP_ID</code></td><td>Set to the shared parent domain when the surfaces are split across subdomains.</td></tr>
+<tr><td><code>PMW_PASSKEY_ORIGINS</code></td><td>Comma-separated allowlist of expected origins.</td></tr>
+<tr><td><code>PMW_PASSKEY_RP_NAME</code></td><td>Display name shown by the browser. Default: "Process Mining Demonstrator".</td></tr>
+</tbody>
+</table>
+
+<h3 id="ch5-passkeys-enrol">5.5.3 Enrolling a passkey</h3>
+
+<ol class="steps">
+<li>Sign in with your password.</li>
+<li>Press <b>🔑 Passkeys</b> in the sidebar footer (tooltip "Manage passkeys for this account"). The <b>Passkeys</b> sheet opens; with none registered it reads "No passkeys registered yet."</li>
+<li>Type a name in the field marked <b>Name (e.g. MacBook Touch ID)</b>. The name is capped at 60 characters and defaults to "Passkey" if you leave it empty.</li>
+<li>Press <b>Add a passkey</b> and complete the ceremony your operating system or browser presents.</li>
+<li>The passkey appears in the list with its name and "Added" date and time.</li>
+</ol>
+
+<p>On the admin interface, use <b>👤 Profile</b> → <b>Passkeys</b>, the field <b>Passkey name</b> (placeholder "e.g. MacBook Touch ID") and the button <b>Add a passkey</b>. Toasts confirm with "Passkey added" and "Passkey removed".</p>
+
+<p>To remove a passkey, press <b>Remove</b> on its row (tooltip "Remove this passkey"). There is no confirmation prompt.</p>
+
+<div class="note"><strong>Note</strong> If your device already holds a passkey for this account you see: "A passkey for this account already exists on this device. If it isn't shown in the list here, remove it from your device's passkey settings (iOS: Settings → Passwords) and try again."</div>
+
+<h3 id="ch5-passkeys-signin">5.5.4 Signing in with a passkey</h3>
+
+<ol class="steps">
+<li>Type your <b>Username</b> on the sign-in panel. The passkey button stays disabled until you do.</li>
+<li>Press <b>🔑 Sign with Passkey</b>. Leave the password field empty.</li>
+<li>Complete the biometric or security-key prompt. You are signed in — with no code step, even if your account uses TOTP.</li>
+</ol>
+
+<p>A challenge is valid for <b>5 minutes</b>; after that you see "Passkey challenge expired. Try again." Replay is prevented by signature counters. Cancelling the browser or operating-system prompt is treated as a silent cancellation — no error is shown.</p>
+
+<div class="note"><strong>Note</strong> Asking for a passkey challenge for an unknown or ineligible username produces an indistinguishable decoy challenge, so the sign-in page cannot be used to discover which usernames exist. Your device then finds no matching passkey and the browser cancels, which looks exactly like a user cancellation.</div>
+
+<h2 id="ch5-sessions">5.6 Sessions, idle sign-out and session lifetime</h2>
+
+<h3 id="ch5-session-mech">5.6.1 How long a session lasts</h3>
+
+<p>Session tokens are stateless signed cookies, re-minted on every authenticated request (including the background session polls). Each token carries your username, your personal session epoch, the surface it belongs to, and the time of your original sign-in — the last of which is carried through every refresh.</p>
+
+<table>
+<thead><tr><th>Limit</th><th>Value</th><th>Setting</th></tr></thead>
+<tbody>
+<tr><td>Idle window (application / integration), when no idle timeout is configured</td><td>12 hours</td><td><code>PMW_SESSION_TTL</code> (seconds)</td></tr>
+<tr><td>Idle window (admin), when no idle timeout is configured</td><td>8 hours</td><td><code>PMW_ADMIN_SESSION_TTL</code> (seconds)</td></tr>
+<tr><td>Idle window when an idle timeout <em>is</em> configured</td><td>Equals the configured timeout, sliding on activity</td><td>Users tab / App Control tab</td></tr>
+<tr><td>Absolute session lifetime, all three surfaces</td><td>7 days from the original sign-in</td><td><code>PMW_SESSION_MAX_LIFETIME</code> (seconds)</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> The absolute lifetime is not a sliding window. Seven days after you first signed in, the session dies even if you have been working continuously, and you must sign in again.</div>
+
+<p>Every request also re-validates the live user record. If your account is disabled or deleted, the session is dead at once. If a role that gates the surface is revoked, the session is dead on that surface immediately.</p>
+
+<h3 id="ch5-idle">5.6.2 Idle sign-out</h3>
+
+<div class="role">Requires: <b>Administrator</b> to configure</div>
+
+<p>Two separate settings govern idle sign-out.</p>
+
+<figure data-fig="admin-04-users"><figcaption>Admin → Users. The <b>Auto sign-out after [N] minutes of inactivity</b> control governs the main application and the integration console.</figcaption></figure>
+
+<ol class="steps">
+<li>Open the admin interface and go to the <b>Users</b> tab.</li>
+<li>Set <b>Auto sign-out after [N] minutes of inactivity</b> — accepted range 0 to 1440, where <b>0 disables</b> the feature.</li>
+<li>Save. The hint below the field confirms the effect: "Idle sessions are signed out after N min." or "Disabled — sessions never time out on inactivity."</li>
+</ol>
+
+<p>In the main application, an invisible watcher observes mouse movement, mouse clicks, key presses, touches, scrolling and wheel events. After N idle minutes it signs you out and the sign-in panel shows "You were signed out due to inactivity." While you are active it pings the session endpoint — at most once every 15 to 60 seconds — so the server-side sliding window stays alive even during long stretches without API calls. The watcher runs only when sign-in is required, a user is signed in, and N is greater than zero.</p>
+
+<div class="warn"><strong>Warning</strong> The integration console honours the <em>same</em> idle value on the server side, so its session expires after N idle minutes — but it has <b>no client-side watcher</b>. You are not bounced to a sign-in screen; instead your next action simply fails authentication. Expect this if you leave the console open in a background tab.</div>
+
+<p>The admin interface has its own, independent setting.</p>
+
+<figure data-fig="admin-02-app-control"><figcaption>Admin → App Control, card <b>Admin session</b>: a separate idle timeout for the admin interface alone.</figcaption></figure>
+
+<ol class="steps">
+<li>Go to the <b>App Control</b> tab and find the card <b>Admin session</b> — "Automatically sign out of <b>this admin interface</b> after a period of inactivity. This is separate from the main app's auto sign-out (set in the Users tab)."</li>
+<li>Set <b>Auto sign-out after [N] minutes of inactivity</b>.</li>
+<li>Press <b>Save</b>. The toast reads "Admin auto sign-out updated" and the hint becomes "You are signed out of this admin after N min idle." or "Disabled — the admin session never times out on inactivity."</li>
+</ol>
+
+<p>The admin watcher mirrors the application's and redirects you to <code>/login?inactivity=1</code>.</p>
+
+<h3 id="ch5-signout">5.6.3 Signing out — and what else it ends</h3>
+
+<p><b>⏻ Sign out</b> in the application and integration console sidebar footer, and <b>Log out</b> in the admin interface, do more than delete the local cookie. They bump your session epoch on the server, which invalidates <b>every outstanding session token of yours on all three surfaces</b>.</p>
+
+<div class="warn"><strong>Warning</strong> Signing out of the main application also kills your admin and integration sessions — they fail on their next request. This is intentional, but it surprises people who keep the admin panel open in another tab. Signing out also releases your per-user database connection on the backend.</div>
+
+<h3 id="ch5-password-change">5.6.4 Password changes invalidate sessions</h3>
+
+<p>Any password set or reset bumps the session epoch, so all of that user's sessions die.</p>
+
+<dl>
+<dt>You change your own password (admin Profile overlay)</dt><dd>Your <em>current</em> admin session survives — a fresh cookie is issued in the same response. Every <em>other</em> session of yours is invalidated.</dd>
+<dt>An administrator resets someone else's password</dt><dd>That user is signed out silently at their next request and must sign in again with the new password.</dd>
+</dl>
+
+<h3 id="ch5-session-dies">5.6.5 When a session dies while you are working</h3>
+
+<p>API calls begin returning 401 with "Authentication required." The application surfaces this as an error, and reloading the page lands you on the sign-in panel. Two other server messages you may meet are unrelated to authentication but appear in the same place: "The compute backend is not reachable. Start it with ./run.sh or check PMW_BACKEND_URL." (502) and "The compute backend timed out." (504).</p>
+
+<h3 id="ch5-resume">5.6.6 Resuming where you left off</h3>
+
+<p>The main application remembers your last working position and restores it automatically the next time it loads. When you sign in again — including after an idle sign-out — it <b>reconnects to the database connection</b> you were using, <b>reopens the project</b> you had open and <b>returns to the view</b> you were in (A-Chart, Statistics, A/B Comparison, and so on). The same restore happens on a plain page reload while your session is still alive.</p>
+
+<p>The position is stored per user in your server-side settings, so it follows you between browsers and machines, exactly like your presets and layouts. It records only <em>where</em> you were — the connection, the project and the view — not any transient in-progress edits. A few natural limits apply:</p>
+
+<ul>
+<li>If the saved connection has since been un-assigned from you, or the saved project no longer exists, that step is skipped silently and you land one level up (connected but no project, or signed in but not connected).</li>
+<li>If the automatic reconnection fails — for example the database is down — the usual "Connection Failed" retry dialog appears, just as if you had clicked the connection yourself.</li>
+<li>Explicitly pressing <b>Disconnect</b> clears the saved connection, so a deliberate disconnect is never silently undone on your next sign-in. (An idle sign-out does <em>not</em> count as a disconnect — that is exactly the case this feature is for.)</li>
+</ul>
+
+<h2 id="ch5-lockout">5.7 Account lockout and attempt throttling</h2>
+
+<h3 id="ch5-lockout-account">5.7.1 Failed-sign-in lockout</h3>
+
+<div class="role">Requires: <b>Administrator</b> to configure</div>
+
+<ol class="steps">
+<li>In the admin interface, open the <b>Users</b> tab.</li>
+<li>Set <b>Disable an account after [N] failed sign-in attempts</b> — accepted range 0 to 100, where 0 turns the feature off. Fresh installations default to <b>3</b>.</li>
+<li>Press <b>Save</b>. The toast reads "Failed-sign-in lockout updated" and the hint becomes "Accounts (incl. the Administrator) are disabled after N failed sign-ins." or "Disabled — accounts are never locked on failed sign-ins."</li>
+</ol>
+
+<p>The counter records <b>consecutive wrong-password attempts</b> against a local account, pooled across all three surfaces — they share one store. A successful sign-in resets it. The following do <em>not</em> count: wrong TOTP codes, failed passkey ceremonies, directory (LDAP) accounts, and accounts that are already disabled.</p>
+
+<p>When the threshold is reached the account is disabled and flagged. Its row in the Users tab shows a <b>locked</b> pill (tooltip "Disabled after too many failed sign-ins — Unlock to restore.") and the action button reads <b>Unlock</b>.</p>
+
+<div class="note"><strong>Note</strong> Despite the admin hint's wording, the <b>built-in Administrator is never auto-locked</b>. Its failures are counted, but it is the break-glass account and must stay reachable; its protection is the per-IP throttle plus deliberately slow password hashing. Other administrator accounts do lock.</div>
+
+<p>There are three ways back in:</p>
+<table>
+<thead><tr><th>Route</th><th>Detail</th></tr></thead>
+<tbody>
+<tr><td>Wait</td><td>A lockout lifts itself after <b>15 minutes</b>. The expiry is applied lazily, at the next sign-in attempt, so simply trying again after the window works.</td></tr>
+<tr><td>Administrator</td><td>Press <b>Unlock</b> (or <b>Enable</b>) on the user's row in the Users tab. This also clears the counter. Disabling and re-enabling an account clears it too.</td></tr>
+<tr><td>Break-glass restart</td><td>Restart the server with <code>PMW_RESET_LOCKOUTS=1</code> to clear every lockout — for the case where your only non-built-in administrator is locked out.</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> The 15-minute auto-expiry is a fixed value with no control in the admin interface. Only the threshold is configurable there.</div>
+
+<h3 id="ch5-oracle">5.7.2 Why the message is sometimes vague</h3>
+
+<p>The sign-in panel avoids telling an attacker whether a username exists. The specific reason for a refusal is shown <b>only when the supplied password is correct</b>:</p>
+
+<ul>
+<li>Correct password, account auto-locked → "This account has been locked after too many failed sign-in attempts. Contact an administrator."</li>
+<li>Correct password, account disabled by an administrator → "This account has been disabled. Contact an administrator."</li>
+<li>Anything else — wrong password, unknown username, disabled account with a wrong password → the generic "Invalid username or password." (application and integration console) or "Invalid credentials, or the account is not an administrator." (admin interface).</li>
+</ul>
+
+<p>The same principle governs the passkey path: a request for an unknown or ineligible account receives a decoy challenge rather than a refusal.</p>
+
+<h3 id="ch5-ip-throttle">5.7.3 Per-IP throttle</h3>
+
+<p>Independently of the account lockout, all three surfaces throttle by source address. After <b>3 failures within 15 minutes from one IP</b>, that IP must wait a <b>5-minute cooldown</b>, measured from its last failure. The counter lives in memory in the serving process and is cleared by a restart, or by one fully successful sign-in from that address.</p>
+
+<p>The throttle covers password sign-ins, TOTP verification, forced-enrolment confirmation, the 2FA turn-off re-authentication and, on the admin panel, passkey sign-in completion. The socket peer address is used; the <code>X-Forwarded-For</code> header is deliberately ignored, so a client cannot forge its way around the limit.</p>
+
+<p>Messages differ slightly by surface: "Too many attempts. Try again shortly." on the application and integration console; "Too many failed attempts. Try again in about N seconds." on the admin login page (accompanied by a Retry-After header); "Too many failed attempts. Try again shortly." on the admin code and setup steps.</p>
+
+<h2 id="ch5-open-mode">5.8 Single-user (open) mode</h2>
+
+<div class="role">Requires: <b>Administrator</b></div>
+
+<p>For a single-user installation or a demonstration machine, sign-in on the <em>main application</em> can be switched off entirely.</p>
+
+<ol class="steps">
+<li>Open the admin interface and go to the <b>Users</b> tab.</li>
+<li>Untick <b>Require sign-in for the main application</b>. The toast reads "Access updated" and the hint changes from "Users must sign in." to "The app is open — no sign-in required."</li>
+</ol>
+
+<table>
+<thead><tr><th>Setting</th><th>Behaviour</th></tr></thead>
+<tbody>
+<tr><td><b>On</b> (default)</td><td>Every visitor sees the sign-in panel. All API calls require a session; without one they return 401 "Authentication required." Only the health probe is open.</td></tr>
+<tr><td><b>Off</b> (open mode)</td><td>The application loads with no sign-in panel and <b>no user identity at all</b>.</td></tr>
+</tbody>
+</table>
+
+<p>In open mode:</p>
+<ul>
+<li>Personal settings and filter presets are shared by everyone who uses the machine — there is one profile.</li>
+<li>The sidebar authentication footer disappears: no name, no <b>🔒 Two-factor</b>, no <b>🔑 Passkeys</b>, no <b>⏻ Sign out</b>.</li>
+<li>The idle sign-out is inactive.</li>
+<li>Power-user and administrator features are hidden in the interface and refused by the server — with no identity there is nothing to authorise, so those endpoints return 403.</li>
+<li>Notes carry no author.</li>
+</ul>
+
+<div class="note"><strong>Note</strong> If the session probe itself fails at start-up, the application assumes open access so that it still loads rather than trapping you on a broken sign-in panel.</div>
+
+<p>The integration console <b>ignores</b> this toggle and always requires sign-in, because it is role-gated. So does the admin interface.</p>
+
+<h2 id="ch5-roles">5.9 Roles and what each one may do</h2>
+
+<p>Roles are independent, additive flags on an account: <b>Administrator</b>, <b>Power</b> and <b>Developer</b>, on top of the implicit plain-user baseline. An account may hold any combination. The sidebar footer shows your identity as "👤 name (Role)" using the highest role you hold, in the order Admin &gt; Power user &gt; Developer &gt; User. The admin Users tab instead shows a combined badge such as <code>admin·power</code> or <code>power·dev</code>, with tooltips "administrator", "power user (manages own connections)", "developer (integration console)" and "Regular user".</p>
+
+<table>
+<thead><tr><th>Capability</th><th>Plain user</th><th>Power</th><th>Developer</th><th>Admin</th></tr></thead>
+<tbody>
+<tr><td>Sign in to the main application (enabled account)</td><td>✔</td><td>✔</td><td>✔</td><td>✔</td></tr>
+<tr><td>Sign in to the integration console</td><td>✖ (403)</td><td>✖ (403)</td><td>✔</td><td>✔</td></tr>
+<tr><td>Sign in to the admin interface</td><td>✖</td><td>✖</td><td>✖</td><td>✔</td></tr>
+<tr><td>Use database connections assigned to them</td><td>✔</td><td>✔</td><td>✔</td><td>✔</td></tr>
+<tr><td>Create and manage <em>their own</em> database connections</td><td>✖</td><td>✔</td><td>✔</td><td>✔ (manages all)</td></tr>
+<tr><td>Conformance Check, Happy Path, Simulation views</td><td>✖ (hidden from the view menu)</td><td>✔</td><td>✖ (unless also Power)</td><td>✔</td></tr>
+<tr><td>Journey sampling — create and delete representative subsets, A/B sources</td><td>✖</td><td>✔</td><td>✖</td><td>✔</td></tr>
+<tr><td>Notes — create and comment</td><td>✔</td><td>✔</td><td>✔</td><td>✔</td></tr>
+<tr><td>Enrol a passkey; set up two-factor</td><td colspan="4">Governed by the per-user Passkey and 2FA permissions, which are independent of role</td></tr>
+<tr><td>Manage users, TLS, LDAP, backups, license, customisation, integration on/off</td><td>✖</td><td>✖</td><td>✖</td><td>✔</td></tr>
+</tbody>
+</table>
+
+<p>Two points are easy to get wrong:</p>
+<ul>
+<li>The <b>Developer</b> role is purely an additional access grant to the integration console. It does not confer power features — a developer who tries to use journey sampling is refused with "Journey sampling is available to power users and administrators only." — although developers can manage their own database connections.</li>
+<li><b>Power</b> does not open the integration console. Power users are refused there at the password step.</li>
+</ul>
+
+<p>Role revocation is enforced live: the surface predicate is re-checked on every request, so a demoted user loses access on their next action rather than at their next sign-in.</p>
+
+<div class="note"><strong>Note</strong> The built-in Administrator cannot be disabled, demoted or deleted — attempts produce "The built-in Administrator account cannot be disabled.", "…must remain an administrator." and "…cannot be deleted." In addition, any change that would leave the installation with no enabled administrator is refused: "This would leave no enabled administrator. Promote or enable another admin first."</div>
+
+<h2 id="ch5-admin-users">5.10 Administering accounts and permissions</h2>
+
+<div class="role">Requires: <b>Administrator</b></div>
+
+<p>The <b>Users</b> tab carries the note "Only enabled users will be allowed to sign in to the main application." and holds the three global settings described above — require sign-in, application idle timeout and the failed-sign-in threshold — plus the per-user controls.</p>
+
+<p>Filter chips <b>All</b> / <b>Local</b> / <b>LDAP</b> with counts and a search field ("Search users by name…") narrow the list; an empty result reads "No matching users."</p>
+
+<h3 id="ch5-master-flags">The all-users master row</h3>
+
+<p>The master row is introduced by the sentence "Passkey and two-factor are optional alternatives/additions to the password (which always works)." It offers, under the label "All users:", a <b>Passkey</b> checkbox ("Allow every user to enrol and sign in with a passkey") and a <b>2FA</b> checkbox ("Allow every user to set up two-factor (TOTP)"). Ticking either writes the flag for every existing user at once, confirmed by "Passkeys allowed/disabled for all users" or "Two-factor allowed/disabled for all users". Each checkbox reflects whether every user is currently allowed.</p>
+
+<div class="warn"><strong>Warning</strong> The master checkboxes act on the users that exist at the moment you tick them. They do not set a default for users created later — you must tick the flag on new accounts yourself.</div>
+
+<h3 id="ch5-per-user">Per-user controls</h3>
+
+<p>Each user card shows the username and display name, a <b>local</b> or <b>LDAP</b> pill, the role badge, an <b>enabled</b> / <b>disabled</b> / <b>locked</b> pill, and the per-user <b>Passkey</b> and <b>2FA</b> checkboxes ("Allow this user to enrol and sign in with a passkey" / "Allow this user to set up two-factor (TOTP)"). The second line shows "Last sign-in: …" followed by the action buttons.</p>
+
+<table>
+<thead><tr><th>Button</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><b>Disable</b> / <b>Enable</b></td><td>Blocks or restores sign-in. Re-enabling also clears the lockout counter.</td></tr>
+<tr><td><b>Unlock</b></td><td>Appears on a locked row. Restores the account and clears the counter.</td></tr>
+<tr><td><b>Make admin</b> / <b>Remove admin</b></td><td>Grants or revokes the administrator role.</td></tr>
+<tr><td><b>Make power</b> / <b>Remove power</b></td><td>Grants or revokes the power role.</td></tr>
+<tr><td><b>Make developer</b> / <b>Remove developer</b></td><td>Grants or revokes access to the integration console.</td></tr>
+<tr><td><b>Reset password</b></td><td>Local users only. Prompts "New password for <em>user</em>:". Signs that user out everywhere.</td></tr>
+<tr><td><b>Delete</b></td><td>Confirms with 'Delete user "<em>user</em>"?'. Also deletes the user's passkeys and recovery codes.</td></tr>
+</tbody>
+</table>
+
+<p>The built-in administrator's row carries only the note <b>built-in admin</b> (tooltip "The built-in administrator cannot be disabled, demoted or deleted.") — and an <b>Unlock</b> button if it has somehow been flagged.</p>
+
+<p>To create an account, use <b>Add a user</b>: fill in <b>Username</b> and <b>Password</b>, optionally tick <b>Administrator</b>, and press <b>Create user</b>. Errors are "Username is required.", "Password is required." and "A user named '…' already exists."</p>
+
+<h2 id="ch5-errors">5.11 Message catalogue</h2>
+
+<p>Every message you may see on a sign-in or authentication screen, with what it means.</p>
+
+<h3 id="ch5-err-password">Password step</h3>
+<table>
+<thead><tr><th>Message</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>Invalid username or password.</td><td>Wrong credentials, or an unknown or disabled account together with a wrong password. Application and integration console.</td></tr>
+<tr><td>Invalid credentials, or the account is not an administrator.</td><td>The admin interface equivalent. Deliberately does not distinguish the two cases.</td></tr>
+<tr><td>This account has been locked after too many failed sign-in attempts. Contact an administrator.</td><td>Your password was correct but the account auto-locked. Wait 15 minutes or ask an administrator to unlock it.</td></tr>
+<tr><td>This account has been disabled. Contact an administrator.</td><td>Your password was correct but an administrator disabled the account.</td></tr>
+<tr><td>Too many attempts. Try again shortly.</td><td>Per-IP cooldown active (429). Application and integration console.</td></tr>
+<tr><td>Too many failed attempts. Try again in about N seconds.</td><td>Per-IP cooldown on the admin login page, with a Retry-After header.</td></tr>
+<tr><td>You need the Developer role to use the integration console. Ask an administrator to grant it.</td><td>Integration console only: valid password, but no Developer or Administrator role (403).</td></tr>
+<tr><td>The server is not reachable.</td><td>The browser could not reach the GUI server at all — a network or service problem, not a credential problem.</td></tr>
+</tbody>
+</table>
+
+<h3 id="ch5-err-totp">Two-factor</h3>
+<table>
+<thead><tr><th>Message</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>Incorrect code. Try again.</td><td>Wrong or expired code, or a recovery code that has already been used. The pending state is kept so you can retry without retyping your password.</td></tr>
+<tr><td>Your sign-in session expired. Start again. / Your sign-in session expired. Please start again.</td><td>The 5-minute window after the password step lapsed. Begin again from username and password. The second wording is the admin interface.</td></tr>
+<tr><td>That code didn't match. Try again.</td><td>Wrong confirmation code during enrolment. The same QR code and secret remain valid — do not rescan.</td></tr>
+<tr><td>Setup expired. Start again.</td><td>The 10-minute enrolment window lapsed. Request a new QR code.</td></tr>
+<tr><td>Two-factor authentication is not enabled for your account.</td><td>An administrator has not allowed 2FA for you (403).</td></tr>
+<tr><td>Two-factor authentication isn't set up.</td><td>You tried to regenerate recovery codes or turn 2FA off without an enrolment.</td></tr>
+<tr><td>Enter your current authentication code to turn off two-factor.</td><td>The code supplied on the turn-off confirmation was wrong.</td></tr>
+</tbody>
+</table>
+
+<h3 id="ch5-err-passkey">Passkeys</h3>
+<table>
+<thead><tr><th>Message</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>Passkey sign-in failed.</td><td>Verification failed: unknown or removed credential, permission revoked, disabled account or — on the integration console — a missing role. The admin page variant adds "Check the passkey is registered and still enabled."</td></tr>
+<tr><td>Passkey challenge expired. Try again.</td><td>The 5-minute challenge window lapsed. Press the button again.</td></tr>
+<tr><td>Passkey sign-in is not available. / Could not start passkey setup.</td><td>The server could not begin the ceremony.</td></tr>
+<tr><td>Passkeys are not supported in this browser. / This browser does not support passkeys.</td><td>No WebAuthn support. The second wording appears in the management sheets.</td></tr>
+<tr><td>Passkeys are not enabled for your account.</td><td>An administrator has not allowed passkeys for you (403). The admin banner variant adds "— enable them in the Users tab first."</td></tr>
+<tr><td>Passkeys need a hostname, not an IP address…</td><td>You reached the page by IP address. Use the server's name over HTTPS — for example its ".local" name.</td></tr>
+<tr><td>A passkey for this account already exists on this device…</td><td>Remove the stale passkey in your device's own passkey settings (on iOS: Settings → Passwords), then try again.</td></tr>
+<tr><td>Could not register passkey: <em>reason</em></td><td>Verification failed while enrolling.</td></tr>
+<tr><td>Could not load passkeys. / Could not remove the passkey.</td><td>The management sheet could not reach the server.</td></tr>
+</tbody>
+</table>
+
+<div class="tip"><strong>Tip</strong> Cancelling an operating-system or browser passkey prompt is always silent — no error appears. If you press the passkey button and nothing seems to happen, the ceremony was cancelled, either by you or because your device holds no matching passkey.</div>
+
+<h3 id="ch5-err-session">Session and state</h3>
+<table>
+<thead><tr><th>Message</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>Not signed in.</td><td>An authentication-management endpoint was called without a session (401).</td></tr>
+<tr><td>Authentication required.</td><td>A gated API was called without a session (401). Reload to reach the sign-in panel.</td></tr>
+<tr><td>You were signed out due to inactivity.</td><td>The idle watcher signed you out. Sign in again.</td></tr>
+<tr><td>The compute backend is not reachable. Start it with ./run.sh or check PMW_BACKEND_URL.</td><td>502 — the web surface is up but the analysis backend is not.</td></tr>
+<tr><td>The compute backend timed out.</td><td>504 — the backend accepted the request but did not answer in time.</td></tr>
+<tr><td>The integration console has been turned off by the administrator.</td><td>503 — the console is disabled in Admin → Integration.</td></tr>
+</tbody>
+</table>
+
+<h2 id="ch5-summary">5.12 Points to remember</h2>
+
+<ol class="steps">
+<li>Enabling 2FA for a user enables <b>mandatory</b> 2FA. There is no opt-out and no grace period.</li>
+<li>A passkey sign-in bypasses the TOTP step by design. Do not allow passkeys if you require a code on every sign-in.</li>
+<li>Signing out anywhere signs you out everywhere, as does any password change or reset — except that an administrator changing their own password keeps their current admin session.</li>
+<li>Revoking the 2FA permission does not delete the enrolment; re-granting it re-arms the same authenticator. Only <b>Turn off</b> from the sheet deletes the secret and the recovery codes.</li>
+<li>Recovery codes are shown once. Regeneration invalidates every earlier code, and no administrator can retrieve them.</li>
+<li>Remember the three timers: 5 minutes to enter a code after the password, 10 minutes for an enrolment QR code, 5 minutes for a passkey challenge.</li>
+<li>Wrong codes never lock an account; wrong passwords do — three attempts by default, auto-unlocking after 15 minutes. The built-in Administrator never auto-locks, and <code>PMW_RESET_LOCKOUTS=1</code> at start-up clears every lockout.</li>
+<li>The integration console has no idle watcher, always requires sign-in even in open mode, and refuses power users before any second factor.</li>
+<li>Open mode has no identity: shared settings and presets, unattributed notes, and no power features at all.</li>
+<li>The absolute 7-day session cap ends even a continuously active session.</li>
+</ol>
+
+</section>

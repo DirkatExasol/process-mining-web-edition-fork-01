@@ -1,0 +1,234 @@
+/* Print stylesheet for the Process Mining Demonstrator manual (A4, Chrome print engine). */
+
+@page {
+  size: A4;
+  margin: 20mm 18mm 18mm 18mm;
+}
+
+:root {
+  --blue: #3a9bff;
+  --violet: #6b5cf0;
+  --ink: #16181d;
+  --ink-soft: #3d434e;
+  --ink-faint: #6b7280;
+  --rule: #d8dce4;
+  --rule-soft: #e8ebf0;
+  --bg-soft: #f5f7fa;
+  --amber: #b7791f;
+  --amber-bg: #fdf6e7;
+  --red: #b42318;
+  --red-bg: #fdf3f2;
+  --green: #237804;
+  --green-bg: #f2f9ef;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+body {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 10.2pt;
+  line-height: 1.52;
+  color: var(--ink);
+  margin: 0;
+  hyphens: auto;
+}
+
+/* ── Cover ────────────────────────────────────────────────────────────────── */
+
+.cover {
+  break-after: page;
+  height: 250mm;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+  position: relative;
+}
+.cover .logo { width: 30mm; height: 30mm; margin: 0 auto 10mm; display: block; }
+.cover h1 {
+  font-size: 30pt;
+  line-height: 1.15;
+  margin: 0 0 4mm;
+  letter-spacing: -0.5pt;
+  color: #4b74ef;   /* midpoint of the logo's blue→violet gradient */
+}
+.cover .edition { font-size: 15pt; color: var(--ink-soft); margin: 0 0 14mm; font-weight: 400; }
+.cover .rule {
+  width: 46mm; height: 1.6mm; margin: 0 auto 14mm; border-radius: 1mm;
+  background: linear-gradient(90deg, var(--blue), var(--violet));
+}
+.cover .sub { font-size: 11.5pt; color: var(--ink-soft); margin: 0 auto; max-width: 120mm; line-height: 1.6; }
+.cover .meta {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  font-size: 9pt; color: var(--ink-faint); line-height: 1.7;
+}
+.cover .meta strong { color: var(--ink-soft); }
+
+/* ── Front matter ─────────────────────────────────────────────────────────── */
+
+.frontmatter { break-after: page; }
+.frontmatter h2 {
+  font-size: 16pt; margin: 0 0 5mm; padding-bottom: 2.5mm;
+  border-bottom: 0.5mm solid var(--rule);
+}
+
+/* ── Table of contents ────────────────────────────────────────────────────── */
+
+.toc { break-after: page; }
+.toc h2 { font-size: 20pt; margin: 0 0 8mm; }
+.toc ol { list-style: none; margin: 0; padding: 0; }
+.toc li { margin: 0 0 1.7mm; display: flex; align-items: baseline; font-size: 10.5pt; }
+.toc .tnum { width: 9mm; color: var(--violet); font-weight: 700; flex: none; }
+.toc .ttitle { flex: none; }
+.toc .tdots { flex: 1; border-bottom: 0.3mm dotted var(--rule); margin: 0 2mm 0.9mm; }
+.toc .tpage { flex: none; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.toc .toc-part {
+  margin: 4mm 0 2mm; font-size: 8.5pt; font-weight: 700; letter-spacing: 1pt;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.toc .toc-part:first-child { margin-top: 0; }
+
+/* ── Chapters ─────────────────────────────────────────────────────────────── */
+
+.chapter { break-before: page; }
+
+.chapter h1 {
+  font-size: 21pt; line-height: 1.2; margin: 0 0 5mm; padding-bottom: 3mm;
+  border-bottom: 0.6mm solid var(--rule); letter-spacing: -0.3pt;
+}
+.chapter h1 .chnum {
+  display: inline-block; min-width: 13mm;
+  color: var(--violet); font-weight: 800;
+}
+.chapter .chintro {
+  font-size: 11pt; color: var(--ink-soft); line-height: 1.6;
+  margin: 0 0 6mm; padding-left: 4mm; border-left: 1mm solid var(--blue);
+}
+
+h2 {
+  font-size: 13.5pt; margin: 8mm 0 3mm; color: var(--ink);
+  break-after: avoid; break-inside: avoid; letter-spacing: -0.2pt;
+}
+h3 {
+  font-size: 11pt; margin: 6mm 0 2mm; color: var(--ink);
+  break-after: avoid; break-inside: avoid;
+}
+h4 { font-size: 10.2pt; margin: 4.5mm 0 1.5mm; color: var(--ink-soft); break-after: avoid; }
+
+p { margin: 0 0 3mm; orphans: 2; widows: 2; }
+
+ul, ol { margin: 0 0 3.5mm; padding-left: 6mm; }
+li { margin: 0 0 1.4mm; }
+
+ol.steps { counter-reset: step; list-style: none; padding-left: 0; }
+ol.steps > li {
+  counter-increment: step; position: relative;
+  padding-left: 8mm; margin-bottom: 2.4mm; break-inside: avoid;
+}
+ol.steps > li::before {
+  content: counter(step);
+  position: absolute; left: 0; top: 0.2mm;
+  width: 5.2mm; height: 5.2mm; border-radius: 50%;
+  background: linear-gradient(135deg, var(--blue), var(--violet));
+  color: #fff; font-size: 7.6pt; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+
+code {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 8.8pt; background: var(--bg-soft);
+  padding: 0.3mm 1.1mm; border-radius: 0.8mm; color: #253; word-break: break-word;
+}
+pre {
+  background: var(--bg-soft); border: 0.25mm solid var(--rule-soft);
+  border-left: 1mm solid var(--blue);
+  padding: 3mm 3.5mm; border-radius: 1.2mm; margin: 0 0 4mm;
+  break-inside: avoid; overflow-wrap: break-word; white-space: pre-wrap;
+}
+pre code { background: none; padding: 0; font-size: 8.4pt; line-height: 1.45; }
+
+table {
+  width: 100%; border-collapse: collapse; margin: 0 0 4.5mm;
+  font-size: 9pt; break-inside: avoid;
+}
+thead { background: var(--bg-soft); }
+th {
+  text-align: left; padding: 1.8mm 2.2mm; font-weight: 700;
+  border-bottom: 0.5mm solid var(--rule); color: var(--ink);
+}
+td { padding: 1.6mm 2.2mm; border-bottom: 0.25mm solid var(--rule-soft); vertical-align: top; }
+tbody tr:last-child td { border-bottom: none; }
+table code { font-size: 8.2pt; }
+
+dl { margin: 0 0 4mm; }
+dt { font-weight: 700; margin: 2.5mm 0 0.6mm; color: var(--ink); break-after: avoid; }
+dd { margin: 0 0 1.4mm 0; padding-left: 4mm; color: var(--ink-soft); }
+
+/* ── Callouts ─────────────────────────────────────────────────────────────── */
+
+.note, .tip, .warn, .role {
+  padding: 2.6mm 3.2mm; border-radius: 1.2mm; margin: 0 0 4mm;
+  font-size: 9.4pt; line-height: 1.5; break-inside: avoid;
+  border-left: 1.2mm solid;
+}
+.note { background: #eef4fd; border-color: var(--blue); }
+.note strong { color: #1a5fb4; }
+.tip { background: var(--green-bg); border-color: #52a52c; }
+.tip strong { color: var(--green); }
+.warn { background: var(--amber-bg); border-color: #e0a422; }
+.warn strong { color: var(--amber); }
+.role {
+  background: #f4f1fe; border-color: var(--violet); font-size: 9pt;
+  font-weight: 500; color: #4a3fb0;
+}
+.role b { color: #362d8c; }
+
+/* ── Figures ──────────────────────────────────────────────────────────────── */
+
+figure {
+  margin: 0 0 5mm; break-inside: avoid; text-align: center;
+  background: var(--bg-soft); border: 0.25mm solid var(--rule-soft);
+  border-radius: 1.5mm; padding: 3mm;
+}
+figure img {
+  max-width: 100%; max-height: 118mm; height: auto;
+  border-radius: 1mm; border: 0.25mm solid var(--rule);
+  background: #fff; display: block; margin: 0 auto;
+}
+figcaption {
+  font-size: 8.6pt; color: var(--ink-faint); margin-top: 2.2mm;
+  line-height: 1.45; text-align: left;
+}
+figcaption .figlabel { font-weight: 700; color: var(--violet); }
+
+/* ── Part dividers ────────────────────────────────────────────────────────── */
+
+.part {
+  break-before: page; height: 200mm;
+  display: flex; flex-direction: column; justify-content: center; text-align: center;
+}
+.part .pnum {
+  font-size: 9pt; letter-spacing: 3pt; text-transform: uppercase;
+  color: var(--ink-faint); margin-bottom: 4mm;
+}
+.part h1 {
+  font-size: 26pt; margin: 0 0 5mm; border: none; padding: 0;
+  color: #4b74ef;   /* midpoint of the logo's blue→violet gradient */
+}
+.part .pdesc { font-size: 11pt; color: var(--ink-soft); max-width: 110mm; margin: 0 auto; }
+.part .rule {
+  width: 34mm; height: 1.2mm; margin: 6mm auto 0; border-radius: 1mm;
+  background: linear-gradient(90deg, var(--blue), var(--violet));
+}
+
+/* ── Misc ─────────────────────────────────────────────────────────────────── */
+
+.kbd {
+  font-family: "SF Mono", Menlo, monospace; font-size: 8.4pt;
+  border: 0.25mm solid var(--rule); border-bottom-width: 0.6mm;
+  border-radius: 1mm; padding: 0.3mm 1.4mm; background: #fff;
+}
+a { color: inherit; text-decoration: none; }
+.small { font-size: 8.8pt; color: var(--ink-faint); }

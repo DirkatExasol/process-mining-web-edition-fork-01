@@ -1,0 +1,559 @@
+<section class="chapter" id="ch-extractor-api" data-title="Reference: Writing an Extractor" data-num="22">
+
+<h1><span class="chnum">22</span> Reference: Writing an Extractor</h1>
+
+<p class="chintro">The File extractor that the integration console ships with is not a special case: it is an ordinary plug-in written against a small, stable contract, and any other source — a CSV export, a message queue, a REST endpoint, a second log format — can be added the same way. This chapter is the reference for that contract. It documents the four types an extractor programs against (<code>ExtractorInfo</code>, <code>Extractor</code>, <code>IngestSession</code>, <code>ExtractResult</code>), the registry, the lifecycle of a run and how status and progress reach the console, the two ingest backends and the transaction bracket, how a destination is opened with stored credentials, the sandboxed file helpers, a complete worked skeleton in Python with its file layout and registration, and how to test the result without a database. It is written for developers with access to the product's source tree; nothing in this chapter is done from the browser.</p>
+
+<div class="role">Requires: write access to the deployment's <code>backend/</code> source tree. Running the finished extractor through the integration console additionally requires the <b>Developer</b> or <b>Administrator</b> role.</div>
+
+<h2 id="ext-where">Where the code lives</h2>
+
+<p>The whole abstraction layer is one Python package, <code>backend/app/integration/</code>. An extractor only ever imports from <code>contract</code> (the stable surface) and, if it reads files, from <code>files</code>. Everything else is machinery it is deliberately kept away from.</p>
+
+<table>
+<thead><tr><th>Module</th><th>What it holds</th><th>An extractor imports it?</th></tr></thead>
+<tbody>
+<tr><td><code>contract.py</code></td><td><code>ColumnType</code>, <code>ExtractorInfo</code>, <code>ExtractResult</code>, <code>IngestError</code>, and the <code>IngestSession</code> / <code>Extractor</code> protocols</td><td><b>Yes</b> — this is the API</td></tr>
+<tr><td><code>files.py</code></td><td>The sandboxed path resolver and the line/delta readers</td><td>Yes, for file-shaped sources</td></tr>
+<tr><td><code>layer.py</code></td><td><code>AbstractionLayer</code>, the concrete session, and the process-wide <code>layer</code> singleton</td><td>Only to register</td></tr>
+<tr><td><code>backends.py</code></td><td><code>InMemoryIngestBackend</code>, <code>SqlIngestBackend</code>, identifier validation, bracket clamping</td><td>No — the caller wires these</td></tr>
+<tr><td><code>destinations.py</code></td><td><code>open_stored_connection()</code> — opens a saved connection for a headless run</td><td>No</td></tr>
+<tr><td><code>status.py</code></td><td><code>LayerStatus</code> / <code>LayerState</code>, the per-user snapshot the console polls</td><td>No</td></tr>
+<tr><td><code>extractors.py</code></td><td>The built-in <code>FileExtractor</code> and <code>register_builtin_extractors()</code></td><td>Reference implementation</td></tr>
+<tr><td><code>watchdog.py</code>, <code>compound.py</code>, <code>parsing.py</code></td><td>The background poller, compound-step rules, timestamp/field detection</td><td>No</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> An extractor never opens a database connection, never builds SQL, never commits, and never decides where rows land. It is handed an <code>IngestSession</code> already bound to the target schema of the connection the user (or the watchdog) chose, and it pushes rows through that. This is what keeps extractors database-agnostic and what lets the same code be tested against an in-memory target.</div>
+
+<h2 id="ext-contract">The contract</h2>
+
+<h3 id="ext-info">ExtractorInfo — the identity</h3>
+
+<p><code>ExtractorInfo</code> is a frozen dataclass carrying the plug-in's identity. It is what <code>GET /api/integration/extractors</code> returns and what the console displays.</p>
+
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>str</td><td>The registry key. Must be globally unique, stable across versions, and a slug: lower-case letters, digits and single hyphens (<code>^[a-z0-9]+(-[a-z0-9]+)*$</code>). Examples: <code>file</code>, <code>csv-folder</code>.</td></tr>
+<tr><td><code>name</code></td><td>str</td><td>The display name, e.g. <code>File</code>.</td></tr>
+<tr><td><code>version</code></td><td>str</td><td>A free-form version string, e.g. <code>1.0</code>.</td></tr>
+<tr><td><code>description</code></td><td>str</td><td>One sentence shown next to the name. Defaults to the empty string.</td></tr>
+</tbody>
+</table>
+
+<p>Registration enforces both rules and reports them as <code>ValueError</code>:</p>
+
+<pre><code>Extractor id 'Not A Slug' must be a slug (a-z, 0-9, '-').
+An extractor with id 'file' is already registered.</code></pre>
+
+<h3 id="ext-protocol">Extractor — the protocol</h3>
+
+<p>An extractor is any object with an <code>info</code> attribute and a <code>run(session)</code> method. There is no base class to inherit from; the protocol is structural.</p>
+
+<pre><code>class Extractor(Protocol):
+    info: ExtractorInfo
+
+    def run(self, session: IngestSession) -&gt; ExtractResult:
+        ...</code></pre>
+
+<dl>
+<dt><code>run</code> is synchronous</dt><dd>The layer executes it off the event loop in a worker thread (<code>asyncio.to_thread</code>). Do not make it a coroutine, and do not block the event loop by calling it directly.</dd>
+<dt>Push incrementally</dt><dd>Read and push in batches rather than buffering the whole source. <code>push</code> accepts a generator and streams it, so a source of any size can be handed over without materialising it.</dd>
+<dt>Raising means failure</dt><dd>Any exception marks the run <code>failed</code>, records the message as <code>lastError</code> in the user's status, rolls back the open transaction bracket, and propagates to the caller. Returning an <code>ExtractResult</code> marks the run <code>completed</code>.</dd>
+<dt>Do not keep the session</dt><dd>The session is created per run and is invalid once <code>run</code> returns. Never store it on the instance for later use.</dd>
+</dl>
+
+<h3 id="ext-session">IngestSession — the only handle to the database</h3>
+
+<table>
+<thead><tr><th>Member</th><th>Signature</th><th>Behaviour</th></tr></thead>
+<tbody>
+<tr><td><code>schema</code></td><td>property → str</td><td>The target schema of the selected connection. Every table this session writes lives there. Validated as a SQL identifier when the session is created.</td></tr>
+<tr><td><code>define_table</code></td><td><code>define_table(table, columns, *, keys=())</code></td><td>Declares the table and creates it if absent (<code>CREATE TABLE IF NOT EXISTS</code>). Idempotent — call it on every run. <code>columns</code> maps column name → <code>ColumnType</code> and also fixes the column <b>order</b> used for inserts. <code>keys</code> names the business-key columns and is informational for now. Must be called for a table before any <code>push</code> to it. Also records the table in <code>tablesTouched</code>, in order of first touch.</td></tr>
+<tr><td><code>push</code></td><td><code>push(table, rows) -&gt; int</code></td><td>Appends rows (each a mapping of column name → value) and returns how many were written. Missing columns become NULL. Rows are flushed in internal batches of <b>1000</b>. Every flush adds to the live <code>recordsPushed</code> counter and to the transaction bracket.</td></tr>
+<tr><td><code>log</code></td><td><code>log(message)</code></td><td>Appends a progress line to the status panel. Only the most recent <b>50</b> lines are kept; older ones are dropped.</td></tr>
+<tr><td><code>progress</code></td><td><code>progress(done, total=None)</code></td><td>Sets the progress-bar counters <code>recordsDone</code> / <code>recordsTotal</code>. Cheap — call it every few hundred items. A <code>total</code> of 0 means "unknown".</td></tr>
+<tr><td><code>existing_keys</code></td><td><code>existing_keys(table, key_columns) -&gt; set[tuple[str, ...]]</code></td><td>The key tuples already present in the table, every value stringified and NULL rendered as the empty string. Use it for create-if-missing of small metadata tables (a project row, step definitions). It reads <b>all</b> keys of the table — never call it on a fact table.</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> <code>push</code> rejects columns that were not declared. A row containing a key that is not in the <code>define_table</code> mapping raises <code>IngestError</code> with <code>Unknown column(s) for JOURNEYS: GHOST</code>, which fails the whole run. Pushing to a table you never declared raises <code>Call define_table('JOURNEYS', ...) before push().</code>, and declaring a table with an empty column mapping raises <code>Table 'JOURNEYS' must declare at least one column.</code></div>
+
+<h3 id="ext-result">ExtractResult — what the run reports</h3>
+
+<p>The result is purely informational: the layer has already counted every row that went through <code>push</code>. The result is where the extractor says what those rows <em>meant</em>.</p>
+
+<table>
+<thead><tr><th>Field</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>records</code></td><td>0</td><td>Successful items — for the File extractor, journey events. Becomes <code>eventsWritten</code> in the status and the <code>records</code> field of the run response.</td></tr>
+<tr><td><code>skipped</code></td><td>0</td><td>Source items that could not become a record. Becomes <code>eventsSkipped</code>. Report this honestly: it is the KPI that makes a silently misconfigured source visible as "lots skipped" rather than merely as a small record count.</td></tr>
+<tr><td><code>tables</code></td><td><code>()</code></td><td>Tuple of table names the extractor touched.</td></tr>
+<tr><td><code>detail</code></td><td><code>""</code></td><td>The human-readable summary shown to the user, e.g. <code>1 240 events written, 17 skipped, 3 new step(s)</code>.</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> <code>recordsPushed</code> in the status and <code>records</code> in the result are different numbers on purpose. <code>recordsPushed</code> counts <em>every</em> row that crossed the session, including the project, step and meta rows an extractor creates on the side; <code>records</code> counts only the domain objects the extractor set out to produce.</div>
+
+<h3 id="ext-types">ColumnType and the portable type mapping</h3>
+
+<p>Extractors declare portable types; the backend maps them to the concrete database. This is the only reason an extractor written for the demonstrator does not contain a single line of Exasol-specific SQL.</p>
+
+<table>
+<thead><tr><th><code>ColumnType</code></th><th>Value</th><th>Exasol type</th><th>Accepted Python values</th></tr></thead>
+<tbody>
+<tr><td><code>STRING</code></td><td><code>string</code></td><td><code>VARCHAR(2000000)</code></td><td>Any value; rendered as text with NUL bytes stripped and single quotes doubled</td></tr>
+<tr><td><code>INT</code></td><td><code>int</code></td><td><code>DECIMAL(18,0)</code></td><td><code>int</code></td></tr>
+<tr><td><code>DECIMAL</code></td><td><code>decimal</code></td><td><code>DECIMAL(36,6)</code></td><td><code>int</code>, <code>float</code> (non-finite values are rejected with <code>Non-finite numeric value: …</code>)</td></tr>
+<tr><td><code>TIMESTAMP</code></td><td><code>timestamp</code></td><td><code>TIMESTAMP</code></td><td><code>datetime</code> (rendered to millisecond precision), <code>date</code></td></tr>
+<tr><td><code>BOOL</code></td><td><code>bool</code></td><td><code>BOOLEAN</code></td><td><code>True</code> / <code>False</code></td></tr>
+</tbody>
+</table>
+
+<h3 id="ext-identifiers">Identifier rules</h3>
+
+<p>Schema, table and column names must match a conservative grammar: a letter or underscore, then letters, digits or underscores, up to <b>128</b> characters. Anything else is <b>rejected, never escaped</b>, with <code>Invalid SQL identifier: 'EVENTS; DROP TABLE X'</code>. Names are therefore safe to interpolate into DDL and DML, and no source data can ever reach a statement as an identifier.</p>
+
+<h3 id="ext-error">IngestError</h3>
+
+<p><code>IngestError</code> is what the layer raises for an invalid ingest operation: unknown table, undeclared column, bad identifier, unknown extractor id, or a concurrent run. Extractors normally let it propagate — it is recorded as the run's failure exactly like any other exception. Extractors may also raise it themselves when they detect a condition the layer would consider fatal.</p>
+
+<h2 id="ext-registry">The registry</h2>
+
+<p><code>AbstractionLayer</code> holds the registry and the per-user status. One process-wide instance exists, exported as <code>layer</code> from <code>app.integration</code>; that is the object the API and the watchdog share.</p>
+
+<table>
+<thead><tr><th>Method</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>layer.register(extractor)</code></td><td>Adds the extractor under <code>extractor.info.id</code>. Raises <code>ValueError</code> on a non-slug id or a duplicate.</td></tr>
+<tr><td><code>layer.unregister(id)</code></td><td>Removes it if present; silent when it is not.</td></tr>
+<tr><td><code>layer.get(id)</code></td><td>The registered extractor, or <code>None</code>. Use it to make registration idempotent.</td></tr>
+<tr><td><code>layer.extractors()</code></td><td>The list of <code>ExtractorInfo</code>s behind <code>GET /api/integration/extractors</code> and the <code>registeredExtractors</code> count in the status.</td></tr>
+<tr><td><code>layer.status_for(user)</code></td><td>That user's <code>LayerStatus</code>, created on first use. A <code>None</code> user maps to the empty key, which is how deployments without sign-in are handled.</td></tr>
+<tr><td><code>layer.run(...)</code></td><td>The coroutine that drives one run. See below.</td></tr>
+</tbody>
+</table>
+
+<p>Registration happens <b>at import time</b>, plug-in style. The package's <code>__init__.py</code> imports the built-ins and calls <code>register_builtin_extractors(layer)</code>, so merely importing <code>app.integration</code> anywhere in the process is enough for the console to list them.</p>
+
+<div class="tip"><strong>Tip</strong> Guard your registration with <code>if layer.get(MY_ID) is None:</code> as the built-in does. Module reloads during tests would otherwise trip the duplicate check and fail the import.</div>
+
+<h3 id="ext-descriptor">Descriptor entries versus configured instances</h3>
+
+<p>Some extractors cannot be run straight from the registry because a run needs configuration that only exists per source — a path, an encoding, a project id, a field list. The built-in File extractor solves this with a two-object pattern that is worth copying:</p>
+
+<ol class="steps">
+<li>A <b>descriptor</b> object is registered. It carries the real <code>ExtractorInfo</code> so the extractor appears in <code>GET /api/integration/extractors</code>, but its <code>run</code> raises immediately: <code>The File extractor is run per source, not from the registry.</code></li>
+<li>The <b>configured instance</b> is built per run by the API or the watchdog, with everything it needs passed to its constructor, and handed to <code>layer.run(extractor=instance, …)</code> as an object rather than an id.</li>
+</ol>
+
+<p><code>layer.run</code> accepts either form: a string is looked up in the registry (<code>No extractor registered with id 'nope'.</code> if absent), and any object satisfying the protocol is used as-is.</p>
+
+<h2 id="ext-lifecycle">The lifecycle of a run</h2>
+
+<p>Every run — a console <b>Run</b>, a watchdog poll, or a call from your own code — goes through the same coroutine. Its parameters are what the console's pipeline canvas is drawn from.</p>
+
+<pre><code>result = await layer.run(
+    user=user,                         # status is per user; None/"" for no-sign-in
+    extractor=instance_or_id,
+    backend=backend,                   # SqlIngestBackend or InMemoryIngestBackend
+    schema=schema,                     # target schema of the chosen connection
+    connection_id=conn_id,
+    connection_name=conn.name,
+    source_name=source.name,
+    source_type_name=st.name,
+    trigger="manual",                  # or "watchdog"
+    transaction_rows=transaction_rows,
+)</code></pre>
+
+<p>What the layer does, in order:</p>
+
+<ol class="steps">
+<li><b>Resolves the extractor.</b> A string id is looked up; a missing id raises <code>IngestError</code>.</li>
+<li><b>Takes the per-user run slot.</b> If that user already has a run in flight it raises <code>An extraction is already running for this user.</code> Different users run concurrently; the same user cannot, which is precisely what stops a manual import and a watchdog poll from importing the same lines twice.</li>
+<li><b>Resets the user's status</b> and sets <code>state: running</code>, the trigger, the extractor id and name, the source, source-type, connection and schema names, <code>startedAt</code>, and zeroes every counter (<code>recordsPushed</code>, <code>eventsWritten</code>, <code>eventsSkipped</code>, <code>commits</code>, <code>recordsDone</code>, <code>recordsTotal</code>), the table list, the error and the message log. The status therefore always describes the most recent or in-flight run only.</li>
+<li><b>Creates the session</b> bound to the backend, the schema and the transaction bracket.</li>
+<li><b>Runs <code>extractor.run(session)</code> in a worker thread.</b> While it runs, every <code>push</code>, <code>log</code> and <code>progress</code> call updates the same status object under a lock, so <code>GET /api/integration/status</code> shows live progress.</li>
+<li><b>Closes the final transaction bracket</b> with a commit, also off the event loop.</li>
+<li><b>On success:</b> sets <code>state: completed</code> and <code>finishedAt</code>, copies <code>result.records</code> into <code>eventsWritten</code> and <code>result.skipped</code> into <code>eventsSkipped</code>, writes the admin-log line <code>extractor &lt;id&gt; pushed &lt;n&gt; rows to &lt;schema&gt;</code> (usage level, operation <code>integration</code>), and returns the result.</li>
+<li><b>On failure:</b> rolls the backend back (a failing rollback is swallowed so it cannot mask the real error), sets <code>state: failed</code>, <code>finishedAt</code> and <code>lastError</code>, logs <code>extractor &lt;id&gt; failed: &lt;error&gt;</code> as a warning, and re-raises.</li>
+<li><b>Always:</b> releases the user's run slot.</li>
+</ol>
+
+<figure data-fig="integ-01-console"><figcaption>The console's pipeline canvas and KPI strip are drawn entirely from the per-user layer status — the same fields any extractor populates through <code>log</code>, <code>progress</code> and <code>push</code>.</figcaption></figure>
+
+<h3 id="ext-status-fields">What your calls become on screen</h3>
+
+<table>
+<thead><tr><th>You call</th><th>Status field</th><th>Where it shows</th></tr></thead>
+<tbody>
+<tr><td><code>session.push(...)</code></td><td><code>recordsPushed</code></td><td>The live "rows pushed" figure, all tables included</td></tr>
+<tr><td><code>session.progress(done, total)</code></td><td><code>recordsDone</code> / <code>recordsTotal</code></td><td>The progress bar (<code>recordsTotal</code> 0 = indeterminate)</td></tr>
+<tr><td><code>session.log(msg)</code></td><td><code>messages</code></td><td>The message list, last 50 lines</td></tr>
+<tr><td><code>session.define_table(...)</code></td><td><code>tablesTouched</code></td><td>The table chips, in order of first touch</td></tr>
+<tr><td>return <code>ExtractResult</code></td><td><code>eventsWritten</code>, <code>eventsSkipped</code></td><td>The two event KPIs, set at completion</td></tr>
+<tr><td>(the layer)</td><td><code>commits</code></td><td>Durable progress — brackets committed so far</td></tr>
+<tr><td>raise</td><td><code>lastError</code>, <code>state</code></td><td>The failure banner</td></tr>
+</tbody>
+</table>
+
+<h2 id="ext-backends">The two backends and the transaction bracket</h2>
+
+<p>An <code>IngestBackend</code> is the seam between the portable ingest API and a concrete target. Extractors never see one; the code that starts the run picks it.</p>
+
+<dl>
+<dt><code>InMemoryIngestBackend</code></dt><dd>Keeps schemas, tables and rows in dictionaries. No database, no dependencies. It is the local development target and the reference implementation of the ingest semantics for tests; it additionally counts <code>commits</code> and <code>rollbacks</code> so a test can assert the bracketing. Inserting into a table that was never created raises <code>Table &lt;schema&gt;.&lt;table&gt; was not defined.</code></dd>
+<dt><code>SqlIngestBackend</code></dt><dd>The production target. It generates schema-qualified DDL and DML and runs it through a caller-supplied <code>run_sql</code> callable, plus optional <code>commit</code> and <code>rollback</code> callables that belong to whoever owns the connection. Identifiers are validated, values are rendered as defensively escaped literals, and each <code>INSERT</code> statement carries at most <b>1000</b> rows. Without the commit/rollback callables it is a no-op on both — the driver's autocommit then ends every statement, which is what the SQL-recording tests expect.</dd>
+</dl>
+
+<h3 id="ext-bracket">Transaction rows</h3>
+
+<p>The <code>transaction_rows</code> argument is the bracket size: the session counts rows written since the last commit and commits as soon as the bracket is full. This keeps the database's transaction small on a large import and makes rows durable as the run progresses.</p>
+
+<table>
+<thead><tr><th>Configured value</th><th>Effective value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>not set, or not a number</td><td><b>5000</b></td><td>The default bracket</td></tr>
+<tr><td><code>0</code> or any value ≤ 0</td><td><b>0</b></td><td>One transaction for the entire import — fully atomic, but the database holds all of it open</td></tr>
+<tr><td>1 … 999</td><td><b>1000</b></td><td>Floored to one insert batch</td></tr>
+<tr><td>1000 … 1 000 000</td><td>as given</td><td>Used unchanged</td></tr>
+<tr><td>above 1 000 000</td><td><b>1 000 000</b></td><td>Clamped</td></tr>
+</tbody>
+</table>
+
+<p>Normalise user-supplied values with <code>clamp_transaction_rows()</code> from <code>app.integration.backends</code> rather than trusting the number. After <code>run</code> returns, the layer issues a final commit for the last, possibly partial bracket. That final commit is skipped only when nothing was written since the previous commit <em>and</em> at least one commit already happened; the very first commit always runs, even with zero rows, to close out the transaction any DDL or SELECT opened.</p>
+
+<div class="warn"><strong>Warning</strong> On failure only the <b>open</b> bracket is rolled back. Brackets already committed stay committed — that is the point of bracketing. A failed run can therefore leave earlier rows in the database while the caller's read checkpoint does not advance, so a retry re-reads the same input and <b>duplicates those rows</b>. Nothing in the layer de-duplicates. If your extractor's source cannot tolerate that, run it with <code>transaction_rows=0</code> for a single atomic transaction, and document the trade-off.</div>
+
+<h2 id="ext-destinations">Opening a destination with stored credentials</h2>
+
+<p>A run's destination is always a <em>stored</em> connection, opened with the credentials an administrator saved — never with whatever the caller happens to have connected in their browser. That is what makes the trigger irrelevant: a console run, a watchdog poll and a headless push all name a connection by id and land in the same place.</p>
+
+<pre><code>from app.integration.destinations import open_stored_connection
+from app.integration import SqlIngestBackend
+
+opened, run_sql = open_stored_connection(conn)      # blocking — call via asyncio.to_thread
+backend = SqlIngestBackend(
+    run_sql=run_sql, commit=opened.commit, rollback=opened.rollback,
+)
+try:
+    result = await layer.run(..., backend=backend, schema=conn.schema)
+finally:
+    opened.close()                                  # the caller owns the handle</code></pre>
+
+<p><code>open_stored_connection</code> returns the raw handle and a synchronous SQL runner bound to it (a list of rows for a SELECT, an empty list otherwise), and it <b>switches autocommit off</b> so that the layer's bracket, not the driver, decides when work becomes durable. The caller owns the handle and must close it, on the failure path as well as the success path.</p>
+
+<p>When the caller already has a live session pointing at exactly the same connection, the API reuses it instead of opening a second one — again turning autocommit off first, and routing <code>commit</code> and <code>rollback</code> through that live session. A connection that cannot be opened is reported to the user as <code>Could not connect to “&lt;name&gt;”: &lt;error&gt;</code>, and a connection whose stored target schema is blank as <code>“&lt;name&gt;” has no target schema configured.</code></p>
+
+<div class="note"><strong>Note</strong> Whoever triggers a run must re-check that the connection is assigned to the acting user, on <em>every</em> run — the assignment, not the presence of a connection id, is the authorisation. The watchdog repeats this check on every poll for exactly this reason, so revoking an assignment stops it immediately.</div>
+
+<h2 id="ext-files">Sandboxed file access</h2>
+
+<p>If your extractor reads files, use the helpers in <code>app.integration.files</code>. They are the only sanctioned path from a user-supplied string to an open file, and every one of them funnels through <code>resolve_source_file</code>. Do not call <code>open()</code> on a configured path yourself — that bypasses the sandbox.</p>
+
+<table>
+<thead><tr><th>Helper</th><th>Returns</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>resolve_source_file(path)</code></td><td><code>Path</code></td><td>Resolves and validates. Raises <code>FileAccessError</code>.</td></tr>
+<tr><td><code>read_preview(path, limit=5)</code></td><td><code>{lines, truncated}</code></td><td>First <code>limit</code> non-blank lines. <code>limit</code> is clamped to <b>1…50</b>. Always decodes as UTF-8 with replacement, regardless of any configured encoding.</td></tr>
+<tr><td><code>iter_lines(path, encoding)</code></td><td>generator of str</td><td>Streams non-blank lines for extraction. Safe to hand straight to a loop that pushes in batches.</td></tr>
+<tr><td><code>count_lines(path, encoding)</code></td><td>int</td><td>A cheap pre-pass counting non-blank lines — the denominator for <code>progress(done, total)</code>.</td></tr>
+<tr><td><code>read_new_lines(path, encoding, offset)</code></td><td><code>{lines, new_offset, size, signature, rotated}</code></td><td>Complete lines appended since <code>offset</code>. A partial trailing line is left for the next read.</td></tr>
+<tr><td><code>read_delta(path, encoding, offset, signature)</code></td><td>same</td><td><code>read_new_lines</code> plus replacement detection: a changed head with an unchanged or grown size means the file was replaced, so it is re-read from byte 0.</td></tr>
+<tr><td><code>seed_demo_files()</code></td><td>—</td><td>Copies the bundled example logs into the sandbox on startup. Never overwrites; best-effort.</td></tr>
+</tbody>
+</table>
+
+<p>The limits below apply to every one of these helpers, so they apply to any extractor built on them:</p>
+
+<table>
+<thead><tr><th>Limit</th><th>Value</th><th>Consequence</th></tr></thead>
+<tbody>
+<tr><td>Line length</td><td><b>2000</b> characters</td><td>Every line is truncated first. A pattern targeting content beyond character 2000 never matches.</td></tr>
+<tr><td>Blank lines</td><td>always skipped</td><td>Also excluded from the progress denominator.</td></tr>
+<tr><td>Bytes per delta read</td><td><b>8 MB</b></td><td>A larger backlog is drained across successive reads; <code>new_offset &lt; size</code> signals more is pending.</td></tr>
+<tr><td>Single line longer than 8 MB</td><td>skipped past</td><td>Treated as unparseable content rather than re-read forever.</td></tr>
+<tr><td>Fingerprint</td><td>first <b>64</b> bytes</td><td>Files shorter than that get an empty signature, so in-place replacement without shrinking goes undetected.</td></tr>
+<tr><td>Decoding</td><td>configured encoding, errors replaced</td><td>Undecodable bytes never raise.</td></tr>
+</tbody>
+</table>
+
+<p>Path resolution raises <code>FileAccessError</code> with exactly one of these messages, which callers surface as HTTP 400: <code>No file path given.</code>, <code>That path is outside the allowed sources directory.</code>, <code>File not found.</code>, <code>Not a regular file.</code> In the default sandboxed mode a relative path is taken relative to <code>PMW_INTEGRATION_FILES_DIR</code>, an absolute path is accepted only if it already lies inside that root, and the real path with symlinks resolved must still be inside it.</p>
+
+<div class="warn"><strong>Warning</strong> Setting <code>PMW_INTEGRATION_ALLOW_ANY_PATH</code> to <code>1</code>, <code>true</code>, <code>yes</code> or <code>on</code> disables the sandbox entirely: any absolute path the server process can read is then accepted. Use it only in a developer-trusted deployment.</div>
+
+<h2 id="ext-skeleton">A worked skeleton</h2>
+
+<p>The example below is a complete, working extractor for a comma-separated event export. It is not shipped with the product; it exists to show every part of the contract in one place — declaration, streaming push, progress, create-if-missing metadata, and the result.</p>
+
+<h3 id="ext-layout">File layout</h3>
+
+<pre><code>backend/
+  app/
+    integration/
+      __init__.py          ← register the new extractor here
+      contract.py
+      files.py
+      layer.py
+      csv_extractor.py     ← the new module
+  tests/
+    test_csv_extractor.py  ← the new test</code></pre>
+
+<h3 id="ext-code">The extractor</h3>
+
+<pre><code>"""Example extractor: reads a comma-separated export and writes JOURNEYS events."""
+
+from __future__ import annotations
+
+import csv
+import hashlib
+from datetime import datetime
+
+from .contract import (
+    ColumnType, ExtractResult, ExtractorInfo, IngestError, IngestSession,
+)
+from .files import resolve_source_file
+
+CSV_EXTRACTOR_ID = "csv-file"
+_BATCH = 500
+
+_JOURNEYS_COLUMNS = {
+    "PROJECT_ID": ColumnType.STRING,
+    "EVENT_ID": ColumnType.STRING,
+    "STEP": ColumnType.STRING,
+    "STEP_ID": ColumnType.INT,
+    "EVENT_TIME": ColumnType.TIMESTAMP,
+    "META_1": ColumnType.STRING,
+    "META_2": ColumnType.STRING,
+    "META_3": ColumnType.STRING,
+    "SAMPLE_SET": ColumnType.STRING,
+}
+_PROJECTS_COLUMNS = {
+    "PROJECT_ID": ColumnType.STRING,
+    "TITLE": ColumnType.STRING,
+    "DESCRIPTION": ColumnType.STRING,
+}
+
+
+def csv_extractor_info() -&gt; ExtractorInfo:
+    return ExtractorInfo(
+        id=CSV_EXTRACTOR_ID,
+        name="CSV file",
+        version="1.0",
+        description="Reads a comma-separated export and writes JOURNEYS events.",
+    )
+
+
+class CsvExtractor:
+    """One configured run over one CSV file."""
+
+    info = csv_extractor_info()
+
+    def __init__(self, *, path: str, encoding: str, project_id: str) -&gt; None:
+        self._path = path
+        self._encoding = encoding or "utf-8"
+        self._project_id = project_id
+
+    # ── the one method the layer calls ────────────────────────────────────
+    def run(self, session: IngestSession) -&gt; ExtractResult:
+        session.define_table(
+            "JOURNEYS", _JOURNEYS_COLUMNS, keys=["PROJECT_ID", "EVENT_ID", "STEP"],
+        )
+        real = resolve_source_file(self._path)   # sandboxed; may raise FileAccessError
+        session.log(
+            f"reading {self._path} → {session.schema}.JOURNEYS "
+            f"(project {self._project_id})"
+        )
+
+        written = skipped = processed = 0
+        batch: list[dict] = []
+        with real.open("r", encoding=self._encoding,
+                       errors="replace", newline="") as fh:
+            for record in csv.DictReader(fh):
+                processed += 1
+                row = self._row(record)
+                if row is None:
+                    skipped += 1
+                else:
+                    batch.append(row)
+                    if len(batch) &gt;= _BATCH:
+                        written += session.push("JOURNEYS", batch)
+                        batch = []
+                if processed % 200 == 0:
+                    session.progress(processed)
+        if batch:
+            written += session.push("JOURNEYS", batch)
+        session.progress(processed)
+
+        session.log(f"pushed {written} events, skipped {skipped} unusable row(s)")
+        created = self._ensure_project(session)
+
+        detail = f"{written} events written, {skipped} skipped"
+        if created:
+            detail += ", project created"
+        return ExtractResult(
+            records=written, skipped=skipped,
+            tables=("JOURNEYS", "PROJECTS"), detail=detail,
+        )
+
+    # ── one source item → one row, or None ────────────────────────────────
+    def _row(self, record: dict) -&gt; dict | None:
+        case_id = (record.get("case") or "").strip()
+        step = (record.get("activity") or "").strip()
+        raw_time = (record.get("time") or "").strip()
+        if not (case_id and step and raw_time):
+            return None                       # counts as skipped, never as an error
+        try:
+            event_time = datetime.strptime(raw_time, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+        return {
+            "PROJECT_ID": self._project_id,
+            # Pseudonymise the case id — the raw value never reaches the database.
+            "EVENT_ID": hashlib.md5(case_id.encode("utf-8")).hexdigest(),
+            "STEP": step,
+            "STEP_ID": None,
+            "EVENT_TIME": event_time,
+            "META_1": record.get("channel"),
+            "META_2": None,
+            "META_3": None,
+            "SAMPLE_SET": "ORIGINAL",
+        }
+
+    # ── create-if-missing metadata ────────────────────────────────────────
+    def _ensure_project(self, session: IngestSession) -&gt; bool:
+        session.define_table("PROJECTS", _PROJECTS_COLUMNS, keys=["PROJECT_ID"])
+        if (self._project_id,) in session.existing_keys("PROJECTS", ["PROJECT_ID"]):
+            return False
+        session.push("PROJECTS", [{
+            "PROJECT_ID": self._project_id,
+            "TITLE": self._project_id,
+            "DESCRIPTION": "",
+        }])
+        session.log(f"created project {self._project_id!r}")
+        return True
+
+
+class _CsvExtractorDescriptor:
+    """Registry-only entry so the extractor is listed; runs use a configured instance."""
+
+    info = csv_extractor_info()
+
+    def run(self, session: IngestSession) -&gt; ExtractResult:
+        raise IngestError("The CSV extractor is run per source, not from the registry.")
+
+
+def register_csv_extractor(layer) -&gt; None:
+    """Idempotent registration — safe under module reloads in tests."""
+    if layer.get(CSV_EXTRACTOR_ID) is None:
+        layer.register(_CsvExtractorDescriptor())</code></pre>
+
+<h3 id="ext-register">Registering it</h3>
+
+<ol class="steps">
+<li>Add the module to <code>backend/app/integration/</code> as shown above.</li>
+<li>Open <code>backend/app/integration/__init__.py</code> and import the registration function next to the existing built-ins:
+<pre><code>from .csv_extractor import CsvExtractor, register_csv_extractor</code></pre></li>
+<li>Call it beside the existing registration, after <code>layer</code> is imported:
+<pre><code>register_builtin_extractors(layer)
+register_csv_extractor(layer)</code></pre></li>
+<li>Add the public names to <code>__all__</code> so callers can import them from the package rather than the module.</li>
+<li>Restart the compute backend. Confirm the entry appears in <code>GET /api/integration/extractors</code> and that <code>registeredExtractors</code> in <code>GET /api/integration/status</code> has gone up by one.</li>
+</ol>
+
+<h3 id="ext-drive">Driving it</h3>
+
+<p>To run the configured instance from your own endpoint or job, build the backend, run the layer, and close anything you opened:</p>
+
+<pre><code>from app.integration import SqlIngestBackend, layer
+from app.integration.backends import clamp_transaction_rows
+from app.integration.destinations import open_stored_connection
+
+opened, run_sql = await asyncio.to_thread(open_stored_connection, conn)
+backend = SqlIngestBackend(
+    run_sql=run_sql, commit=opened.commit, rollback=opened.rollback,
+)
+try:
+    result = await layer.run(
+        user=user,
+        extractor=CsvExtractor(path=path, encoding="utf-8", project_id="RETAIL"),
+        backend=backend,
+        schema=conn.schema,
+        connection_id=conn.id,
+        connection_name=conn.name,
+        source_name=source.name,
+        trigger="manual",
+        transaction_rows=clamp_transaction_rows(cfg.get("transactionRows")),
+    )
+finally:
+    await asyncio.to_thread(opened.close)</code></pre>
+
+<div class="tip"><strong>Tip</strong> If your source can be read incrementally, keep the read cursor outside the extractor and advance it <b>only after the run succeeds</b>, exactly as the file checkpoint does. A cursor advanced before or during a run silently loses data when the run fails.</div>
+
+<h2 id="ext-testing">Testing an extractor</h2>
+
+<p>Every extractor can be tested end to end with no database at all: register it on a private <code>AbstractionLayer()</code>, run it against an <code>InMemoryIngestBackend</code>, and assert on the rows that landed and on the status the console would have shown. Use a private layer instance rather than the shared <code>layer</code> singleton so tests cannot interfere with each other.</p>
+
+<ol class="steps">
+<li>Create <code>backend/tests/test_csv_extractor.py</code> alongside the existing <code>test_integration_*.py</code> files.</li>
+<li>Point the sandbox at a temporary directory before importing anything that reads it, then reload <code>app.config</code> and <code>app.integration.files</code> so the new value takes effect:
+<pre><code>@pytest.fixture
+def env(tmp_path, monkeypatch):
+    monkeypatch.setenv("PMW_INTEGRATION_FILES_DIR", str(tmp_path / "files"))
+    monkeypatch.delenv("PMW_INTEGRATION_ALLOW_ANY_PATH", raising=False)
+    import app.config as config
+    importlib.reload(config)
+    import app.integration.files as files_mod
+    importlib.reload(files_mod)
+    return config</code></pre></li>
+<li>Write a fixture file into <code>config.INTEGRATION_FILES_DIR</code> and run the extractor:
+<pre><code>def test_csv_extractor_writes_rows(env):
+    (env.INTEGRATION_FILES_DIR / "events.csv").write_text(
+        "case,activity,time\nA1,login,2026-08-03 14:05:09\n"
+    )
+    mem = InMemoryIngestBackend()
+    result = asyncio.run(AbstractionLayer().run(
+        user="dev",
+        extractor=CsvExtractor(path="events.csv", encoding="utf-8",
+                               project_id="RETAIL"),
+        backend=mem, schema="MINING", transaction_rows=1000,
+    ))
+    assert result.records == 1
+    rows = mem.tables["MINING"]["JOURNEYS"]["rows"]
+    assert rows[0]["STEP"] == "login"
+    assert rows[0]["SAMPLE_SET"] == "ORIGINAL"</code></pre></li>
+<li>Run the suite with <code>./test.sh backend</code>, or a single file with <code>cd backend &amp;&amp; ../.venv/bin/python -m pytest tests/test_csv_extractor.py</code>.</li>
+</ol>
+
+<p>Things worth asserting, all of which the existing integration tests already demonstrate:</p>
+
+<table>
+<thead><tr><th>What to check</th><th>How</th></tr></thead>
+<tbody>
+<tr><td>Rows and their values</td><td><code>mem.tables[schema][table]["rows"]</code></td></tr>
+<tr><td>Missing columns become NULL</td><td>Push a partial row and assert the absent column is <code>None</code></td></tr>
+<tr><td>The status the console would show</td><td><code>layer.status_for("dev").public()</code> — check <code>state</code>, <code>recordsPushed</code>, <code>tablesTouched</code>, <code>messages</code>, <code>lastError</code></td></tr>
+<tr><td>Transaction bracketing</td><td><code>mem.commits</code> and <code>mem.rollbacks</code>; 2500 rows at a 1000-row bracket give 3 commits and 0 rollbacks</td></tr>
+<tr><td>Failure handling</td><td>Raise inside <code>run</code> and assert <code>state == "failed"</code>, the message in <code>lastError</code>, one rollback, and that already-committed brackets remain</td></tr>
+<tr><td>Generated SQL</td><td><code>SqlIngestBackend(run_sql=sql.append)</code> and assert on the recorded statements — DDL, escaping and the 1000-row batching</td></tr>
+<tr><td>Sandbox enforcement</td><td>Assert <code>FileAccessError</code> for <code>../secret</code>, a symlink out of the root, a directory and a missing file</td></tr>
+<tr><td>Registry rules</td><td>Non-slug ids and duplicate registration both raise <code>ValueError</code></td></tr>
+</tbody>
+</table>
+
+<h2 id="ext-rules">Rules to design against</h2>
+
+<p>A short checklist of the behaviours that most often surprise a first-time extractor author:</p>
+
+<dl>
+<dt>Nothing is de-duplicated</dt><dd>The layer appends. It never updates, never merges, never checks whether a row exists. Idempotence, if you need it, has to come from your read cursor — and from the caveat about committed brackets above.</dd>
+<dt>One run per user</dt><dd>A second run for the same user fails immediately. Design any scheduler you build around that, and treat the error as "retry later", not as a data problem.</dd>
+<dt>Declare before you push</dt><dd><code>define_table</code> fixes the column set and the column order; unknown columns are a hard error, not a warning.</dd>
+<dt>Count skipped items honestly</dt><dd>An item you cannot turn into a record should increment <code>skipped</code>, not raise. Failing the whole run over one malformed source item throws away everything already read.</dd>
+<dt><code>existing_keys</code> is for metadata only</dt><dd>It reads every key in the table. On a fact table with millions of rows that is a full scan on every run.</dd>
+<dt>Report progress, then report it again</dt><dd>Without <code>progress</code> calls the console shows an indeterminate bar for the whole run. Call it every few hundred items and give a total as soon as you know one.</dd>
+<dt>The id is permanent</dt><dd>The slug is the plug-in key stored and displayed everywhere. Changing it later orphans anything that referenced the old value.</dd>
+</dl>
+
+</section>

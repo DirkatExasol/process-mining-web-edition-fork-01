@@ -1,0 +1,306 @@
+<section class="chapter" id="ch-analysis" data-title="Analysis: Statistics, Conformance, Happy Path and Simulation" data-num="10">
+  <h1><span class="chnum">10</span> Analysis: Statistics, Conformance, Happy Path and Simulation</h1>
+
+  <p class="chintro">The charts in the previous chapters show you what the process looks like. The four views in this chapter tell you what it means: <b>Statistics</b> enumerates and ranks every route your journeys actually take, <b>Happy Path</b> lets you record the route they were <em>supposed</em> to take and scores reality against it, <b>Conformance Check</b> compares individual transitions against numeric target values ("norms"), and <b>Simulation</b> generates synthetic journeys from the observed process so you can test a hypothesis without touching the database. Statistics is available to every user; Happy Path, Conformance Check and Simulation are reserved for power users and administrators and are hidden from the view menu of plain users.</p>
+
+  <h2 id="stat">Statistics</h2>
+
+  <p>Statistics answers three questions: which routes do journeys take, how many journeys take each route, and how are duration and traffic distributed across the process. It is reached from the <b>☰</b> (Switch view) menu as <b>📊 Statistics</b>.</p>
+
+  <div class="note"><strong>Note</strong> Statistics does not have its own filter state. It always uses the <b>same filters as Chart A</b>, and the view says so in an information line: "ⓘ Statistics use the same filters as Chart A." To change what Statistics reports on, change the A-Chart filters in the sidebar. This is the one exception to the rule that each view mode remembers its own filter state.</div>
+
+  <figure data-fig="app-14-statistics"><figcaption>The Statistics view, Routes tab: journeys-over-time chart above the sortable route table.</figcaption></figure>
+
+  <h3 id="stat-load">Loading routes</h3>
+
+  <p>Route computation runs once per project automatically the first time you open the view. Afterwards you reload it explicitly.</p>
+
+  <ol class="steps">
+    <li>Select a project in the sidebar and set the filters you want on the A-Chart.</li>
+    <li>Switch to <b>Statistics</b>. If routes have never been computed for this project, the empty state ⑂ <b>No Routes Yet</b> appears with the text "Compute all journey routes for the current filters." — press <b>↻ Compute Routes</b>.</li>
+    <li>While the server works, a spinner reads "Computing journey routes".</li>
+    <li>When the computation fails, ⚠️ <b>Query Failed</b> appears with the backend message and a <b>↻ Retry</b> button; a modal alert titled "Statistics Error" with <b>Retry</b> and <b>Cancel</b> is shown at the same time.</li>
+  </ol>
+
+  <p>If you change any sidebar filter after the last computation, an orange banner appears above the tabs: "⚠ Filters changed since last load", with a <b>↻ Reload</b> button. The figures on screen still describe the <em>old</em> filter set until you reload — the banner exists precisely because the numbers would otherwise be silently stale.</p>
+
+  <p>The standard KPI strip sits at the top of the view with its own collapse handle; the expanded/collapsed state is remembered in the setting <code>statistics.kpiExpanded</code> (default expanded). Without a project selected the view shows 🗺 <b>No Project Selected</b>.</p>
+
+  <h3 id="stat-routes">The Routes tab</h3>
+
+  <p>A <em>route</em> (also called a path or variant) is the ordered sequence of steps one journey passed through, written "Step A → Step B → Step C". All journeys with an identical sequence are collapsed into one row.</p>
+
+  <table>
+    <thead><tr><th>Control</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>🔍 <b>Filter paths</b></td><td>Free-text search across the route strings; the row count updates as you type.</td></tr>
+      <tr><td><b>N route(s)</b></td><td>Number of routes currently listed. "(truncated)" is appended when the server capped the result set — the rarest routes are then missing from the table.</td></tr>
+      <tr><td><b>↻ Reload</b></td><td>Recomputes the routes with the current A-Chart filters.</td></tr>
+      <tr><td><b>Journeys over time</b></td><td>Line chart of journey volume across the filtered window. The granularity label reads <b>Daily</b>, <b>Weekly</b> or <b>Monthly</b> and is chosen by the server according to the window length; you cannot set it manually.</td></tr>
+      <tr><td><b>Rows</b></td><td>Page size: 25 (default), 50, 100 or 250.</td></tr>
+      <tr><td>⇤ ‹ <b>Page X of Y</b> › ⇥</td><td>First, previous, next and last page.</td></tr>
+    </tbody>
+  </table>
+
+  <p>The table itself has four sortable columns. Click a header to sort by it; an arrow (▲ ascending / ▼ descending) marks the active column. The default sort is <b>Journeys</b> descending, so the dominant routes are at the top.</p>
+
+  <table>
+    <thead><tr><th>Column</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><b>Journey Path</b></td><td>The step sequence of this route.</td></tr>
+      <tr><td><b>Journeys</b></td><td>Number of journeys that followed exactly this sequence.</td></tr>
+      <tr><td><b>Steps</b></td><td>Length of the route in steps.</td></tr>
+      <tr><td><b>Score/J</b></td><td>Sum of the step scores along the route — the score one journey earns by taking it.</td></tr>
+      <tr><td><b>Total</b></td><td>Score/J × Journeys: the route's total contribution to the process value.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="tip"><strong>Tip</strong> Sort by <b>Total</b> descending to find the routes that carry the most value, and by <b>Score/J</b> ascending to find the most damaging route pattern regardless of how rare it is. A route with a poor Score/J but a large Journeys count is usually the most rewarding thing to fix first.</div>
+
+  <h3 id="stat-analytics">The Analytics tab</h3>
+
+  <p>The Analytics tab summarises the same filtered journey set from four angles.</p>
+
+  <dl>
+    <dt>Journey duration distribution</dt>
+    <dd>Histogram of end-to-end journey durations. Reads "No duration data." when the filtered set carries no usable timestamps. A long right-hand tail points at a small number of stuck journeys; two separate humps usually mean two different journey types are mixed in your filter.</dd>
+    <dt>Step traffic</dt>
+    <dd>Horizontal bar chart, <b>Top 25 by visits</b>. A step's visit count is <code>max(incoming occurrences, outgoing occurrences)</code>, so a step is counted once per journey pass whether it is measured from its inbound or outbound side. The busiest step is highlighted.</dd>
+    <dt>Transition heat map</dt>
+    <dd>Matrix with "rows = from · columns = to". Blue intensity is proportional to the number of occurrences; the tooltip of each cell reads "&lt;from&gt; → &lt;to&gt;: N". Shows "No transitions." when empty. Cells away from the leading diagonal band are the process's shortcuts and rework loops.</dd>
+    <dt>Duration KPIs</dt>
+    <dd>Shortest, Average, Std deviation and Longest journey duration for the filtered set.</dd>
+  </dl>
+
+  <h2 id="happy">Happy Path</h2>
+
+  <div class="role">Requires: <b>Power user</b> or <b>Administrator</b></div>
+
+  <p>A happy path is your <em>intended</em> step sequence — the route a journey should take when nothing goes wrong. You record it as an ordered list of steps (optionally with alternative branches), and the application scores how closely real journeys follow it. Happy paths are stored on the server per project and per user, so they survive a browser change and are included in backups.</p>
+
+  <figure data-fig="app-16-happy-path"><figcaption>Happy Path: the actual process map on the left, the ideal step sequence on the right.</figcaption></figure>
+
+  <h3 id="happy-layout">Layout</h3>
+
+  <p>The view is split in two. The left pane, headed "Actual Process" with the filtered journey count ("N journeys"), is the full process flowchart with the same node, note and drag behaviour as the A-Chart (its node layout is stored under the chart mode "HappyPath", independently of the A-Chart). If no data is loaded it shows 📊 <b>No Process Data</b> — "Apply filters in the sidebar to load the process map." with a <b>Load</b> button.</p>
+
+  <p>The right pane holds the ideal path. Drag its left edge to resize it between <b>300</b> and <b>1000</b> px; double-click the drag handle to reset the width to <b>460</b> px. The width persists as <code>happyPath.editorWidth</code>.</p>
+
+  <h3 id="happy-create">Creating and editing a path</h3>
+
+  <ol class="steps">
+    <li>Press <b>＋ New</b> in the top bar. The sheet "New Happy Path" ("Give the ideal step sequence a name.") asks for a name. Creating a path also switches the pane into edit mode.</li>
+    <li>Use <b>＋ Add step…</b> to append steps in the intended order. The dropdown lists only steps that are not yet used anywhere in the path — a step may appear <b>only once</b> across the whole path, branches included.</li>
+    <li>Reorder with <b>▲ Move up</b> / <b>▼ Move down</b> on each row, and remove a step with the red <b>⊖</b> button.</li>
+    <li>For genuine alternatives, press <b>⑂ Split</b> ("Add a split — alternatives that rejoin and continue"). The split card offers <b>✎ Rename split</b> ("Rename Split"), <b>▲</b>/<b>▼</b>, <b>🗑 Delete split</b>, one embedded editor per branch, <b>＋ Branch</b> to add another, and <b>🗑 Delete branch</b> on branches beyond the second.</li>
+    <li>When steps follow the split, name the convergence point with <b>✎ Rejoin: &lt;name&gt;</b> (prompt "Name Rejoin", confirm <b>Save</b>). Steps after the split are the shared continuation of every branch.</li>
+    <li>Press <b>✓ Done</b> to leave edit mode. Use <b>↻ Recompute conformance</b> at any time to re-run the scoring.</li>
+  </ol>
+
+  <p>Splits may be nested: a split can be placed inside a branch of another split. The helper text in the editor states the rule the scoring follows: "Each journey is scored against the route it matches best."</p>
+
+  <table>
+    <thead><tr><th>Top-bar control</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td><b>Path selector</b></td><td>Dropdown of the project's happy paths; reads "No happy paths yet" when none exist.</td></tr>
+      <tr><td><b>＋ New</b></td><td>Creates a path and enters edit mode.</td></tr>
+      <tr><td><b>✎ Rename</b></td><td>Prompt "Rename Happy Path", confirm button <b>Rename</b>. Only shown when a path is selected.</td></tr>
+      <tr><td><b>🗑 Delete</b></td><td>Deletes the selected path <b>immediately, without a confirmation</b>.</td></tr>
+      <tr><td><b>🪧 Conformance N.NN</b></td><td>Score badge, shown once computed. Green ≥ 0.70, orange in between, red ≤ 0.30. Tooltip: "Journey-count-weighted edge coverage".</td></tr>
+      <tr><td><b>✎ Edit Path</b> / <b>✓ Done</b></td><td>Toggles edit mode.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="warn"><strong>Warning</strong> Happy-path deletion takes effect at once — there is no confirmation dialogue and no undo. Rename rather than delete when you are unsure.</div>
+
+  <h3 id="happy-read">Reading the visualisation</h3>
+
+  <p>Outside edit mode the path is drawn as a vertical trunk of step cards joined by ⌄ chevrons.</p>
+
+  <ul>
+    <li>A card is <b>green-tinted</b> when that step exists in the currently filtered process (tooltip = the step name) and <b>grey</b> when it does not (tooltip "&lt;name&gt; — not present in the filtered process"). A grey card means the step you designed into the process never occurs under the current filters at all.</li>
+    <li>Green cards carry a <b>coverage percentage</b>: <code>min(1, max(incoming, outgoing) ÷ filtered journeys)</code> — the share of filtered journeys that touch this step. A step at 100 % is on every journey; a step at 12 % is an exception in practice, however central it is on paper.</li>
+    <li>A split renders as a "⑂ &lt;label or 'Split'&gt;" fork line followed by side-by-side branch columns headed <b>Branch 1</b>, <b>Branch 2</b>, … (an empty branch shows "No steps"), and, when a shared continuation exists, a "⑃ &lt;rejoin label or 'rejoin'&gt;" line before it.</li>
+  </ul>
+
+  <p>Two helper states replace the trunk: with no path selected the pane explains "Define an ideal step sequence to measure how closely real journeys follow your intended design. Create one with "＋ New"."; with an empty path it shows 🪧 <b>No Steps Defined</b> — "Use ＋ to add the first step." in edit mode, or "Enable Edit Path to define the happy path." otherwise.</p>
+
+  <h3 id="happy-score">How routes are enumerated and scored</h3>
+
+  <p>The conformance score is computed on the server and recomputes automatically whenever the project or the selected path changes.</p>
+
+  <ol class="steps">
+    <li><b>Route enumeration.</b> The path is expanded into every possible start-to-end step sequence: plain step nodes append themselves, and each split multiplies the routes collected so far by all routes through each of its branches. Nested splits are expanded recursively. The expansion is capped at <b>2 000</b> routes so that heavily nested paths cannot explode; routes shorter than two steps are discarded because they contain no transition to compare.</li>
+    <li><b>Edge sets.</b> Each enumerated route and each observed journey variant is reduced to its set of consecutive transitions ("A → B", "B → C", …).</li>
+    <li><b>Best-match coverage.</b> For each observed variant the application computes, against every enumerated route, the fraction of that route's transitions the variant contains, and keeps the <b>highest</b> value. This is why a split costs nothing: a journey is measured against the branch it actually took.</li>
+    <li><b>Weighting.</b> Coverage values are averaged weighted by the number of journeys behind each variant, so a route walked by 5 000 journeys moves the score far more than one walked by three. The result is the 0–1 figure in the badge.</li>
+    <li><b>Variant limit.</b> The scoring is run against the top <b>500</b> journey variants of the current filter. Extremely long-tailed processes are therefore scored on their meaningful mass, not on every one-off route.</li>
+  </ol>
+
+  <div class="note"><strong>Note</strong> The score is <em>edge coverage</em>, not equality. A journey that walks the whole happy path and then adds three rework loops still scores 1.00 for that path, because every intended transition is present. Use the Conformance Check norms (below) or the Statistics route table to detect the extra traffic.</div>
+
+  <p>Happy paths also feed the AI supported Documentation report: if none are defined, that view warns that conformance data will not be included.</p>
+
+  <h2 id="conf">Conformance Check</h2>
+
+  <div class="role">Requires: <b>Power user</b> or <b>Administrator</b></div>
+
+  <p>Conformance Check compares the <em>measured</em> value of each transition against a target value you store on that transition — its <b>norm</b>. Norms are held per project <b>and per metric</b> in backend storage, so the Count norms and the Avg Time norms of the same edge are independent, and norms follow your account to any browser.</p>
+
+  <figure data-fig="app-15-conformance-check"><figcaption>Conformance Check in view mode with the gap-analysis table open.</figcaption></figure>
+
+  <h3 id="conf-controls">The toolbar</h3>
+
+  <table>
+    <thead><tr><th>Control</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td><b>Metric chips</b> (# Count, ⏱ Avg Time, ⌄ Min Time, ⌃ Max Time, 〰 Std Dev)</td><td>Select which metric's norms you are viewing and editing. The choice persists per project.</td></tr>
+      <tr><td><b>Norm is a minimum</b> (checkbox)</td><td>Setting <code>compliance.normIsMinimum</code>, default <b>off</b>. Off: the actual value must be <b>≤</b> the norm to comply (the norm is a cap — the usual reading for times). On: the actual value must be <b>≥</b> the norm (a floor — the usual reading for throughput shares).</td></tr>
+      <tr><td><b>Show gaps</b> / <b>Hide gaps</b></td><td>Opens and closes the 460 px gap-analysis table on the right. Tooltip: "Toggle the gap-analysis table".</td></tr>
+      <tr><td><b>Edit norms</b> / <b>Done</b></td><td>Switches between view and edit mode; the button is highlighted while editing.</td></tr>
+      <tr><td>KPI handle (chevron)</td><td>Collapses the standard KPI strip (<code>compliance.kpiExpanded</code>, default on). Collapsed it summarises "N violations · M compliant".</td></tr>
+    </tbody>
+  </table>
+
+  <p>Under the toolbar a status line reads "❌ N violation(s)  ✅ M compliant  — K without norm". In edit mode it is joined by the hint "Click an edge to set its norm".</p>
+
+  <h3 id="conf-modes">View mode and edit mode</h3>
+
+  <p>In <b>view mode</b> the flowchart is a compliance overlay: edges are green (compliant), red (violation) or grey (no norm defined), their width still encodes the actual value, and each label is a solid badge showing the <b>actual</b> value. In <b>edit mode</b> every edge is drawn uniform grey at width 6 and the badge shows the <b>stored norm</b> instead ("—" when none is set; the badge is accent-coloured where a norm exists and faint grey where it does not). The deliberate flattening in edit mode stops the visual weight of the data from distracting you while you set targets.</p>
+
+  <h3 id="conf-set">Setting a norm</h3>
+
+  <ol class="steps">
+    <li>Select the metric whose norm you want to set.</li>
+    <li>Press <b>Edit norms</b>.</li>
+    <li>Click the edge (the line has a generous invisible hit area, and the label is clickable too). The norm editor opens, headed "&lt;from&gt; → &lt;to&gt;" with the line "Actual: &lt;value&gt;" — for Count the wording is "Actual: &lt;value&gt; of outgoing".</li>
+    <li>Type the target. The placeholder is <b>Target %</b> for Count and <b>Target value (seconds)</b> for the time metrics. Press <b>Enter</b> or <b>Set</b> to save, <b>Clear</b> to delete the norm.</li>
+    <li>Press <b>Done</b> to return to the compliance overlay.</li>
+  </ol>
+
+  <div class="note"><strong>Note</strong> Pressing <b>Set</b> with an empty or non-numeric input clears the norm rather than storing a zero. Clearing is therefore always safe and never leaves a hidden "0" target behind.</div>
+
+  <h3 id="conf-count">Count norms are percentages</h3>
+
+  <p>For the Count metric a norm is not an absolute number of traversals — it is the transition's <b>share of the source node's outgoing flow</b>, so the norms leaving one step should total 100 %. The editor helps you keep that budget: it shows "X% on N other edge(s) from "&lt;step&gt;"" and "<b>Y% remaining</b> to reach 100%", and if your entry would push the node over, it displays a red border and the message "Total would be Z% — over 100%".</p>
+
+  <div class="warn"><strong>Warning</strong> The budget helper warns but does not block. You can store a set of Count norms that adds up to more than 100 % of a node's outgoing flow; the compliance colours will then be arithmetically unreachable for at least one edge.</div>
+
+  <h3 id="conf-gaps">Reading the gap table</h3>
+
+  <p>Press <b>Show gaps</b> for a tabular reading of the same data. Rows are sorted by severity — violations first, then by descending delta — so the worst offender is always the first row. Self-loop edges (a step following itself) are excluded from the table.</p>
+
+  <table>
+    <thead><tr><th>Column</th><th>Content</th></tr></thead>
+    <tbody>
+      <tr><td><b>From</b> / <b>To</b></td><td>The transition's source and target step.</td></tr>
+      <tr><td><b>Actual</b></td><td>The measured value under the current filters, formatted per metric (Count as a percentage, time metrics as a duration, otherwise an integer).</td></tr>
+      <tr><td><b>Norm</b></td><td>The stored target for the selected metric.</td></tr>
+      <tr><td><b>Delta</b></td><td>Distance between actual and norm — the size of the gap.</td></tr>
+      <tr><td><b>Status</b></td><td>❌ <b>Violation</b> (red), ✅ <b>Compliant</b> (green) or — <b>No norm</b> (grey).</td></tr>
+    </tbody>
+  </table>
+
+  <p>A <b>violation</b> means only this: for the selected metric, this transition's measured value falls on the wrong side of the target you stored, under the direction set by <b>Norm is a minimum</b>. It is not a statement about the journey as a whole, and it changes as soon as you change the filters, the metric or the direction checkbox. Transitions with no norm are never violations — they are simply unmeasured, which is what the "— K without norm" figure in the status line is for.</p>
+
+  <p>With no project selected the view shows 🗺 <b>No Project Selected</b>; with no data loaded it shows 🛡️ <b>No Process Data</b> — "Apply filters in the sidebar to load the process map." with a <b>Load</b> button. The node layout of this view is stored under the chart mode "Conformance".</p>
+
+  <h2 id="sim">Simulation</h2>
+
+  <div class="role">Requires: <b>Power user</b> or <b>Administrator</b></div>
+
+  <p>Simulation fits a Markov model to the process graph currently loaded in the <b>A-Chart</b> and generates synthetic journeys from it: transition probabilities come from the observed occurrence counts, edge durations are drawn from a lognormal distribution fitted to each edge's average and standard deviation, and journeys arrive as a Poisson process. Nothing is written to the database — the result lives in the selected simulation slot for the session and can be exported or used as an A/B data source.</p>
+
+  <figure data-fig="app-18-simulation"><figcaption>Simulation: configuration column on the left, results with the Flow, Variants, Charts and Event log tabs on the right.</figcaption></figure>
+
+  <h3 id="sim-config">Configuration parameters</h3>
+
+  <p>The left column, headed "🎲 Simulation configuration", is 340 px wide and holds every parameter.</p>
+
+  <table>
+    <thead><tr><th>Parameter</th><th>Default</th><th>Range / notes</th></tr></thead>
+    <tbody>
+      <tr><td><b>Target slot</b> (segmented Sim-A | Sim-B)</td><td>Sim-A</td><td>Two independent result slots, so one simulation can be compared with another in A/B Comparison.</td></tr>
+      <tr><td><b>Journey count</b></td><td>200</td><td>Minimum 1. The backend refuses runs above 100 000 (see below).</td></tr>
+      <tr><td><b>Start date</b></td><td>today</td><td>Timestamp of the first simulated arrival.</td></tr>
+      <tr><td><b>Average inter-arrival (hours)</b></td><td>2</td><td>Minimum 0.1, step 0.1. Mean of the exponential inter-arrival distribution; must be a finite number.</td></tr>
+      <tr><td><b>Max steps per journey</b></td><td>60</td><td>Minimum 2. Hard stop for a random walk that never reaches an end-of-process step. The backend limit is 10 000.</td></tr>
+      <tr><td><b>Excluded steps</b></td><td>none</td><td>Multi-select picker (◉ selected / ○ not) with a count pill and an ⊗ clear button. Hint: "Removed before the Markov model is built." — the step and all its transitions are cut out before probabilities are computed.</td></tr>
+      <tr><td><b>Required steps</b></td><td>none</td><td>Same picker. Hint: "Journeys not visiting all of these are discarded." — generated journeys missing any required step are thrown away and regenerated.</td></tr>
+    </tbody>
+  </table>
+
+  <p>A walk ends when it reaches a step flagged as end-of-process, when the model has no outgoing transition left, or when <b>Max steps per journey</b> is reached — whichever comes first.</p>
+
+  <div class="note"><strong>Note</strong> With <b>Required steps</b> set, a run can finish with fewer journeys than you asked for. The generator makes a bounded number of attempts (twenty times the journey count, and never fewer than a thousand); if the required combination is rare in the observed graph, the attempts run out first. Compare the <b>Journeys</b> tile in the results header with the journey count you configured.</div>
+
+  <h3 id="sim-run">Running a simulation</h3>
+
+  <ol class="steps">
+    <li>Load the A-Chart with the filters that describe the population you want to model. Simulation has no filters of its own — it consumes the A-Chart's graph.</li>
+    <li>Switch to <b>Simulation</b> and choose the target slot, <b>Sim-A</b> or <b>Sim-B</b>.</li>
+    <li>Set journey count, start date, average inter-arrival and max steps per journey; add excluded and required steps if needed.</li>
+    <li>Press <b>Run simulation</b>. The button shows a spinner and is disabled while the run is in flight, and whenever no A-Chart graph is available.</li>
+    <li>Read the results in the tabs on the right. Re-run as often as you like — each run replaces the content of its slot.</li>
+  </ol>
+
+  <p>Before any run the results area shows 🎲 <b>Sim-A — no results yet</b> (or Sim-B) with the text "Configure the parameters and run the simulation. Results can then be selected as an A/B data source in the Sampling section." With no project selected it shows 🗺 <b>No Project Selected</b> — "Select a project from the sidebar."</p>
+
+  <h3 id="sim-results">Reading the results</h3>
+
+  <p>The results header carries six tiles: <b>Journeys</b> 👥, <b>Avg cycle time</b> ⏱️, <b>Shortest</b> 🐇, <b>Longest</b> 🐢, <b>Std dev</b> 〰️ and <b>Variants</b> ⑂. Below them a segmented control switches between four tabs, with <b>⤓ Export CSV</b> alongside.</p>
+
+  <dl>
+    <dt>Flow</dt>
+    <dd>The simulated process graph drawn in the standard flowchart, with the currently selected transition metric, the usual zoom and fit controls, and a node layout that persists per slot (chart mode <code>sim_&lt;slot&gt;</code>). This is the tab to compare against the A-Chart: the shapes should match, and where the simulated flow differs from the observed one, the Markov assumption — that the next step depends only on the current step — is not holding for that part of the process.</dd>
+    <dt>Variants</dt>
+    <dd>Table with <b>Path</b>, <b>Count</b>, <b>Share (%)</b> and <b>Avg cycle time</b>, ordered by count.</dd>
+    <dt>Charts</dt>
+    <dd>"Cycle-time distribution" — a 12-bucket histogram of journey durations — and "Top variants" — the first 12 variants as bars labelled V1…V12, with the full path in the tooltip.</dd>
+    <dt>Event log</dt>
+    <dd>Journey | Step | Timestamp table, prefaced by the note "Showing the first 1 000 of N events. Use "Export CSV" for the full log."</dd>
+  </dl>
+
+  <p><b>⤓ Export CSV</b> downloads the <em>complete</em> event log — not the 1 000-row preview — as <code>Sim-A-event-log.csv</code> or <code>Sim-B-event-log.csv</code>, with the columns <code>journeyId</code>, <code>step</code>, <code>timestamp</code>.</p>
+
+  <h3 id="sim-ab">Using a simulation as an A/B data source</h3>
+
+  <p>Each simulation slot can stand in for real data on either side of the A/B Comparison.</p>
+
+  <ol class="steps">
+    <li>Run a simulation into <b>Sim-A</b> (and, for a two-scenario comparison, a second one into <b>Sim-B</b>).</li>
+    <li>Switch to <b>A/B Comparison</b> and make the side you want to change active by clicking its panel header.</li>
+    <li>In the sidebar <b>Sampling</b> section choose <b>Sim-A</b> or <b>Sim-B</b> as that side's data source instead of Original or Sample 1–3.</li>
+    <li>The panel reloads from the simulation. Its <b>Active Sample</b> KPI tile now reads "Sim-A" or "Sim-B" with that run's journey count.</li>
+  </ol>
+
+  <figure data-fig="app-11-a-b-comparison"><figcaption>A simulated scenario on one side of the A/B Comparison, with the similarity badge below.</figcaption></figure>
+
+  <p>Re-running a slot that is currently displayed as an A/B data source refreshes that side automatically — you do not need to reselect it.</p>
+
+  <div class="warn"><strong>Warning</strong> Simulation output is <b>read-only</b> wherever it appears. The canvas shows a red notice — "Sim-A: simulation data is read-only — interactive filtering, drill-down and step editing are not available." — and the <b>✓ Require in journeys</b> and <b>⊖ Exclude from journeys</b> items disappear from the node popover. To change what a simulated scenario contains, change the <b>Excluded steps</b> / <b>Required steps</b> configuration and run it again.</div>
+
+  <h3 id="sim-guards">Guard rails and error messages</h3>
+
+  <p>A simulation runs inside the shared backend, so an oversized request would slow down or crash the service for every user. The size is therefore checked <em>before</em> the run starts and rejected outright; the message appears in red above the <b>Run simulation</b> button.</p>
+
+  <table>
+    <thead><tr><th>Condition</th><th>Message</th></tr></thead>
+    <tbody>
+      <tr><td>Journey count above 100 000</td><td>"Too many journeys to simulate (&lt;count&gt;). The maximum is 100,000."</td></tr>
+      <tr><td>Max steps per journey above 10 000</td><td>"maxStepsPerJourney (&lt;steps&gt;) exceeds the limit of 10,000."</td></tr>
+      <tr><td>Journeys × steps above 20 000 000</td><td>"The requested run is too large (&lt;count&gt; journeys × &lt;steps&gt; steps). Keep journeys × steps under 20,000,000."</td></tr>
+      <tr><td>Non-finite inter-arrival value</td><td>"avgInterArrivalHours must be a finite number."</td></tr>
+      <tr><td>Run still going after 120 seconds</td><td>"Simulation timed out (&lt;count&gt; journeys). Try fewer journeys."</td></tr>
+      <tr><td>Out of memory during the run</td><td>"Simulation ran out of memory (&lt;count&gt; journeys). Try fewer journeys."</td></tr>
+      <tr><td>Any other server-side failure</td><td>"Simulation failed. Please try again." (the detail is written to the server log, not returned to the browser)</td></tr>
+    </tbody>
+  </table>
+
+  <p>Both the product limit and the per-dimension limits exist because a cyclic process graph generates one event per step: a modest journey count combined with a very large <b>Max steps per journey</b> produces just as many events as a huge journey count. Every rejection is also recorded in the backend log under the operation "simulation", so an administrator can see who hit which ceiling.</p>
+
+  <p>A second guard applies before the request is even sent. If the A-Chart holds no process graph, the configuration column shows an orange warning — "Load the A-Chart first — simulation needs an observed process graph." — and the <b>Run simulation</b> button stays disabled; attempting the run from elsewhere reports "Load the A-Chart first — simulation needs a process graph."</p>
+
+  <div class="tip"><strong>Tip</strong> Start small. A run of the default 200 journeys completes in a moment and tells you immediately whether the model produces plausible variants; only then scale the journey count up for a distribution you intend to quote.</div>
+
+</section>
