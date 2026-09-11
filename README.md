@@ -147,6 +147,26 @@ enabled in the admin. The compute backend stays internal to the container.
   build stays cheap because Docker's layer cache is the real "needs rebuilding?"
   check — untouched layers are reused, so only the affected parts rebuild.
 
+## Program License
+
+Separate from the source-code license in [`LICENSE`](LICENSE), the running
+application is gated by a **signed program license**. A license file ships with
+the repository at `data/license.json`, so a fresh install runs out of the box —
+but it is deliberately **time-bombed**: the file carries an `expires` date and an
+Ed25519 signature, and once that date passes the license is no longer valid.
+
+On startup — and continuously afterwards — the backend verifies the license. If
+it is missing, tampered with, or expired, the backend keeps serving for a short
+**grace period** (30 minutes by default, `PMW_LICENSE_GRACE_SECS`) and then
+**stops itself**. It re-reads the file every 15 seconds, so replacing the license
+cancels a pending shutdown within seconds.
+
+**New license files are committed to the repository on schedule, before the
+current one lapses** — so keeping your checkout up to date (`git pull`) keeps the
+app licensed. You can also drop a newer `data/license.json` in by hand, or upload
+one from the admin panel's **App Control** tab, at any time. The private signing
+key lives only in an offline issuer, so licenses cannot be forged.
+
 ## 🚀 The Launcher — your starting point
 
 > [!TIP]

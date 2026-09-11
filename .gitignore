@@ -1,5 +1,8 @@
 .venv/
-data/
+# Runtime state under data/ is ignored, EXCEPT the signed program license, which
+# is shipped in-repo (time-bombed; refreshed with new files before it expires).
+data/*
+!data/license.json
 node_modules/
 dist/
 __pycache__/
