@@ -1,0 +1,425 @@
+<section class="chapter" id="ch-installation" data-title="Installation and Deployment" data-num="3">
+  <h1><span class="chnum">3</span> Installation and Deployment</h1>
+
+  <p class="chintro">This chapter tells you how to get Process Mining Demonstrator — Web Edition running, either directly on a machine with Python and Node.js installed or as a single Docker container. It covers the system requirements, the <code>run.sh</code> launcher and its flags, the shipped Docker Compose file with its port offsets and data volume, the complete reference of <code>PMW_*</code> environment variables, a first-run checklist, where the runtime licence file lives, where backups are written, and what to check after an upgrade. It is written for the person who installs and operates the system — normally the same person who holds the Administrator account. End users need none of it.</p>
+
+  <div class="note"><strong>Note</strong> Process Mining Demonstrator — Web Edition is intended for demonstration and educational purposes. It is not a production-ready process mining solution. Size and secure your deployment accordingly.</div>
+
+  <h2 id="inst-requirements">3.1 System requirements</h2>
+
+  <p>Only the compute backend has hard runtime requirements. Node.js is needed solely to build the single-page application (SPA) and is not required at runtime — the Docker image builds the SPA in a separate stage and ships only the compiled result.</p>
+
+  <table>
+    <thead><tr><th>Item</th><th>Requirement</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Python</td><td>3.13 or 3.14</td><td>Falls back gracefully to 3.11+. The Docker image pins <code>python:3.13-slim</code>.</td></tr>
+      <tr><td>Node.js</td><td>20 or newer</td><td>Needed only to build the React SPA locally. The Docker image builds it in a <code>node:22-slim</code> stage, so the runtime container never needs Node.</td></tr>
+      <tr><td>Exasol</td><td>Any reachable instance</td><td>The only supported analytics database. Accessed through <code>pyexasol</code>.</td></tr>
+      <tr><td>LLM endpoint</td><td>Optional; any OpenAI-compatible endpoint</td><td>Used by the AI Documentation view. Configured per database connection, not globally.</td></tr>
+      <tr><td>Docker</td><td>Optional; Docker Compose</td><td>Compose 2.22 or newer if you want <code>docker compose watch</code> auto-rebuild.</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="inst-deps">Python dependencies</h3>
+
+  <p>All backend dependencies are pinned in <code>requirements.txt</code>: fastapi 0.139.2, uvicorn[standard] 0.51.0, pyexasol 2.3.0, openai 2.46.0, pydantic 2.13.4, pydantic-settings 2.14.2, cryptography 49.0.0, ldap3 2.9.1, httpx 0.28.1, orjson 3.11.9, python-multipart 0.0.20, regex 2026.7.19 (the ReDoS-safe engine behind admin log search), tzdata 2026.3, webauthn 3.0.0 (passkeys), pyotp 2.10.0 and qrcode 8.2 (TOTP enrolment; the SVG factory is used so no imaging library is required).</p>
+
+  <div class="note"><strong>Note</strong> <code>tzdata</code> is not optional. The slim container image carries no system IANA zone database, and the admin display-timezone setting — which also governs when scheduled backups fire — depends on it.</div>
+
+  <p>Test and development dependencies live in <code>requirements-dev.txt</code> and are installed <em>on top of</em> <code>requirements.txt</code>: pytest 9.1.1, pytest-asyncio 1.4.0 and httpx2 2.9.1. The httpx2 package is test-only; production code continues to use httpx.</p>
+
+  <h3 id="inst-licences">Two different licences</h3>
+
+  <p>Do not confuse the two:</p>
+  <dl>
+    <dt>Software licence</dt><dd>The source code is distributed under the MIT licence (file <code>LICENSE</code> in the repository).</dd>
+    <dt>Runtime application licence</dt><dd>A separate Ed25519-signed <code>license.json</code> that the compute backend requires in order to keep running. See section 3.9.</dd>
+  </dl>
+
+  <h2 id="inst-local">3.2 Local installation</h2>
+
+  <p>The launcher <code>run.sh</code> hard-codes the interpreter path <code>./.venv/bin/python</code>. The virtual environment must therefore live at <code>.venv</code> in the repository root — not elsewhere, and not under a different name.</p>
+
+  <ol class="steps">
+    <li>Open a terminal in the repository root.</li>
+    <li>Create the virtual environment and install the backend dependencies:
+      <pre><code>python3.13 -m venv .venv
+.venv/bin/pip install -r requirements.txt</code></pre>
+      Python 3.14 works equally well; substitute <code>python3.14</code>.</li>
+    <li>Optionally add the test dependencies:
+      <pre><code>.venv/bin/pip install -r requirements-dev.txt</code></pre></li>
+    <li>Build the single-page application:
+      <pre><code>./run.sh --build</code></pre>
+      On the first run this prints <code>&rarr; installing frontend dependencies</code> and runs <code>npm install</code> inside <code>frontend/web</code>; afterwards it prints <code>&rarr; building the SPA</code> and runs <code>npm run build</code>. The script then exits without starting any server.</li>
+    <li>Start the stack:
+      <pre><code>./run.sh</code></pre></li>
+  </ol>
+
+  <div class="warn"><strong>Warning</strong> If the virtual environment is missing, <code>run.sh</code> refuses to start and prints:<br>
+  <code>error: virtualenv missing — create it with:</code><br>
+  <code>&nbsp;&nbsp;python3.13 -m venv .venv &amp;&amp; .venv/bin/pip install -r requirements.txt</code></div>
+
+  <h2 id="inst-runsh">3.3 The <code>run.sh</code> launcher</h2>
+
+  <p><code>run.sh</code> is the single entry point for all four Python processes. It changes to its own directory before doing anything, runs under <code>set -euo pipefail</code>, and traps <code>EXIT</code>, <code>INT</code> and <code>TERM</code> so that pressing Ctrl-C kills every child process cleanly. There is no separate stop script.</p>
+
+  <table>
+    <thead><tr><th>Invocation</th><th>What it starts</th></tr></thead>
+    <tbody>
+      <tr><td><code>./run.sh</code></td><td>Compute backend, admin interface, GUI server and integration console. If <code>frontend/web/dist/index.html</code> is missing, the SPA is built first automatically.</td></tr>
+      <tr><td><code>./run.sh --dev</code></td><td>Compute backend, admin interface and the Vite dev server on <code>http://localhost:5173</code> with hot reload (HTTP only). No GUI server and no integration console. Runs <code>npm install</code> first if <code>node_modules</code> is absent.</td></tr>
+      <tr><td><code>./run.sh --build</code></td><td>Rebuilds the SPA and exits. No servers are started.</td></tr>
+    </tbody>
+  </table>
+
+  <p>A normal start prints these lines; use them to confirm that all four processes came up:</p>
+  <pre><code>&rarr; compute backend on https://127.0.0.1:8000 (TLS, internal cert)
+&rarr; admin interface (HTTP 8090 / HTTPS 8453, per TLS mode)
+&rarr; GUI server (HTTP 8080 / HTTPS 8443, per TLS mode)
+&rarr; integration console (HTTP 8100 / HTTPS 8463, per TLS mode)</code></pre>
+
+  <p>In development mode the third and fourth lines are replaced by <code>&rarr; Vite dev server on http://localhost:5173</code>.</p>
+
+  <div class="warn"><strong>Warning</strong> <code>--dev</code> sets <code>PMW_REQUIRE_PROXY_AUTH=0</code> automatically. This is safe only because Vite proxies straight to the backend over loopback with no GUI proxy in between. Never use <code>--dev</code> for anything but local development: with proxy authentication off, any local process can forge the <code>X-PMW-User</code> header and reach <code>/api/*</code> directly.</div>
+
+  <h3 id="inst-processes">The four processes and their ports</h3>
+
+  <table>
+    <thead><tr><th>Process</th><th>Directory</th><th>HTTP</th><th>HTTPS</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>Compute backend</td><td><code>backend/</code></td><td>&mdash;</td><td>8000 (always TLS)</td><td>Exasol access, analytics, simulation, sampling, LLM proxy, settings store, licensing watchdog, integration layer and file watchdog</td></tr>
+      <tr><td>GUI server</td><td><code>frontend/</code></td><td>8080</td><td>8443</td><td>Serves the SPA, proxies <code>/api/*</code> to the backend, enforces sign-in</td></tr>
+      <tr><td>Admin interface</td><td><code>admin/</code></td><td>8090</td><td>8453</td><td>TLS, users, database connections, LDAP, logging, backups, licence, customise, restart</td></tr>
+      <tr><td>Integration console</td><td><code>integration/</code></td><td>8100</td><td>8463</td><td>Data-source configuration; sign-in restricted to power users, developers and administrators</td></tr>
+    </tbody>
+  </table>
+
+  <p>After a local start, open:</p>
+  <dl>
+    <dt>Main application</dt><dd><code>http://127.0.0.1:8080</code></dd>
+    <dt>Admin interface</dt><dd><code>http://127.0.0.1:8090</code></dd>
+    <dt>Integration console</dt><dd><code>http://127.0.0.1:8100</code> (power users, developers and administrators only; every other account is refused with a clear message)</dd>
+  </dl>
+
+  <p>Four operational facts follow from this layout and are worth understanding before you plan a deployment:</p>
+  <ul>
+    <li>The browser only ever talks to the GUI server. The compute backend can therefore run on a separate host close to the database; point the GUI proxy at it with <code>PMW_BACKEND_URL</code>.</li>
+    <li>The GUI-to-backend hop is always TLS-encrypted, even on loopback. The backend mints an internal self-signed certificate at start (<code>data/certs/internal.crt</code> and <code>internal.key</code>), independently of the user-facing TLS mode, and the GUI proxy pins it through <code>PMW_BACKEND_CA</code>.</li>
+    <li>The integration console ports are derived by convention as the admin port plus ten (8090 &rarr; 8100, 8453 &rarr; 8463) unless you override them explicitly.</li>
+    <li>All three user-facing surfaces share one sign-in stack (password, TOTP two-factor, WebAuthn passkey) and one TLS mode with one active certificate.</li>
+  </ul>
+
+  <div class="warn"><strong>Warning</strong> The per-source-IP sign-in throttle keys on the socket peer address and never trusts <code>X-Forwarded-For</code>. Behind a reverse proxy, every client shares a single throttle bucket. Terminate TLS at the application itself, as <code>run.sh</code> does, or add trusted-proxy handling before fronting it.</div>
+
+  <h2 id="inst-docker">3.4 Docker deployment</h2>
+
+  <p>One image, <code>process-mining-web:latest</code>, runs all four services through <code>run.sh</code> as its <code>CMD</code>. The container is named <code>process-mining-web</code>.</p>
+
+  <ol class="steps">
+    <li>Edit <code>docker-compose.yml</code> and set <code>PMW_DEFAULT_ADMIN_PASSWORD</code> (and optionally <code>PMW_DEFAULT_ADMIN_USER</code>) in the <code>environment:</code> block. The lines are present but commented out, with <code>Administrator</code> and <code>"change-me"</code> placeholders.</li>
+    <li>Build and start:
+      <pre><code>docker compose up -d --build</code></pre></li>
+    <li>Open the admin interface at <code>http://localhost:18090</code> and sign in.</li>
+    <li>Open the main application at <code>http://localhost:18080</code> — or the Launcher at <code>http://localhost:18080/launcher.html</code>.</li>
+  </ol>
+
+  <h3 id="inst-ports">Host port mapping — the +10000 offset</h3>
+
+  <p>Host ports are offset by 10000 from the container ports so that they do not clash with other local services (the compose file cites phpLDAPadmin on host port 8080). This is only the shipped default — the left-hand side of each <code>ports:</code> mapping in <code>docker-compose.yml</code> is the host port and may be remapped to any free port.</p>
+
+  <table>
+    <thead><tr><th>Host port</th><th>Container port</th><th>Surface</th></tr></thead>
+    <tbody>
+      <tr><td>18080</td><td>8080</td><td>Main application (HTTP)</td></tr>
+      <tr><td>18443</td><td>8443</td><td>Main application (HTTPS)</td></tr>
+      <tr><td>18090</td><td>8090</td><td>Admin interface (HTTP)</td></tr>
+      <tr><td>18453</td><td>8453</td><td>Admin interface (HTTPS)</td></tr>
+      <tr><td>18100</td><td>8100</td><td>Integration console (HTTP)</td></tr>
+      <tr><td>18463</td><td>8463</td><td>Integration console (HTTPS)</td></tr>
+      <tr><td>18110</td><td>8110</td><td>Actions surface (HTTP)</td></tr>
+      <tr><td>18473</td><td>8473</td><td>Actions surface (HTTPS)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note"><strong>Note</strong> The HTTPS host ports do nothing until TLS is switched to <em>Optional</em> or <em>Required</em> in the admin interface. Until then only the HTTP ports answer.</div>
+
+  <div class="warn"><strong>Warning</strong> Do not map a surface to host port <code>10080</code>: Chrome, Firefox and Safari block it as a restricted port, so a page served there never loads. The shipped compose file therefore uses the +10000 offset (host <code>18080</code>, <code>18090</code>, …); the compose file is authoritative for the URLs.</div>
+
+  <p>Container port 8000 — the compute backend — is deliberately not published. It stays private inside the container, where <code>PMW_BACKEND_HOST</code> is baked to <code>127.0.0.1</code>. The image's <code>EXPOSE</code> lists 8080, 8443, 8090, 8453, 8100, 8463, 8110 and 8473.</p>
+
+  <h3 id="inst-image">What the image contains</h3>
+
+  <p>The build is a two-stage Dockerfile:</p>
+  <ul>
+    <li>Stage 1 (<code>node:22-slim</code>) runs <code>npm ci</code> against the lockfile — cached until the lockfile changes — and then <code>npm run build</code>.</li>
+    <li>Stage 2 (<code>python:3.13-slim</code>) creates <code>/app/.venv</code> and pip-installs <code>requirements.txt</code> into it, so <code>run.sh</code>'s <code>./.venv/bin/*</code> paths work unchanged. It copies <code>backend/</code>, <code>admin/</code>, <code>integration/</code>, <code>frontend/</code>, <code>examples/</code> (the bundled demo logs) and <code>run.sh</code>, and drops the built SPA into <code>frontend/web/dist</code>.</li>
+  </ul>
+
+  <p>Environment baked into the image: <code>PYTHONUNBUFFERED=1</code>, <code>PIP_NO_CACHE_DIR=1</code>, <code>PMW_DATA_DIR=/app/data</code>, <code>PMW_BACKEND_HOST=127.0.0.1</code>, and <code>PMW_FRONTEND_HOST</code>, <code>PMW_ADMIN_HOST</code> and <code>PMW_INTEGRATION_HOST</code> all set to <code>0.0.0.0</code> so that the published ports are reachable from the host.</p>
+
+  <p>A <code>HEALTHCHECK</code> fetches <code>https://127.0.0.1:8000/api/health</code> every 30 seconds, with a 5-second timeout, a 25-second start period and 3 retries. Certificate verification is disabled for that probe because the backend serves its internal self-signed certificate and loopback liveness does not need verification. Compose sets <code>init: true</code>, so tini runs as PID 1 for clean signal handling and no zombie processes, and <code>restart: unless-stopped</code>.</p>
+
+  <p><code>.dockerignore</code> keeps local state and secrets out of the build context: <code>.git</code>, <code>.venv</code>, <code>node_modules</code>, <code>frontend/web/dist</code>, the entire <code>data</code> directory, <code>**/*.sqlite3</code>, <code>**/secret.key</code>, <code>**/certs</code> and the usual caches. A locally populated data directory or encryption key can therefore never be baked into an image by accident.</p>
+
+  <h3 id="inst-volume">Persistence: the data volume</h3>
+
+  <p>The compose file declares a single bind mount: <code>./data</code>, relative to the compose file, onto <code>/app/data</code> inside the container — which is <code>PMW_DATA_DIR</code>. Everything the application must keep lives there.</p>
+
+  <div class="note"><strong>Note</strong> There is no separate <code>integration_files</code> mount in the shipped compose file. The File-source sandbox lives inside the same volume at <code>data/integration_files</code>, and the bundled <code>examples/*.log</code> demo logs are seeded into it on first run. Add a second mount only if you move the sandbox elsewhere with <code>PMW_INTEGRATION_FILES_DIR</code>.</div>
+
+  <h3 id="inst-watch">Auto-rebuild during development</h3>
+
+  <p>Run <code>docker compose watch</code> (or <code>docker compose up --watch</code>) to rebuild the image whenever source changes. The watch rules cover <code>./backend</code>, <code>./admin</code>, <code>./integration</code>, <code>./frontend</code> (ignoring <code>node_modules/</code> and <code>dist/</code>), <code>./requirements.txt</code>, <code>./run.sh</code> and <code>./Dockerfile</code>; each change triggers <code>action: rebuild</code>. Docker's layer cache keeps this cheap because untouched layers are reused. This requires Docker Compose 2.22 or newer.</p>
+
+  <h2 id="inst-env">3.5 Environment variable reference</h2>
+
+  <p>All four processes read the same configuration module, so every variable below applies wherever it is relevant. Boolean-style variables accept <code>1</code>, <code>true</code>, <code>yes</code> or <code>on</code> (case-insensitive) as true; <code>PMW_REQUIRE_PROXY_AUTH</code> additionally treats <code>0</code>, <code>false</code>, <code>no</code> and <code>off</code> as false.</p>
+
+  <h3 id="inst-env-ports">Hosts and ports</h3>
+  <table>
+    <thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>PMW_BACKEND_HOST</code></td><td><code>127.0.0.1</code></td><td>Bind address of the compute backend. Keep it on loopback unless the backend runs on a separate host.</td></tr>
+      <tr><td><code>PMW_BACKEND_PORT</code></td><td><code>8000</code></td><td>Compute backend port. Always HTTPS, using the internal certificate.</td></tr>
+      <tr><td><code>PMW_FRONTEND_HOST</code></td><td><code>127.0.0.1</code> (Docker image: <code>0.0.0.0</code>)</td><td>Bind address of the GUI server.</td></tr>
+      <tr><td><code>PMW_FRONTEND_PORT</code></td><td><code>8080</code></td><td>GUI HTTP port.</td></tr>
+      <tr><td><code>PMW_FRONTEND_HTTPS_PORT</code></td><td><code>8443</code></td><td>GUI HTTPS port, used when the TLS mode is Optional or Required.</td></tr>
+      <tr><td><code>PMW_ADMIN_HOST</code></td><td><code>127.0.0.1</code> (Docker image: <code>0.0.0.0</code>)</td><td>Bind address of the admin interface.</td></tr>
+      <tr><td><code>PMW_ADMIN_PORT</code></td><td><code>8090</code></td><td>Admin HTTP port.</td></tr>
+      <tr><td><code>PMW_ADMIN_HTTPS_PORT</code></td><td><code>8453</code></td><td>Admin HTTPS port.</td></tr>
+      <tr><td><code>PMW_INTEGRATION_HOST</code></td><td>same as <code>PMW_ADMIN_HOST</code> (Docker image: <code>0.0.0.0</code>)</td><td>Bind address of the integration console.</td></tr>
+      <tr><td><code>PMW_INTEGRATION_PORT</code></td><td>admin port + 10 &rarr; <code>8100</code></td><td>Integration console HTTP port.</td></tr>
+      <tr><td><code>PMW_INTEGRATION_HTTPS_PORT</code></td><td>admin HTTPS port + 10 &rarr; <code>8463</code></td><td>Integration console HTTPS port.</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="inst-env-backend">Backend reachability and internal TLS</h3>
+  <table>
+    <thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>PMW_BACKEND_URL</code></td><td><code>https://{PMW_BACKEND_HOST}:{PMW_BACKEND_PORT}</code>, i.e. <code>https://127.0.0.1:8000</code></td><td>The URL the GUI proxy uses to reach the compute backend. Set this when the backend runs on another host.</td></tr>
+      <tr><td><code>PMW_BACKEND_CA</code></td><td><code>{data}/certs/internal.crt</code></td><td>CA bundle the GUI proxy verifies the backend against; by default the pinned internal self-signed certificate. Point it at a real CA when the backend sits behind one, or set it empty to fall back to the system trust store.</td></tr>
+      <tr><td><code>PMW_REQUIRE_PROXY_AUTH</code></td><td><code>1</code> (on)</td><td>Makes the backend require a proxy-auth secret on <code>/api/*</code>, so only the GUI proxy — which has already validated the session — can reach it. <code>run.sh --dev</code> sets it to <code>0</code>. Do not disable it in production.</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="inst-env-data">Data and storage</h3>
+  <table>
+    <thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>PMW_DATA_DIR</code></td><td><code>&lt;repo&gt;/data</code> (Docker: <code>/app/data</code>)</td><td>Root of all persisted state. Created at start together with the <code>logs/</code>, <code>certs/</code>, <code>backups/</code> and <code>integration_files/</code> subdirectories. Git-ignored; this is the directory you back up.</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="inst-env-sessions">Sessions and sign-in</h3>
+  <table>
+    <thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>PMW_SESSION_TTL</code></td><td><code>43200</code> (12 hours)</td><td>Main-application session lifetime. A sliding idle window: the cookie is re-minted on every authenticated request.</td></tr>
+      <tr><td><code>PMW_SESSION_MAX_LIFETIME</code></td><td><code>604800</code> (7 days)</td><td>Hard cap on one sign-in regardless of activity, measured from the original sign-in. Reaching it forces a fresh sign-in, which defeats a captured cookie kept alive by periodic requests.</td></tr>
+      <tr><td><code>PMW_ADMIN_SESSION_TTL</code></td><td><code>28800</code> (8 hours)</td><td>Admin-interface session lifetime.</td></tr>
+      <tr><td><code>PMW_DEFAULT_ADMIN_USER</code></td><td><code>Administrator</code></td><td>Username of the bootstrap administrator, created on first run only if no users exist.</td></tr>
+      <tr><td><code>PMW_DEFAULT_ADMIN_PASSWORD</code></td><td><code>Administrator</code></td><td>Password of the bootstrap administrator, subject to the same first-run-only rule. Override it before the first start, especially under Docker.</td></tr>
+      <tr><td><code>PMW_RESET_LOCKOUTS</code></td><td>unset</td><td>Break-glass valve. Set it to <code>1</code> and restart to clear all failed-sign-in lockouts; the log records <code>PMW_RESET_LOCKOUTS set — cleared all failed-sign-in lockouts.</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="note"><strong>Note</strong> Accounts are disabled automatically after a configurable number of wrong passwords. The threshold lives in the admin interface, tab <b>Users</b>; the default is 3 and <code>0</code> switches lockout off.</div>
+
+  <h3 id="inst-env-passkeys">Passkeys and TOTP</h3>
+  <table>
+    <thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>PMW_PASSKEY_RP_ID</code></td><td>unset (derived from the request <code>Host</code> header)</td><td>Relying-Party ID: the registrable domain without a port, so the application on :8443 and the admin interface on :8453 of one host share a single passkey. Set it only when application and admin live on separate sub-domains, and then use the shared parent domain.</td></tr>
+      <tr><td><code>PMW_PASSKEY_RP_NAME</code></td><td><code>Process Mining Demonstrator</code></td><td>Human-readable Relying-Party name shown by the authenticator.</td></tr>
+      <tr><td><code>PMW_PASSKEY_ORIGINS</code></td><td>empty (accepts the request's own origin)</td><td>Comma-separated allowlist of expected origins in the form <code>scheme://host[:port]</code>. Single-host deployments need neither this nor the RP ID.</td></tr>
+      <tr><td><code>PMW_MFA_ISSUER</code></td><td><code>Process Mining Demonstrator</code></td><td>Issuer label shown in authenticator apps for TOTP enrolments.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="warn"><strong>Warning</strong> WebAuthn requires a secure context — HTTPS, or <code>localhost</code> — and a real hostname. Reaching the system by bare IP address makes the browser fail with <em>"the effective domain … is not a valid domain."</em>. The interface hides the passkey controls and shows a hint when it detects an IP address. Password sign-in always remains available.</div>
+
+  <h3 id="inst-env-licence">Licensing and demo mode</h3>
+  <table>
+    <thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>PMW_LICENSE_GRACE_SECS</code></td><td><code>1800</code> (30 minutes)</td><td>How long the backend keeps running without a valid licence, giving you time to upload one through the admin interface.</td></tr>
+      <tr><td><code>PMW_LICENSE_POLL_SECS</code></td><td><code>15</code></td><td>How often the backend re-reads the licence during the grace period. Short enough that an upload cancels a pending shutdown within seconds.</td></tr>
+      <tr><td><code>PMW_RESET_DEMO</code></td><td>unset</td><td>Set to <code>1</code> to clear the one-time demo marker <code>data/demo_grace.json</code> at backend start, granting a fresh demo window. The log records <code>PMW_RESET_DEMO set — cleared the one-time demo marker.</code> Deleting the file has the same effect.</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="inst-env-query">Queries and LLM access</h3>
+  <table>
+    <thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>PMW_QUERY_TIMEOUT</code></td><td><code>30</code> seconds</td><td>Wall-clock limit for the heavy statistics queries.</td></tr>
+      <tr><td><code>PMW_BLOCK_PRIVATE_LLM_HOSTS</code></td><td>unset (off)</td><td>SSRF hardening for the user-configurable LLM endpoint. By default loopback and private LLM hosts are allowed, because Ollama, LM Studio and internal vLLM servers are primary use cases; link-local and cloud-metadata addresses (169.254.169.254), multicast, reserved and unspecified addresses and non-HTTP(S) schemes are always refused. Set it to <code>1</code> in hardened or cloud deployments to refuse loopback and private targets as well.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note"><strong>Note</strong> Whatever the setting, outbound LLM connections are pinned to the IP address that was vetted, which defeats DNS-rebinding attacks.</div>
+
+  <h3 id="inst-env-integration">Integration console</h3>
+  <table>
+    <thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>PMW_INTEGRATION_FILES_DIR</code></td><td><code>{data}/integration_files</code></td><td>The sandbox directory File sources may read from. Nothing outside it can be opened; path traversal and symlink escapes are rejected. The bundled <code>examples/*.log</code> demo logs are seeded here on first run.</td></tr>
+      <tr><td><code>PMW_INTEGRATION_ALLOW_ANY_PATH</code></td><td>unset (off)</td><td>Set to <code>1</code> to let File sources read any absolute path the server process can read. Developer-trusted deployments only — it enables reading arbitrary server files.</td></tr>
+      <tr><td><code>PMW_INTEGRATION_WATCHDOG</code></td><td><code>1</code> (on)</td><td>Globally enables the file-source watchdog, the background loop that imports newly appended lines when a watched file grows. <code>0</code> disables it.</td></tr>
+      <tr><td><code>PMW_INTEGRATION_WATCHDOG_TICK</code></td><td><code>10</code> seconds (floor of 5 enforced)</td><td>Base wake interval of the watchdog loop. Each source additionally has its own configured poll interval.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="inst-tls">3.6 Enabling TLS</h2>
+
+  <div class="role">Requires: <b>Administrator</b></div>
+
+  <p>TLS is configured entirely in the admin interface, tab <b>TLS / SSL</b>. One mode and one active certificate are shared by the GUI server, the admin interface and the integration console.</p>
+
+  <table>
+    <thead><tr><th>Mode</th><th>GUI binds</th><th>Admin binds</th><th>Integration binds</th></tr></thead>
+    <tbody>
+      <tr><td>Off</td><td>HTTP only (:8080)</td><td>HTTP only (:8090)</td><td>HTTP only (:8100)</td></tr>
+      <tr><td>Optional</td><td>:8080 and :8443</td><td>:8090 and :8453</td><td>:8100 and :8463</td></tr>
+      <tr><td>Required</td><td>HTTPS only (:8443)</td><td>HTTPS only (:8453)</td><td>HTTPS only (:8463)</td></tr>
+    </tbody>
+  </table>
+
+  <ol class="steps">
+    <li>Sign in to the admin interface and open the <b>TLS / SSL</b> tab.</li>
+    <li>Either generate a self-signed certificate — supplying common name, subject alternative names, validity and key size — or upload a PEM certificate together with its key.</li>
+    <li>Mark exactly one certificate as active.</li>
+    <li>Choose the mode: Off, Optional or Required.</li>
+    <li>Open <b>App Control</b> and press <b>&#8635; Restart app server</b>. The listeners rebind in place; no terminal is needed.</li>
+  </ol>
+
+  <figure data-fig="admin-03-tls-ssl"><figcaption>The TLS / SSL tab: certificate list, generation form and the mode selector shared by all three user-facing surfaces.</figcaption></figure>
+
+  <p>The restart works because each TLS-aware launcher writes a PID file — <code>data/gui.pid</code>, <code>data/admin.pid</code> and <code>data/integration.pid</code> — and the admin service sends <code>SIGHUP</code>, on receipt of which the launcher rebinds according to the current TLS plan.</p>
+
+  <div class="note"><strong>Note</strong> The design is fail-safe. If a mode needs a certificate but none is active, every server falls back to HTTP so that nothing becomes unreachable — including the admin interface itself. A bad certificate can never lock you out.</div>
+
+  <p>The active certificate is materialised to disk as <code>data/certs/active.crt</code> and <code>active.key</code> so that the TLS listener can read it. Certificate private keys are encrypted at rest with Fernet in the security store, and key files are written with mode <code>0600</code> from the moment they are created. Both the application and admin servers send <code>X-Frame-Options: DENY</code>, a Content-Security-Policy of <code>frame-ancestors 'none'</code>, <code>X-Content-Type-Options: nosniff</code> and <code>Referrer-Policy: no-referrer</code>, plus HSTS when TLS is on.</p>
+
+  <h2 id="inst-datadir">3.7 The <code>data/</code> directory</h2>
+
+  <p>The data directory defaults to <code>&lt;repo&gt;/data</code>, is overridable with <code>PMW_DATA_DIR</code>, and is bind-mounted as <code>./data</code> under Docker. It is entirely git-ignored, and it is the unit you back up.</p>
+
+  <table>
+    <thead><tr><th>Path</th><th>Contents</th></tr></thead>
+    <tbody>
+      <tr><td><code>settings.sqlite3</code></td><td>Application preferences: filter presets, happy paths, target norms and per-user node layouts</td></tr>
+      <tr><td><code>security.sqlite3</code></td><td>Users with scrypt-hashed passwords, roles, database connections with ownership and assignments, TLS certificates and mode, LDAP configuration, passkey credentials, encrypted TOTP secrets and recovery-code hashes, lockouts and the backup schedule</td></tr>
+      <tr><td><code>logs.sqlite3</code></td><td>The live structured log shared by all four servers</td></tr>
+      <tr><td><code>logs/</code></td><td>Rotated log segments exported as <code>.log</code> files, one line per entry in the form <code>DATE -- TIME -- SEVERITY -- CLIENT-IP -- USER -- TAG -- text</code></td></tr>
+      <tr><td><code>secret.key</code></td><td>The Fernet key that encrypts every secret at rest: database passwords, LLM API keys, the LDAP service password, certificate private keys and the backup password. Created atomically on first run with mode <code>0600</code> and never overwritten.</td></tr>
+      <tr><td><code>certs/</code></td><td><code>active.crt</code> and <code>active.key</code> for user-facing TLS, <code>internal.crt</code> and <code>internal.key</code> for the backend loopback hop, plus the stored certificates</td></tr>
+      <tr><td><code>backups/</code></td><td>Scheduled and on-demand encrypted backups as timestamped AES-256-GCM <code>.json</code> envelopes</td></tr>
+      <tr><td><code>license.json</code></td><td>The uploaded Ed25519-signed runtime licence</td></tr>
+      <tr><td><code>demo_grace.json</code></td><td>The one-time demo-grace marker</td></tr>
+      <tr><td><code>gui.pid</code>, <code>admin.pid</code>, <code>integration.pid</code></td><td>PID files that enable the admin interface's in-place restart</td></tr>
+      <tr><td><code>integration_files/</code></td><td>The sandbox for integration File sources; <code>examples/*.log</code> is seeded here on first run</td></tr>
+    </tbody>
+  </table>
+
+  <div class="warn"><strong>Warning</strong> Losing <code>secret.key</code> orphans every stored secret. Database passwords, API keys, certificate private keys and the backup password become unrecoverable, and no amount of database restore brings them back. Treat it with the same care as a private key, and never copy it into a build context or an image.</div>
+
+  <h2 id="inst-backups">3.8 Backups</h2>
+
+  <div class="role">Requires: <b>Administrator</b></div>
+
+  <p>The admin interface, tab <b>Backup</b>, runs encrypted backups on an in-process scheduler. No external cron job is involved.</p>
+
+  <ol class="steps">
+    <li>Open the <b>Backup</b> tab in the admin interface.</li>
+    <li>Enable scheduled backups.</li>
+    <li>Build the schedule either with the dropdowns — hourly, daily, weekly or monthly, plus a time — or by typing a raw five-field cron expression. The panel shows the resulting cron string and a plain-English preview as you edit.</li>
+    <li>Set the retention count: files beyond this number are pruned automatically.</li>
+    <li>Set the AES-256-GCM password.</li>
+    <li>Save, then press <b>Run backup now</b> to test the configuration. The outcome of the last run is displayed.</li>
+  </ol>
+
+  <figure data-fig="admin-08-backup"><figcaption>The Backup tab, with the schedule builder, retention count, encryption password and the Run backup now button.</figcaption></figure>
+
+  <p>Backups are written to <code>data/backups/</code> as timestamped, encrypted <code>.json</code> envelopes. The backup password is stored Fernet-encrypted at rest so that unattended runs work, and it is never returned to the client: the API exposes only a <code>hasPassword</code> flag. Schedule times follow the display-timezone setting in <b>App Control</b>, so "daily at 02:00" fires at 02:00 in the chosen zone and is DST-aware; the default is <em>Server local</em>.</p>
+
+  <div class="warn"><strong>Warning</strong> In-app backups are not a substitute for disaster recovery. For that, back up the whole <code>data/</code> directory, including <code>secret.key</code> — without it the encrypted secrets inside the backup cannot be decrypted.</div>
+
+  <h2 id="inst-licence">3.9 Where to put the licence file</h2>
+
+  <div class="role">Requires: <b>Administrator</b></div>
+
+  <p>The compute backend requires a signed licence. Upload the issued <code>license.json</code> in the admin interface under <b>App Control &rarr; License</b>; the panel shows the licensee and the expiry date, and offers a remove option. Verification is Ed25519 against a public key embedded in the application. The uploaded file is stored as <code>data/license.json</code>.</p>
+
+  <figure data-fig="admin-02-app-control"><figcaption>App Control, with the License panel showing licensee and expiry alongside the restart control.</figcaption></figure>
+
+  <p>Without a valid licence the system enters <strong>Demo Mode</strong>. The sign-in panel shows a <em>Demo Mode — remaining time</em> banner during a one-time grace period, 30 minutes by default (<code>PMW_LICENSE_GRACE_SECS</code>). Once the grace is spent the banner reads <em>No License installed</em> and the backend stops itself until a licence is applied.</p>
+
+  <ol class="steps">
+    <li>Open the admin interface — it keeps running even after the backend has stopped, so you can always get in.</li>
+    <li>Go to <b>App Control</b> and find the <b>License</b> panel.</li>
+    <li>Upload the issued <code>license.json</code>.</li>
+    <li>Wait a few seconds. The backend re-reads the licence every 15 seconds by default (<code>PMW_LICENSE_POLL_SECS</code>), so a pending shutdown is cancelled almost immediately.</li>
+  </ol>
+
+  <div class="note"><strong>Note</strong> The grace period is anchored in <code>data/demo_grace.json</code> and is never renewed by restarting the application — that is what makes it one-time. Delete the file, or set <code>PMW_RESET_DEMO=1</code>, if you genuinely need a fresh demo window.</div>
+
+  <h2 id="inst-firstrun">3.10 First-run checklist</h2>
+
+  <p>Work through this list once, in order, after the very first start.</p>
+
+  <ol class="steps">
+    <li>Start the stack with <code>./run.sh</code> or <code>docker compose up -d --build</code>.</li>
+    <li>Sign in to the admin interface. The default credentials are <b>Administrator / Administrator</b>, and a password change is forced on first use. If you set <code>PMW_DEFAULT_ADMIN_PASSWORD</code> before the first start, use that instead — it applied only because the security database was still empty, and it is ignored from then on.</li>
+    <li>Open <b>App Control &rarr; License</b> and upload <code>license.json</code> if the sign-in panel showed the Demo Mode banner.</li>
+    <li>Open <b>Database Connections</b> and define a connection: Exasol host, port, user, password and schema, optionally an OpenAI-compatible LLM server, and the TLS options. Use <b>Test connection</b>, then assign the connection to the users who should see it.</li>
+    <li>Optionally press <b>Create schema &amp; tables</b> to provision <code>PROJECTS</code>, <code>JOURNEYS</code>, <code>STEPS</code>, <code>METAS</code> and <code>NOTES</code>. The statements are idempotent (<code>IF NOT EXISTS</code>), but the database account needs <code>CREATE SCHEMA</code> and <code>CREATE TABLE</code> privileges, which only a DBA can grant.</li>
+    <li>Open <b>Users</b>, create the accounts you need, and grant roles: Admin, the <i>Make power</i> action and the <i>Developer</i> checkbox. Enable the Passkey and 2FA columns per user if you want them.</li>
+    <li>Configure TLS as described in section 3.6, and restart the app server.</li>
+    <li>Configure scheduled backups as described in section 3.8.</li>
+    <li>Have a user open the main application, click a connection card under <b>Connections</b>, open <b>Projects</b>, and check that the views load from the <b>&#9776;</b> menu.</li>
+  </ol>
+
+  <figure data-fig="admin-01-overview"><figcaption>The admin interface after the first sign-in, with the tab strip that structures the whole checklist.</figcaption></figure>
+
+  <div class="tip"><strong>Tip</strong> Leaving a password or API-key field blank when you edit an existing database connection keeps the stored value. It does not clear it. Type a new value only when you actually want to change the secret.</div>
+
+  <h2 id="inst-upgrade">3.11 Upgrading</h2>
+
+  <p>Everything under <code>data/</code> is state, and the image contains none of it, so rebuilding the image or redeploying the container is safe — the state survives in the volume. Locally, upgrading means pulling the new source, reinstalling dependencies and rebuilding the SPA.</p>
+
+  <ol class="steps">
+    <li>Stop the stack (Ctrl-C locally, or <code>docker compose down</code>).</li>
+    <li>Back up the <code>data/</code> directory.</li>
+    <li>Fetch the new version of the source.</li>
+    <li>Locally: run <code>.venv/bin/pip install -r requirements.txt</code> again, then <code>./run.sh --build</code>. Under Docker: run <code>docker compose up -d --build</code>, which rebuilds both stages.</li>
+    <li>Start the stack and work through the post-upgrade actions below.</li>
+  </ol>
+
+  <h3 id="inst-upgrade-transitions">Rebuild <code>TRANSITIONS_RAW</code></h3>
+
+  <div class="role">Requires: <b>Administrator</b></div>
+
+  <p>Any pre-materialised transitions table that was built before the partition fix can show wrong per-edge values. Older builds partitioned the <code>LEAD()</code> window by <code>EVENT_ID</code> alone, which produces incorrect edges wherever an <code>EVENT_ID</code> recurs across projects or sample sets. Press <b>Rebuild now</b> once on each affected connection after upgrading. The equivalent API call on the admin server is:</p>
+
+  <pre><code>curl -k -X POST \
+  -H "Authorization: Bearer &lt;token&gt;" \
+  https://localhost:8453/api/connections/&lt;id&gt;/rebuild-transitions</code></pre>
+
+  <div class="note"><strong>Note</strong> The <code>-k</code> flag is present because the admin certificate is typically self-signed. Drop it once you have installed a certificate the client trusts.</div>
+
+  <h3 id="inst-upgrade-journeys">Distribution and partition clauses on <code>JOURNEYS</code></h3>
+
+  <p>New tables are created with <code>DISTRIBUTE BY EVENT_ID</code> and <code>PARTITION BY EVENT_TIME</code>. Tables that pre-date those clauses are not modified by <code>CREATE TABLE IF NOT EXISTS</code>, because the table already exists and the statement does nothing. Apply the clauses once by hand:</p>
+
+  <pre><code>ALTER TABLE JOURNEYS DISTRIBUTE BY EVENT_ID;
+ALTER TABLE JOURNEYS PARTITION BY EVENT_TIME;</code></pre>
+
+  <h3 id="inst-upgrade-ldap">Migrating existing users to LDAP</h3>
+
+  <p>A directory login never adopts a local account of the same name. If you switch an existing installation to LDAP authentication, delete or rename the old local rows first; otherwise those users keep signing in with their local passwords and the directory is never consulted for them.</p>
+
+  <div class="tip"><strong>Tip</strong> Older README text and the header comment in <code>run.sh</code> speak of "all three services". The current system runs four — the integration console was added later. If a document mentions three, it predates that change.</div>
+
+</section>

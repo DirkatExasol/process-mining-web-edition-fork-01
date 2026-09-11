@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+"""Generate the self-contained HTML overview of the Integration Console: what it is,
+who may use it, the extractor abstraction layer, the two things you define (source
+type + source) and how an import runs.
+
+Every illustration is a small CSS-drawn mock — no screenshots — so the single .html
+file is fully self-contained. Facts mirror the in-app Help.
+Run:  python3 docs/30-build-integration-guide.py
+"""
+import base64
+import html
+import pathlib
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+OUT = ROOT / "docs" / "30-Integration-Console.html"
+_BUILDER = pathlib.Path(__file__).name
+
+_LOGO_SVG = (ROOT / "frontend" / "web" / "public" / "logo.svg").read_text(encoding="utf-8")
+FAVICON = "data:image/svg+xml;base64," + base64.b64encode(_LOGO_SVG.encode("utf-8")).decode("ascii")
+
+TITLE = "30 - Integration Console"
+CHIP = "Integration · Guide"
+HERO_H1 = "The Integration Console"
+HERO_P = ("Bring event data into a connection: a pluggable extractor reads a file, applies a "
+          "parsing recipe you define once, and writes process-mining rows straight into the "
+          "database. This is the overview — the three format how-tos follow (31 / 32 / 33).")
+LEAD = ("The <b>Integration Console</b> is a separate, role-gated surface for loading logs into a "
+        "connection's schema. You define a <b>source type</b> (how to parse a file) and a "
+        "<b>source</b> (which file), then run an <b>import</b> — the extractor normalises the "
+        "timestamp, hashes the case id and writes one <b>JOURNEYS</b> row per event.")
+NOTE = ("The console turns any timestamped log into process-mining rows — define the recipe once, "
+        "then import (or auto-import) as often as you like.")
+FOOTER = "Process Mining Demonstrator · Integration — Console overview"
+
+STEPS = [
+    (
+        "A separate surface for loading data",
+        "The Integration Console is where you <b>bring event data in</b>. It runs on its own port "
+        "(the admin port + 10 — <b>8100</b> HTTP, <b>8463</b> HTTPS) and reuses the app's sign-in "
+        "and TLS. It is for <b>developers and administrators</b> only; an admin can disable it "
+        "entirely under Admin → Integration.",
+        """<div class="mock"><div class="row">
+      <span class="node hub">🧩 Integration Console · :8100 / :8463</span>
+      <span class="cap" style="margin:0">— developers &amp; admins · same sign-in &amp; TLS as the app</span>
+    </div></div>""",
+        None,
+        None,
+    ),
+    (
+        "The abstraction layer",
+        "At its heart is a pluggable <b>extractor</b>: it reads a <b>source</b> (today, a file), "
+        "applies your parsing recipe, and writes the parsed events straight into the <b>schema of "
+        "a connection</b> — creating the process-mining tables as needed.",
+        """<div class="mock"><div class="row">
+      <span class="node">📄 Source file</span><span class="arrow">→</span>
+      <span class="node hub">Extractor</span><span class="arrow">→</span>
+      <span class="node good">Connection schema · JOURNEYS</span>
+    </div><p class="cap">One hub in the middle; supporting a new kind of source is a matter of adding
+      an extractor behind it.</p></div>""",
+        None,
+        None,
+    ),
+    (
+        "Two things you define",
+        "Before importing you set up two reusable pieces — both live in the left panel alongside "
+        "<b>Connections</b>:",
+        """<div class="mock"><div class="cards">
+      <div class="cardk"><div class="ct">Source type</div><div class="cd">A parsing recipe for one
+        file format: an example record plus the selectors that pull out the timestamp, case id,
+        step and up to three metas — regular expressions for Text, or JSON / XML paths for
+        semi-structured files.</div></div>
+      <div class="cardk"><div class="ct">Source</div><div class="cd">A concrete thing to import —
+        a <b>File</b> (a path + encoding) linked to a source type.</div></div>
+    </div></div>""",
+        [
+            "The left panel mirrors the app: <b>Connections</b>, <b>Sources</b> and "
+            "<b>Source types</b>, plus the theme selector and your account.",
+            "Connections can be <b>created and edited here</b> (＋ / ✎) — no need to switch to the "
+            "main app to set up the database you're importing into.",
+        ],
+        None,
+    ),
+    (
+        "The five roles every record maps to",
+        "However a file is parsed, each record maps to the same fields — this is what turns a raw "
+        "log into a process:",
+        """<div class="mock"><div class="mapwrap"><table class="maptab">
+      <tr><th>Role</th><th>What it is</th></tr>
+      <tr><td class="role">EVENT_TIME</td><td>the timestamp — analysed and normalised to
+        <code>YYYY-MM-DD HH:MM:SS</code></td></tr>
+      <tr><td class="role">EVENT_ID</td><td>the case / journey key — stored <b>MD5-hashed</b>, so a
+        raw login or user id never lands in the clear</td></tr>
+      <tr><td class="role">STEP</td><td>the activity name for the event</td></tr>
+      <tr><td class="role">Metas ×3</td><td>up to three extra attributes, each given a business
+        name shown in the app</td></tr>
+      <tr><td class="role">Helper</td><td>a value used only by compound-step rules; extracted but
+        written to no column</td></tr>
+    </table></div></div>""",
+        None,
+        None,
+    ),
+    (
+        "Run an import",
+        "Press <b>▷</b> on a source, pick the destination <b>connection</b> and <b>project</b>. The "
+        "extractor reads the file, normalises the timestamp, hashes the id and writes one "
+        "<b>JOURNEYS</b> row per event — creating the PROJECTS row, a STEPS definition per distinct "
+        "step, and the META titles as needed (existing rows are never overwritten).",
+        """<div class="mock"><div class="lab">Importing…</div><div class="progress"><i></i></div>
+      <p class="cap"><b>Delta upload</b> is on by default: a checkpoint remembers how far the file
+        was read, so pressing ▷ again tops the project up with only the new lines instead of
+        duplicating. “Nothing new” is a normal result, not an error.</p></div>""",
+        None,
+        '<span class="k">Which format?</span> Text (unstructured logs), JSON and XML each have '
+        "their own how-to — guides <b>31</b>, <b>32</b> and <b>33</b>.",
+    ),
+]
+
+BEYOND = [
+    "<b>Sandboxed reads.</b> Only files under the server's integration files directory can be read; "
+    "paths escaping it (via “..” or symlinks) are rejected. An operator can opt out with "
+    "<code>PMW_INTEGRATION_ALLOW_ANY_PATH=1</code> for trusted deployments.",
+    "<b>Compound steps.</b> Split one activity into several by another field (e.g. a login that "
+    "returned HTTP 200 vs 500) — covered in the format guides.",
+    "<b>The watchdog.</b> A file source can be polled automatically; it shares the same checkpoint "
+    "as a manual run, so neither imports a line twice.",
+    "<b>Everything is logged.</b> Each import is recorded (DATA + USER tags) — successes at USAGE, "
+    "failures at WARN/ERROR with the reason.",
+]
+
+CSS = r"""
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --ink:#1c2530; --soft:#5b6672; --line:#e5e8ec;
+  --accent:#3a6df0; --accent2:#6b5cf0; --tipbg:#eef3ff; --tipink:#2b3a63; --tipbar:#3a6df0;
+  --warnbg:#fff7ed; --warnbar:#d98324; --warnink:#5c4415;
+  --txt:#3a9bff; --json:#e0a417; --xml:#12a150; --good:#1e9e5a;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:0 20px 72px}
+header.hero{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;
+  border-radius:0 0 26px 26px;padding:44px 20px 40px;margin-bottom:34px;
+  box-shadow:0 12px 30px rgba(58,109,240,.25)}
+.hero-inner{max-width:900px;margin:0 auto;padding:0 20px}
+.chip{display:inline-block;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);
+  padding:4px 12px;border-radius:999px;font-size:13px;font-weight:600;letter-spacing:.3px}
+h1{font-size:30px;line-height:1.2;margin:14px 0 8px;font-weight:800}
+.hero p{margin:0;max-width:660px;color:rgba(255,255,255,.92);font-size:16px}
+.lead{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 22px;
+  margin:0 0 30px;color:var(--soft)}
+.lead b{color:var(--ink)}
+.step{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px 22px 8px;
+  margin:0 0 22px;box-shadow:0 1px 2px rgba(20,30,50,.04)}
+.step-head{display:flex;align-items:center;gap:14px;margin-bottom:6px}
+.num{flex:0 0 auto;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+  font-weight:800;color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+.step h2{font-size:20px;margin:0;font-weight:750}
+.step p.body{margin:2px 0 16px}
+.step ul{margin:0 0 12px;padding-left:20px;color:var(--soft)}
+.step ul li{margin:3px 0}
+.tip{background:var(--tipbg);border-left:4px solid var(--tipbar);color:var(--tipink);
+  border-radius:8px;padding:10px 14px;margin:0 0 16px;font-size:14.5px}
+.tip b{color:var(--tipink)}
+.tip .k{font-weight:700;margin-right:6px}
+.beyond{background:var(--warnbg);border:1px solid #f0d9b8;border-left:4px solid var(--warnbar);
+  color:var(--warnink);border-radius:14px;padding:20px 22px;margin:34px 0 0}
+.beyond h2{margin:0 0 8px;font-size:19px;color:#7a4d13}
+.beyond ul{margin:8px 0 0;padding-left:20px}
+.beyond li{margin:3px 0}
+.beyond .note{margin-top:12px;font-size:14.5px}
+footer{color:var(--soft);font-size:13px;text-align:center;margin-top:34px}
+kbd{background:var(--card);border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;
+  padding:1px 7px;font:600 13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+code{background:var(--bg);border-radius:4px;padding:1px 5px;font-size:12.5px}
+.mock{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;
+  margin:0 0 16px;box-shadow:0 6px 18px rgba(20,30,50,.08)}
+.row{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+.cap{color:var(--soft);font-size:13px;margin:8px 2px 0}
+.big-arrow{color:var(--soft);font-size:20px;font-weight:700}
+.node{border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--card);font-weight:600;font-size:13px}
+.node.good{border-color:rgba(30,158,90,.5);background:rgba(30,158,90,.1);color:var(--good)}
+.node.hub{border-color:var(--accent);background:rgba(58,109,240,.08);color:var(--accent);font-weight:750}
+.arrow{color:var(--soft);font-weight:700}
+.lab{color:var(--soft);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px}
+/* format badge */
+.fmt{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.05em;border-radius:6px;
+  padding:2px 8px;color:#fff}
+.fmt.text{background:var(--txt)} .fmt.json{background:var(--json)} .fmt.xml{background:var(--xml)}
+/* example record box */
+.rec{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:8px;
+  font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-x:auto;color:var(--ink)}
+.rec .hl{background:rgba(58,109,240,.22);border-radius:3px;padding:0 2px;box-shadow:0 0 0 1px rgba(58,109,240,.4)}
+.rec .k{color:var(--json)} .rec .t{color:var(--xml)}
+/* mapping table */
+.maptab{border-collapse:collapse;width:100%;font-size:13px;min-width:460px}
+.maptab th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--soft);
+  padding:5px 10px;border-bottom:2px solid var(--line)}
+.maptab td{padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.maptab .role{font-weight:750;color:var(--accent);white-space:nowrap}
+.maptab .sel{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink)}
+.maptab .val{color:var(--good);font-weight:650}
+.mapwrap{overflow-x:auto}
+/* two concept cards */
+.cards{display:flex;gap:12px;flex-wrap:wrap}
+.cardk{flex:1;min-width:220px;border:1px solid var(--line);border-radius:11px;padding:13px 15px;background:var(--card)}
+.cardk .ct{font-weight:800;font-size:15px;margin-bottom:3px}
+.cardk .cd{color:var(--soft);font-size:13px}
+/* rule badges */
+.rules{display:flex;flex-direction:column;gap:6px}
+.rulechip{border:1px solid var(--line);border-radius:9px;padding:8px 12px;background:var(--card);font-size:13px}
+.rulechip b{color:var(--accent)}
+.rulechip .cond{color:var(--soft)}
+/* progress / checkpoint */
+.progress{height:8px;border-radius:5px;background:var(--line);overflow:hidden;max-width:320px;margin-top:6px}
+.progress i{display:block;height:100%;width:64%;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#14171c;--card:#1d2127;--ink:#e7eaee;--soft:#a3adba;--line:#2c333c;
+    --tipbg:#182338;--tipink:#cdd9f5;--warnbg:#2a2213;--warnink:#e9d3ac}
+}
+@media print{
+  body{background:#fff}
+  header.hero{box-shadow:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .step,.lead,.beyond,.mock{break-inside:avoid;box-shadow:none}
+}
+"""
+
+
+def render() -> str:
+    steps_html = []
+    for i, (title, body, mock, bullets, tip) in enumerate(STEPS, start=1):
+        parts = [
+            '<section class="step">',
+            f'  <div class="step-head"><div class="num">{i}</div>'
+            f"<h2>{html.escape(title)}</h2></div>",
+            f'  <p class="body">{body}</p>',
+        ]
+        if mock:
+            parts.append(f"  {mock}")
+        if bullets:
+            items = "".join(f"<li>{b}</li>" for b in bullets)
+            parts.append(f"  <ul>{items}</ul>")
+        if tip:
+            parts.append(f'  <div class="tip">{tip}</div>')
+        parts.append("</section>")
+        steps_html.append("\n".join(parts))
+    beyond_items = "\n".join(f"      <li>{b}</li>" for b in BEYOND)
+    return f'''<!doctype html>
+<!-- Generated documentation page - open this file in a WEB BROWSER.
+     It is NOT a script; to rebuild it run:  python3 docs/{_BUILDER} -->
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{TITLE}</title>
+<link rel="icon" type="image/svg+xml" href="{FAVICON}">
+<style>{CSS}</style>
+</head>
+<body>
+<header class="hero"><div class="hero-inner">
+  <span class="chip">{CHIP}</span>
+  <h1>{HERO_H1}</h1>
+  <p>{HERO_P}</p>
+</div></header>
+
+<div class="wrap">
+
+  <div class="lead">{LEAD}</div>
+
+  {''.join(steps_html)}
+
+  <div class="beyond">
+    <h2>Good to know</h2>
+    <ul>
+{beyond_items}
+    </ul>
+    <p class="note">{NOTE}</p>
+  </div>
+
+  <footer>{FOOTER}</footer>
+</div>
+</body></html>
+'''
+
+
+OUT.write_text(render(), encoding="utf-8")
+kb = OUT.stat().st_size / 1024
+print(f"WROTE {OUT}  ({kb:.0f} KB)")

@@ -1,0 +1,34 @@
+# gitleaks configuration — auto-loaded by both CI pipelines (they scan the
+# --source root, where this file lives). Keeps all default rules and adds a
+# narrow allowlist.
+
+title = "Process Mining Web"
+
+[extend]
+# Keep gitleaks' full default rule set; only add the allowlist below.
+useDefault = true
+
+[allowlist]
+description = "Local-only trees and a known-public value"
+
+# Directories that are NOT part of the repo (gitignored) but exist in a local
+# working tree. `--no-git` scans them anyway, so exclude them here to keep local
+# runs matching a clean CI checkout. Harmless in CI, where these don't exist.
+paths = [
+  '''^\.venv/''',
+  '''^data/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+]
+
+# The embedded Ed25519 *public* verification key in backend/app/licensing.py.
+# It is meant to be published; the matching private key lives only in the
+# offline issuer. If the issuer key is ever rotated, update this value too.
+regexes = [
+  '''59afd128c103c3c6bb4013683af9612f858d134be5d59102809996304cdb798f''',
+  # Prose in README.md / ARCHITECTURE.md listing the sign-in factors
+  # ("password, TOTP, WebAuthn passkey, mandatory-2FA enrolment"). Not a
+  # secret. gitleaks <= v8.18.4 ignores it; the broader generic-api-key rule
+  # in >= v8.30 flags it, so allowlist it explicitly to survive a version bump.
+  '''mandatory-2FA''',
+]

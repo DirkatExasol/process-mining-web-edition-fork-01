@@ -1,0 +1,222 @@
+<section class="chapter" id="ch-watchdog" data-title="The Watchdog: Automatic Imports" data-num="20">
+<h1><span class="chnum">20</span> The Watchdog: Automatic Imports</h1>
+
+<p class="chintro">A manual run imports a file when you press a button. The <em>watchdog</em> imports it whenever it grows &mdash; unattended, without a browser, without anybody being signed in. This chapter explains what the watchdog does and how it differs from a manual run, how to switch it on for a file source and which destination it writes into, why that destination has to be stored with the source, how the authorisation is re-checked on every single poll, how to read and reset the checkpoint, where failures are recorded, and which deployment-wide switches an operator has over the whole loop. It is written for developers who configure sources in the integration console, and for the administrator or operator who runs the server they sit on.</p>
+
+<div class="role">Requires: <b>Developer</b> or <b>Administrator</b> &mdash; the watchdog is configured in the integration console (HTTP :8100, HTTPS :8463), which only these two roles may sign in to. The deployment-wide switches in section 20.10 are environment variables and require access to the server, not to any screen.</div>
+
+<h2 id="wd-what">20.1 What the watchdog does</h2>
+
+<p>The watchdog is a single background loop inside the compute backend. It starts with the backend process and is cancelled when the backend shuts down. On every tick it lists <strong>all file sources of all owners</strong>, decides which of them are due, and polls each due source in turn: it opens the source's file, reads the complete lines that have been appended since that source's checkpoint, runs them through the linked source type exactly as a manual import does, writes the resulting events into the configured destination, and advances the checkpoint.</p>
+
+<p>Everything the extractor does is identical to a manual run &mdash; the same regexes, the same compound step rules, the same timestamp normalisation, the same MD5 pseudonymisation of the case id, the same automatic creation of missing <code>PROJECTS</code>, <code>STEPS</code> and <code>METAS</code> rows, and the same transaction bracket (<b>rows per transaction</b>, default 5000). What differs is who triggers it, what it is allowed to read, and where the result is reported.</p>
+
+<table>
+<thead><tr><th></th><th>Manual run (Run dialog)</th><th>Watchdog poll</th></tr></thead>
+<tbody>
+<tr><td>Trigger</td><td>You press <b>&#9655; Run extraction</b>.</td><td>The background loop, when the source's interval has elapsed.</td></tr>
+<tr><td>Destination</td><td>Chosen in the dialog each time (remembered as a preselection).</td><td>Fixed: the connection and project id stored in the source's watchdog settings.</td></tr>
+<tr><td>Session</td><td>Reuses your live database session if you happen to be connected to exactly that connection; otherwise the backend opens the connection itself.</td><td>Always opens the connection itself with its stored credentials, and closes it again after the poll.</td></tr>
+<tr><td>Scope of the read</td><td><b>Delta upload</b> is on by default but can be switched off to re-read the whole file from the top.</td><td>Always delta. There is no &ldquo;read everything again&rdquo; option; use <b>Reset checkpoint</b> (20.7) instead.</td></tr>
+<tr><td>Result</td><td>Shown in the Run dialog, the status card, the KPIs and the pipeline.</td><td>Shown in the status card, the KPIs and the pipeline &mdash; and, when it fails, on the checkpoint and in the admin log.</td></tr>
+<tr><td>Nothing new</td><td>A run still happens and reports <i>&ldquo;Nothing new to import &mdash; the file has not grown since the last import.&rdquo;</i></td><td>No run is started at all. The checkpoint is merely refreshed and any old error cleared, so the pipeline stays quiet.</td></tr>
+</tbody>
+</table>
+
+<p>Both triggers share <strong>one checkpoint per source</strong>. That is deliberate: it is exactly what stops a manual top-up and the watchdog from importing the same line twice between them.</p>
+
+<h2 id="wd-configure">20.2 Switching the watchdog on for a source</h2>
+<figure data-fig="integ-08-watchdog"><figcaption>The watchdog section of the source editor. Once enabled, you set the destination connection, the project id and the poll interval; the source then imports newly appended lines on its own.</figcaption></figure>
+
+<p>The watchdog is configured inside the source itself, on step 2 of the source wizard, in the panel headed <b>&#128065; Watchdog &mdash; auto-import new lines when the file grows</b>. The panel explains itself on screen: <i>&ldquo;A background job watches this file and imports only the newly-appended lines into the destination below. A checkpoint is kept per file, so nothing is imported twice &mdash; even across restarts.&rdquo;</i></p>
+
+<figure data-fig="integ-02-sources"><figcaption>The Sources section of the integration console sidebar. A source with the watchdog switched on carries an eye after its name.</figcaption></figure>
+
+<ol class="steps">
+<li>In the sidebar, open the <b>Sources</b> section and click the source you want to automate. (To create one first, use the <b>&#65291;</b> button; see the previous chapter.) The wizard opens at step 2, <b>Configuration</b>.</li>
+<li>Check that <b>File path or glob</b> points at the file that grows, and that a <b>Source type</b> is selected. A source with no source type linked can never be imported, by hand or by watchdog.</li>
+<li>Tick the checkbox in the <b>&#128065; Watchdog</b> panel. Three further fields appear.</li>
+<li>Choose the <b>Destination connection</b>. The dropdown lists the connections assigned to you and starts on &ldquo;&mdash; pick a connection &mdash;&rdquo;. If it is empty you will see <i>&ldquo;No connections are assigned to you &mdash; ask an administrator, or create one in the main app.&rdquo;</i></li>
+<li>Type the <b>Project id</b> the events are written into, for example <code>LIVE-LOG</code>. The <code>PROJECTS</code> row is created for you on the first import if it does not exist.</li>
+<li>Set <b>Every (seconds)</b> &mdash; the poll interval. The default is 30 and the minimum is 5.</li>
+<li>Click <b>Next</b>, review step 3, then <b>Save changes</b> (or <b>Create source</b> for a new source).</li>
+</ol>
+
+<table>
+<thead><tr><th>Field</th><th>Required</th><th>Default</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Watchdog checkbox</td><td>&mdash;</td><td>off</td><td>The per-source on/off switch. Only file sources have it.</td></tr>
+<tr><td>Destination connection</td><td>yes</td><td>none</td><td>Must be a connection assigned to you, both now and at every later poll (20.5).</td></tr>
+<tr><td>Project id</td><td>yes</td><td>none</td><td>Written into <code>JOURNEYS.PROJECT_ID</code> for every event of every poll.</td></tr>
+<tr><td>Every (seconds)</td><td>&mdash;</td><td>30</td><td>Hard minimum 5. Values below 5, or missing, are raised to the bound by both the form and the backend.</td></tr>
+<tr><td>Rows per transaction</td><td>&mdash;</td><td>5000</td><td>Configured in the <b>&#8644; Transaction bracket</b> panel of the same source and applies to watchdog polls exactly as to manual runs.</td></tr>
+</tbody>
+</table>
+
+<p>If you enable the watchdog but leave the destination or the project id blank, saving is refused and the wizard returns you to step 2 with <i>&ldquo;The watchdog needs a destination connection and a project id.&rdquo;</i> If the connection you picked is not assigned to you, the backend refuses the save with <i>&ldquo;The watchdog's destination connection is not assigned to you.&rdquo;</i></p>
+
+<div class="tip"><strong>Tip</strong> Once the watchdog is on, the source badge in the sidebar gains a <b>&#128065;</b> eye after its name (tooltip &ldquo;Watchdog on &mdash; auto-imports new lines&rdquo;), and its <b>&#9655;</b> Run button turns green with the tooltip &ldquo;Watchdog active &mdash; run an import now as well&rdquo;. You can still run a watched source by hand at any time; because both share the checkpoint, the manual run simply takes whatever the watchdog has not yet picked up.</div>
+
+<h2 id="wd-headless">20.3 Why the destination is stored with the source</h2>
+
+<p>A manual run can ask you where to write, because you are standing in front of it. The watchdog cannot: it runs headless, with no signed-in user, no browser and no active database session. There is nothing to ask and nobody to ask. The destination therefore has to be part of the source's own configuration &mdash; the connection id and the project id are stored in the source's watchdog block, and the loop uses the connection's <strong>stored credentials</strong> (the username and password an administrator saved on the connection) to open the database for the duration of the poll and close it again afterwards.</p>
+
+<p>This is the same mechanism the manual run uses when you name a connection you are not currently connected to, and the same one the administrative rebuild job uses. It is what makes an import possible with no session at all.</p>
+
+<div class="note"><strong>Note</strong> Because the watchdog acts as the source's <em>owner</em>, its run updates that owner's status, KPIs and pipeline in the console &mdash; not the administrator's. If a developer's watchdog is importing, that developer sees it live in their own console; nobody else does.</div>
+
+<h2 id="wd-authorisation">20.4 The authorisation model</h2>
+
+<p>Storing credentials with a source raises an obvious question: what stops a developer from pointing a watchdog at a connection they were never given? The answer is that the assignment is the gate, and it is checked twice.</p>
+
+<ul>
+<li><strong>At save time</strong> &mdash; enabling the watchdog on a connection that is not assigned to you is rejected outright with <i>&ldquo;The watchdog's destination connection is not assigned to you.&rdquo;</i> This is a fail-fast convenience, not the real protection.</li>
+<li><strong>On every poll</strong> &mdash; before it opens anything, the loop re-checks that the source's owner is still assigned to the destination connection. This check is repeated for the lifetime of the watchdog, on every single poll.</li>
+</ul>
+
+<p>The consequence is the one administrators care about: <strong>revoking a connection assignment stops that user's watchdogs immediately</strong>. The very next poll fails with <code>The destination connection is not assigned to you.</code>, the checkpoint does not advance, and nothing further is written. There is no window in which a stored connection id keeps writing with credentials the user no longer has rights to.</p>
+
+<div class="warn"><strong>Warning</strong> Revoking access stops future imports; it does not remove what has already been imported. Rows written by earlier polls stay in the destination schema and must be removed there (for example from the <b>Projects</b> tab of the connection editor) if they should not remain.</div>
+
+<h2 id="wd-timing">20.5 When a poll happens</h2>
+
+<p>Two intervals combine.</p>
+
+<dl>
+<dt>The loop tick</dt>
+<dd>The background loop wakes every <code>PMW_INTEGRATION_WATCHDOG_TICK</code> seconds &mdash; default <b>10</b>, hard minimum <b>5</b>. On each tick it lists every file source of every owner and decides which are due. This is deployment-wide.</dd>
+<dt>The per-source interval</dt>
+<dd><b>Every (seconds)</b> in the source's watchdog panel &mdash; default <b>30</b>, minimum <b>5</b>. A source is due when it has never run, when its checkpoint has no usable timestamp, or when at least this many seconds have elapsed since the checkpoint was last touched.</dd>
+</dl>
+
+<p>Because the tick is the loop's own heartbeat, a source is never polled more often than the tick: setting an interval of 5 seconds on a deployment ticking every 10 gives you a poll roughly every 10 seconds, not every 5.</p>
+
+<div class="note"><strong>Note</strong> &ldquo;Since the checkpoint was last touched&rdquo; means exactly that: <em>every</em> checkpoint write updates the timestamp, including a poll that found nothing new and including a manual run. The interval therefore measures the time since the last import activity of any kind on that source, not since the last import that actually wrote rows.</div>
+
+<h2 id="wd-reads">20.6 What one poll reads</h2>
+
+<p>A poll reads only <strong>complete</strong> lines beyond the stored byte offset; a partial trailing line that the writing application has not finished is left for the next poll. Blank lines are skipped and each line is truncated to its first 2000 characters, exactly as in a manual run.</p>
+
+<p>A single poll reads at most <strong>8&nbsp;MB</strong> of new bytes. A larger backlog &mdash; typically the first poll on a file that already existed &mdash; is drained across successive polls, 8&nbsp;MB at a time, until the file is caught up. This is normal and needs no intervention; it simply means the first few polls after enabling a watchdog on a large file import a slice each.</p>
+
+<p>Rotation and replacement are detected automatically. If the file has shrunk below the stored offset (truncation, or a fresh file at the same name), reading restarts from byte 0. If the file's head has changed &mdash; the watchdog fingerprints the first 64 bytes &mdash; while the size did not shrink, the stored offset is assumed to point into unrelated content and the file is likewise re-read from byte 0.</p>
+
+<div class="warn"><strong>Warning</strong> Events are <strong>appended</strong> and never de-duplicated. Anything that makes the watchdog re-read from byte 0 &mdash; a detected rotation, a checkpoint reset, a change of file path &mdash; imports that file's events into the project a second time. The database has no idea it has seen them before.</div>
+
+<h2 id="wd-checkpoint">20.7 The checkpoint status display and Reset</h2>
+
+<p>The checkpoint is the watchdog's memory: how far into the file it has read, how large the file was, the fingerprint of its head, how many events it has imported in total, when it was last touched, and the last error if there was one. It is shown in two places.</p>
+
+<p>In the <b>source wizard</b>, directly under the watchdog fields (for a source that already exists), you see one of:</p>
+
+<table>
+<thead><tr><th>Display</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>&#9888; <i>&lt;last error&gt;</i> (red)</td><td>The most recent poll failed. See 20.8 for the wording and the causes.</td></tr>
+<tr><td>&#10003; <i>&lt;n&gt; records imported &middot; last checked &lt;date and time&gt;</i></td><td>Healthy. The count is cumulative across every poll and every manual delta run of this source; the time is your local time.</td></tr>
+<tr><td><i>Not run yet &mdash; the watchdog will pick it up shortly.</i></td><td>No checkpoint exists. The next due poll reads the file from the start.</td></tr>
+</tbody>
+</table>
+
+<p>In the <b>Run dialog</b> the same checkpoint appears in more detail: <i>&ldquo;&#10003; &lt;n&gt; records imported &middot; read to &lt;bytes&gt; of &lt;bytes&gt; bytes &middot; last &lt;date and time&gt;&rdquo;</i>, or the red error, or <i>&ldquo;No checkpoint yet &mdash; this is the first import of this file.&rdquo;</i> The two byte figures tell you whether a backlog is still draining: while &ldquo;read to&rdquo; is smaller than the file size, more is pending.</p>
+
+<h3 id="wd-reset">20.7.1 Resetting the checkpoint</h3>
+
+<p>Both places carry a <b>&#8634; Reset checkpoint</b> button (in the Run dialog it is disabled while a run is in flight or when no checkpoint exists; its tooltip reads &ldquo;Forget how far the file has been read, so the next import starts from the top&rdquo;).</p>
+
+<ol class="steps">
+<li>Open the source in the wizard, or open the Run dialog from the <b>&#9655;</b> button on the source badge.</li>
+<li>Click <b>&#8634; Reset checkpoint</b>. The stored offset, size, fingerprint, record count and last error are discarded.</li>
+<li>The next import &mdash; whether the next watchdog poll or a manual run &mdash; starts at byte 0 of the file.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> A reset forgets a position; it deletes nothing from the database. Re-importing after a reset writes the file's events into the project a <strong>second time</strong>. If you want a clean reload, delete the project in the destination schema first (connection editor, <b>Projects</b> tab), then reset.</div>
+
+<div class="note"><strong>Note</strong> Changing a source's <b>File path or glob</b> deletes its checkpoint automatically &mdash; the old offset means nothing in a different file &mdash; so the next poll reads the new file from the beginning. Renaming the source, or editing any other field, keeps the checkpoint.</div>
+
+<h2 id="wd-errors">20.8 When a poll fails</h2>
+
+<p>A watchdog runs unattended, so a silent failure would go unnoticed. Every failure is therefore recorded in two places at once: on the source's <strong>checkpoint</strong>, as the last error you see in the wizard and the Run dialog, and in the <strong>admin log</strong> as a warning under the tag <code>DATA</code>, operation <code>import</code>, attributed to the source's owner. The log line reads:</p>
+
+<pre><code>watchdog import failed: '&lt;source name&gt;' — &lt;message&gt;</code></pre>
+
+<p>The offset does <strong>not</strong> advance on failure, so the next poll retries exactly the same lines. One misconfigured source never stops the other sources and never stops the loop.</p>
+
+<table>
+<thead><tr><th>Recorded message</th><th>Cause and remedy</th></tr></thead>
+<tbody>
+<tr><td><code>Watchdog is missing a file path, project id or connection.</code></td><td>The source's watchdog block is incomplete. Reopen the wizard and fill in the starred fields.</td></tr>
+<tr><td><code>The source has no source type linked.</code></td><td>No source type is selected, or the one it referenced was deleted &mdash; deleting a source type does not cascade. Pick a source type on step 2.</td></tr>
+<tr><td><code>The destination connection is not assigned to you.</code></td><td>The owner's assignment was revoked. An administrator must reassign the connection, or you must choose a different destination.</td></tr>
+<tr><td><code>The watchdog's destination connection no longer exists.</code></td><td>The connection was deleted. Choose another destination.</td></tr>
+<tr><td><code>The destination connection has no target schema.</code></td><td>The connection has no schema configured. An administrator (or the connection's owner) must set one.</td></tr>
+<tr><td><code>No file path given.</code> / <code>File not found.</code> / <code>Not a regular file.</code></td><td>The configured path is blank, missing, or is a directory rather than a file.</td></tr>
+<tr><td><code>That path is outside the allowed sources directory.</code></td><td>The path escapes the sandbox root (including via <code>..</code> or a symlink). Move the file into the sources directory, or use a relative path.</td></tr>
+<tr><td><code>Could not connect: &lt;error&gt;</code></td><td>The destination database could not be opened &mdash; host down, credentials rejected, TLS refused.</td></tr>
+<tr><td><code>Import failed: &lt;error&gt;</code></td><td>The extraction or the write failed. One common case is <code>An extraction is already running for this user.</code> &mdash; see 20.9.</td></tr>
+</tbody>
+</table>
+
+<p>Successful polls are logged too. When new lines were imported, the admin log records, at usage level under tag <code>DATA</code>:</p>
+
+<pre><code>watchdog imported &lt;n&gt; new event(s) from '&lt;source&gt;' into &lt;connection&gt;/&lt;schema&gt; (project &lt;id&gt;)</code></pre>
+
+<p>Problems with the loop itself, rather than with one source, appear as <code>watchdog: could not list sources: &lt;error&gt;</code> and <code>watchdog: source '&lt;name&gt;' poll failed: &lt;error&gt;</code>.</p>
+
+<figure data-fig="admin-07-logging"><figcaption>The admin Logging tab. Filter on the DATA tag to see watchdog imports and failures.</figcaption></figure>
+
+<div class="warn"><strong>Warning</strong> If <b>rows per transaction</b> is greater than 0 and a poll fails part-way through, the brackets already committed stay committed, but the checkpoint does not advance. The next poll therefore re-reads those lines and can write them a second time. Set the transaction bracket to <b>0</b> (&ldquo;one transaction for the whole import&rdquo;) if a failed import must be all-or-nothing; the cost is that the database holds the entire import open.</div>
+
+<h2 id="wd-monitor">20.9 Watching the watchdog from the console</h2>
+
+<p>A watchdog import is a normal run of the abstraction layer, tagged with the trigger <code>watchdog</code>, so it shows up everywhere a manual run does.</p>
+
+<figure data-fig="integ-01-console"><figcaption>The integration console: the Abstraction layer status card, the ingestion KPIs and the live pipeline.</figcaption></figure>
+
+<ul>
+<li>The <b>Abstraction layer</b> card switches to <b>Running</b> while a poll imports, then <b>Completed</b> or <b>Failed</b>, and its <b>Run log</b> carries lines such as <i>&ldquo;watchdog: 14 new line(s) from /var/log/app/access.log &rarr; &hellip;&rdquo;</i> and <i>&ldquo;pushed 500 events, skipped 2 unparseable line(s)&rdquo;</i>. A failed run is repeated as the banner <b>&ldquo;Last run failed: &lt;error&gt;&rdquo;</b>.</li>
+<li>The KPI strip separates the two triggers: <b>Manual imports</b> (&#9655;) and <b>Watchdog imports</b> (&#128065;) count the recorded runs of each kind, while <b>Watchdogs active</b> (&#128021;) shows a live &ldquo;&lt;active&gt; / &lt;total&gt;&rdquo; &mdash; your file sources with the watchdog switched on out of all of them &mdash; and turns green when at least one is active.</li>
+<li>The pipeline flowchart adds an edge for each combination that has actually run, so a watchdog's source type, source and destination appear on the canvas alongside your manual imports, with the cumulative row counts on the source and connection nodes.</li>
+</ul>
+
+<div class="note"><strong>Note</strong> Only <strong>one extraction runs per user at a time</strong>. If you press <b>&#9655; Run extraction</b> while your own watchdog is mid-import (or the other way round), the second one is refused with <code>An extraction is already running for this user.</code> For a manual run this appears as an error in the Run dialog; for the watchdog it is recorded on the checkpoint as <code>Import failed: An extraction is already running for this user.</code> and retried automatically on the next poll. Different users are unaffected by each other.</div>
+
+<h2 id="wd-switches">20.10 The deployment-wide switch</h2>
+
+<div class="role">Requires: <b>Administrator</b> / server operator &mdash; these are environment variables read at backend start, not settings in any interface.</div>
+
+<table>
+<thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>PMW_INTEGRATION_WATCHDOG</code></td><td><b>on</b> (<code>1</code>)</td><td>The global on/off switch for the whole loop. Truthy values are <code>1</code>, <code>true</code>, <code>yes</code>, <code>on</code>. When it is off, the loop exits immediately at start-up and <em>no</em> source is ever polled, whatever its own watchdog setting says.</td></tr>
+<tr><td><code>PMW_INTEGRATION_WATCHDOG_TICK</code></td><td><b>10</b> seconds</td><td>The base loop tick (see 20.5). Hard minimum 5 seconds. Lower it if you need per-source intervals near the 5-second floor to be honoured; raise it to reduce idle polling on a busy server.</td></tr>
+</tbody>
+</table>
+
+<pre><code># disable all automatic imports on this backend
+PMW_INTEGRATION_WATCHDOG=0
+
+# or keep them, but only look every 30 seconds
+PMW_INTEGRATION_WATCHDOG_TICK=30</code></pre>
+
+<p>The console does not hide the fact that the loop is off. The status endpoint reports it, and the <b>Watchdogs active</b> KPI tile relabels itself to <b>Watchdogs (off)</b> and turns orange &mdash; so a source whose watchdog is &ldquo;on&rdquo; but that never actually polls is visible at a glance instead of quietly doing nothing.</p>
+
+<div class="tip"><strong>Tip</strong> Switching the loop off is the cleanest way to freeze all automatic ingestion during a database migration or a maintenance window. Per-source settings and checkpoints are untouched; when you switch it back on, each due source resumes from exactly where it stopped.</div>
+
+<h2 id="wd-rotation">20.11 Operational guidance: log rotation</h2>
+
+<p>The watchdog is normally pointed at a file that a live application keeps appending to, which in practice means a file that some rotation scheme keeps renaming, compressing or truncating. The detection described in 20.6 handles the common cases, but a few operational rules keep it reliable.</p>
+
+<ul>
+<li><strong>Poll considerably faster than you rotate.</strong> The watchdog only ever looks at the configured path. Lines that are written to the active file and then rotated away before the next poll are never read, because the file at that path is a different file by the time the watchdog gets there. An interval of 30 seconds against an hourly rotation is safe; an interval of ten minutes against a rotation every five is not.</li>
+<li><strong>Point the source at the stable name.</strong> Configure the path of the live file (<code>access.log</code>), not of a rotated generation (<code>access.log.1</code>). The label on the field says &ldquo;File path or glob&rdquo;, but the path is resolved to one regular file &mdash; wildcards are not expanded, so a pattern intended to match rotated generations simply fails with <code>File not found.</code></li>
+<li><strong>Copy-truncate and create-new are both detected.</strong> Truncation is caught by the size dropping below the stored offset; a brand-new file at the same name is caught by the changed fingerprint of its first 64 bytes. Either way the watchdog restarts at byte 0 of the new file.</li>
+<li><strong>Beware very small files.</strong> A file shorter than 64 bytes cannot be fingerprinted. If such a file is replaced in place by another one of the same or greater size, the replacement goes undetected and the watchdog carries on reading from the old offset. Files of that size are rarely worth watching in the first place.</li>
+<li><strong>Expect a burst after every rotation.</strong> Because a detected rotation re-reads from byte 0, the poll after a rotation imports the whole of the new file so far. That is correct for a genuinely fresh file &mdash; but if your rotation scheme seeds the new file with content that was already imported, those events are appended again.</li>
+<li><strong>Keep the sandbox in mind.</strong> Source paths are confined to the integration files directory unless the deployment has explicitly opted out. If your log lives elsewhere, arrange for the rotation scheme to write or link into that directory rather than loosening the sandbox.</li>
+<li><strong>Watch the skipped counter.</strong> A rotation that changes the log format (a new application version, a different formatter) produces lines that the linked source type's regexes no longer match. The import will not fail; it will succeed with everything skipped. The orange <b>Events skipped</b> KPI is your early warning.</li>
+</ul>
+
+<div class="note"><strong>Note</strong> Nothing about the watchdog depends on the console being open. It lives in the compute backend, polls on its own timetable and writes with stored credentials. Closing the browser, signing out, or never signing in at all changes nothing &mdash; only the two environment switches in 20.10, the per-source checkbox, and the connection assignment do.</div>
+
+</section>

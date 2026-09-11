@@ -1,0 +1,318 @@
+<section class="chapter" id="ch-integration-orientation" data-title="The Integration Console" data-num="16">
+
+<h1><span class="chnum">16</span> The Integration Console</h1>
+
+<p class="chintro">The integration console is the fourth surface of the product, alongside the application, the administration interface and the login screen. It is where log files and other raw data are turned into the JOURNEYS events the application analyses. This chapter is your orientation: what the console is for, who is allowed in and how that permission is enforced, how the window is laid out, what each of the three sidebar sections holds, how connections are managed from here, and how to read the <strong>Abstraction layer</strong> status card, the six ingestion KPI tiles and the live pipeline flowchart. Defining source types and running imports have chapters of their own; read this one first so the surface makes sense before you build anything on it.</p>
+
+<figure data-fig="integ-01-console"><figcaption>The integration console: sidebar with Connections, Sources and Source types on the left; the Abstraction layer status card, ingestion KPIs and the live pipeline flowchart on the right.</figcaption></figure>
+
+<h2 id="integ-purpose">What the console is for</h2>
+
+<p>The application reads process data that is already in the database. The integration console is the tool that puts it there. In the console you:</p>
+
+<dl>
+  <dt>Define a <strong>source type</strong></dt>
+  <dd>An extraction specification: a pasted sample line from your log plus a regular expression for each field you want out of it — timestamp, case id, step, up to three business attributes and any number of helper values used only for matching. A source type is the parser.</dd>
+  <dt>Define a <strong>source</strong></dt>
+  <dd>Where the data actually comes from — today a file on the server, addressed by path — together with its encoding, the source type applied to each line, the transaction bracket and, optionally, a watchdog that imports newly appended lines by itself.</dd>
+  <dt>Run an import</dt>
+  <dd>Point a source at one of your assigned connections and a project id, and the abstraction layer reads the file, applies the source type and writes JOURNEYS rows — creating the PROJECTS, STEPS and METAS companion rows for you.</dd>
+  <dt>Watch what happened</dt>
+  <dd>The status card, the KPI tiles and the pipeline flowchart show the run in flight and, over time, the accumulated behaviour of every source, source type and destination you have used.</dd>
+</dl>
+
+<p>Everything you create in the console is <strong>owned by you</strong>. Your source types and sources are yours alone; another developer signing in to the same deployment sees their own, not yours.</p>
+
+<h2 id="integ-access">Access, sign-in and roles</h2>
+
+<div class="role">Requires: <b>Developer</b> or <b>Administrator</b></div>
+
+<p>The console is served on its own port, by convention the administration port plus ten: <strong>8100</strong> for HTTP and <strong>8463</strong> for HTTPS with the default port assignment. It follows the same TLS plan as the application and the administration interface. In Docker the published ports are offset by 2000.</p>
+
+<table>
+  <thead><tr><th>Setting</th><th>Default</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>PMW_INTEGRATION_PORT</code></td><td>administration port + 10 (8100)</td><td>HTTP port of the console</td></tr>
+    <tr><td><code>PMW_INTEGRATION_HTTPS_PORT</code></td><td>8463</td><td>HTTPS port of the console</td></tr>
+    <tr><td><code>PMW_INTEGRATION_HOST</code></td><td>the administration host (127.0.0.1)</td><td>Interface the console binds to</td></tr>
+  </tbody>
+</table>
+
+<h3 id="integ-who">Who may sign in</h3>
+
+<p>Only users holding the <strong>Developer</strong> role or the <strong>Admin</strong> role may use the console. Power users and plain users are refused: the server declines the sign-in and drops the session. This is deliberate — the data-source surface writes directly into the analysis database, so it is restricted more tightly than the application itself, where power users have wide privileges.</p>
+
+<p><strong>Sign-in is always required on this surface</strong>, even when the deployment's global “require login” setting is switched off for the application. The only exception is a deployment that runs entirely without sign-in (single-user or development mode, where no user identity exists at all); there the surface is open, in step with every other part of the product.</p>
+
+<ol class="steps">
+  <li>Open the console's address in your browser — for a default local installation <code>http://localhost:8100</code>, or the HTTPS address your administrator gave you.</li>
+  <li>While the session check runs the console shows a large spinner with the text <strong>Starting…</strong>.</li>
+  <li>The shared login screen appears, with the subtitle <strong>Integration</strong> under the product logo so you can tell at a glance which surface you are signing in to. Enter your credentials.</li>
+  <li>If your deployment mandates two-factor authentication and you have not yet enrolled, the login screen stays up until enrolment is complete — exactly as in the application.</li>
+  <li>The console loads, applies your personal theme setting and reads your assigned data-source connections.</li>
+</ol>
+
+<figure data-fig="app-login"><figcaption>The shared login screen. On the integration console it carries the subtitle “Integration” under the logo.</figcaption></figure>
+
+<div class="note"><strong>Note — idle sign-out</strong> If your administrator has set an idle timeout (admin <b>Users</b> tab), the console signs you out after that many minutes of inactivity and returns you to this login screen with the notice “You were signed out due to inactivity”, exactly as the main application does. Because the console is always role-gated, idle sign-out applies here even when the global “require sign-in” setting is off.</div>
+
+<h3 id="integ-api-gate">Why the API re-checks your role</h3>
+
+<p>The console's own port is only the first line of defence. All integration endpoints live under <code>/api/integration</code> on the shared compute backend, and the application proxies <code>/api/*</code> for any enabled user. If the role were only checked at the console's front door, a power user could drive the whole data-source surface through the application's proxy instead. To close that, the role check is repeated <strong>server-side on the API router</strong>, so it covers every integration endpoint — including any added in a later release.</p>
+
+<table>
+  <thead><tr><th>Situation</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>The deployment runs without sign-in (no user identity)</td><td>Open, no restriction</td></tr>
+    <tr><td>The administrator has switched the integration surface off</td><td>HTTP 403 — <em>“The integration console is turned off.”</em></td></tr>
+    <tr><td>The user is unknown, disabled, or lacks the Developer/Admin role</td><td>HTTP 403 — <em>“You need the Developer role to use the integration features.”</em></td></tr>
+  </tbody>
+</table>
+
+<div class="note"><strong>Note</strong> Because the switch is enforced on the API and not only on the port, turning the integration surface off in the administration interface disables the entire integration API as well. The switch is on by default.</div>
+
+<figure data-fig="admin-10-integration"><figcaption>The administration interface holds the deployment-wide switch that enables or disables the integration surface.</figcaption></figure>
+
+<h3 id="integ-revoked">If your role is revoked while you are signed in</h3>
+
+<p>The console does not silently degrade. If an administrator removes your Developer role during your session, the console replaces its whole window with an <strong>Access denied</strong> page: the product logo, the heading “Access denied”, the text <em>“The integration console is available to developers and administrators only. Ask an administrator to grant you the Developer role.”</em> and a <strong>⏻ Sign out</strong> button.</p>
+
+<h2 id="integ-layout">The console layout</h2>
+
+<p>The window is divided the same way as the application: a sidebar on the left, a main pane on the right. The main column is centred and no wider than 900 px, so the pipeline and status card stay readable on a large screen.</p>
+
+<h3 id="integ-sidebar">The sidebar</h3>
+
+<p>From top to bottom the sidebar contains:</p>
+
+<ol class="steps">
+  <li>The brand header — the logo, the title <strong>Integration</strong> and the caption <strong>Data-source configuration</strong>.</li>
+  <li>Three collapsible accordion sections: <strong>Connections</strong>, <strong>Sources</strong> and <strong>Source types</strong>. At most one is open at a time, and clicking the header of the open section closes it. Each header shows a chevron, the title, the item count in parentheses when it is greater than zero, and one or two trailing icon buttons.</li>
+  <li>Pinned at the bottom, the shared identity footer: a first row reading <strong>👤 &lt;your display name&gt; (&lt;role&gt;)</strong> — Admin, Power user, Developer or User — and a second row of buttons, <strong>🔒 Two-factor</strong> and <strong>🔑 Passkeys</strong> where your deployment allows them, plus <strong>⏻ Sign out</strong>.</li>
+  <li>Below the footer, the theme bar with the light, dark and system switcher.</li>
+</ol>
+
+<p>The console follows your personal <code>app.theme</code> setting, shared with the application: light, dark or system. “System” tracks your operating system's colour scheme live. Until your settings have loaded after sign-in, the operating system's scheme is used.</p>
+
+<h3 id="integ-main-pane">The main pane</h3>
+
+<p>The main pane holds four things, in this order:</p>
+
+<dl>
+  <dt>The toolbar</dt>
+  <dd>A single <strong>？</strong> Help button in the top right, opening the same Help panel as the application.</dd>
+  <dt>The Abstraction layer card</dt>
+  <dd>Status pill, target line, the six KPI tiles and — after a run that produced messages — the run log. See <a href="#integ-status">the status panel</a> below.</dd>
+  <dt>The <strong>Ingestion pipeline</strong> header row</dt>
+  <dd>The caption showing how many runs have been recorded, and the <strong>↺ Clear</strong> button.</dd>
+  <dt>The pipeline canvas</dt>
+  <dd>The live flowchart of your ingestion behaviour.</dd>
+</dl>
+
+<h2 id="integ-sections">The three sidebar sections</h2>
+
+<h3 id="integ-sec-connections">Connections</h3>
+
+<p>The <strong>Connections</strong> section lists the database connections <em>assigned to you</em>, as clickable badges sorted alphabetically by name. Each badge shows a <strong>⛁</strong> icon — green when that connection is connected, accent blue otherwise — the connection name (or “(unnamed)”), the optional comment, a line reading <strong>Database: &lt;host&gt;:&lt;port&gt;</strong> (“(no host)” when the host is empty) and, when an LLM is configured, <strong>LLM: &lt;url&gt;</strong> or “(configured)”. About three badges are visible at once; the list scrolls beyond that.</p>
+
+<p>The header carries two buttons: <strong>＋</strong> (“New connection”), shown only to users who may manage connections, and <strong>↻</strong> (“Refresh connections”), which reloads the assigned list.</p>
+
+<p>If you have no connections, the empty state depends on your permissions: managers see <em>“No connections yet. Use ＋ above to create one and assign users.”</em>, everyone else sees <em>“No connections assigned to you. Ask an administrator to grant access.”</em> Any connection error is shown in red under the list.</p>
+
+<h3 id="integ-sec-sources">Sources</h3>
+
+<p>The <strong>Sources</strong> section lists your data sources, with <strong>＋</strong> (“Add a source”) in the header. Each badge shows the kind icon (📄 for a File source), the source name, and a sub-line with the kind label and a summary of its configuration — for a File source, its path, or “(no path)” when none is set. A <strong>👁</strong> eye after the name means the watchdog is switched on for that source (tooltip “Watchdog on — auto-imports new lines”). The <strong>▷</strong> button opens the Run dialog and the <strong>✕</strong> button deletes the source after a confirmation; clicking anywhere else on the badge opens the edit wizard. Sources, the wizard and the Run dialog are covered in their own chapter.</p>
+
+<figure data-fig="integ-02-sources"><figcaption>The Sources section, with a watchdog-enabled source and its Run and Delete buttons.</figcaption></figure>
+
+<h3 id="integ-sec-source-types">Source types</h3>
+
+<p>The <strong>Source types</strong> section lists your extraction specifications, with <strong>＋</strong> (“Add a source type”) in the header. Each badge shows a 🧩 icon, the name and a sub-line reading “&lt;n&gt; field(s)” or “no fields yet”. Clicking a badge opens the source-type wizard; <strong>✕</strong> deletes it after a confirmation. The wizard — sample line, field mapping, compound steps and the example JOURNEYS record — has its own chapter.</p>
+
+<figure data-fig="integ-03-source-types"><figcaption>The Source types section. Each badge reports how many extraction fields the type defines.</figcaption></figure>
+
+<div class="warn"><strong>Warning</strong> Deleting a source type does not cascade. Sources that reference it keep a dangling link and their runs fail with the warning “This source has no source type linked” until you edit the source and pick a new one.</div>
+
+<h2 id="integ-connections">Managing connections from the console</h2>
+
+<div class="role">Requires: ownership of the connection (Power user, Administrator or Developer role to create one)</div>
+
+<p>You do not have to switch to the application to set up a destination database. The console embeds the same connection editor. What differs from the application is not the editor but the permission model, and the distinction is easy to trip over:</p>
+
+<dl>
+  <dt>Assignment</dt>
+  <dd>An <em>assigned</em> connection is one you may <strong>use</strong>: connect to it from the sidebar, run an import into it, and name it as a watchdog destination. Assignment is granted by whoever owns the connection.</dd>
+  <dt>Ownership</dt>
+  <dd>An <em>owned</em> connection is one you may <strong>edit</strong>. Only owned connections show the <strong>✎</strong> pencil on their badge.</dd>
+</dl>
+
+<p>A connection that an administrator created and assigned to you is therefore read-only for you: you can import into it all day, but you cannot change its host, credentials or user assignments. This is why the pencil is missing from some badges and present on others.</p>
+
+<h3 id="integ-connect">Connecting and disconnecting</h3>
+
+<ol class="steps">
+  <li>Open the <strong>Connections</strong> section in the sidebar.</li>
+  <li>Click a connection badge to connect to it. The badge shows a status dot: green for <strong>Connected</strong>, orange for <strong>Not connected</strong>.</li>
+  <li>Click the active badge again to disconnect.</li>
+  <li>Clicking a different badge while one is active disconnects the current connection first, then connects the new one.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> You do not need to be connected in order to import. The Run dialog and the watchdog open the destination themselves using the connection's stored credentials. Connecting from the sidebar is what sets the <em>default</em> target shown in the status card and preselects a destination in the Run dialog.</div>
+
+<h3 id="integ-new-connection">Creating a connection</h3>
+
+<ol class="steps">
+  <li>Click <strong>＋</strong> in the <strong>Connections</strong> header. The <strong>New Connection</strong> editor opens as a wide sheet with the ⛁ icon.</li>
+  <li>On the <strong>Database / LLM Details</strong> tab, fill in at least a <strong>Name</strong> — leaving it blank fails with “Name is required.” — and the <strong>Host</strong>, <strong>Port</strong> (default 8563), <strong>Username</strong>, <strong>Schema</strong> and <strong>Password</strong>.</li>
+  <li>Optionally switch on <strong>Use TLS</strong> and choose a <strong>Certificate mode</strong>: “Verify (system trust store)” (the default), “Pin fingerprint” or “Accept any (insecure)”. A pinned fingerprint goes in <strong>Fingerprint (SHA-256)</strong>; <strong>Minimum RSA key size</strong> defaults to 2048.</li>
+  <li>Optionally configure an LLM: <strong>Server URL</strong>, <strong>Model</strong> and <strong>API key</strong>.</li>
+  <li>Tick the usernames that should be able to use this connection under <strong>Assigned users</strong>.</li>
+  <li>Click <strong>Test</strong> to verify. The result appears inline — green when everything answered, orange when one component failed, red when all did, with text such as “Database OK · LLM OK (n models)”.</li>
+  <li>Click <strong>Save</strong>. The new connection appears in the sidebar and, being owned by you, carries the ✎ pencil.</li>
+</ol>
+
+<figure data-fig="app-09-connection-editor"><figcaption>The connection editor, shared between the application and the integration console.</figcaption></figure>
+
+<h3 id="integ-edit-connection">Editing an owned connection</h3>
+
+<ol class="steps">
+  <li>Hover the badge of a connection you own and click the <strong>✎</strong> pencil. The click does not connect or disconnect — it only opens the <strong>Edit Connection</strong> editor.</li>
+  <li>Change what you need. A stored password shows the placeholder <strong>•••••• (unchanged)</strong>; leave it blank to keep the stored value.</li>
+  <li>Use <strong>Create schema &amp; tables</strong> if the target schema does not exist yet. The button stays disabled until a schema name is entered, and it needs a database account with CREATE SCHEMA and CREATE TABLE rights — only your DBA can grant those.</li>
+  <li>Click <strong>Save</strong>, or <strong>Delete</strong> to remove the connection. Deletion asks to confirm: <em>“&lt;name&gt; will be removed for all assigned users. This cannot be undone.”</em></li>
+</ol>
+
+<p>The editor's other two tabs are equally available here: <strong>Demo Content</strong>, which generates a Retail, Finance/Insurance or Transportation demonstration data set into a schema (journey count default 500, range 1–20 000), and <strong>Projects</strong>, which lists the projects in the connection's schema with their journey and event counts and lets you delete one. Both are described in full in the chapter on connections and projects.</p>
+
+<h2 id="integ-status">The Abstraction layer status panel</h2>
+
+<p>The status card is the console's live readout of the extraction engine. It is driven by a single poll of the status endpoint every <strong>1.5 seconds</strong>, and re-polls immediately whenever you change the active connection.</p>
+
+<p>The card is titled <strong>Abstraction layer</strong> and carries a state pill on the right:</p>
+
+<table>
+  <thead><tr><th>Pill</th><th>Colour</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>● Idle</td><td>Grey</td><td>Nothing has run yet in this session</td></tr>
+    <tr><td>Running</td><td>Accent blue</td><td>An extraction is in progress</td></tr>
+    <tr><td>Completed</td><td>Green</td><td>The most recent run finished successfully</td></tr>
+    <tr><td>Failed</td><td>Red</td><td>The most recent run failed; the message is shown below</td></tr>
+  </tbody>
+</table>
+
+<p>Under the title, the <strong>target line</strong> tells you where an import would land: <strong>Target &lt;schema&gt; · &lt;connection name&gt;</strong> when you are connected and the connection has a schema; <em>“The active connection has no target schema”</em> when it does not; and <em>“Pick a connection on the left to choose the target”</em> when you are not connected at all.</p>
+
+<p>Two warning banners can appear: the poll error, if the status endpoint cannot be reached, and <strong>Last run failed: &lt;error&gt;</strong> after a failure.</p>
+
+<p>When the most recent run produced log messages, a toggle button <strong>▸ Run log (&lt;n&gt;)</strong> appears below the KPI strip. Expanding it shows a scrollable monospace list of that run's messages, for example:</p>
+
+<pre><code>reading /data/logs/access.log → SALES.JOURNEYS (project LIVE-LOG)
+pushed 500 events, skipped 2 unparseable line(s)
+created project 'LIVE-LOG'
+watchdog: 14 new line(s) from /data/logs/access.log</code></pre>
+
+<div class="note"><strong>Note</strong> The status is per user and always reflects the <em>most recent</em> run only — a new run resets its counters. Only one extraction runs per user at a time; a second one started while the first is in flight fails with “An extraction is already running for this user.” Different users can run concurrently.</div>
+
+<h2 id="integ-kpis">The ingestion KPI tiles</h2>
+
+<p>Six tiles sit inside the status card, using the same visual language as the application's KPI strip. They wrap onto further rows in a narrow window.</p>
+<figure data-fig="integ-09-kpis-pipeline"><figcaption>The ingestion KPI tiles &mdash; Manual imports, Watchdog imports, Watchdogs active, Last import, Events pushed and Events skipped &mdash; above the live pipeline flowchart, shown here after an import has run.</figcaption></figure>
+
+<table>
+  <thead><tr><th>Tile</th><th>Icon</th><th>What it shows</th></tr></thead>
+  <tbody>
+    <tr><td>Manual imports</td><td>▷</td><td>How many recorded runs you triggered yourself, from the Run dialog.</td></tr>
+    <tr><td>Watchdog imports</td><td>👁</td><td>How many recorded runs the watchdog started on its own.</td></tr>
+    <tr><td>Watchdogs active</td><td>🐕</td><td>A live “&lt;active&gt; / &lt;total&gt;”: your file sources with the watchdog switched on, out of all your file sources. Green when at least one is active, “—” until a status has loaded.</td></tr>
+    <tr><td>Last import</td><td>🕒</td><td>The age of the newest run: “just now” under 45 seconds, then “Nm ago”, “Nh ago”, “Nd ago”; “—” when there are none. While a run is in flight it reads <strong>running…</strong> in the accent colour.</td></tr>
+    <tr><td>Events pushed</td><td>▦</td><td>Total journey events written across the recorded history. Always green.</td></tr>
+    <tr><td>Events skipped</td><td>⊘</td><td>Total source lines that could not be parsed across the history. <strong>Orange whenever it is greater than zero.</strong></td></tr>
+  </tbody>
+</table>
+
+<p>The split between <strong>Manual imports</strong> and <strong>Watchdog imports</strong> exists because both write into the same tables through the same engine; without the split you could not tell an unattended import from one you started.</p>
+
+<div class="tip"><strong>Tip</strong> Treat <strong>Events skipped</strong> as your correctness signal. A run that reports thousands of events written and thousands skipped almost always means the linked source type's regular expressions only fit part of the log. Open the source type and test its fields against a sample line from the file that is actually being read.</div>
+
+<div class="warn"><strong>Warning</strong> If your deployment has switched the watchdog loop off entirely, the third tile's label changes to <strong>Watchdogs (off)</strong> and the tile turns orange. A source whose watchdog is “on” then never polls. The tile is deliberately loud about this, because the alternative is a count that quietly does nothing.</div>
+
+<div class="note"><strong>Note</strong> Every tile except <strong>Watchdogs active</strong> is computed from the console's own recorded run history, not from the backend. They therefore survive a backend restart, and they are reset by <strong>↺ Clear</strong> — see <a href="#integ-clear">Clearing the history</a>.</div>
+
+<h2 id="integ-pipeline">The ingestion pipeline flowchart</h2>
+
+<p>The canvas below the status card draws your whole ingestion behaviour as one accumulating graph, in four columns:</p>
+
+<pre><code>[Source type] ──▶ [Source] ──▶ [Abstraction layer] ──▶ [Connection]</code></pre>
+
+<h3 id="integ-pipeline-nodes">Nodes accumulate across runs</h3>
+
+<p>This is not a picture of the last run. Nodes are <strong>reused</strong>: there is one node per distinct source-type name, one per source name and one per destination connection name, with the <strong>Abstraction layer</strong> as the single hub in the middle. Edges are drawn for whatever combinations have actually run, so several sources, types and destinations fan in and out of the hub. Over a few days the chart becomes a portrait of how data really reaches your database — which is exactly what it is for.</p>
+
+<p>Every run that has actually started is recorded, whichever way it was triggered: a manual run from the Run dialog, a watchdog poll, or a push through the API. The entry for a run in flight updates in place as the poll progresses.</p>
+
+<table>
+  <thead><tr><th>Node</th><th>Icon</th><th>Kicker</th><th>Subtitle</th></tr></thead>
+  <tbody>
+    <tr><td>Source type</td><td>🧩</td><td>SOURCE TYPE</td><td>extraction spec</td></tr>
+    <tr><td>Source</td><td>🗂️</td><td>SOURCE</td><td>imported &amp; extracted</td></tr>
+    <tr><td>Abstraction layer</td><td>⚙️</td><td>ABSTRACTION LAYER</td><td>progress bar and state label</td></tr>
+    <tr><td>Connection</td><td>🛢️</td><td>CONNECTION</td><td>schema &lt;schema&gt;, or “destination database”</td></tr>
+  </tbody>
+</table>
+
+<h3 id="integ-pipeline-counts">Row counts</h3>
+
+<p>The <strong>Source</strong> and <strong>Connection</strong> nodes each carry a line reading <strong>▦ &lt;n&gt; rows imported</strong>. This is the cumulative total across every recorded run that touched that node — not the last run's figure. Reading across the chart therefore tells you how much each file has contributed and how much has landed in each destination database. Each <strong>Source</strong> node also shows <strong>🕒 &lt;date, time&gt;</strong> — the moment of its <em>most recent</em> import, in your local time — so you can see at a glance when each file was last loaded.</p>
+
+<p>The hub itself shows either a live state — “Running”, with real progress once the totals are known and an indeterminate animation before that — or, between runs, <strong>&lt;total&gt; rows over &lt;n&gt; run(s)</strong>. With an empty history it simply reads “Idle”.</p>
+
+<h3 id="integ-pipeline-colour">Colour and state</h3>
+
+<p>Each node is tinted with a semi-transparent wash of its own accent colour — purple for a source type, accent blue for a source, the current phase colour for the layer, teal for a connection. The wash is 14 % opaque in light mode and 20 % in dark, so the canvas dot-grid shows through and the chart stays pastel rather than solid.</p>
+
+<table>
+  <thead><tr><th>State</th><th>Appearance</th></tr></thead>
+  <tbody>
+    <tr><td>Running</td><td>The wash deepens to 24 % (30 % in dark mode) and the node gains an accent ring</td></tr>
+    <tr><td>Completed</td><td>Green-tinted border</td></tr>
+    <tr><td>Failed</td><td>Red border</td></tr>
+    <tr><td>Idle</td><td>Reduced opacity</td></tr>
+  </tbody>
+</table>
+
+<p>Edges take their colour from their own most recent run: green while it is running, red after a failure, blue otherwise. While a run is live, a single animated dot travels the run's path node by node in order — type, source, layer, connection — taking roughly 0.9 seconds per edge and looping until the run ends. Because edges remember their last outcome individually, a red edge tells you precisely which combination failed even when a later run of a different source succeeded.</p>
+
+<p>Before anything has run, the canvas shows a dim idle skeleton — a generic “Source type” feeding a generic “Source”, the layer, and either the connection you are currently connected to or “(no connection)” — so the pipeline's shape stays visible from the first visit.</p>
+
+<h3 id="integ-pipeline-layout">Moving, resizing and resetting the canvas</h3>
+
+<p>The automatic arrangement is a starting point, not a constraint. You can lay the graph out to match how you think about your data flows.</p>
+
+<ol class="steps">
+  <li><strong>Drag a node</strong> to move it. The position is saved for you personally and survives polls, page reloads and backend restarts.</li>
+  <li><strong>Drag the background</strong> to pan the canvas. Zoom is limited to between 0.3× and 1.5×, and scroll-wheel zoom is switched off so that scrolling the page over the canvas behaves normally. Nodes cannot be selected or wired together — the graph is a readout, not an editor.</li>
+  <li><strong>Drag the grip strip along the bottom edge</strong> of the canvas (tooltip “Drag to resize the canvas”) to change its height, anywhere between <strong>520 px and 1400 px</strong>. The height is saved for you as well.</li>
+  <li>Click <strong>⤢ Reset layout</strong> in the top right to discard both the saved positions and the saved height and return to the automatic arrangement. The button appears only once you have moved a node or resized the canvas.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> The canvas also grows by itself as the number of node rows increases, and a height you dragged is never allowed to shrink below what the current rows need — so adding a fifth source cannot push nodes out of sight.</div>
+
+<h3 id="integ-clear">The run history and clearing it</h3>
+
+<p>The live status only ever describes the most recent run, so the console keeps its own list, appending each run as it starts. The header above the canvas reads <strong>Ingestion pipeline</strong> with the caption <em>“no imports yet”</em> or <em>“&lt;n&gt; run(s) · behaviour over time”</em>. The list is capped at <strong>50 runs</strong>; older entries drop off and the caption then reads “50+ runs”.</p>
+
+<ol class="steps">
+  <li>Click <strong>↺ Clear</strong> next to the caption (tooltip “Clear the ingestion history”). The button appears only when runs have been recorded.</li>
+  <li>The confirmation dialog <strong>Clear ingestion history</strong> asks: <em>“Reset the pipeline flowchart, removing all &lt;n&gt; recorded run(s)? This only clears the console view — nothing already imported is affected.”</em></li>
+  <li>Click <strong>Clear history</strong>. The flowchart returns to its idle skeleton and all KPI tiles except <strong>Watchdogs active</strong> return to zero.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> The run history, the node layout and the canvas height are stored in your browser's local storage, per user and therefore per browser profile. Signing in from a different machine shows that machine's history, which may be empty; a browser with storage disabled keeps nothing at all. None of this affects the database — clearing the history deletes no imported data, and losing the history loses no rows.</div>
+
+<h2 id="integ-together">How the pieces work together</h2>
+
+<p>A run started in the Run dialog is the same run the status card reports, the same run that lights up the pipeline, and the same run the KPI tiles count — they are three views of one live status poll, updating together in real time. That is worth knowing when something looks wrong: if the Run dialog shows progress but the pipeline does not, the problem is the browser, not the import; if the status pill says <strong>Failed</strong> and an edge on the canvas has turned red, both are telling you about the same failure, and the message is on the status card and in the Run dialog's checkpoint panel.</p>
+
+<p>With the surface understood, the remaining integration chapters build on it in the order you will use them: define a source type, define a source that uses it, then run the import and — where the data keeps arriving — hand the job to the watchdog.</p>
+
+</section>

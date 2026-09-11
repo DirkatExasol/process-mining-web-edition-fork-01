@@ -1,0 +1,140 @@
+name: Process Mining Web CI
+
+# Ported from the solution's own .github/workflows/ci.yml when it moved into
+# this repo. A workflow only runs from the repo root, so it lives here and is
+# scoped back to the solution folder by the path filter below. Same checks and
+# same pinned tool versions as the standalone repo had.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "process-mining-demonstrator-web-edition/**"
+      - ".github/workflows/process-mining-web-ci.yml"
+  pull_request:
+    paths:
+      - "process-mining-demonstrator-web-edition/**"
+      - ".github/workflows/process-mining-web-ci.yml"
+
+permissions:
+  contents: read
+
+env:
+  SOLUTION_DIR: process-mining-demonstrator-web-edition
+
+jobs:
+  lint:
+    name: Lint (shell, Dockerfile, Python syntax, deps)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: process-mining-demonstrator-web-edition
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: shellcheck
+        # run.sh / test.sh. Run at --severity=warning: the only remaining note is
+        # one intentional SC2015 (`kill … || true`) in run.sh, which is info-level.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck --severity=warning run.sh test.sh
+
+      - name: hadolint (Dockerfile)
+        # Run via the pinned Docker image (not a Node action), so it is unaffected
+        # by GitHub Node runner deprecations. The Dockerfile is clean at the
+        # default ruleset, so no ignores are needed.
+        run: |
+          docker run --rm -i hadolint/hadolint:2.12.0 hadolint - < Dockerfile
+
+      - name: Python syntax (py_compile)
+        # Fast structural check over all backend sources before the heavier pytest
+        # job runs. Compiles every module so a syntax error fails in seconds.
+        run: |
+          python3 -m py_compile backend/launch.py
+          find backend/app backend/tests -name '*.py' -print0 | xargs -0 python3 -m py_compile
+
+      - name: Dependency audit (pip-audit)
+        # Hard gate: fails the build on any known CVE in the pinned runtime deps.
+        # A finding means a dependency needs bumping (see requirements.txt).
+        run: |
+          pip install --user pip-audit
+          python3 -m pip_audit -r requirements.txt --progress-spinner=off
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: gitleaks
+        # Pinned Docker image (no Node action, no fragile binary download).
+        # The solution folder — not the repo root — is mounted at /repo, so
+        # `--source .` keeps reported paths relative to the solution and the
+        # `^`-anchored path allowlist in its .gitleaks.toml still matches.
+        # --no-git scans the checked-out files (avoids the container's git
+        # "dubious ownership" error on the mounted workspace); a leak → exit 1.
+        run: |
+          docker run --rm -w /repo \
+            -v "${{ github.workspace }}/${SOLUTION_DIR}:/repo" \
+            ghcr.io/gitleaks/gitleaks:v8.18.4 \
+            detect --source . --config .gitleaks.toml --no-git --no-banner --redact
+
+  backend:
+    name: Backend tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          # Action inputs resolve from the repo root, so this stays fully qualified.
+          cache-dependency-path: process-mining-demonstrator-web-edition/requirements-dev.txt
+      - name: Install dependencies
+        working-directory: process-mining-demonstrator-web-edition
+        run: pip install -r requirements-dev.txt
+      - name: pytest
+        # Same invocation as ./test.sh backend — run from backend/ so pytest.ini
+        # (testpaths=tests) and the app package resolve as they do locally.
+        working-directory: process-mining-demonstrator-web-edition/backend
+        run: python -m pytest
+
+  frontend:
+    name: Frontend build + tests (tsc, vite, vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: process-mining-demonstrator-web-edition/frontend/web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: process-mining-demonstrator-web-edition/frontend/web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Build (tsc -b && vite build)
+        # `npm run build` type-checks the whole project (tsc -b) and then bundles,
+        # so a type error fails CI just as it would break a real build.
+        run: npm run build
+      - name: Unit tests (vitest)
+        run: npm test
+
+  docker:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: process-mining-demonstrator-web-edition
+    steps:
+      - uses: actions/checkout@v5
+      # Prove the multi-stage image assembles end-to-end (Node web build →
+      # Python runtime) from a clean context. Catches breakages that unit tests
+      # can't (missing COPY, bad requirements pin, frontend build failing
+      # inside the container).
+      - name: docker build
+        run: docker build -f Dockerfile --progress=plain -t process-mining-web:ci .

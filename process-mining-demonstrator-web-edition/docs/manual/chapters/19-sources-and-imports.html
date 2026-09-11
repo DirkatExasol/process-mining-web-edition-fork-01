@@ -1,0 +1,309 @@
+<section class="chapter" id="ch-sources-and-imports" data-title="Sources and Running an Import" data-num="19">
+<h1><span class="chnum">19</span> Sources and Running an Import</h1>
+
+<p class="chintro">A <em>source</em> tells the integration console <em>where</em> the raw data is; a <em>source type</em> (Chapter&nbsp;18) tells it <em>how</em> to read each line. This chapter covers the remaining half of the job: creating a File source, pointing it at a file inside the sandboxed sources directory, previewing the lines, linking a source type, choosing how often the import commits, and then running the import into a destination connection and project. It closes with the two things that surprise people most — how the read checkpoint decides what a delta import picks up, and the fact that events are always appended and are never de-duplicated. Read it before you import into a schema anyone else relies on.</p>
+
+<div class="role">Requires: <b>Developer</b> or <b>Administrator</b>. Sources, source types and checkpoints are owned per user — you only ever see and run your own.</div>
+
+<figure data-fig="integ-02-sources"><figcaption>The <b>Sources</b> section of the integration sidebar. Each badge shows the kind icon, the source name, the configured path, a ▷ Run button and a ✕ Delete button.</figcaption></figure>
+
+<h2 id="s19-before">19.1 Before you start</h2>
+
+<p>An import needs four things to be in place. If any of them is missing the run is refused before a single line is read, with the message shown below.</p>
+
+<table>
+<thead><tr><th>Prerequisite</th><th>Where it comes from</th><th>Message if missing</th></tr></thead>
+<tbody>
+<tr><td>A readable file</td><td>The source's <b>File path or glob</b> field</td><td><code>This source has no file path.</code> / <code>File not found.</code></td></tr>
+<tr><td>A linked source type</td><td>The source's <b>Source type</b> dropdown</td><td><code>Link a source type to this source first.</code></td></tr>
+<tr><td>A timestamp field in that source type</td><td>The source type wizard, <b>Timestamp</b> tab</td><td><code>The source type has no timestamp field.</code></td></tr>
+<tr><td>A destination connection assigned to you, with a target schema</td><td>Assigned by an administrator; schema set in the connection editor</td><td><code>Connection not found.</code> / <code>“&lt;name&gt;” has no target schema configured.</code></td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> Only the <b>File</b> kind can be run today. The wizard also lists <b>Database</b>, <b>REST API</b> and <b>Object storage</b>, but they are greyed out and marked “· coming soon”. A source of any other kind is refused with <code>Only file sources can be run yet.</code></div>
+
+<h2 id="s19-sandbox">19.2 Where source files must live</h2>
+
+<p>Every file read by the console — the preview, a manual import, a watchdog poll — goes through one path resolver. By default that resolver confines you to a single directory, the <b>sources directory</b>, so that a developer account cannot use the console to read arbitrary files from the server.</p>
+
+<table>
+<thead><tr><th>Setting</th><th>Default</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>PMW_INTEGRATION_FILES_DIR</code></td><td><code>&lt;data dir&gt;/integration_files</code>, where the data directory is <code>PMW_DATA_DIR</code> or <code>&lt;project root&gt;/data</code></td><td>The sandbox root. Created automatically at start-up, parents included. In Docker it is a mounted volume, so you can drop log files into it from the host.</td></tr>
+<tr><td><code>PMW_INTEGRATION_ALLOW_ANY_PATH</code></td><td>off</td><td>When set to <code>1</code>, <code>true</code>, <code>yes</code> or <code>on</code> (case-insensitive), the sandbox is switched off entirely and <em>any</em> absolute path the server process can read is accepted; <code>~</code> is expanded.</td></tr>
+</tbody>
+</table>
+
+<p>In the default, sandboxed mode the rules are:</p>
+
+<ul>
+<li>A <b>relative</b> path is taken relative to the sources directory — so <code>access.log</code> means <code>&lt;files dir&gt;/access.log</code>.</li>
+<li>An <b>absolute</b> path is accepted only if it already lies inside the sources directory.</li>
+<li>The real path is resolved with symlinks followed, and the result must <em>still</em> be inside the (likewise resolved) root. Traversal with <code>../</code> and symlinks pointing outside are rejected.</li>
+</ul>
+
+<table>
+<thead><tr><th>Error text</th><th>Cause</th></tr></thead>
+<tbody>
+<tr><td><code>No file path given.</code></td><td>The path is empty or only whitespace.</td></tr>
+<tr><td><code>That path is outside the allowed sources directory.</code></td><td>Traversal, a symlink escape, an absolute path elsewhere on the machine (on Windows, also a different drive).</td></tr>
+<tr><td><code>File not found.</code></td><td>The resolved path does not exist.</td></tr>
+<tr><td><code>Not a regular file.</code></td><td>The path resolves to a directory, a device or a socket.</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> <code>PMW_INTEGRATION_ALLOW_ANY_PATH</code> lets anyone with the Developer role read any file the backend process can read, and preview it in the browser. Enable it only on a developer-trusted deployment, never on a shared or production installation.</div>
+
+<div class="tip"><strong>Tip</strong> On start-up the backend copies every <code>*.log</code> file from the installation's <code>examples/</code> directory into the sources directory, unless a file of that name is already there. Existing files are never overwritten, so you can experiment with the bundled demo log immediately, and your own edits to it survive a restart.</div>
+
+<h2 id="s19-create">19.3 Creating a File source</h2>
+<figure data-fig="integ-06-source-wizard"><figcaption>The File source editor: the file path, the encoding, a live preview of the first lines, the linked source type and the transaction-bracket setting.</figcaption></figure>
+
+<p>Sources are created and edited in the same three-step wizard. The footer always shows <b>Step&nbsp;N of&nbsp;3</b> together with <b>Cancel</b>, <b>Back</b> and <b>Next</b>, and on the last step <b>Create source</b> or <b>Save changes</b>. Opening an existing source from the sidebar takes you straight to step&nbsp;2, since its kind is already fixed.</p>
+
+<ol class="steps">
+<li>In the sidebar, open the <b>Sources</b> section and click <b>＋</b> (<i>Add a source</i>). The <b>New source</b> sheet opens at step&nbsp;1.</li>
+<li>On <b>Choose a source kind</b>, select the <b>File</b> card — “A log or data file the extractor reads at run time.” A green dot marks the selected kind. Click <b>Next</b>.</li>
+<li>Enter a <b>Name</b> (required; for example <code>File — access log</code>). <b>Next</b> stays disabled until the name is filled in.</li>
+<li>Fill in <b>File path or glob</b>, the required field marked with <code>*</code>. Type a path relative to the sources directory, or an absolute path inside it.</li>
+<li>Choose the <b>Encoding</b> that matches the file: <code>utf-8</code> (default), <code>latin-1</code> or <code>utf-16</code>.</li>
+<li>Check the <b>Preview</b> box underneath (see §19.3.2) to confirm the console is reading the file you meant.</li>
+<li>Pick the <b>Source type</b> that parses these lines. The first entry is <b>— none —</b>, which is also the default.</li>
+<li>Set the <b>⇄ Transaction bracket</b> if the default of 5000 rows per commit does not suit the import (see §19.4).</li>
+<li>Optionally switch on <b>👁 Watchdog — auto-import new lines when the file grows</b> and complete its destination fields (Chapter&nbsp;20).</li>
+<li>Click <b>Next</b>, check the review page — kind icon, name, and every configured field as label → value — and click <b>Create source</b>.</li>
+</ol>
+
+<h3 id="s19-fields">19.3.1 Field reference</h3>
+
+<table>
+<thead><tr><th>Field</th><th>Default</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><b>Name</b> *</td><td>—</td><td>1–120 characters. Saving without one gives <code>A name is required.</code> and returns you to step&nbsp;2.</td></tr>
+<tr><td><b>File path or glob</b> *</td><td>—</td><td>Help text: “Path (or glob) the extractor reads when the source runs.” Resolved through the sandbox described in §19.2. Saving without it gives <code>&lt;Label&gt; is required.</code></td></tr>
+<tr><td><b>Encoding</b></td><td><code>utf-8</code></td><td>Used for the import. Bytes that cannot be decoded are replaced rather than causing an error, so a wrong encoding shows up as mangled values, not as a failure.</td></tr>
+<tr><td><b>Source type</b></td><td><b>— none —</b></td><td>“The parser applied to each line when this source runs.” If you have not defined any, the wizard says <i>“No source types yet — define one in the Source types section first.”</i></td></tr>
+<tr><td><b>rows per transaction</b></td><td>5000</td><td>See §19.4. Minimum 0, stepped in thousands.</td></tr>
+<tr><td><b>👁 Watchdog</b></td><td>off</td><td>Background auto-import; covered in Chapter&nbsp;20. It shares this source's checkpoint and transaction bracket.</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> Despite its label, <b>File path or glob</b> is <em>not</em> expanded as a glob today. The path is resolved to exactly one regular file; a pattern such as <code>/data/logs/*.log</code> produces <code>File not found.</code> Point the source at a single file.</div>
+
+<div class="note"><strong>Note</strong> The whole configuration of a source is stored as one block and must serialise to 8000 characters or fewer, otherwise the save is refused with <code>Source settings are too large.</code></div>
+
+<h3 id="s19-preview">19.3.2 The line preview</h3>
+
+<p>Below the path field, the row <b>Preview first [N] lines</b> shows the beginning of the file exactly as the extractor will see it. <code>N</code> defaults to <b>5</b> and is clamped to <b>1–50</b>; an invalid entry falls back to 5. The preview refreshes roughly 350&nbsp;ms after you stop typing in the path or changing <code>N</code>.</p>
+
+<table>
+<thead><tr><th>What you see</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>Monospace lines</td><td>The first <code>N</code> <em>non-blank</em> lines. Blank lines are skipped everywhere — preview, import and progress counting.</td></tr>
+<tr><td>A trailing <code>…</code></td><td>Further non-blank content follows the lines shown.</td></tr>
+<tr><td><i>“Enter a file path to preview it.”</i></td><td>The path field is still empty.</td></tr>
+<tr><td><i>“No lines.”</i></td><td>The file exists but has no non-blank content.</td></tr>
+<tr><td>Red text</td><td>A sandbox or file error, verbatim — for example <code>File not found.</code></td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Note</strong> Two limits apply to the preview and to the import alike. Every line is truncated to its first <b>2000 characters</b>, so a regex aimed at content beyond that never matches. And the preview always decodes as UTF-8, whatever <b>Encoding</b> you selected — a <code>latin-1</code> file may therefore look slightly wrong in the preview yet import correctly.</div>
+
+<h3 id="s19-linking">19.3.3 Linking a source type</h3>
+
+<p>The linked source type is what turns a line into an event: its timestamp, id, step, meta and helper regexes plus any compound step rules are applied to each line at run time. Two consequences are worth remembering:</p>
+
+<ul>
+<li>A source with <b>— none —</b> selected cannot be run. The Run dialog shows the banner <i>“This source has no source type linked — edit it and pick one so the lines can be parsed.”</i> and <b>▷ Run extraction</b> stays disabled.</li>
+<li>Deleting a source type does <em>not</em> cascade. Sources that referenced it keep a dangling link and behave exactly as if none were selected until you pick a new one.</li>
+</ul>
+
+<div class="warn"><strong>Warning</strong> Changing the <b>File path</b> of an existing source deletes that source's read checkpoint. The next import — manual or watchdog — therefore reads the new file from the very beginning. That is usually what you want, but if the new path points at the same content under a different name, everything is imported again.</div>
+
+<h2 id="s19-bracket">19.4 The transaction bracket</h2>
+
+<p>The <b>⇄ Transaction bracket</b> panel holds a single number input labelled <b>rows per transaction</b>. Rows are written inside a transaction and committed as soon as that many rows have been written; when you set it to <code>0</code> the label gains the suffix <b>(one transaction for the whole import)</b>.</p>
+
+<table>
+<thead><tr><th>Value entered</th><th>Value used</th><th>Behaviour</th></tr></thead>
+<tbody>
+<tr><td>(blank or non-numeric)</td><td>5000</td><td>The default.</td></tr>
+<tr><td><code>0</code> or negative</td><td>0</td><td>One single transaction for the whole import — all rows become durable together, or none do.</td></tr>
+<tr><td><code>1</code>–<code>999</code></td><td>1000</td><td>Raised to the minimum bracket.</td></tr>
+<tr><td><code>1000</code>–<code>1000000</code></td><td>as entered</td><td>Commits every <code>n</code> rows.</td></tr>
+<tr><td>above <code>1000000</code></td><td>1000000</td><td>Clamped to the maximum.</td></tr>
+</tbody>
+</table>
+
+<p>A larger bracket means fewer, bigger transactions — more atomic, but the database holds more work open at once. A smaller one commits steadily, so a failure part-way through leaves the already-committed rows in place and makes progress durable as the run proceeds. The number of brackets committed so far is reported in the status panel as <i>commits</i>. Autocommit on the destination driver is switched off for the duration of every run, so the bracket — not the driver — decides when work becomes durable. The setting applies to manual runs and to watchdog imports alike.</p>
+
+<div class="warn"><strong>Warning</strong> With a bracket greater than 0, a run that fails half-way leaves the brackets it already committed in the database, while the checkpoint stays where it was (§19.6). Retrying therefore re-reads those lines and writes them a <em>second</em> time. If a mid-run failure must never duplicate rows, set <b>rows per transaction</b> to <code>0</code> and accept one long-open transaction instead.</div>
+
+<h2 id="s19-run">19.5 Running an import</h2>
+<figure data-fig="integ-07-run-dialog"><figcaption>The Run dialog. You choose the <b>Destination connection</b> and the <b>Project</b> (an existing one or a new id), leave <b>Delta upload</b> on to import only new lines, and press <b>Run extraction</b>. The checkpoint panel below records how far the file has been read.</figcaption></figure>
+
+<p>Click the <b>▷</b> button on a source badge (tooltip <i>Run extraction</i>) to open the <b>Run “&lt;source name&gt;”</b> sheet.</p>
+
+<ol class="steps">
+<li>Choose the <b>Destination connection</b>. The dropdown offers <b>— pick a connection —</b> plus every connection assigned to you. Under it, the target summary reads <b>&lt;host&gt;:&lt;port&gt; — writes into schema &lt;schema&gt;</b>, or “(none set)” when the connection has no schema.</li>
+<li>Choose the <b>Project</b>. The first entry is <b>＋ New project…</b>; below it are the projects already present in that schema, shown as <code>&lt;projectId&gt; — &lt;title&gt;</code>.</li>
+<li>If you picked <b>＋ New project…</b>, type the identifier into <b>New project id</b> (for example <code>RETAIL-DEMO</code>). It is written into <code>JOURNEYS.PROJECT_ID</code> for every event, and the <code>PROJECTS</code> row is created for you.</li>
+<li>Decide whether <b>⏩ Delta upload — import only what was appended since the last import</b> stays ticked. It is on by default.</li>
+<li>Check the checkpoint panel underneath so you know what the run will read (§19.6).</li>
+<li>Click <b>▷ Run extraction</b>. The button reads “Running…” while the import is in flight; <b>Cancel</b> becomes <b>Close</b> once a result is shown.</li>
+</ol>
+
+<h3 id="s19-destination">19.5.1 The destination connection</h3>
+
+<p>You do <em>not</em> need to connect to the database in the main app first. The backend opens the chosen destination itself, using the connection's stored credentials, and closes it again when the run ends — including when it fails. The exception is a connection you happen to be actively connected to in the main app: that live session is reused instead, with autocommit turned off for the run.</p>
+
+<p>The dropdown pre-selects, in this order: the connection this source last imported into (remembered on the server per source, and dropped if the assignment has since been revoked), then the main app's currently active connection, then the first connection assigned to you.</p>
+
+<div class="note"><strong>Note</strong> The dropdown is a convenience, not the authorisation. The server re-checks that the connection is assigned to you on every run. An unassigned — or simply non-existent — connection id both return the same message, <code>Connection not found.</code>, so that knowing an id reveals nothing about whether it exists.</div>
+
+<p>If nothing is assigned to you the sheet shows the banner <i>“No connections are assigned to you — ask an administrator, or create one in the main app.”</i> If the connection cannot be opened, the run fails with <code>Could not connect to “&lt;name&gt;”: &lt;error&gt;</code>; if it has no target schema, with <code>“&lt;name&gt;” has no target schema configured.</code></p>
+
+<h3 id="s19-project">19.5.2 Choosing the project</h3>
+
+<p>Filling the project list opens the destination database on demand; while that happens the sheet shows <i>“Reading the projects in that schema…”</i>. The outcomes are:</p>
+
+<dl>
+<dt>Projects found</dt><dd>They are listed with their identifier and, when different, their title. The project you last imported into is pre-selected — but only when the same connection is selected; on a different connection nothing is pre-selected.</dd>
+<dt>None found</dt><dd><i>“That schema has no projects yet — this import creates the first one.”</i> A reachable schema that has no <code>PROJECTS</code> table at all counts as an empty list, not an error.</dd>
+<dt>Listing failed</dt><dd>An orange line, <i>“Could not list existing projects (&lt;error&gt;) — you can still type a new project id below.”</i> The import itself is unaffected.</dd>
+</dl>
+
+<p>If the remembered project no longer exists in that schema, its identifier is kept in the <b>New project id</b> field rather than being silently discarded, so a re-created project keeps its name.</p>
+
+<div class="warn"><strong>Warning — events are appended and never de-duplicated</strong> Selecting an existing project shows the banner <i>“Events are <b>appended</b> to “&lt;id&gt;” (&lt;n&gt; already stored)”</i>. There is no de-duplication anywhere in the pipeline: nothing compares a new row against what is already in <code>JOURNEYS</code>. With <b>Delta upload</b> on, only newly-appended lines are read, so nothing is stored twice. With it off, the whole file is read again and every event already imported is written a second time. To reload a project from scratch, delete the project first (the connection editor's <b>Projects</b> tab does this) and then import with delta upload switched off.</div>
+
+<h3 id="s19-delta">19.5.3 Delta upload</h3>
+
+<p><b>⏩ Delta upload</b> is ticked by default. With it on, a checkpoint records how far the file has been read and the run picks up only the lines appended since — the help text reads <i>“no duplicates”</i>. With it off, the file is read from the top, ignoring the stored offset, and the run restarts the checkpoint's imported-records counter rather than adding to it.</p>
+
+<div class="note"><strong>Note</strong> One read consumes at most <b>8&nbsp;MB</b> of new bytes. The first delta run on a large existing file therefore imports only the first ~8&nbsp;MB; run it again (or let the watchdog poll again) to continue draining the backlog, cap by cap.</div>
+
+<h3 id="s19-results">19.5.4 Progress and results</h3>
+
+<p>While the import runs, a progress bar shows <b>Importing &lt;done&gt; / &lt;total&gt; log records…</b>, or <b>Reading the file…</b> and an indeterminate animation before the totals are known. The same progress appears on the Abstraction layer node of the pipeline canvas, since both read the same live status, polled every 350&nbsp;ms.</p>
+
+<table>
+<thead><tr><th>Result</th><th>Appearance</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>Success</td><td>Green <b>✓</b> with a detail line such as <code>12,340 events written, 3 skipped, 5 new step(s), project created</code></td><td>Events were written. “Skipped” counts source lines that could not be parsed.</td></tr>
+<tr><td>Nothing new</td><td>Neutral grey <b>—</b> <i>“Nothing new to import — the file has not grown since the last import.”</i> or <i>“Nothing to import — the file is empty.”</i></td><td>No lines were read at all. This is the normal, expected outcome of a delta run with no new data, and is deliberately not styled as a problem.</td></tr>
+<tr><td>No line matched</td><td>Orange <b>⚠</b> <i>“… No line matched — check the linked source type's regexes fit this file's format (edit the source type and test against a sample line).”</i></td><td>Lines <em>were</em> read but produced no events — a real misconfiguration of the source type.</td></tr>
+<tr><td>Failure</td><td>Red text, e.g. <code>Could not connect to “&lt;name&gt;”: …</code> or <code>Extraction failed: …</code></td><td>The run was aborted. See §19.4 for what may already be committed.</td></tr>
+</tbody>
+</table>
+
+<p>Validation before the run produces <code>Pick a destination connection.</code> or <code>A project id is required.</code></p>
+
+<div class="note"><strong>Note</strong> Only <b>one extraction per user</b> may run at a time. Starting a second — including a manual run while your own watchdog is importing — fails with <code>An extraction is already running for this user.</code> Different users are unaffected and may import concurrently.</div>
+
+<p>Unparseable lines are skipped and counted rather than aborting the run; the count appears both in the result detail and in the <b>Events skipped</b> KPI tile, which turns orange as soon as it is greater than zero. Regexes are executed with a 0.25-second timeout per match where the optional <code>regex</code> module is installed, so a catastrophically backtracking pattern costs you skipped lines rather than a frozen backend.</p>
+
+<h2 id="s19-checkpoint">19.6 Checkpoints</h2>
+
+<p>Each source has exactly one checkpoint, stored on the server. It is what makes “import only what is new” possible, and it is <b>shared between the manual delta run and the watchdog</b> — both advance the same offset, which is precisely what stops the two triggers importing a line twice between them.</p>
+
+<div class="note"><strong>Note — a manual run imports the whole file at once</strong> A manual <b>Run extraction</b> reads everything from the checkpoint to the end of the file in a single run, however large the file is (it is streamed in bounded chunks internally, so it is never loaded into memory whole). The watchdog is different: to keep each unattended poll cheap it reads at most one ~8&nbsp;MB chunk per poll and lets a large backlog drain over several polls. So if you point the watchdog at a huge pre-existing file it will catch up over a few polls, whereas a manual run finishes it in one.</div>
+
+<h3 id="s19-cp-stored">19.6.1 What is stored</h3>
+
+<table>
+<thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>byteOffset</code></td><td>Where the next read resumes. Only complete lines — up to the last newline — are ever consumed, so the offset always stops on a line boundary and a partial trailing line is left for next time.</td></tr>
+<tr><td><code>size</code></td><td>The file's size at the last read, used to detect truncation.</td></tr>
+<tr><td><code>signature</code></td><td>The MD5 of the file's first 64 bytes — a fingerprint that does not change as the file grows by appends, used to detect replacement.</td></tr>
+<tr><td><code>records</code></td><td>The cumulative number of events imported from this file.</td></tr>
+<tr><td><code>updatedAt</code></td><td>When the checkpoint was last written, shown in your local time.</td></tr>
+<tr><td><code>lastError</code></td><td>The last failure message, or empty. Cleared by the next successful read.</td></tr>
+</tbody>
+</table>
+
+<p>The checkpoint panel in the Run dialog renders this as one of three lines: red <b>⚠ &lt;last error&gt;</b>; <b>✓ &lt;n&gt; records imported · read to &lt;bytes&gt; of &lt;bytes&gt; bytes · last &lt;date and time&gt;</b>; or <i>“No checkpoint yet — this is the first import of this file.”</i></p>
+
+<h3 id="s19-cp-delta">19.6.2 Delta versus full re-read</h3>
+
+<p>Every manual run is checkpointed, whether or not delta upload is ticked.</p>
+
+<ul>
+<li><b>Delta run</b> — reads from <code>byteOffset</code> to the end of the file and <em>adds</em> to the records counter.</li>
+<li><b>Full run</b> (delta unticked) — reads from byte 0, ignoring the stored offset and signature, and <em>restarts</em> the records counter.</li>
+<li><b>Empty file, or nothing appended</b> — a normal outcome, not an error. The run still executes, so it appears in the pipeline and the KPIs, and simply writes no rows.</li>
+</ul>
+
+<h3 id="s19-cp-rotation">19.6.3 Rotation, truncation and replacement</h3>
+
+<p>Log files are rotated, and the console detects the two common shapes of that without you doing anything:</p>
+
+<dl>
+<dt>Truncation or rotation in place</dt><dd>The file is now smaller than the stored offset. Reading restarts at byte 0.</dd>
+<dt>Replacement under the same name</dt><dd>The size did not shrink, the offset is greater than zero, but the stored signature no longer matches the file's first 64 bytes. The offset must therefore point into unrelated content, so the file is re-read from byte 0.</dd>
+</dl>
+
+<div class="warn"><strong>Warning</strong> A file shorter than 64 bytes gets an empty signature and cannot be fingerprinted. Replacement of such a file without a size decrease goes undetected, and the import silently resumes at an offset that now means something else.</div>
+
+<div class="note"><strong>Note</strong> A single “line” longer than the whole 8&nbsp;MB read cap is treated as unparseable log content: the offset jumps past it rather than retrying it forever.</div>
+
+<h3 id="s19-cp-failure">19.6.4 Failed runs leave the checkpoint alone</h3>
+
+<p>The checkpoint advances only after the run's rows are safely written — offset, size, signature and record count are updated, and <code>lastError</code> is cleared, only on success. A failed run leaves all of it exactly where it was, so the next attempt re-reads the same lines instead of skipping them. Combine this with §19.4: a failure part-way through a bracketed import means some rows are already committed <em>and</em> will be read again on the retry.</p>
+
+<h3 id="s19-cp-reset">19.6.5 Resetting the checkpoint</h3>
+
+<p><b>↺ Reset checkpoint</b> appears in the Run dialog's checkpoint panel (and, for watchdog sources, in the source wizard). Its tooltip reads <i>Forget how far the file has been read, so the next import starts from the top</i>. It is disabled while a run is in progress and when there is no checkpoint to forget.</p>
+
+<ol class="steps">
+<li>Open the Run dialog for the source (▷ on its badge), or edit the source and scroll to the watchdog panel.</li>
+<li>Read the current checkpoint line so that you know how many records have been counted so far.</li>
+<li>Click <b>↺ Reset checkpoint</b>. The next import — manual <em>or</em> watchdog — starts at byte 0.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> Resetting a checkpoint is not a database cleanup. Nothing is removed from <code>JOURNEYS</code>. Unless you delete the destination project first, the next import appends the file's events all over again.</div>
+
+<p>The checkpoint is also discarded automatically when you change the source's file path (§19.3.3).</p>
+
+<h2 id="s19-journeys">19.7 What the import writes</h2>
+
+<p>The File extractor reads the file line by line, applies the linked source type's regexes, and writes one <code>JOURNEYS</code> row per line that yields a complete event. A line produces an event only if a case id, a step <em>and</em> a timestamp were all captured and the timestamp normalises successfully; anything else counts as one skipped line. Events are pushed in batches of 500 rows, and progress is reported every 200 processed lines.</p>
+
+<table>
+<thead><tr><th>JOURNEYS column</th><th>Written value</th></tr></thead>
+<tbody>
+<tr><td><code>PROJECT_ID</code></td><td>The project id chosen in the Run dialog (or configured on the watchdog).</td></tr>
+<tr><td><code>EVENT_ID</code></td><td>The <b>hex MD5 digest</b> of the raw captured id — never the raw value.</td></tr>
+<tr><td><code>STEP</code></td><td>The captured step value, replaced by a compound rule's step when one matches.</td></tr>
+<tr><td><code>STEP_ID</code></td><td>Always <code>NULL</code>; it is filled in at load time by the main app.</td></tr>
+<tr><td><code>EVENT_TIME</code></td><td>A real <code>TIMESTAMP</code>, normalised to <code>YYYY-MM-DD HH:MM:SS</code>.</td></tr>
+<tr><td><code>META_1</code>, <code>META_2</code>, <code>META_3</code></td><td>The first three meta fields of the source type, in field order; <code>NULL</code> where the regex did not match. A fourth meta field is silently unused, and helper fields are never written at all.</td></tr>
+<tr><td><code>SAMPLE_SET</code></td><td>Always the literal string <code>ORIGINAL</code>.</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> The <code>EVENT_ID</code> hashing is unconditional and cannot be switched off. Because the same raw id always produces the same digest, journeys still correlate correctly across events — but the original identifier (which is often a login or customer number) cannot be recovered from the database afterwards. Treat this as the pseudonymisation it is: if you need the raw id for business reporting, capture it additionally as a meta field, with all the data-protection consequences that carries.</div>
+
+<p>After the events are written, the extractor creates the companion rows that the main app needs, always create-if-missing and never update-if-present:</p>
+
+<dl>
+<dt><code>PROJECTS</code></dt><dd>If the project id has no row, one is created with <code>TITLE</code> set to the project id and an empty description. The run log line is <code>created project '&lt;id&gt;'</code>.</dd>
+<dt><code>METAS</code></dt><dd>Only when at least one meta field carries a business title. A row with <code>META_1_TITLE</code>…<code>META_3_TITLE</code> is created if the project has none. Existing rows are never rewritten, so editing meta titles later does not change a <code>METAS</code> row that already exists.</dd>
+<dt><code>STEPS</code></dt><dd>Every step name seen in the run that has no row for this project gets one: empty description, a background colour chosen deterministically from a fixed ten-colour palette (the same step name always gets the same colour), white foreground, <code>SCORE</code> 0 so auto-created steps do not skew scoring, a deterministically chosen shape, <code>END_OF_PROCESS</code> false and no parent. The run log line is <code>created &lt;n&gt; new step(s): &lt;names&gt;</code>.</dd>
+</dl>
+
+<h2 id="s19-log">19.8 Where a run is recorded</h2>
+
+<p>Every import writes to three places you can consult afterwards:</p>
+
+<ul>
+<li>The <b>Abstraction layer</b> status card — state pill, target line, KPI tiles and the expandable <b>Run log</b> with lines such as <code>reading &lt;path&gt; → &lt;schema&gt;.JOURNEYS (project &lt;id&gt;)</code>, <code>pushed 500 events, skipped 2 unparseable line(s)</code> and <code>created project 'X'</code>. At most the 50 most recent messages are kept.</li>
+<li>The <b>ingestion pipeline</b> canvas and the KPI tiles, which accumulate every run that has actually started — manual or watchdog.</li>
+<li>The <b>admin log</b> under tag <code>DATA</code>: <code>import started: …</code>, <code>import finished: … — &lt;detail&gt;</code>, and on failure <code>import failed: … — &lt;error&gt;</code> at error level.</li>
+</ul>
+
+<div class="tip"><strong>Tip</strong> On success the destination connection and project are remembered on the source, so the Run dialog reopens on the same target next time. Renaming or otherwise editing the source in the wizard carries that memory forward — it is only lost when the connection assignment itself is revoked.</div>
+
+</section>

@@ -1,0 +1,617 @@
+<section class="chapter" id="ch-troubleshooting" data-title="Troubleshooting and FAQ" data-num="23">
+<h1><span class="chnum">23</span> Troubleshooting and FAQ</h1>
+
+<p class="chintro">This chapter is a problem-and-remedy reference. Each entry names a <b>symptom</b> as you actually see it on screen, explains the <b>cause</b> in terms of how the application works, and gives the <b>fix</b> — as a numbered procedure wherever the fix is something you carry out. It covers sign-in failures, database connection failures, empty process maps, blank AI reports, imports that write nothing or write everything twice, the file watchdog, permission refusals on the integration console, licence expiry and the demo grace period, and an empty project list in the administration interface. Exact on-screen messages are quoted throughout so that you can match what you see against what is written here. Some remedies require an administrator; those carry a role callout. The chapter closes with a short list of frequently asked questions.</p>
+
+<h2 id="ch23-first">23.1 Before you start: where the evidence is</h2>
+
+<p>Three places hold nearly all the diagnostic information this application produces.</p>
+
+<dl>
+  <dt>The message on screen</dt>
+  <dd>User-facing messages are deliberately generic where they touch security (so that an error cannot be used to discover whether an account or a connection exists) and specific everywhere else. Quote the message exactly when you report a problem.</dd>
+  <dt>The administration <b>Logging</b> tab</dt>
+  <dd>All three servers — the main application, the administration interface and the integration console — write into one shared structured log. Each entry carries a timestamp, severity, client IP, user, operation, an optional tag and the message. Filter by <b>operation</b> to isolate a subsystem (<code>login</code>, <code>db-connect</code>, <code>db-test</code>, <code>db-sql</code>, <code>db-timeout</code>, <code>llm-test</code>, <code>materialize</code>, <code>import</code>, <code>connection</code>, <code>backup</code>, <code>tls</code>, <code>ldap</code>), or by <b>tag</b> to follow a whole activity (<code>SQL</code>, <code>DATA</code>, <code>BACKUP/RESTORE</code>).</dd>
+  <dt>The status information in the interface itself</dt>
+  <dd>The connection card's status dots, the transitions pill on the process map, the checkpoint panel on a file source, and the integration console's KPI tiles each report state that no log can give you as quickly.</dd>
+</dl>
+
+<div class="tip"><strong>Tip</strong> The log records only what the configured severity allows. The default <b>Max level logged</b> is <b>ERROR</b>, which records INFO, USAGE, WARN and ERROR but not DEBUG. Raise it to <b>DEBUG</b> while you reproduce a database problem — that level adds the per-statement SQL trace (tag <code>SQL</code>, with the execution time of each statement) — and lower it again afterwards, because DEBUG is voluminous.</div>
+
+<figure data-fig="admin-07-logging"><figcaption>The Logging tab. Filter by severity, client IP, operation or tag, narrow further with a regular expression, then click a row to open the full entry.</figcaption></figure>
+
+<h2 id="ch23-signin">23.2 You cannot sign in</h2>
+
+<figure data-fig="app-login"><figcaption>The sign-in panel. Errors appear in a red box above the fields; the orange notices above it report an idle sign-out or an unlicensed installation.</figcaption></figure>
+
+<h3 id="ch23-signin-wrong">23.2.1 &ldquo;Invalid username or password.&rdquo;</h3>
+
+<p><b>Symptom.</b> The main application or the integration console shows &ldquo;Invalid username or password.&rdquo; in the red error box; the password field is cleared and the username is kept. On the administration interface the equivalent message reads &ldquo;Invalid credentials, or the account is not an administrator.&rdquo;</p>
+
+<p><b>Cause.</b> The credentials are wrong — or the account is unknown, or it is disabled and the password you typed was also wrong. The message is deliberately identical in all of these cases so that it cannot be used to discover which usernames exist. On the administration interface the same message is also shown for a <em>correct</em> password belonging to a non-administrator, for exactly the same reason.</p>
+
+<p><b>Fix.</b></p>
+<ol class="steps">
+  <li>Retype the password. Note that a failed attempt counts towards the lockout threshold — see 23.2.2 before you try repeatedly.</li>
+  <li>If you are signing in to the administration interface, confirm with an administrator that your account carries the administrator role. A perfectly valid application account gets this same message here.</li>
+  <li>Directory (LDAP) accounts must exist in the directory. If the sign-in panel shows a red LED with &ldquo;Directory server unavailable&rdquo;, the directory itself is not answering; local accounts still work.</li>
+</ol>
+
+<h3 id="ch23-signin-locked">23.2.2 &ldquo;This account has been locked after too many failed sign-in attempts.&rdquo;</h3>
+
+<p><b>Symptom.</b> The full message is &ldquo;This account has been locked after too many failed sign-in attempts. Contact an administrator.&rdquo; In the administration interface the account's card carries a red <b>locked</b> pill (tooltip &ldquo;Disabled after too many failed sign-ins — Unlock to restore.&rdquo;) and its action button reads <b>Unlock</b>.</p>
+
+<p><b>Cause.</b> Consecutive wrong-password attempts against a local account reached the threshold set in <b>Users &rarr; Disable an account after N failed sign-in attempts</b>, which is <b>3</b> on a fresh installation (0 turns the feature off). The counter is shared by all three surfaces, so wrong passwords typed at the application, the console and the administration interface all count towards the same total. A successful sign-in resets it.</p>
+
+<p>Note what does <em>not</em> count: wrong two-factor codes, failed passkey ceremonies, directory (LDAP) accounts, and attempts against an already-disabled account. A mistyped authenticator code can therefore never disable an account.</p>
+
+<p><b>Fix.</b> Any one of the following.</p>
+<ol class="steps">
+  <li><b>Wait.</b> A lockout lifts itself after <b>15 minutes</b>. The expiry is applied lazily, at the next sign-in attempt, so simply trying again after the window works. This interval is fixed and has no control in the interface — only the threshold is configurable.</li>
+  <li><b>Have an administrator unlock the account.</b> In the administration interface, <b>Users</b> tab, find the account and press <b>Unlock</b> (or <b>Enable</b>). This also clears the failure counter.</li>
+  <li><b>Break glass.</b> If the only remaining administrator is locked out, restart the servers with the environment variable <code>PMW_RESET_LOCKOUTS=1</code>, which clears every lockout in the installation.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> The built-in <b>Administrator</b> account is counted but never auto-locked. It is the recovery account, and it must not be possible to disable it merely by knowing its name. It is protected instead by the per-IP throttle and by slow password hashing. The hint under the setting says &ldquo;incl. the Administrator&rdquo;; in practice the built-in account is exempt, while every other administrator account is not.</div>
+
+<figure data-fig="admin-04-users"><figcaption>The Users tab. A locked account shows the red locked pill; the Unlock button restores it and clears the counter.</figcaption></figure>
+
+<h3 id="ch23-signin-disabled">23.2.3 &ldquo;This account has been disabled.&rdquo;</h3>
+
+<p><b>Symptom.</b> &ldquo;This account has been disabled. Contact an administrator.&rdquo; This message appears only when the password you typed was <em>correct</em>; with a wrong password you get the generic message instead.</p>
+
+<p><b>Cause.</b> An administrator has cleared the account's access, or the account was never enabled. Only enabled users may sign in.</p>
+
+<div class="role">Requires: <b>Administrator</b></div>
+<p><b>Fix.</b> In the administration interface, <b>Users</b> tab, locate the account and press <b>Enable</b>. Disabling and re-enabling an account also clears its lockout counter.</p>
+
+<h3 id="ch23-signin-throttle">23.2.4 &ldquo;Too many attempts. Try again shortly.&rdquo;</h3>
+
+<p><b>Symptom.</b> HTTP 429 with &ldquo;Too many attempts. Try again shortly.&rdquo; on the application and the integration console, or &ldquo;Too many failed attempts. Try again in about N seconds.&rdquo; on the administration interface.</p>
+
+<p><b>Cause.</b> The per-IP throttle, which is independent of the account lockout: after <b>3 failures within 15 minutes from one source IP</b>, that address waits a <b>5-minute cooldown</b> measured from its last failure. It applies to password sign-ins, two-factor verification, forced enrolment, the two-factor turn-off confirmation and (in the administration interface) passkey completion. The throttle is held in memory per process and uses the socket peer address; a forwarded-for header is deliberately ignored.</p>
+
+<p><b>Fix.</b> Wait out the cooldown, then sign in correctly — only a fully successful sign-in clears the counter. Restarting the servers also clears it, since it is not persisted.</p>
+
+<h3 id="ch23-signin-forced2fa">23.2.5 The sign-in stops and demands a QR code</h3>
+
+<p><b>Symptom.</b> After the password is accepted the panel does not sign you in. Instead the caption changes to &ldquo;Set up two-factor to continue&rdquo; and a QR code appears with the text &ldquo;Two-factor is required for your account. Scan this with an authenticator app (Google Authenticator, 1Password…), then enter the 6-digit code.&rdquo; There is no way past it except <b>Back</b>, which abandons the sign-in.</p>
+
+<p><b>Cause.</b> This is not a fault. Allowing two-factor for an account makes it <b>mandatory</b>. When an administrator ticks the <b>2FA</b> box for a user who has not yet enrolled, the user's next sign-in on any surface halts after the password and forces enrolment. No session is issued until a code confirms the authenticator, which is also why there are never half-enrolled accounts.</p>
+
+<p><b>Fix.</b></p>
+<ol class="steps">
+  <li>Scan the QR code with an authenticator application, or use the &ldquo;Can't scan? Key&rdquo; secret shown beneath it.</li>
+  <li>Type the current 6-digit code into <b>6-digit code</b> and press <b>Confirm &amp; sign in</b>. A wrong code gives &ldquo;That code didn't match. Try again.&rdquo; and keeps the same QR — you do not need to rescan.</li>
+  <li>The next screen shows ten one-time <b>recovery codes</b>. Save them now. They are displayed once, they cannot be recovered later by anybody including an administrator, and each signs you in once if you lose your authenticator. Press <b>Copy codes</b>, then <b>Continue</b>.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> The enrolment QR is valid for <b>10 minutes</b>. If you leave it open longer you get &ldquo;Setup expired. Start again.&rdquo; and must restart from the username and password.</div>
+
+<h3 id="ch23-signin-code">23.2.6 The authentication code is rejected</h3>
+
+<p><b>Symptom.</b> &ldquo;Incorrect code. Try again.&rdquo; at the code step, or &ldquo;Your sign-in session expired. Start again.&rdquo; (&ldquo;…Please start again.&rdquo; in the administration interface).</p>
+
+<p><b>Cause.</b> Either the code is wrong, expired or a recovery code that has already been used; or more than <b>5 minutes</b> passed between the password step and the code step, which is the lifetime of the short-lived &ldquo;password ok&rdquo; state. Codes are 6 digits on 30-second steps with one step of clock-skew tolerance either way, so a device whose clock has drifted by more than about a minute will fail every time.</p>
+
+<p><b>Fix.</b></p>
+<ol class="steps">
+  <li>Wait for a fresh code and retype it. Spaces are ignored.</li>
+  <li>Check the clock on the device running the authenticator; enable automatic time synchronisation.</li>
+  <li>If you no longer have the authenticator, type one of your <b>recovery codes</b> in the same field. Dashes, spaces and case are ignored. Each code works once.</li>
+  <li>If both are lost, an administrator must untick <b>2FA</b> for your account in the <b>Users</b> tab. Your password alone then signs you in and you can enrol again. There is no administrator function that resets two-factor while preserving the enrolment, because the secret cannot be read back.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> Unticking <b>2FA</b> relaxes the requirement but does <em>not</em> delete the stored secret. Re-ticking it re-arms the same authenticator with no new enrolment. Only turning two-factor off from the <b>🔒 Two-factor</b> sheet (which requires a current code) deletes the secret and the recovery codes.</div>
+
+<h3 id="ch23-signin-surface">23.2.7 Right credentials, wrong surface</h3>
+
+<p><b>Symptom.</b> Your username and password work in one place and are refused in another.</p>
+
+<p><b>Cause.</b> The three surfaces admit different people, and their session cookies are audience-bound: signing in to one does not sign you in to the others.</p>
+
+<table>
+  <thead><tr><th>Surface</th><th>Default ports (HTTP / HTTPS)</th><th>Who may sign in</th><th>Refusal you see</th></tr></thead>
+  <tbody>
+    <tr><td>Main application</td><td>8080 / 8443</td><td>Any enabled user, in any role</td><td>&ldquo;Invalid username or password.&rdquo;</td></tr>
+    <tr><td>Integration console</td><td>8100 / 8463</td><td>Developers and administrators only — power users are refused</td><td>403 &ldquo;You need the Developer role to use the integration console. Ask an administrator to grant it.&rdquo;</td></tr>
+    <tr><td>Administration interface</td><td>8090 / 8453</td><td>Administrators only; directory accounts only when explicitly permitted and locally promoted</td><td>&ldquo;Invalid credentials, or the account is not an administrator.&rdquo;</td></tr>
+  </tbody>
+</table>
+
+<p><b>Fix.</b> Ask an administrator for the grant the surface requires: the <b>Developer</b> role (Users tab, <b>Make developer</b>) for the integration console, or the administrator role for the administration interface. Note that the console's role check runs <em>before</em> any second factor, so a refused power user never even reaches the code step.</p>
+
+<div class="note"><strong>Note</strong> The integration console always requires a sign-in, even when the main application is running in open mode with &ldquo;Require sign-in for the main application&rdquo; switched off. The administration interface does too.</div>
+
+<h3 id="ch23-signin-console-off">23.2.8 &ldquo;Console unavailable&rdquo;</h3>
+
+<p><b>Symptom.</b> The integration console answers a browser navigation with a 503 page titled <b>Console unavailable</b>: &ldquo;The integration console has been turned off by the administrator.&rdquo; Programmatic calls get the same text as JSON.</p>
+
+<p><b>Cause.</b> The checkbox <b>Enable the integration console</b> in the administration interface's <b>Integration</b> tab is cleared.</p>
+
+<div class="role">Requires: <b>Administrator</b></div>
+<p><b>Fix.</b> Tick <b>Enable the integration console</b> (toast &ldquo;Integration console enabled — restart to apply&rdquo;), then press <b>↻ Restart app server</b> in the <b>App Control</b> tab. The change is stored immediately but only takes effect on restart.</p>
+
+<h3 id="ch23-signin-passkey">23.2.9 The passkey button is missing, or a passkey sign-in fails</h3>
+
+<p><b>Symptom.</b> The <b>🔑 Sign with Passkey</b> button does not appear; or it appears and produces &ldquo;Passkey sign-in failed.&rdquo; (&ldquo;…Check the passkey is registered and still enabled.&rdquo; in the administration interface); or enrolment reports &ldquo;Passkeys need a hostname, not an IP address.&rdquo;</p>
+
+<p><b>Cause.</b> One of four:</p>
+<ul>
+  <li>The browser does not support WebAuthn (&ldquo;This browser does not support passkeys.&rdquo;).</li>
+  <li>The page was reached by a bare IP address or a single-label host. WebAuthn binds a passkey to a domain name and rejects both, so the controls hide themselves. Off localhost, a secure context (HTTPS) is required as well.</li>
+  <li>An administrator has not allowed passkeys for the account, or has revoked the permission — which blocks passkey sign-in immediately, existing passkeys included.</li>
+  <li>You did not type a username. The flow is username-first: type the name, then press the button.</li>
+</ul>
+
+<p><b>Fix.</b></p>
+<ol class="steps">
+  <li>Reach the server by a resolvable name over HTTPS — its <code>.local</code> Bonjour name or a DNS entry — and issue the TLS certificate for that name. Password sign-in works over an IP either way.</li>
+  <li>Ask an administrator to tick <b>Passkey</b> for your account in the <b>Users</b> tab, then enrol from <b>🔑 Passkeys</b> next to <b>Sign out</b> while signed in with your password.</li>
+  <li>For a deployment that splits the application and the administration interface across sub-domains, set <code>PMW_PASSKEY_RP_ID</code> to the shared parent domain and list the expected origins in <code>PMW_PASSKEY_ORIGINS</code>.</li>
+  <li>If enrolment reports &ldquo;A passkey for this account already exists on this device.&rdquo;, remove it from the device's own passkey settings (on iOS: Settings &rarr; Passwords) and try again.</li>
+</ol>
+
+<h3 id="ch23-signin-dropped">23.2.10 You are signed out unexpectedly</h3>
+
+<p><b>Symptom.</b> The application returns to the sign-in panel, sometimes with the orange notice &ldquo;You were signed out due to inactivity.&rdquo;; or requests start failing with 401 &ldquo;Authentication required.&rdquo;</p>
+
+<p><b>Cause.</b> One of the session rules below.</p>
+
+<table>
+  <thead><tr><th>Rule</th><th>Value</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td>Idle auto sign-out (main application)</td><td>Set per installation in <b>Users</b> (0&ndash;1440 min; 0 disables)</td><td>Signs you out after N idle minutes and shows the inactivity notice</td></tr>
+    <tr><td>Idle auto sign-out (administration)</td><td>A separate setting in <b>App Control &rarr; Admin session</b></td><td>Redirects to the sign-in page with the same notice</td></tr>
+    <tr><td>Session lifetime with no idle timeout</td><td>12 h application and console, 8 h administration</td><td>The cookie simply expires</td></tr>
+    <tr><td>Absolute session lifetime</td><td>7 days from the original sign-in</td><td>Ends even a continuously active session</td></tr>
+    <tr><td>Sign-out anywhere</td><td>Immediate</td><td>Invalidates every one of your sessions on all three surfaces</td></tr>
+    <tr><td>Password change or administrator reset</td><td>Immediate</td><td>Invalidates all your sessions (an administrator changing their own password keeps that one session)</td></tr>
+    <tr><td>Account disabled, deleted, or role revoked</td><td>Immediate</td><td>The session dies at the next request</td></tr>
+  </tbody>
+</table>
+
+<p><b>Fix.</b> Sign in again. If it happens constantly, ask an administrator to review the idle timeout. If you lose the integration console specifically and see the <b>Access denied</b> screen (&ldquo;The integration console is available to developers and administrators only…&rdquo;), your Developer role was revoked mid-session.</p>
+
+<div class="note"><strong>Note</strong> The integration console has no client-side idle watcher. Its session expires server-side after the same idle window as the application, but nothing bounces you to the sign-in screen — you discover it when your next action fails.</div>
+
+<h2 id="ch23-db">23.3 Database connection failures</h2>
+
+<p>When you tap a connection card, the first status dot turns orange and an error is reported. The messages a normal user sees are deliberately generic: no Exasol codes, internal hostnames or SQL-state fragments reach the browser. The full driver detail is written to the log under operation <code>db-connect</code>. Power users and administrators running <b>Test</b> see the same categories with the raw driver detail appended.</p>
+
+<figure data-fig="app-08-connections"><figcaption>The Connections section. The first dot is the database state (green connected, orange connecting or failed); the second, when present, is the LLM server.</figcaption></figure>
+
+<h3 id="ch23-db-table">23.3.1 The message catalogue</h3>
+
+<table>
+  <thead><tr><th>Message</th><th>Cause</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>&ldquo;Authentication failed — check your username and password.&rdquo;</td>
+      <td>The database rejected the credentials stored on the connection.</td>
+      <td>The connection's database user and password are managed by an administrator (or by the power user who created it). Ask them to correct and re-test it. You never type a database password into the application.</td>
+    </tr>
+    <tr>
+      <td>&ldquo;Connection timed out. Verify the host address, port, and network connectivity.&rdquo;</td>
+      <td>The socket did not open within the fixed <b>15-second</b> connect timeout — usually a firewall silently dropping packets, or an unreachable network.</td>
+      <td>Check routing and firewall rules between the server and the database host and port (8563 by default).</td>
+    </tr>
+    <tr>
+      <td>&ldquo;Connection refused. No server is accepting connections at this host and port.&rdquo;</td>
+      <td>The host answered but nothing is listening on that port.</td>
+      <td>Verify the port number and that the database is running.</td>
+    </tr>
+    <tr>
+      <td>&ldquo;Host not found. Check the hostname spelling and your DNS / network connectivity.&rdquo;</td>
+      <td>Name resolution failed.</td>
+      <td>Correct the hostname, or use an address that resolves from the application server.</td>
+    </tr>
+    <tr>
+      <td>&ldquo;TLS certificate error. Try 'Skip verification' or configure a fingerprint in the server's security settings.&rdquo;</td>
+      <td>The connection uses TLS in <b>Verify (system trust store)</b> mode and the server's certificate is not trusted, has expired, or does not match the hostname.</td>
+      <td>See 23.3.2.</td>
+    </tr>
+    <tr>
+      <td>&ldquo;This connection is set to pin a certificate fingerprint, but the fingerprint is missing or not hexadecimal. Enter the server's SHA-256 fingerprint, or change the certificate mode.&rdquo;</td>
+      <td>Certificate mode is <b>Pin fingerprint</b> but the fingerprint field is empty or contains something that is not hexadecimal.</td>
+      <td>See 23.3.3.</td>
+    </tr>
+    <tr>
+      <td>&ldquo;The database rejected the request.&rdquo;</td>
+      <td>An Exasol query error — most often a missing schema, a missing table, or no SELECT privilege.</td>
+      <td>Check the schema name on the connection and the account's privileges (see 23.3.4). The detail is in the log.</td>
+    </tr>
+    <tr>
+      <td>&ldquo;Connection failed. Check the host, port, and credentials.&rdquo;</td>
+      <td>Fallback for anything not classified above.</td>
+      <td>Read the log entry under operation <code>db-connect</code>.</td>
+    </tr>
+    <tr>
+      <td>&ldquo;This connection changed during sign-in. Please reconnect.&rdquo;</td>
+      <td>An administrator edited or deleted the connection while your (slow) connect was still in flight, so the freshly opened session was dropped.</td>
+      <td>Refresh the Connections list with <b>↻</b> and connect again.</td>
+    </tr>
+    <tr>
+      <td>&ldquo;This connection is not available to you.&rdquo; (403) / &ldquo;Connection not found.&rdquo; (404)</td>
+      <td>The connection is no longer assigned to you, or no longer exists.</td>
+      <td>Refresh the list; ask an administrator to reassign it.</td>
+    </tr>
+    <tr>
+      <td>&ldquo;Not connected to a database.&rdquo; (409)</td>
+      <td>A data request arrived with no live session — typically after a forced disconnect.</td>
+      <td>Tap the connection card again.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="ch23-db-tls">23.3.2 TLS certificate errors</h3>
+
+<p><b>Cause.</b> Certificate mode is <b>Verify (system trust store)</b>, the default, and the database's certificate cannot be validated against the trust store — a self-signed certificate, a private CA the server does not know, an expired certificate, or a hostname mismatch.</p>
+
+<div class="role">Requires: <b>Power user</b> (own connections) or <b>Administrator</b></div>
+<p><b>Fix.</b> Open the connection editor and choose the mode that matches your situation.</p>
+<ol class="steps">
+  <li><b>Verify (system trust store)</b> — correct for a certificate issued by a CA the server trusts. If that is what you intend, install the CA certificate in the server's trust store rather than weakening the connection.</li>
+  <li><b>Pin fingerprint</b> — correct for a self-signed or private-CA certificate whose identity you can confirm out of band. Paste the server's SHA-256 fingerprint into <b>Fingerprint (SHA-256)</b>. Colons are stripped; the value must be pure hexadecimal, 16 to 128 characters.</li>
+  <li><b>Accept any (insecure)</b> — disables certificate <em>and</em> hostname verification. Acceptable only in a laboratory.</li>
+  <li>Press <b>Test connection</b>, then <b>Save</b>.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> Mode parsing fails closed: any stored value that is not recognised — a typo, or legacy data from a restored backup — is treated as <b>Verify</b>, never as no verification. A connection that used to work after a restore and now reports a certificate error has most likely landed in this state.</div>
+
+<div class="note"><strong>Note</strong> The field <b>Minimum RSA key size</b> (default 2048) is stored and carried through every operation for compatibility with the macOS application's connection records, but the web backend does not currently enforce it. Do not rely on it to solve a handshake problem.</div>
+
+<h3 id="ch23-db-fingerprint">23.3.3 Fingerprint missing or mismatched</h3>
+
+<p><b>Symptom.</b> The connection refuses to open with the &ldquo;set to pin a certificate fingerprint&rdquo; message, or — where the fingerprint is well-formed but wrong — with the generic TLS certificate error.</p>
+
+<p><b>Cause.</b> In <b>Pin fingerprint</b> mode the driver pins the server's certificate to the value you supplied. A blank or non-hexadecimal value is refused outright rather than silently falling back to no verification, which is why the message is so specific. A well-formed but incorrect fingerprint means the certificate on the server is not the one you pinned — either it was legitimately replaced, or you are not talking to the server you think you are.</p>
+
+<p><b>Fix.</b> Obtain the current SHA-256 fingerprint from the database administrator, paste it into the field and test. If the certificate was rotated, update the pin. If it was not rotated, do not update the pin — investigate.</p>
+
+<h3 id="ch23-db-perms">23.3.4 Connected, but features fail</h3>
+
+<p><b>Symptom.</b> The connection opens, but a specific feature reports an error while the rest of the application works.</p>
+
+<p><b>Cause.</b> The database account lacks a privilege that only that feature needs.</p>
+
+<table>
+  <thead><tr><th>Feature</th><th>Required database privilege</th></tr></thead>
+  <tbody>
+    <tr><td>Every read feature (maps, charts, KPIs)</td><td>SELECT on PROJECTS, JOURNEYS, STEPS, METAS</td></tr>
+    <tr><td>Notes (first use creates the table)</td><td>CREATE TABLE, then INSERT and DELETE on NOTES</td></tr>
+    <tr><td>Journey sampling (adds the SAMPLE_SET column)</td><td>ALTER TABLE and INSERT on JOURNEYS</td></tr>
+    <tr><td>The in-application Step Editor</td><td>UPDATE on STEPS</td></tr>
+    <tr><td>Create schema &amp; tables, demo content</td><td>CREATE SCHEMA, CREATE TABLE and (for demo data) INSERT</td></tr>
+  </tbody>
+</table>
+
+<p><b>Fix.</b> Ask the database administrator to grant the missing right. The application cannot grant database privileges to itself.</p>
+
+<h3 id="ch23-db-testblank">23.3.5 &ldquo;Test connection&rdquo; fails although the saved connection works</h3>
+
+<p><b>Symptom.</b> A connection that users connect to happily reports an authentication failure the moment you press <b>Test connection</b>, <b>Create schema &amp; tables</b> or <b>Generate</b> in the editor.</p>
+
+<p><b>Cause.</b> These three operations use the password <em>as typed in the form</em>, never the stored one. On a saved connection the password field is blank (it shows &ldquo;•••••• (unchanged)&rdquo; or the hint &ldquo;(set — leave blank to keep)&rdquo;), so the test runs with an empty password.</p>
+
+<p><b>Fix.</b> Retype the password into the field before testing or provisioning. Leave it blank again — or simply press <b>Cancel</b> — if you do not want to change the stored secret; a blank field on save keeps the stored value unchanged.</p>
+
+<h3 id="ch23-db-noconn">23.3.6 The Connections list is empty</h3>
+
+<p><b>Symptom.</b> The sidebar <b>Connections</b> section lists nothing.</p>
+
+<p><b>Cause.</b> No connection has been assigned to your account. Each user sees only their assigned connections.</p>
+
+<p><b>Fix.</b> Press <b>↻</b> in the Connections header first — the list does not refresh itself after an administrator grants access. If it is still empty, ask an administrator to assign one in <b>Database Connections</b>. If you hold the power role, create your own with the <b>＋</b> button; every connection you create is assigned to you automatically.</p>
+
+<div class="note"><strong>Note</strong> Saving any change to a connection, changing its assignments, or deleting it immediately disconnects every user currently using it. That is intentional — a revoked assignment must take effect at once — but it means a connection can drop out from under you while you work.</div>
+
+<h2 id="ch23-map">23.4 The process map is empty or wrong</h2>
+
+<h3 id="ch23-map-empty">23.4.1 No nodes appear</h3>
+
+<p><b>Symptom.</b> A project is selected but the map area stays empty, or <b>Filtered Journeys</b> reads 0 while <b>Total Journeys</b> is greater than 0.</p>
+
+<p><b>Cause and fix</b>, in the order worth checking:</p>
+<ol class="steps">
+  <li><b>The date window excludes your data.</b> When a project is first selected, A-Chart loads the last <b>30 days</b> before the latest event (<b>Configuration &rarr; Default date window</b>; <b>0</b> loads the full range). Widen the slider, or set the default to 0 and reload the project — the setting takes effect on the next project load and does not move the slider on the current map.</li>
+  <li><b>The filters exclude everything.</b> Every filter works at journey level: a journey qualifies in full or not at all. An <b>Exclude Steps</b> entry, a narrow <b>Num Steps</b>, <b>Journey Time</b> or <b>Journey Score</b> range, or a meta value with a typo will empty the map. Press <b>Reset</b>, then <b>Apply</b>.</li>
+  <li><b>You did not press Apply.</b> Filters are never applied automatically. In A/B Comparison, <b>Apply</b> reloads only the active side — the one marked with the pencil icon and the &ldquo;editing&rdquo; label.</li>
+  <li><b>You are looking at B-Chart.</b> B-Chart starts empty by design. Apply filters, or press <b>Load</b> on its empty state.</li>
+  <li><b>The selected sample set is empty.</b> If the A or B slot in the <b>Sampling</b> section points at a sample that was deleted, or at a stored simulation result that was never produced, there is nothing to draw. Switch the slot back to <b>Original data</b>.</li>
+</ol>
+
+<h3 id="ch23-map-pill">23.4.2 The map shows &ldquo;⚠ Live (not built)&rdquo;</h3>
+
+<p><b>Symptom.</b> The pill in the chart header reads <b>⚠ Live (not built)</b> instead of <b>⚡ Pre-materialized</b>, and interactive filtering is slower than expected.</p>
+
+<p><b>Cause.</b> The connection has <b>Use pre-materialized transitions</b> switched on, but the <code>TRANSITIONS_RAW</code> table is missing, has never been built, or could not be read. This is a fail-safe, not a fault: the map falls back to the live windowed query so it never breaks. The exact cause is logged under operation <code>materialize</code>.</p>
+
+<div class="role">Requires: <b>Administrator</b></div>
+<p><b>Fix.</b></p>
+<ol class="steps">
+  <li>Open <b>Database Connections</b>, edit the connection, and press <b>Rebuild now</b> in the <b>Use pre-materialized transitions</b> banner. The status line then reads &ldquo;Last built: &lt;date&gt; · N pairs.&rdquo;</li>
+  <li>If the rebuild fails, read the red status text and the <code>materialize</code> entries in the log.</li>
+  <li>Schedule a rebuild as the last step of every load of JOURNEYS. The table is a snapshot and goes stale the moment the event log changes; generating demo data and creating or deleting samples do not rebuild it either. Use the per-connection bearer token and <code>POST /api/connections/&lt;id&gt;/rebuild-transitions</code> on the administration server for that.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> Two rebuilds of one connection never overlap — the second gets 409 &ldquo;A rebuild is already running for this connection.&rdquo; Token-triggered rebuilds also carry a 60-second per-connection cooldown (429 &ldquo;Rebuild throttled — try again in Ns.&rdquo;); an administrator pressing <b>Rebuild now</b> is never throttled.</div>
+
+<h3 id="ch23-map-dash">23.4.3 A KPI tile shows &ldquo;—&rdquo;, or Statistics reports a timeout</h3>
+
+<p><b>Symptom.</b> The <b>Process Goodness</b> tile shows a dash, or the Statistics view reports &ldquo;Statistics query timed out (30 s). Narrow your date range or filters and try again.&rdquo;</p>
+
+<p><b>Cause.</b> Heavy statistics queries (variants and routes, and the goodness metric) carry a <b>30-second</b> timeout, configurable with <code>PMW_QUERY_TIMEOUT</code>. The goodness query groups journeys by path pattern, which is expensive on a large, heavily filtered dataset. Timeouts are logged under operation <code>db-timeout</code>. A dash can also simply mean that <em>no step has a SCORE</em> — with no scores configured in STEPS the tile is hidden altogether rather than dashed.</p>
+
+<p><b>Fix.</b> Narrow the date range or add filters and reload. For a lasting improvement, index <code>JOURNEYS (PROJECT_ID, EVENT_TIME)</code> and <code>JOURNEYS (PROJECT_ID, EVENT_ID)</code>, and consider enabling pre-materialized transitions on the connection.</p>
+
+<h2 id="ch23-ai">23.5 AI supported Documentation stays blank</h2>
+
+<p><b>Symptom.</b> The AI supported Documentation view produces no report, or produces only the locally computed sections.</p>
+
+<p><b>Cause.</b> The view sends the current A-Chart transition table and your prompt template to an OpenAI-compatible endpoint configured <em>on the active connection</em>. Without a reachable model server there is nothing to render. The journey-paths table, happy-path conformance, the conformance gap analysis and your notes are computed locally and never sent to the model — which is why those sections can appear while the model's answer does not.</p>
+
+<p><b>Fix.</b></p>
+<ol class="steps">
+  <li>Look at the connection card. A second status dot appears only when an LLM server is attached, and it must be <b>blue</b>. Orange means the model server did not answer; no second dot at all means no LLM is configured on this connection.</li>
+  <li>Ask an administrator (or the power user who owns the connection) to fill in <b>Server URL</b>, <b>Model</b> and, if required, <b>API key</b> on the connection's <b>LLM</b> tab, and to press <b>Test connection</b>. A successful probe reports &ldquo;LLM: reachable — N models&rdquo;; a failure reports &ldquo;LLM server not reachable.&rdquo;</li>
+  <li>The probe is a <code>GET &lt;serverURL&gt;/models</code> with a 5-second timeout. A server that is merely slow to start will read as unreachable; retry once it is up.</li>
+  <li>If the URL looks correct and the probe still fails, check the log under operation <code>llm-test</code>. The outbound SSRF guard refuses some URLs outright and records why — for example &ldquo;Only http:// and https:// URLs are allowed.&rdquo; or a refusal because the host resolves to a link-local or cloud-metadata address. Such a refusal is never shown to end users; the model simply reads as unreachable. Loopback and private addresses are allowed by default so that local model servers work, unless the deployment sets <code>PMW_BLOCK_PRIVATE_LLM_HOSTS=1</code>.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> AI models can produce results that are incorrect, incomplete or misleading. Verify every finding independently before acting on it.</div>
+
+<h2 id="ch23-import">23.6 Import problems (integration console)</h2>
+
+<figure data-fig="integ-02-sources"><figcaption>A file source with its checkpoint panel: records imported, how far into the file the reader has got, and when it last ran.</figcaption></figure>
+
+<h3 id="ch23-import-zero">23.6.1 The import wrote zero rows</h3>
+
+<p><b>Symptom.</b> A run finishes without error but nothing new appears in the project.</p>
+
+<p><b>Cause.</b> There are two entirely different reasons, and the run result distinguishes them. This is why the result reports <code>linesRead</code> separately from <code>records</code>.</p>
+
+<table>
+  <thead><tr><th>What the run reports</th><th>What happened</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>&ldquo;Nothing new to import — the file has not grown since the last import.&rdquo;</td>
+      <td>A delta run found no bytes appended past the checkpoint. Normal, not an error.</td>
+      <td>Nothing to do. Append to the file, or switch delta upload off to read from the top again.</td>
+    </tr>
+    <tr>
+      <td>&ldquo;Nothing to import — the file is empty.&rdquo;</td>
+      <td>The file has no content at all.</td>
+      <td>Check the path. Remember relative paths resolve inside the server's integration files directory.</td>
+    </tr>
+    <tr>
+      <td>Lines were read but <b>0 events written</b> and a high <b>Events skipped</b> count</td>
+      <td>A real misconfiguration: the source type's regular expressions do not match this log. A line becomes an event only if the case id, the step <em>and</em> the timestamp are all captured and the timestamp normalises.</td>
+      <td>See below.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><b>Fix for the third case.</b></p>
+<ol class="steps">
+  <li>Open the linked source type and paste a genuine line from the log as the sample. Each field row shows live what it captured; a wrong pattern is immediately visible.</li>
+  <li>Check that a field with the role <b>EVENT_TIME</b> exists — without one the run is refused with &ldquo;The source type has no timestamp field.&rdquo;</li>
+  <li>Check the <b>Example JOURNEYS record</b> panel. It shows exactly the row the specification would produce, marks the id as &ldquo;stored as MD5&rdquo; and marks a compound-derived step with &ldquo;compound&rdquo;.</li>
+  <li>Give each field's regular expression exactly one capturing group — that group is the value. Without a group the whole match is used.</li>
+  <li>Remember that every line is truncated to its first <b>2000 characters</b> before matching. A pattern aimed at content beyond that will never match.</li>
+  <li>Verify the timestamp interpretation. Numeric dates default to <b>day-first</b> (European); a 12-hour AM/PM clock flips the interpretation to month-first. Yearless syslog timestamps are given the current UTC year, which mis-years an old log imported around the turn of the year.</li>
+</ol>
+
+<div class="tip"><strong>Tip</strong> A non-zero <b>Events skipped</b> KPI is highlighted in orange for exactly this reason. It exists so that a silently misconfigured source type shows up as &ldquo;lots skipped&rdquo; rather than merely as a small event count.</div>
+
+<h3 id="ch23-import-partial">23.6.2 Only part of a large file was imported</h3>
+
+<p><b>Symptom.</b> A first import of a large existing file stops well short of the end; running it again imports more.</p>
+
+<p><b>Cause.</b> One read — a manual run or a watchdog poll — consumes at most <b>8 MB</b> of new bytes. A larger backlog is drained across successive reads, cap by cap. A single &ldquo;line&rdquo; longer than the whole 8 MB cap is treated as unparseable content and skipped past rather than re-read for ever.</p>
+
+<p><b>Fix.</b> Press <b>▷</b> again (or let the watchdog poll again) until the checkpoint reaches the end of the file. The checkpoint panel shows how far into the file the reader has got.</p>
+
+<h3 id="ch23-import-dup">23.6.3 Duplicate events after re-importing</h3>
+
+<p><b>Symptom.</b> After importing the same file twice the project holds every event twice; journey counts and transition counts are inflated.</p>
+
+<p><b>Cause.</b> <b>Events are never de-duplicated.</b> The importer appends one JOURNEYS row per parsed event; it does not check whether an identical row already exists. Three routes lead here:</p>
+<ul>
+  <li>Switching <b>delta upload</b> off, which re-reads the file from the top.</li>
+  <li>Pressing <b>↺ Reset checkpoint</b>, which forgets the read position but deletes nothing from the database.</li>
+  <li>Retrying after a run that failed part-way. On failure the currently open transaction bracket is rolled back, but brackets already committed stay committed — while the checkpoint does <em>not</em> advance for a failed run. The retry therefore re-reads lines whose rows are already in the database.</li>
+</ul>
+
+<p><b>Fix.</b></p>
+<ol class="steps">
+  <li>To reload a project genuinely: delete the project first, in the connection editor's <b>Projects</b> tab, then import again. Deletion clears the project's rows from PROJECTS, JOURNEYS, STEPS, METAS, NOTES and TRANSITIONS_RAW and cannot be undone — notes attached to the project go with it.</li>
+  <li>To make a failed run leave nothing behind, set the source's <b>Transaction bracket</b> to <b>0</b>, which commits the whole import as a single transaction: all of it lands, or none of it. The default is <b>5000</b> rows; any other value is clamped to the range 1000 to 1,000,000, and a non-numeric value falls back to 5000.</li>
+  <li>Leave delta upload on for routine top-ups. Running the same source twice then adds only what was appended since the last run.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> There is one checkpoint per source, shared by manual runs and the watchdog. Resetting it also makes the watchdog re-read the file from the start. Changing a source's <b>file path</b> deletes the checkpoint automatically, so the next import — manual or watchdog — reads the new file from the beginning.</div>
+
+<div class="note"><strong>Note</strong> Changed compound-step rules apply only to <em>future</em> imports. Rows already written keep the step names they were given. To re-apply changed rules to existing data, delete the project and import again.</div>
+
+<h3 id="ch23-import-watchdog">23.6.4 The watchdog is not importing</h3>
+
+<p><b>Symptom.</b> A file source is marked with <b>👁</b> but its checkpoint never advances, or the console reports no watchdog imports.</p>
+
+<p><b>Cause and fix.</b> Work down this list; the failure reason is recorded on the source's checkpoint as <b>lastError</b> and also written to the log (tag <code>DATA</code>, operation <code>import</code>) as &ldquo;watchdog import failed: '&lt;source&gt;' — &lt;message&gt;&rdquo;.</p>
+
+<table>
+  <thead><tr><th>Recorded message</th><th>Cause</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr><td>&ldquo;Watchdog is missing a file path, project id or connection.&rdquo;</td><td>The watchdog block is incomplete.</td><td>Open the source wizard and fill in all three.</td></tr>
+    <tr><td>&ldquo;The source has no source type linked.&rdquo;</td><td>No parsing recipe is attached.</td><td>Link a source type.</td></tr>
+    <tr><td>&ldquo;The destination connection is not assigned to you.&rdquo;</td><td>The assignment is re-checked on <em>every</em> poll. Revoking it stops the watchdog at once.</td><td>Ask an administrator to reassign the connection to the source's owner.</td></tr>
+    <tr><td>&ldquo;The watchdog's destination connection no longer exists.&rdquo;</td><td>The connection was deleted.</td><td>Point the watchdog at an existing connection.</td></tr>
+    <tr><td>&ldquo;The destination connection has no target schema.&rdquo;</td><td>The connection's schema field is blank.</td><td>Set the schema on the connection.</td></tr>
+    <tr><td>&ldquo;File not found.&rdquo; / &ldquo;Not a regular file.&rdquo; / &ldquo;That path is outside the allowed sources directory.&rdquo;</td><td>The sandboxed path resolver rejected the path. By default only files under the server's integration files directory may be read; traversal and symlink escapes are refused.</td><td>Move the file into the sandbox directory, or use a path inside it. An operator may opt out with <code>PMW_INTEGRATION_ALLOW_ANY_PATH=1</code> in trusted deployments.</td></tr>
+    <tr><td>&ldquo;Could not connect: …&rdquo;</td><td>The destination database is unreachable with its stored credentials.</td><td>Test the connection in its editor.</td></tr>
+    <tr><td>&ldquo;Import failed: An extraction is already running for this user.&rdquo;</td><td>Only one extraction runs per user at a time; a manual run and a watchdog poll collided.</td><td>Nothing — the watchdog retries on its next poll.</td></tr>
+  </tbody>
+</table>
+
+<p>If no error at all is recorded, check the two switches that silence the watchdog wholesale:</p>
+<ol class="steps">
+  <li>The per-source switch in the wizard, under the file path, must be on.</li>
+  <li>The deployment-wide switch <code>PMW_INTEGRATION_WATCHDOG</code> must not be off. When it is off the console's status reports <code>watchdogEnabled: false</code>, and a source marked &ldquo;enabled&rdquo; never polls. The base loop tick is <code>PMW_INTEGRATION_WATCHDOG_TICK</code> (default 10 seconds, minimum 5); a source's own <b>poll interval</b> defaults to 30 seconds with a minimum of 5.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> The watchdog runs headless, with no signed-in session. It acts as the source's owner and opens the destination with the connection's stored credentials — which is precisely why the destination connection and project are stored <em>with the source</em> rather than picked at run time, and why the assignment is re-checked on every poll.</div>
+
+<h3 id="ch23-import-403">23.6.5 Permission denied on the integration endpoints</h3>
+
+<p><b>Symptom.</b> An integration request fails with HTTP 403 and one of two messages: &ldquo;You need the Developer role to use the integration features.&rdquo; or &ldquo;The integration console is turned off.&rdquo;</p>
+
+<p><b>Cause.</b> Every integration endpoint sits behind one router-level gate on the shared compute backend, so it protects the API no matter which surface proxies the call. In order, the gate checks: whether the deployment runs without sign-in at all (in which case the surface is open); whether the administrator has switched the integration surface off; and finally whether the signed-in user exists, is enabled, and holds the <b>Developer</b> or administrator role. Power users are deliberately refused — the check exists precisely so that the main application's proxy cannot be used to bypass the console's own role gate.</p>
+
+<div class="role">Requires: <b>Administrator</b></div>
+<p><b>Fix.</b></p>
+<ol class="steps">
+  <li>For &ldquo;You need the Developer role…&rdquo;: in the administration interface, <b>Users</b> tab, press <b>Make developer</b> on the account (logged as &ldquo;granted the Developer role for '&lt;user&gt;'&rdquo;). The role is re-checked on every request, so a grant takes effect immediately — and a revocation drops the user to the <b>Access denied</b> screen mid-session.</li>
+  <li>For &ldquo;The integration console is turned off.&rdquo;: tick <b>Enable the integration console</b> in the <b>Integration</b> tab and restart from <b>App Control</b>.</li>
+</ol>
+
+<h3 id="ch23-import-other">23.6.6 Other refusals when running a source</h3>
+
+<table>
+  <thead><tr><th>Message</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>&ldquo;Only file sources can be run yet.&rdquo;</td><td>The source kind is not <code>file</code>; file is the only kind implemented.</td></tr>
+    <tr><td>&ldquo;This source has no file path.&rdquo;</td><td>Fill in the path in the source wizard.</td></tr>
+    <tr><td>&ldquo;Link a source type to this source first.&rdquo;</td><td>No source type is linked, or the linked one is not yours.</td></tr>
+    <tr><td>&ldquo;Connection not found.&rdquo; (404)</td><td>The chosen destination is not assigned to you, or does not exist. The same message covers both, so a connection id alone reveals nothing.</td></tr>
+    <tr><td>&ldquo;&lsquo;&lt;name&gt;&rsquo; has no target schema configured.&rdquo;</td><td>Set the schema on that connection.</td></tr>
+    <tr><td>&ldquo;Pick a destination connection first.&rdquo;</td><td>No connection was named and no session connection is active.</td></tr>
+    <tr><td>&ldquo;The watchdog's destination connection is not assigned to you.&rdquo;</td><td>Raised when <em>saving</em> a source with the watchdog enabled — a fail-fast version of the per-poll check.</td></tr>
+    <tr><td>&ldquo;Source settings are too large.&rdquo;</td><td>The serialised source configuration exceeds 8000 characters.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="ch23-licence">23.7 Licence expiry and demo mode</h2>
+
+<h3 id="ch23-licence-stop">23.7.1 The application stops responding after a while</h3>
+
+<p><b>Symptom.</b> The sign-in panel carries the orange banner &ldquo;<b>Demo Mode</b> — remaining time: N min&rdquo;, then &ldquo;<b>No License installed</b>&rdquo;. Eventually the application's API calls fail with 502 &ldquo;The compute backend is not reachable. Start it with ./run.sh or check PMW_BACKEND_URL.&rdquo; The administration interface keeps working normally.</p>
+
+<p><b>Cause.</b> The application requires a valid licence. Without one it runs for a <b>one-time grace period</b> — 30 minutes by default, set with <code>PMW_LICENSE_GRACE_SECS</code> — after which the <b>compute backend stops</b>. The grace window is granted once per installation and stamped in a marker file; restarting does not renew it, and deleting a licence cannot reset it. The administration interface is deliberately left running so that a licence can always be applied.</p>
+
+<div class="role">Requires: <b>Administrator</b></div>
+<p><b>Fix.</b></p>
+<ol class="steps">
+  <li>Open the administration interface (it is still reachable) and go to <b>App Control &rarr; License</b>.</li>
+  <li>Choose the issued <code>license.json</code> file and press <b>Upload license</b>. The signature is verified before anything is stored; a forged or corrupt file is rejected with the specific reason and nothing is written.</li>
+  <li>On success the panel reports &ldquo;License installed. The backend applies it within a few seconds.&rdquo; No restart is needed — the backend polls for it. Uploading a valid licence <em>during</em> the grace period cancels the pending shutdown.</li>
+  <li>Confirm the green status banner: &ldquo;Licensed to '&lt;name&gt;', valid until &lt;date&gt;.&rdquo;</li>
+</ol>
+
+<figure data-fig="admin-02-app-control"><figcaption>App Control. The License card shows who the installation is licensed to and when the licence expires, and accepts a replacement without a restart.</figcaption></figure>
+
+<h3 id="ch23-licence-msgs">23.7.2 The licence status banner is red or orange</h3>
+
+<table>
+  <thead><tr><th>Banner</th><th>Meaning and remedy</th></tr></thead>
+  <tbody>
+    <tr><td>Orange: &ldquo;License for '&lt;name&gt;' expired on &lt;date&gt;.&rdquo;</td><td>The licence is genuine but out of date. Obtain a renewal and upload it.</td></tr>
+    <tr><td>&ldquo;No license installed.&rdquo;</td><td>Nothing has been uploaded, or the licence was deleted. Upload one.</td></tr>
+    <tr><td>&ldquo;License signature is not valid.&rdquo; / &ldquo;License signature is malformed.&rdquo;</td><td>The file was altered or is not the one you were issued. Request a fresh file; do not edit a licence by hand.</td></tr>
+    <tr><td>&ldquo;License file is not valid JSON.&rdquo; / &ldquo;License file is missing 'license' or 'signature'.&rdquo;</td><td>The wrong file was uploaded, or it was truncated in transit.</td></tr>
+    <tr><td>&ldquo;License has no valid expiry date.&rdquo; / &ldquo;License file could not be read: …&rdquo;</td><td>Contact your supplier with the exact text.</td></tr>
+    <tr><td>413 &ldquo;License file is too large.&rdquo; / &ldquo;Invalid file content.&rdquo;</td><td>The upload exceeded the size cap or was not decodable. Check that you selected the right file.</td></tr>
+  </tbody>
+</table>
+
+<div class="note"><strong>Note</strong> 502 &ldquo;The compute backend is not reachable…&rdquo; and 504 &ldquo;The compute backend timed out.&rdquo; are proxy errors, not licensing errors as such. They mean the compute backend is down or overloaded — which an expired grace period causes, but so does a backend that was never started.</div>
+
+<h2 id="ch23-admin">23.8 Administration interface problems</h2>
+
+<h3 id="ch23-admin-projects">23.8.1 The projects list is empty</h3>
+
+<p><b>Symptom.</b> In <b>Database Connections &rarr; Projects</b> the table shows &ldquo;No projects found in this schema.&rdquo;, &ldquo;Save the connection first to list its projects.&rdquo;, or a red &ldquo;Could not read projects.&rdquo;</p>
+
+<p><b>Cause and fix</b>, by message:</p>
+
+<table>
+  <thead><tr><th>State</th><th>Cause</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>&ldquo;Save the connection first to list its projects.&rdquo; (the tab button is disabled)</td>
+      <td>The listing uses the connection's <em>stored</em> credentials, which do not exist until the connection is saved.</td>
+      <td>Press <b>Save</b>. The Projects tab unlocks when the editor reloads.</td>
+    </tr>
+    <tr>
+      <td>&ldquo;No projects found in this schema.&rdquo;</td>
+      <td>The schema really is empty; or the schema field points somewhere else; or the tables have not been provisioned. A missing table is tolerated rather than reported, so a schema without PROJECTS or JOURNEYS yields an empty list rather than an error.</td>
+      <td>Check the <b>Schema</b> field on the <b>Database</b> tab, press <b>↻ Refresh</b>, and use <b>Create schema &amp; tables</b> if the schema has not been provisioned.</td>
+    </tr>
+    <tr>
+      <td>&ldquo;A schema name is required.&rdquo;</td>
+      <td>The connection has no schema configured. A schema is optional for connecting but required for listing, provisioning and demo generation.</td>
+      <td>Fill in the schema and save.</td>
+    </tr>
+    <tr>
+      <td>Red &ldquo;Could not read projects.&rdquo; or a database error</td>
+      <td>The stored credentials fail, or the account lacks SELECT on PROJECTS and JOURNEYS. Note that this listing does <em>not</em> use the password typed in the form.</td>
+      <td>Press <b>Test connection</b> after retyping the password, correct the stored credentials, and check privileges.</td>
+    </tr>
+    <tr>
+      <td>Journey or event counts look too low</td>
+      <td>The counts deliberately consider <b>ORIGINAL data only</b> — sample sets are excluded. Journeys are distinct EVENT_IDs; events are rows.</td>
+      <td>None. This is by design.</td>
+    </tr>
+  </tbody>
+</table>
+
+<figure data-fig="admin-05-database-connections"><figcaption>The connection editor's Projects tab lists what is actually stored in the schema, with journey and event counts for the original data.</figcaption></figure>
+
+<div class="tip"><strong>Tip</strong> A project appears in this list if it exists in <em>either</em> PROJECTS or JOURNEYS, so an orphan on one side is still visible. An untitled project displays its raw project id as the title.</div>
+
+<h3 id="ch23-admin-restart">23.8.2 The administration page stops responding after a restart</h3>
+
+<p><b>Symptom.</b> You pressed <b>↻ Restart app server</b> and the administration page no longer loads.</p>
+
+<p><b>Cause.</b> One restart rebinds all three servers — the main application, the integration console and the administration interface — because they share the TLS mode and the active certificate. If you changed the TLS mode, the administration interface itself moves between <code>http://…:8090</code> and <code>https://…:8453</code>.</p>
+
+<p><b>Fix.</b> Reconnect on the other address. If the restart fails outright, the exact messages are: 409 &ldquo;The app server is not managed by the launcher (no PID file). Start it with <code>./run.sh</code>, then try again.&rdquo;, 409 &ldquo;The app server process is not running.&rdquo;, 500 &ldquo;Invalid PID file.&rdquo; or 500 &ldquo;Could not signal the app server: &lt;os error&gt;&rdquo;.</p>
+
+<div class="note"><strong>Note</strong> If a mode requires HTTPS but no certificate is active, every server falls back to HTTP on restart so that nothing — including the administration interface — becomes unreachable. The TLS tab warns about this in advance: &ldquo;No active certificate — HTTPS cannot start. Generate or upload one and activate it below.&rdquo;</p>
+</div>
+
+<h2 id="ch23-faq">23.9 Frequently asked questions</h2>
+
+<dl>
+  <dt>Why can I not see the Conformance Check, Happy Path and Simulation views?</dt>
+  <dd>They are shown only to power users and administrators. They are also hidden — for everybody — when the installation runs in open mode with sign-in switched off, because there is then no identity to hold a role. Their APIs answer 403 in that state. There is no way to have both no-login access and the power features at once.</dd>
+
+  <dt>Why can I not see the Sampling section?</dt>
+  <dd>Same reason. Sampling rewrites the shared sample sets for everyone on the connection, so it is a power-user capability rather than a personal one.</dd>
+
+  <dt>Why does the map look different for a colleague using the same project?</dt>
+  <dd>Filters, presets, node layouts, KPI arrangement and personal settings are per user. Notes, sample sets and everything in the STEPS table are shared, because they live in the database.</dd>
+
+  <dt>Why can I not edit a connection that appears in my sidebar?</dt>
+  <dd>The <b>✎</b> button appears only on connections you created. A connection an administrator created and assigned to you can be used but not edited.</dd>
+
+  <dt>I typed a friendly reference into the Event ID field and got nothing.</dt>
+  <dd>Anything that is not already a 32-character hash is MD5-hashed before the query. In the demo datasets the stored EVENT_ID is the MD5 hash of a synthetic reference such as <code>ORD-000001</code>, so typing that reference works. Imported data behaves the same way: the integration console always stores EVENT_ID as the MD5 of the captured id, so the raw identifier cannot be recovered from the database.</dd>
+
+  <dt>Why did my filter preset not update after I changed the filters?</dt>
+  <dd>A preset is a snapshot taken at the moment you saved it. Later filter changes do not update it. Save a new preset, or rename and re-save.</dd>
+
+  <dt>Why is the Process Similarity badge missing in A/B Comparison?</dt>
+  <dd>The variant set is capped at 500 per side (1000 combined). Beyond the cap the badge is hidden rather than showing a misleading score from a biased sample. Narrow the filters on either side.</dd>
+
+  <dt>Where do rotated log files and scheduled backups go?</dt>
+  <dd>Rotated logs to <code>data/logs/</code> (only the newest ten archives are kept; <b>Clear</b> empties the live log only). Scheduled backups to <code>data/backups/</code>, named by timestamp and pruned to the retention count.</dd>
+
+  <dt>Why did no scheduled backup run last night?</dt>
+  <dd>The scheduler runs inside the administration server process — nothing is written while that server is down. A tick with no stored password records the failure &ldquo;No backup password is set.&rdquo; The cron expression is matched against the wall clock of the display timezone set in <b>App Control &rarr; Timezone</b>.</dd>
+
+  <dt>Can an administrator recover my recovery codes or my two-factor secret?</dt>
+  <dd>No. The secret is stored encrypted and the recovery codes only as hashes. The recovery path is for an administrator to untick <b>2FA</b> for your account so that your password alone signs you in and you can enrol again.</dd>
+</dl>
+
+</section>

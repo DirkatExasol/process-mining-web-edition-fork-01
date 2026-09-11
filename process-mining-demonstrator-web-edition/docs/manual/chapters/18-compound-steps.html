@@ -1,0 +1,304 @@
+<section class="chapter" id="ch-compound-steps" data-title="Compound Steps" data-num="18">
+<h1><span class="chnum">18</span> Compound Steps</h1>
+
+<p class="chintro">A log line rarely names the activity you want to see in the process map. It names half of it &mdash; the endpoint, the command, the message code &mdash; and leaves the other half in a second field: a status code, a result flag, a return value. <em>Compound steps</em> are the mechanism that joins those halves back together at import time, so that the event stored in <code>JOURNEYS.STEP</code> reads &ldquo;login successful&rdquo; rather than &ldquo;login&rdquo;. This chapter explains why compound steps exist, how to write and test rules in the source type wizard, exactly how the rules are evaluated when a source runs, how helper fields keep your three META columns free, and which mistakes cost people the most time. It is written for the person who defines source types in the integration console.</p>
+
+<div class="role">Requires: <b>Developer</b> or <b>Administrator</b>. Compound steps are edited inside the source type wizard on the integration console (HTTP :8100, HTTPS :8463). Power users and plain users cannot sign in to that surface, and every <code>/api/integration/*</code> endpoint refuses them with &ldquo;You need the Developer role to use the integration features.&rdquo;</div>
+
+<div class="note"><strong>Note (all formats)</strong> The examples in this chapter use a text (regex) source type, but compound steps work for <b>every</b> data format. Rules match on the extracted field <em>values</em>, not on how they were extracted — so a JSON or XML source type carries rules in exactly the same way. The only difference is the selector: a helper field on a JSON/XML source type is a <em>path</em> (e.g. <code>status</code>, <code>@status</code>) rather than a regex, and the inline &ldquo;Add a helper field&rdquo; panel accepts a path there. Everywhere below, read &ldquo;the value the field captures&rdquo; as &ldquo;the value the field extracts&rdquo;.</div>
+
+<h2 id="cs-why">18.1 Why compound steps exist</h2>
+
+<p>Consider a single line from an Apache access log:</p>
+
+<pre><code>10.0.0.7 - - [03/Aug/2026:14:05:09 +0000] "POST /shop/login HTTP/1.1" 200 512 sess=abc-123</code></pre>
+
+<p>A regex over the request path extracts the step <code>login</code>. So does the next line &mdash; the one whose status code is <code>500</code>. Both events land in the process map as the same activity, and the map can no longer tell a successful sign-in from a failed one. The information is present in the line; it is simply in a different field.</p>
+
+<p>Compound steps close that gap. A source type may carry an ordered list of <strong>rules</strong>. Each rule names a resulting step and one or more <strong>conditions</strong> over the fields the source type extracts. When every condition of a rule holds for a line, that rule's step text replaces the step the plain <code>step</code> field captured. When no rule matches, the plain step value is used unchanged &mdash; compound rules are strictly <em>additive</em>, never destructive.</p>
+
+<p>The second half of the mechanism is the <strong>helper field</strong>. The status code in the example above is needed only to decide the step name; it has no business meaning and does not deserve one of the three META columns that carry business attributes such as an order number or a customer segment. A helper field (internally the role <code>aux</code>) is extracted from every line like any other field and offered to the rules by name, but it is written to <strong>no database column at all</strong>. The wizard states this in the explainer shown when a Step tab has no rules yet:</p>
+
+<div class="note"><strong>Note</strong> &ldquo;Build the step from more than one field when the log splits it &mdash; e.g. step &lsquo;login&rsquo; plus status &lsquo;200&rsquo; becomes &lsquo;login successful&rsquo;. Values needed only for matching can be extracted as helper fields, which are never written to the database, so your META columns stay free for business attributes.&rdquo;</div>
+
+<h2 id="cs-where">18.2 Where the rules live</h2>
+
+<p>Compound rules belong to a <strong>source type</strong>, not to a source. They are stored with the source type's name, its pasted sample line and its field list, and they are owned per user. Every source that links to that source type is parsed with those rules, so editing a rule changes the behaviour of every future import through that source type &mdash; manual runs and watchdog imports alike.</p>
+
+<p>The editor is the <b>Step</b> tab of step 2 (&ldquo;Field mapping&rdquo;) of the source type wizard. Compound rules appear there and nowhere else, because a rule always produces a STEP value; there is no equivalent for timestamps, ids or meta fields.</p>
+
+<figure data-fig="integ-03-source-types"><figcaption>The Source types section of the console sidebar. Each source type carries the extraction fields and the compound-step rules applied when a linked source runs.</figcaption></figure>
+
+<figure data-fig="integ-04c-source-type-step3"><figcaption>The final wizard step shows the defined compound rules (&ldquo;login successful &larr; step is <code>login</code> and status is <code>200</code>&rdquo;) above a preview of the resulting <code>JOURNEYS</code> record, so you can confirm the mapping before saving.</figcaption></figure>
+<h2 id="cs-badges">18.3 The Compound steps panel</h2>
+
+<p>Inside the Step tab, below the plain step field, sits a section headed <b>Compound steps</b> with the caption &ldquo;optional&rdquo;, a rule count in parentheses once at least one rule exists, and a <b>&#65291; Add rule</b> button.</p>
+
+<p>Rules render as <strong>badges</strong> in a scrolling list. Roughly three badges are visible at a time (each is at least 52&nbsp;px high, the list is capped at 190&nbsp;px); beyond that the list scrolls. Each badge shows:</p>
+
+<table>
+<thead><tr><th>Element</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>Order number</td><td>The rule's position in the evaluation sequence. Tooltip: &ldquo;Rule N &mdash; checked in this order&rdquo;. Order is significant: the first fully-matching rule wins.</td></tr>
+<tr><td>Resulting step</td><td>The text the rule writes into <code>STEP</code>, shown in green, or &ldquo;(no step yet)&rdquo; while the rule is unfinished.</td></tr>
+<tr><td>Conditions summary</td><td>Each condition rendered as <code>field &lt;operator label&gt; &ldquo;value&rdquo;</code>, joined with &ldquo;&nbsp;&middot;&nbsp;&rdquo;, or &ldquo;no conditions yet&rdquo;.</td></tr>
+<tr><td>Green &#10003;</td><td>Shown when this rule matches the sample line pasted on step 1. Tooltip: &ldquo;Matches the sample line&rdquo;.</td></tr>
+<tr><td>&#10005;</td><td>Removes the rule (tooltip &ldquo;Remove rule&rdquo;). There is no confirmation prompt.</td></tr>
+</tbody>
+</table>
+
+<p>Clicking anywhere else on a badge opens the rule editor.</p>
+
+<p>Under the list the wizard evaluates the whole rule set against the sample line and reports the outcome in one line: green &ldquo;&#10003; For the sample line the step becomes &lsquo;&lt;step&gt;&rsquo;.&rdquo; when some rule matches, or grey &ldquo;&bull; No rule matches the sample line &mdash; the plain STEP value would be used.&rdquo; when none does. The second message is not an error; it is the normal reading for a sample line that happens to be an ordinary event.</p>
+
+<div class="tip"><strong>Tip</strong> The preview in the wizard runs the <em>same</em> comparison logic as the backend evaluator, including case handling and trimming. If the badge shows a green tick against your sample line, the same line in the real file will be relabelled the same way.</div>
+
+<h2 id="cs-editor">18.4 The rule editor</h2>
+
+<p>Clicking a badge &mdash; or <b>&#65291; Add rule</b> &mdash; opens a nested sheet titled <b>Compound step rule</b> with the icon &#9879;. Edits take effect immediately; the <b>Done</b> button in the footer simply closes the sheet. Beside it the footer shows a live verdict against the sample line: &ldquo;&#10003; matches the sample line&rdquo; or &ldquo;&bull; does not match the sample line&rdquo;.</p>
+
+<h3 id="cs-editor-fields">18.4.1 Controls</h3>
+
+<table>
+<thead><tr><th>Control</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><b>Step becomes</b></td><td>The resulting step text, shown in bold green. Placeholder &ldquo;e.g. login successful&rdquo;. Written verbatim into <code>JOURNEYS.STEP</code>.</td></tr>
+<tr><td><b>Conditions &mdash; all must hold</b></td><td>The condition list. The first row is labelled <b>when</b>, every further row <b>and</b>.</td></tr>
+<tr><td>Field dropdown</td><td>Lists every <em>named</em> field of the source type. Helper fields are suffixed &ldquo;&nbsp;(helper)&rdquo;. The empty option reads &ldquo;(field)&rdquo;.</td></tr>
+<tr><td>Operator dropdown</td><td>One of the six operators in 18.5.</td></tr>
+<tr><td>Value input</td><td>The comparison value (placeholder &ldquo;value&rdquo;). Beside it a live hint <b>= &lt;captured value&gt;</b> shows what that field captures from the sample line; tooltip &ldquo;What this field captures from the sample line&rdquo;.</td></tr>
+<tr><td><b>&minus;</b></td><td>Removes a condition. Shown only while the rule has more than one condition.</td></tr>
+<tr><td><b>&#65291; Add condition</b></td><td>Appends another empty condition row.</td></tr>
+<tr><td><b>Add a helper field</b></td><td>The inline helper-field panel described in 18.6.</td></tr>
+</tbody>
+</table>
+
+<p><b>&#65291; Add rule</b> creates a rule pre-seeded with <strong>two</strong> conditions, because a compound step by definition combines at least two fields, and pre-selects the plain step field in the first condition &mdash; almost every rule starts with &ldquo;when step is &hellip;&rdquo;.</p>
+
+<h3 id="cs-add-rule">18.4.2 Adding a rule</h3>
+
+<ol class="steps">
+<li>Open the source type wizard (click a badge in the <b>Source types</b> section, or <b>&#65291;</b> to create one) and go to step 2, <b>Field mapping</b>.</li>
+<li>Select the <b>Step</b> tab. Make sure a plain step field exists and its match line reads &ldquo;&#10003; matches: &lt;value&gt;&rdquo; against your sample.</li>
+<li>In the <b>Compound steps</b> section click <b>&#65291; Add rule</b>. The rule editor opens with two conditions, the first already pointing at the step field.</li>
+<li>Type the resulting activity name into <b>Step becomes</b>, for example <code>login successful</code>.</li>
+<li>Complete the first condition: leave the field as the step field, choose the operator <b>is</b> and type the plain step value, for example <code>login</code>.</li>
+<li>For the second condition pick the field that carries the other half of the activity &mdash; a helper field such as <code>status</code> &mdash; choose an operator, and type the value. Use the <b>= &lt;captured value&gt;</b> hint beside the input to see exactly what the field captures from your sample.</li>
+<li>Check the footer verdict. If your sample line is one this rule should relabel, it must read &ldquo;&#10003; matches the sample line&rdquo;.</li>
+<li>Click <b>Done</b>, then repeat for the remaining variants. Verify the order numbers on the badges.</li>
+<li>Go to step 3 and click <b>Create source type</b> / <b>Save changes</b>.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> Only <strong>complete</strong> rules survive the save. A rule needs non-blank text in <b>Step becomes</b> <em>and</em> at least one condition that names a field; conditions with no field selected are dropped, and a rule left with none is discarded entirely. This is deliberate: a half-built rule abandoned in the wizard can never silently relabel events at import time.</div>
+
+<h2 id="cs-operators">18.5 Conditions and operators</h2>
+
+<p>A condition is a triple: a field name, an operator, and a value. The field is referenced <strong>by name</strong>, which is why renaming a field is safe (see 18.7) and deleting one is not.</p>
+
+<table>
+<thead><tr><th>On screen</th><th>Stored id</th><th>Holds when&hellip;</th></tr></thead>
+<tbody>
+<tr><td><b>is</b></td><td><code>eq</code></td><td>The captured value equals the condition value.</td></tr>
+<tr><td><b>is not</b></td><td><code>ne</code></td><td>The captured value differs from the condition value.</td></tr>
+<tr><td><b>contains</b></td><td><code>contains</code></td><td>The condition value occurs anywhere in the captured value.</td></tr>
+<tr><td><b>starts with</b></td><td><code>startswith</code></td><td>The captured value begins with the condition value.</td></tr>
+<tr><td><b>ends with</b></td><td><code>endswith</code></td><td>The captured value ends with the condition value.</td></tr>
+<tr><td><b>matches regex</b></td><td><code>regex</code></td><td>The condition value, read as a regular expression, is found anywhere in the captured value.</td></tr>
+</tbody>
+</table>
+
+<p>Four properties of the evaluation matter in practice:</p>
+
+<dl>
+<dt>All conditions must hold</dt>
+<dd>The conditions of one rule are combined with AND. There is no OR: express alternatives as two rules with the same resulting step. A rule with no valid condition never matches at all.</dd>
+<dt>Case-insensitive and trimmed</dt>
+<dd>Every operator except <code>regex</code> compares case-insensitively, and both sides are trimmed of surrounding whitespace first. Log casing is rarely dependable, so <code>is</code> &ldquo;OK&rdquo; matches a captured &ldquo;ok&nbsp;&rdquo;. When case really matters, use <b>matches regex</b>, which is the exact-comparison escape hatch.</dd>
+<dt>A missing value makes the condition false</dt>
+<dd>If the field's regex captured nothing on that line, every condition on it is false &mdash; including <b>is not</b>. &ldquo;Missing&rdquo; is not treated as &ldquo;different&rdquo;. To catch lines where a field is absent you must find something else to test.</dd>
+<dt>An unusable regex simply never matches</dt>
+<dd>A <b>matches regex</b> value that is not a valid pattern makes the condition false rather than failing the import. The same is true of a field whose extraction regex does not compile.</dd>
+</dl>
+
+<h2 id="cs-helpers">18.6 Helper fields</h2>
+
+<p>Helper fields carry the role <code>aux</code>. They are extracted from every line exactly like a meta field &mdash; same regex convention, capture group 1 if the pattern has groups, otherwise the whole match, searched anywhere in the line &mdash; but they are written to no column. Only the first three meta fields map to <code>META_1</code>&hellip;<code>META_3</code>; anything you extract purely for matching should therefore be a helper, not a meta, or you will spend a business column on an HTTP status code.</p>
+
+<p>Helpers are rendered in teal. New ones are named <code>helper_1</code>, <code>helper_2</code>, &hellip; (skipping names already taken); the name input carries the tooltip &ldquo;Compound rules reference a helper by this name&rdquo;.</p>
+
+<p>You can create a helper in two places: on the <b>Helper</b> role tab of step 2 like any other field, or &mdash; more conveniently &mdash; from inside the rule editor.</p>
+
+<ol class="steps">
+<li>In the rule editor, find the <b>Add a helper field</b> panel.</li>
+<li>Type a name into the first input (placeholder &ldquo;name, e.g. status&rdquo;).</li>
+<li>Type the extraction pattern into the second input (placeholder &ldquo;regex with one capture group&rdquo;). Watch the live feedback: green &ldquo;&#10003; captures &lsquo;&lt;value&gt;&rsquo; from the sample&rdquo;, orange &ldquo;&#9888; invalid regex&rdquo;, or &ldquo;&bull; no match in the sample line&rdquo;.</li>
+<li>Click <b>Add</b> (disabled until both inputs are filled). The helper is created as an <code>aux</code> field of the source type and is immediately pointed at by the first empty condition &mdash; or, if every condition already has a field, by a newly appended one.</li>
+<li>Choose the operator and type the value for that condition.</li>
+</ol>
+
+<div class="note"><strong>Note</strong> The panel's own explainer states the trade: &ldquo;Extract a value only needed for matching (an HTTP status, a result code). Helper fields are never written to the database, so your three META columns stay free for business attributes.&rdquo;</div>
+
+<h2 id="cs-lock">18.7 Renaming and deleting referenced fields</h2>
+
+<p>Because conditions reference fields by name, the wizard protects the link in both directions.</p>
+
+<p><strong>Renaming cascades.</strong> If you rename a field that any rule references, every condition naming it is rewritten to the new name automatically. Nothing silently stops matching.</p>
+
+<p><strong>Deleting is blocked.</strong> On a field row, the <b>&#10005;</b> remove button is replaced by an orange <b>&#128274;</b> lock as soon as any rule references that field. The lock is not clickable (the cursor shows &ldquo;not allowed&rdquo;) and its tooltip reads: &ldquo;Used by N compound step rule(s) (&lt;rule steps&gt;). Remove the field from those rules first &mdash; deleting it now would stop them matching. Renaming is safe: the rules follow the new name.&rdquo; An orange caption under the row repeats the message: &ldquo;&#128274; Used by N compound rule(s): &lt;steps&gt; &mdash; remove it there before deleting this field. Renaming is safe.&rdquo; The same guard exists in the code, so no route through the interface can orphan a rule.</p>
+
+<ol class="steps">
+<li>Open the rule editor of each rule listed in the lock's tooltip.</li>
+<li>Remove the condition on the field with <b>&minus;</b>, or point the condition at a different field.</li>
+<li>Close the rule editor with <b>Done</b>. The lock on the field row turns back into <b>&#10005;</b>.</li>
+<li>Delete the field and save the source type.</li>
+</ol>
+
+<h2 id="cs-import">18.8 What happens at import time</h2>
+
+<p>Compound rules are applied while a source runs &mdash; from the Run dialog or from a watchdog poll; the two behave identically. For each non-blank line of the file, truncated to its first 2000 characters, the extractor does the following:</p>
+
+<ol class="steps">
+<li>Runs the regex of <strong>every named field</strong> of the linked source type, including helper fields. Regexes are compiled once per run; one that fails to compile is treated as never matching.</li>
+<li>Applies the mandatory gate: the line yields an event only if a case id, a step and a timestamp were all captured <em>and</em> the timestamp normalises successfully. Otherwise the line is <strong>skipped</strong> and counted in the <b>Events skipped</b> KPI.</li>
+<li>Evaluates the compound rules in order. The first rule all of whose conditions hold supplies the step text. If none matches, the plain step field's captured value is kept.</li>
+<li>Writes the row into <code>JOURNEYS</code>, with the derived value in <code>STEP</code>.</li>
+<li>After the run, creates a <code>STEPS</code> row for every step name seen that did not have one, with an empty description, a colour and shape chosen deterministically from the step name, <code>SCORE</code> 0, <code>END_OF_PROCESS</code> false and <code>BELONGS_TO</code> NULL. The run log records &ldquo;created &lt;n&gt; new step(s): &lt;names&gt;&rdquo;.</li>
+</ol>
+
+<div class="warn"><strong>Warning</strong> Compound evaluation happens <em>after</em> the id/step/timestamp gate, not instead of it. A line whose plain step regex captures nothing produces no event at all, no matter how well a compound rule's other conditions fit. Compound rules can only <em>relabel</em> an event that would have been written anyway.</div>
+
+<p>Because the derived step is an ordinary step name from the database's point of view, it takes part in everything downstream: it becomes a node in the process map, it gets its own colour and shape in <code>STEPS</code>, and it can be scored, described and grouped like any other activity.</p>
+
+<h3 id="cs-timeout">18.8.1 The regex timeout guard</h3>
+
+<p>Every regex the extractor runs &mdash; field extractions and <b>matches regex</b> conditions alike &mdash; is executed under a <strong>0.25-second wall-clock timeout</strong> per match, provided the third-party <code>regex</code> module is installed in the backend environment. The reason is blunt: CPython's standard <code>re</code> engine does not release the interpreter lock while matching, so a catastrophically backtracking pattern on a hostile line would freeze the entire compute backend &mdash; including the watchdog loop and every other user's request &mdash; until it finished.</p>
+
+<p>The consequences are asymmetric and worth remembering:</p>
+
+<table>
+<thead><tr><th>Where the timeout hits</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td>A field extraction regex</td><td>The line counts as unparseable and is <strong>skipped</strong>. It shows up in the run detail (&ldquo;&hellip; n skipped&rdquo;) and in the <b>Events skipped</b> KPI, which turns orange above zero.</td></tr>
+<tr><td>A <b>matches regex</b> condition</td><td>The condition evaluates to <strong>false</strong>. The rule does not match, evaluation continues with the next rule, and the event is still written &mdash; with the plain step, or a later rule's step.</td></tr>
+</tbody>
+</table>
+
+<div class="warn"><strong>Warning</strong> Without the <code>regex</code> module the backend falls back to the standard library and <em>no</em> timeout applies. A pathological pattern then runs to completion. Keep expressions simple, avoid nested quantifiers such as <code>(\w+)+</code>, and prefer anchored literal context over open-ended wildcards.</div>
+
+<h2 id="cs-example">18.9 A worked example</h2>
+
+<p>The source is an Apache-style access log with a session id appended. The sample line pasted on step 1 of the wizard is the first of these:</p>
+
+<pre><code>10.0.0.7 - - [03/Aug/2026:14:05:09 +0000] "POST /shop/login HTTP/1.1" 200 512 sess=abc-123
+10.0.0.9 - - [03/Aug/2026:14:05:11 +0000] "POST /shop/login HTTP/1.1" 500 216 sess=def-456
+10.0.0.7 - - [03/Aug/2026:14:07:44 +0000] "GET /shop/basket HTTP/1.1" 200 980 sess=abc-123
+10.0.0.7 - - [03/Aug/2026:14:09:02 +0000] "POST /shop/checkout HTTP/1.1" 402 120 sess=abc-123
+10.0.0.3 - - [03/Aug/2026:14:11:20 +0000] "GET /shop/search HTTP/1.1" 200 44 sess=ghi-789</code></pre>
+
+<h3 id="cs-example-fields">18.9.1 The fields</h3>
+
+<table>
+<thead><tr><th>Tab</th><th>Name</th><th>Regex</th><th>Written to</th></tr></thead>
+<tbody>
+<tr><td>Timestamp</td><td><code>timestamp</code></td><td><code>\[([^\]]+)\]</code></td><td><code>EVENT_TIME</code>, normalised to <code>2026-08-03 14:05:09</code></td></tr>
+<tr><td>Id</td><td><code>id</code></td><td><code>sess=([A-Za-z0-9-]+)</code></td><td><code>EVENT_ID</code>, stored as an MD5 digest</td></tr>
+<tr><td>Step</td><td><code>step</code></td><td><code>"[A-Z]+ /shop/([a-z]+)</code></td><td><code>STEP</code> &mdash; unless a rule overrides it</td></tr>
+<tr><td>Metas</td><td><code>client</code> (title &ldquo;Client IP&rdquo;)</td><td><code>^(\S+)</code></td><td><code>META_1</code></td></tr>
+<tr><td>Helper</td><td><code>status</code></td><td><code>" (\d{3}) </code></td><td>nothing &mdash; matching only</td></tr>
+<tr><td>Helper</td><td><code>method</code></td><td><code>"([A-Z]+) /</code></td><td>nothing &mdash; matching only</td></tr>
+</tbody>
+</table>
+
+<p>Two META columns remain free for genuine business attributes, because <code>status</code> and <code>method</code> are helpers.</p>
+
+<h3 id="cs-example-rules">18.9.2 The rules</h3>
+
+<table>
+<thead><tr><th>#</th><th>Step becomes</th><th>Conditions (all must hold)</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>login successful</td><td><code>step</code> <b>is</b> &ldquo;login&rdquo; &middot; <code>status</code> <b>is</b> &ldquo;200&rdquo;</td></tr>
+<tr><td>2</td><td>login failed</td><td><code>step</code> <b>is</b> &ldquo;login&rdquo; &middot; <code>status</code> <b>starts with</b> &ldquo;5&rdquo;</td></tr>
+<tr><td>3</td><td>checkout declined</td><td><code>step</code> <b>is</b> &ldquo;checkout&rdquo; &middot; <code>status</code> <b>is not</b> &ldquo;200&rdquo;</td></tr>
+<tr><td>4</td><td>basket viewed</td><td><code>step</code> <b>is</b> &ldquo;basket&rdquo; &middot; <code>method</code> <b>is</b> &ldquo;GET&rdquo;</td></tr>
+</tbody>
+</table>
+
+<h3 id="cs-example-result">18.9.3 The result</h3>
+
+<table>
+<thead><tr><th>Line</th><th><code>step</code></th><th><code>status</code></th><th><code>method</code></th><th>First matching rule</th><th>STEP written</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>login</td><td>200</td><td>POST</td><td>1</td><td>login successful</td></tr>
+<tr><td>2</td><td>login</td><td>500</td><td>POST</td><td>2</td><td>login failed</td></tr>
+<tr><td>3</td><td>basket</td><td>200</td><td>GET</td><td>4</td><td>basket viewed</td></tr>
+<tr><td>4</td><td>checkout</td><td>402</td><td>POST</td><td>3</td><td>checkout declined</td></tr>
+<tr><td>5</td><td>search</td><td>200</td><td>GET</td><td>&mdash; none</td><td>search <span>(plain step)</span></td></tr>
+</tbody>
+</table>
+
+<p>Line&nbsp;5 shows the fallback: no rule covers <code>search</code>, so the plain step value is written unchanged. Line&nbsp;2 shows why <b>starts with</b> is often the right operator for status families &mdash; it catches 500, 502 and 503 with one rule. Line&nbsp;4 shows <b>is not</b> doing useful work: any non-200 checkout is a decline.</p>
+
+<p>After the run the <code>STEPS</code> table contains rows for <code>login successful</code>, <code>login failed</code>, <code>basket viewed</code>, <code>checkout declined</code> and <code>search</code> &mdash; five activities where the plain extraction would have produced four indistinguishable ones.</p>
+
+<h3 id="cs-example-preview">18.9.4 Checking the outcome before you save</h3>
+
+<p>Steps 2 and 3 of the wizard show a one-row table labelled <b>Example JOURNEYS record</b>, built from the sample line with the current specification. Watch the <code>STEP</code> column: when a compound rule wins, the cell shows the derived text and the column note reads <b>compound</b>. The <code>EVENT_ID</code> cell shows the original captured id with the note &ldquo;original &mdash; stored as MD5&rdquo;, and <code>EVENT_TIME</code> shows the normalised timestamp. Step 3 also lists a <b>Compound steps</b> summary in the compact form <code>&lt;step&gt; &larr; field is "value" and &hellip;</code>, which is the fastest way to read the whole rule set at a glance before saving.</p>
+
+<h2 id="cs-limits">18.10 Limits</h2>
+
+<table>
+<thead><tr><th>Item</th><th>Limit</th></tr></thead>
+<tbody>
+<tr><td>Rules per source type</td><td>200</td></tr>
+<tr><td>Resulting step text</td><td>500 characters</td></tr>
+<tr><td>Condition field name</td><td>60 characters</td></tr>
+<tr><td>Condition value</td><td>500 characters</td></tr>
+<tr><td>Field regex</td><td>2000 characters</td></tr>
+<tr><td>Sample line stored with the source type</td><td>20&nbsp;000 characters</td></tr>
+<tr><td>Line length read from the source file</td><td>2000 characters (the rest of the line is discarded)</td></tr>
+<tr><td>Regex match time</td><td>0.25&nbsp;seconds per match, when the <code>regex</code> module is present</td></tr>
+</tbody>
+</table>
+
+<p>An operator the backend does not recognise &mdash; only possible through the API, not the wizard &mdash; is silently treated as <code>eq</code>.</p>
+
+<h2 id="cs-mistakes">18.11 Common mistakes</h2>
+
+<dl>
+<dt>Writing the general rule before the specific one</dt>
+<dd>The <em>first</em> fully-matching rule wins, so a broad rule placed early shadows every narrower rule after it. Put the most specific rules first and read the badge order numbers before saving.</dd>
+
+<dt>Omitting the step condition</dt>
+<dd>A rule that says only &ldquo;<code>status</code> starts with 5&rdquo; relabels <em>every</em> 5xx line as, say, &ldquo;login failed&rdquo; &mdash; searches, checkouts and all. Nearly every rule should pin the plain step field as well.</dd>
+
+<dt>Expecting a rule to rescue a line that produced no event</dt>
+<dd>If the id, step or timestamp regex fails, the line is skipped before rules are considered. A large <b>Events skipped</b> count with no compound effect points at the field regexes, not at the rules.</dd>
+
+<dt>Expecting <b>is not</b> to fire on a missing value</dt>
+<dd>A condition on a field that captured nothing is false for every operator. If a status code is absent from some lines, &ldquo;<code>status</code> is not 200&rdquo; will not match them.</dd>
+
+<dt>Relying on case</dt>
+<dd>All operators except <b>matches regex</b> compare case-insensitively after trimming, so &ldquo;GET&rdquo;, &ldquo;get&rdquo; and &ldquo;&nbsp;Get&nbsp;&rdquo; are the same value. If you genuinely need case-sensitive matching, use <b>matches regex</b>.</dd>
+
+<dt>Using a meta field for a matching-only value</dt>
+<dd>Only the first three meta fields are written, to <code>META_1</code>&hellip;<code>META_3</code>; a fourth is silently ignored. Extract status codes, result flags and the like as <em>helper</em> fields so the META columns stay available for business attributes.</dd>
+
+<dt>Leaving a rule half-finished</dt>
+<dd>A rule with no step text, or with no condition that names a field, is dropped on save without warning. If a rule disappears after saving, it was incomplete.</dd>
+
+<dt>Targeting content past character 2000</dt>
+<dd>Every line is truncated to its first 2000 characters before extraction. A regex aimed at a field beyond that point never matches, and the condition that uses it is always false.</dd>
+
+<dt>Typos in the resulting step name</dt>
+<dd>Step names are written verbatim and auto-create <code>STEPS</code> rows. &ldquo;login successful&rdquo; and &ldquo;Login Successful&rdquo; become two separate activities in the process map. Keep a consistent naming convention across all rules of a source type.</dd>
+
+<dt>Expecting rules to change events already imported</dt>
+<dd>Rules are applied at import time only. Editing them has no effect on rows already in <code>JOURNEYS</code>. To relabel a historical import you must delete the project in the destination schema, reset the source's checkpoint, and import the file again from the top &mdash; resetting a checkpoint on its own deletes nothing from the database and would simply append everything a second time.</dd>
+
+<dt>Deleting a source type that sources still use</dt>
+<dd>Deletion does not cascade. A source whose source type has gone keeps a dangling link, its Run button warns &ldquo;This source has no source type linked&rdquo;, and the watchdog records the checkpoint error &ldquo;The source has no source type linked.&rdquo; Pick a replacement source type on the source before running it again.</dd>
+</dl>
+
+<div class="tip"><strong>Tip</strong> After changing rules, run the source once against a scratch project id with delta upload switched off, and inspect the process map. New or missing activity names show up immediately, and the run log line &ldquo;created &lt;n&gt; new step(s): &lt;names&gt;&rdquo; tells you exactly which step names your rules produced.</div>
+
+</section>

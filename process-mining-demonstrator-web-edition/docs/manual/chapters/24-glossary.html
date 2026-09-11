@@ -1,0 +1,482 @@
+<section class="chapter" id="ch-glossary" data-title="Glossary" data-num="24">
+<h1><span class="chnum">24</span> Glossary</h1>
+
+<p class="chintro">This chapter defines every term used elsewhere in the manual, in the application's own vocabulary — the words that appear on screen, in the database schema and in error messages. Entries are listed alphabetically and grouped by initial letter. Where a term belongs to a feature described in detail elsewhere, the entry names the chapter that covers it. Use this chapter as a reference while reading any other chapter; it is written for all audiences, and entries that apply only to a particular role say so.</p>
+
+<div class="note"><strong>Note</strong> Where a term is a literal on-screen control, a database object or an environment variable, it is printed exactly as the application spells it — including the American spelling of labels such as <b>Use pre-materialized transitions</b> and the table name <code>TRANSITIONS_RAW</code>. Everything else follows British spelling.</div>
+
+<figure data-fig="app-03-achart"><figcaption>The vocabulary of the process map: nodes are steps, arrows are transitions, the dashed box is a step group, and the tiles above are KPIs.</figcaption></figure>
+
+<h2 id="glo-a">A</h2>
+<dl>
+  <dt>Abstraction layer</dt>
+  <dd>The part of the Integration console that sits between an extractor and the target database. Extractors never write SQL themselves; they push records through the layer, which creates tables, batches inserts, counts progress and manages transaction brackets. Its summary card heads the console's pipeline monitoring page.</dd>
+
+  <dt>A-Chart</dt>
+  <dd>The primary process map. It shows every journey matching the current filter set as one aggregated directly-follows graph, and loads automatically when you select a project, using the default date window (30 days unless changed). See the Chart Views chapter.</dd>
+
+  <dt>A/B Comparison</dt>
+  <dd>The split view that shows A-Chart on the left and B-Chart on the right at the same time, each with its own filters, presets and KPI strip. The sidebar edits whichever side is active. See also Valve, Process Similarity.</dd>
+
+  <dt>Administrator</dt>
+  <dd>The highest role. An administrator can do everything a Power user can, over every connection, and additionally has the admin interface for users, TLS, the directory, licensing, logging, backups and customisation. See the Users &amp; Permissions chapter.</dd>
+
+  <dt>Admin interface</dt>
+  <dd>The separate administration surface on its own port — 8090 for HTTP, 8453 for HTTPS by default — with its own sign-in that admits administrators only. It keeps working even when the compute backend has stopped, so a licence can always be applied.</dd>
+
+  <dt>AI supported Documentation</dt>
+  <dd>The view that sends the current A-Chart transition table and your prompt template to the connection's LLM server and renders the answer as a Markdown report. Journey paths, happy-path conformance, the gap analysis and your notes are computed locally and appended without being sent to the model.</dd>
+
+  <dt>Alignment cost</dt>
+  <dd>The building block of Process Similarity: <code>missing_edges / total_edges_in_variant</code>. A cost of 0 means the graph contains every consecutive pair the variant needs; 0.5 means half are missing. Variants with a single step carry no edges and are skipped.</dd>
+
+  <dt>Anonymous mode</dt>
+  <dd>How the main application behaves when an administrator turns off <b>Require sign-in for the main application</b>. There is then no user identity, so all settings and presets fall back to one shared profile and every Power/Admin-only capability is unavailable — the relevant APIs answer 403.</dd>
+
+  <dt>Assignment</dt>
+  <dd>The grant that makes a connection visible and usable to a particular user. Assignments are checked on the server for every connect, import and watchdog poll — never trusted from a dropdown — and revoking one immediately disconnects that user's live session and stops any watchdog using the connection.</dd>
+
+  <dt>Avg Time</dt>
+  <dd>The transition metric that measures the average elapsed time between two steps, displayed as a readable duration such as 4m, 1.2h or 3.5d. Its default colour scale is orange.</dd>
+
+  <dt>Aux field</dt>
+  <dd>The internal role name for a helper field in a source type. See Helper field.</dd>
+</dl>
+
+<h2 id="glo-b">B</h2>
+<dl>
+  <dt>Backup</dt>
+  <dd>A single JSON file containing everything except the event data itself: connections and servers, filter presets, happy paths, target norms, saved node layouts, LLM prompt templates and preferences. The format is interchangeable with the macOS version of the application. See the Backup &amp; Restore chapter.</dd>
+
+  <dt>B-Chart</dt>
+  <dd>An independent second process map with its own filter set, for exploring a different segment. Unlike A-Chart it starts empty: set filters and press <b>Apply</b>, or use <b>Load</b> on its empty state.</dd>
+
+  <dt>Break-glass account</dt>
+  <dd>A local administrator account, which always works regardless of directory configuration. The seeded <code>Administrator</code> account is the recovery route into the admin interface and is exempt from automatic lockout.</dd>
+</dl>
+
+<h2 id="glo-c">C</h2>
+<dl>
+  <dt>Case</dt>
+  <dd>A synonym for journey — one end-to-end instance of the process. The manual uses "journey" throughout because that is the application's own wording.</dd>
+
+  <dt>Certificate mode</dt>
+  <dd>The per-connection setting that governs how the database server's TLS certificate is checked: <b>Verify (system trust store)</b>, <b>Pin fingerprint</b> or <b>Accept any (insecure)</b>. Parsing fails closed — an unrecognised stored value is treated as Verify, never as no verification.</dd>
+
+  <dt>Checkpoint</dt>
+  <dd>The per-source record of how far a file has been read: byte offset, file size, signature, cumulative imported records, last update time and last error. There is exactly one per source and it is shared by manual delta runs and the watchdog, which is what stops the two importing the same line twice. It advances only after a successful run.</dd>
+
+  <dt>Colorise edges by weight</dt>
+  <dd>The Configuration option that tints each transition arrow using the colour scale of the active metric. Thickness always encodes the value independently of colour.</dd>
+
+  <dt>Compound step</dt>
+  <dd>A rule in a source type that derives the STEP value from several extracted fields — for example splitting one "login" activity into "login successful" and "login failed" using an HTTP status helper. Conditions are combined with AND, rules are evaluated in order and the first fully matching rule wins; if none match, the plain step value is used unchanged.</dd>
+
+  <dt>Compute backend</dt>
+  <dd>The third server process, alongside the main application and the admin interface. It runs the database queries and the integration API, and it is the component that stops when no valid licence is present.</dd>
+
+  <dt>Conformance Check</dt>
+  <dd>The advanced view that overlays target norms on a transition metric and colours each edge green or red according to whether it meets its norm. Available to Power users and administrators only.</dd>
+
+  <dt>Conformance score</dt>
+  <dd>The Happy Path measure: a journey-count-weighted average of edge coverage, from 1.00 (every journey follows the ideal path) to 0.00 (no journey shares a single transition with it). Each journey is scored against the route through the splits it matches best.</dd>
+
+  <dt>Connection</dt>
+  <dd>One Exasol database server plus an optional OpenAI-compatible LLM server, stored together with credentials, target schema and TLS options. Connections are created by administrators or Power users, assigned to individual users, and only one is active at a time.</dd>
+
+  <dt>Count</dt>
+  <dd>The default transition metric: how many times a transition occurred. It is always available and its default colour scale is green.</dd>
+
+  <dt>Coverage factor</dt>
+  <dd>The term <code>(filtered_journeys / total_journeys)^0.5</code> that scales raw Process Goodness, so a score reflects representativeness as well as quality. Filters capturing half the journeys reduce the score by roughly 29 per cent.</dd>
+</dl>
+
+<h2 id="glo-d">D</h2>
+<dl>
+  <dt>DATA</dt>
+  <dd>The log tag that groups every data-import entry — manual or watchdog, success or failure — in the admin Logging tab. Successful imports are recorded at USAGE level, failures at WARN or ERROR with the reason.</dd>
+
+  <dt>Default date window</dt>
+  <dd>The Configuration setting controlling how many days back the map shows when a project first loads. It defaults to 30; 0 loads the project's full range. It takes effect on the next project load and does not move the slider on the current map.</dd>
+
+  <dt>Delta upload</dt>
+  <dd>The import mode, on by default, that reads only the lines appended to a file since the source's checkpoint. Running the same source again therefore tops the project up rather than storing everything a second time. See also Checkpoint, Watchdog.</dd>
+
+  <dt>Demo content</dt>
+  <dd>A ready-made dataset generated into a connection's schema from the connection editor's Demo Content tab — Online Bookstore (retail), Online Credit Application (finance) and Flight Booking &amp; Management (transportation). The default is 500 journeys and the server caps any request at 20,000.</dd>
+
+  <dt>Demo Mode</dt>
+  <dd>How the application runs with no valid licence: a one-time grace period, shown on the sign-in panel as "Demo Mode — remaining time", after which the compute backend stops. The period is granted once per installation and restarting does not renew it.</dd>
+
+  <dt>Developer</dt>
+  <dd>An additional grant, independent of the three roles, given by the <b>Developer</b> checkbox in the admin Users tab. It admits an account to the Integration console. Power users are deliberately excluded; only developers and administrators may enter.</dd>
+
+  <dt>Directly-follows graph</dt>
+  <dd>The graph formed by aggregating every chronologically consecutive pair of steps within the same journey. It is what the process map draws: one node per step, one arrow per observed pair.</dd>
+
+  <dt>Directory (LDAP)</dt>
+  <dd>Sign-in against an LDAP or Active Directory server using search + bind: a read-only service account finds the login name under the base DN, then the application re-binds as that user with the supplied password. A directory user is created locally as a plain, enabled account on first successful sign-in.</dd>
+</dl>
+
+<h2 id="glo-e">E</h2>
+<dl>
+  <dt>Encoding</dt>
+  <dd>The character encoding a file source is decoded with, <code>utf-8</code> by default; undecodable bytes are replaced rather than raising an error. The preview endpoint always decodes as UTF-8, whatever the source is configured with.</dd>
+
+  <dt>End of process</dt>
+  <dd>The <code>END_OF_PROCESS</code> flag on a step, shown on the map as an orange dot on the node. See also Exit marker.</dd>
+
+  <dt>Event</dt>
+  <dd>A synonym for step: one activity within a journey, stored as one row of JOURNEYS.</dd>
+
+  <dt>Event log</dt>
+  <dd>The JOURNEYS table — one row per event, and the only large table in the schema. Everything the application draws is derived from it.</dd>
+
+  <dt>EVENT_ID</dt>
+  <dd>The journey (case) identifier. Rows sharing an EVENT_ID form one journey. Demo datasets and integration imports store it MD5-hashed, so the raw identifier never lands in the database in the clear.</dd>
+
+  <dt>EVENT_TIME</dt>
+  <dd>The timestamp of an event. It orders the steps of a journey (with STEP_ID as tie-breaker) and drives every date filter.</dd>
+
+  <dt>Events skipped</dt>
+  <dd>The Integration console KPI counting source lines that could not be turned into an event — no case id, no step, or a missing or unparseable timestamp. A non-zero value is highlighted in orange and usually means the source type's regular expressions do not fit the log.</dd>
+
+  <dt>Exasol</dt>
+  <dd>The analytical database the application reads from and writes to. The free Community Edition and the official Docker image both work; for the Docker image and Exasol 7.x set the connection's minimum RSA key size to 1024 bits.</dd>
+
+  <dt>Excluded steps</dt>
+  <dd>In Simulation, steps removed from the Markov model entirely before the run, together with everything that becomes unreachable as a result. Not to be confused with the <b>Exclude Steps</b> filter, which removes whole journeys from the map.</dd>
+
+  <dt>Exit marker</dt>
+  <dd>The orange arrow drawn below every end node — a step with no outgoing transitions. Its counterpart is the green entry arrow above every start node. Both are drawn outside a step group's dashed border.</dd>
+
+  <dt>Extractor</dt>
+  <dd>A pluggable component that reads one kind of source and pushes parsed records through the abstraction layer. One ships today: the File extractor, which reads a File source line by line and writes JOURNEYS events using the linked source type's regular expressions.</dd>
+</dl>
+
+<h2 id="glo-f">F</h2>
+<dl>
+  <dt>File source</dt>
+  <dd>The only source kind available today: a file path plus an encoding, linked to a source type. File reads are sandboxed to the server's integration files directory unless an operator sets <code>PMW_INTEGRATION_ALLOW_ANY_PATH=1</code>.</dd>
+
+  <dt>Filtered Journeys</dt>
+  <dd>The KPI counting distinct journeys that match all current filters — the population the map visualises. Contrast Total Journeys.</dd>
+
+  <dt>Fingerprint</dt>
+  <dd>The SHA-256 hash of a database server's certificate, entered in the connection's <b>Fingerprint (SHA-256)</b> field when the certificate mode is <b>Pin fingerprint</b>. Colons are stripped and the value must be pure hexadecimal, 16 to 128 characters; a blank or non-hexadecimal value refuses the connection rather than silently skipping verification.</dd>
+</dl>
+
+<h2 id="glo-g">G</h2>
+<dl>
+  <dt>Gap analysis</dt>
+  <dd>The Conformance Check table opened with <b>Show gaps</b>, listing from, to, actual, norm, delta and status for every edge, violations first. It is also appended to the AI Documentation report.</dd>
+
+  <dt>Graph Value</dt>
+  <dd>The KPI summing step score × visit count over every scored node on the map, where visit count is the larger of a node's incoming and outgoing transition occurrences so that start and end nodes are counted correctly.</dd>
+
+  <dt>Grace period</dt>
+  <dd>See Demo Mode.</dd>
+</dl>
+
+<h2 id="glo-h">H</h2>
+<dl>
+  <dt>Happy Path</dt>
+  <dd>An ideal step sequence you define for a project, including splits for legitimate alternatives and their rejoin points, against which real journeys are scored. Available to Power users and administrators only.</dd>
+
+  <dt>Helper field</dt>
+  <dd>A field extracted from every source line for the sole purpose of being matched by compound rules — an HTTP status, a result code, a queue name. It is written to no database column, so all three META columns stay free for business attributes.</dd>
+</dl>
+
+<h2 id="glo-i">I</h2>
+<dl>
+  <dt>Importance</dt>
+  <dd>The level attached to a note: NORMAL (the default), INFO, IMPORTANT or URGENT, shown as a coloured badge. Only the note's author can change it.</dd>
+
+  <dt>Include Steps / Exclude Steps</dt>
+  <dd>Journey-level filters. Include keeps only journeys passing through any selected step; Exclude removes every journey passing through any selected step. A step chosen for one list is automatically disabled in the other.</dd>
+
+  <dt>Individual Journey</dt>
+  <dd>The view showing the complete step sequence of a single journey identified by EVENT_ID. Anything typed into the Event ID field that is not already a 32-character hash is MD5-hashed for you.</dd>
+
+  <dt>IngestSession</dt>
+  <dd>The only handle an extractor receives to the target database, bound to the connection's schema for the duration of one run. It offers <code>define_table</code>, <code>push</code>, <code>log</code>, <code>progress</code> and <code>existing_keys</code> — extractors never issue SQL themselves.</dd>
+
+  <dt>Integration console</dt>
+  <dd>The fourth surface, on the admin port plus 10 — 8100 for HTTP, 8463 for HTTPS by default — where data sources are defined and imports are run and monitored. It reuses the main application's sign-in and admits developers and administrators only.</dd>
+</dl>
+
+<h2 id="glo-j">J</h2>
+<dl>
+  <dt>Journey</dt>
+  <dd>One end-to-end instance of a process — all JOURNEYS rows sharing an EVENT_ID. Every filter in the application works at journey level: a journey either qualifies in full or not at all.</dd>
+
+  <dt>Journey sampling</dt>
+  <dd>Creating up to three named sample sets from a project's original data so that exploration of a very large event log stays interactive. Restricted to Power users and administrators because samples are shared by everyone on the connection. See Sample set.</dd>
+
+  <dt>Journey Score</dt>
+  <dd>The filter keeping journeys whose summed step scores fall within a range. Negative scores are supported, so the right handle can be dragged below zero to isolate problem paths.</dd>
+
+  <dt>Journey Time</dt>
+  <dd>The filter keeping journeys whose first-to-last span falls within a range.</dd>
+
+  <dt>JOURNEYS</dt>
+  <dd>The event-log table: PROJECT_ID, EVENT_ID, STEP, STEP_ID, EVENT_TIME, META_1 to META_3 and SAMPLE_SET. See the Data Model chapter.</dd>
+</dl>
+
+<h2 id="glo-k">K</h2>
+<dl>
+  <dt>KPI</dt>
+  <dd>One tile in the strip above the process map — Total Journeys, Filtered Journeys, Shortest/Avg/Longest Journey, Std Dev, Graph Value, Process Goodness and, in A/B mode, Process Similarity. Tiles are reordered by dragging — either on the strip itself or in the Configuration → KPIs list — and switched on or off from that list or by hovering a strip tile and clicking its × ; the two views share one order and visibility, stored per user. The strip appears only once a chart has loaded data.</dd>
+</dl>
+
+<h2 id="glo-l">L</h2>
+<dl>
+  <dt>Licence</dt>
+  <dd>The file uploaded in <b>App Control → License</b> that unlocks the application. The panel shows who it is licensed to and when it expires. Without one the application runs in Demo Mode.</dd>
+
+  <dt>Live query</dt>
+  <dd>The default way the process map is built: a window function pairs each event with its successor on every reload. Shown on the map as the pill <b>↻ Live query</b>. Contrast Pre-materialized transitions.</dd>
+
+  <dt>LLM</dt>
+  <dd>The optional OpenAI-compatible model server attached to a connection — base URL, model and optional API key — that enables the AI supported Documentation view. Its reachability is probed with a five-second request and shown as the second, blue status dot on the connection card.</dd>
+
+  <dt>Lockout</dt>
+  <dd>The automatic disabling of an account after N failed sign-in attempts, set in the admin Users tab. The default is 3 and 0 turns it off. The built-in Administrator is exempt and protected by a per-IP throttle instead.</dd>
+</dl>
+
+<h2 id="glo-m">M</h2>
+<dl>
+  <dt>MD5 hash</dt>
+  <dd>The one-way digest used for case identifiers. Demo datasets store the MD5 of a synthetic reference such as <code>ORD-000001</code>; integration imports store the MD5 of the captured raw id unconditionally. The same raw id always yields the same digest, so journeys still correlate, but the original value cannot be recovered.</dd>
+
+  <dt>Meta field</dt>
+  <dd>One of the three free-text, case-level attribute columns META_1 to META_3 — department, customer segment, payment method and the like. Their business names come from the METAS table and appear as the Meta 1–3 filters, which perform a case-insensitive contains search.</dd>
+
+  <dt>METAS</dt>
+  <dd>The table holding one row per project with META_1_TITLE, META_2_TITLE and META_3_TITLE. Where a title is missing the interface shows generic meta labels.</dd>
+
+  <dt>Metric</dt>
+  <dd>See Transition metric.</dd>
+
+  <dt>Min Time / Max Time</dt>
+  <dd>The transition metrics reporting the shortest and longest observed elapsed time for a transition. Default colour scales blue and red respectively.</dd>
+</dl>
+
+<h2 id="glo-n">N</h2>
+<dl>
+  <dt>Node</dt>
+  <dd>One distinct process step drawn on the map. Its colour, shape, score badge and description come from the STEPS table; steps appearing in transitions with no STEPS row are drawn grey.</dd>
+
+  <dt>Norm</dt>
+  <dd>A target value set on a transition in Conformance Check, stored per project and per metric. For Count a norm is a percentage of all traffic leaving the same source node; for time metrics it is an absolute number of seconds. The <b>Norm is a minimum</b> toggle flips the comparison.</dd>
+
+  <dt>Note</dt>
+  <dd>An annotation anchored to a node or an edge, stored in the NOTES table in the project database. A note is a thread: anyone who can see it may add a comment, but only the author can change its importance or sharing or delete it. Each note records its author, its last contributor and the complete filter context at creation time.</dd>
+
+  <dt>Num Steps</dt>
+  <dd>The filter keeping journeys whose total step count falls within a range.</dd>
+</dl>
+
+<h2 id="glo-o">O</h2>
+<dl>
+  <dt>Operation</dt>
+  <dd>The field in every log entry naming the code path that wrote it — for example <code>login</code>, <code>connection</code>, <code>db-connect</code>, <code>db-timeout</code>, <code>materialize</code>, <code>import</code> or <code>llm-test</code>. Contrast Tag, which groups an entire activity across operations.</dd>
+
+  <dt>Optimise layout</dt>
+  <dd>The Configuration toggle enabling barycenter crossing-minimisation, which produces a cleaner automatic arrangement on complex graphs.</dd>
+
+  <dt>ORIGINAL</dt>
+  <dd>The SAMPLE_SET value marking the source data, as opposed to a sample. Wherever the application filters by sample set, a NULL SAMPLE_SET counts as ORIGINAL, so tables predating the column behave unchanged. ORIGINAL rows can never be deleted by deleting a sample.</dd>
+</dl>
+
+<h2 id="glo-p">P</h2>
+<dl>
+  <dt>Passkey</dt>
+  <dd>A WebAuthn credential — Touch ID, Windows Hello or a hardware security key — that signs a user in instead of a password. It is always an alternative, never a replacement: the password remains as fallback. Passkeys require a secure context and a real hostname; they do not work over a bare IP address.</dd>
+
+  <dt>Path pattern</dt>
+  <dd>See Variant.</dd>
+
+  <dt>Pipeline</dt>
+  <dd>The Integration console's flowchart of imports — source type → source → abstraction layer → connection — with nodes reused across runs and a dot travelling the active path while an import runs. Its history is stored per user in the browser, so it is per device.</dd>
+
+  <dt>Power user</dt>
+  <dd>The middle role. A Power user does everything a Regular user does and additionally creates, manages and assigns their own database connections, provisions schemas, generates demo data, runs journey sampling, and uses the advanced views — Conformance Check, Happy Path and Simulation. They manage only the connections they created.</dd>
+
+  <dt>Pre-materialized transitions</dt>
+  <dd>The optional per-connection performance mode that reads the process map from the prebuilt <code>TRANSITIONS_RAW</code> table instead of pairing events live on every request. It is off by default and fails safe: any read failure falls back to the live query. Shown on the map as <b>⚡ Pre-materialized</b>, or <b>⚠ Live (not built)</b> when enabled but not yet usable.</dd>
+
+  <dt>Preset</dt>
+  <dd>A named snapshot of every filter dimension — date range, included and excluded steps, meta values, step-count, journey-time and score bounds. Presets are stored per project, persist between sessions, are included in backups, and are captured at the moment of saving: later filter changes do not update them.</dd>
+
+  <dt>Process Goodness</dt>
+  <dd>The composite quality KPI combining path quality, efficiency and coverage into one number that can be positive or negative. It is shown only when at least one step has a SCORE, and shows "—" if its query exceeds the 30-second timeout.</dd>
+
+  <dt>Process map</dt>
+  <dd>The interactive directly-follows graph at the centre of the application: nodes for steps, arrows for transitions whose thickness, opacity, colour and label reflect the selected transition metric relative to the highest value on the map.</dd>
+
+  <dt>Process Similarity</dt>
+  <dd>The A/B-only score Q(T₁, T₂), between 0 and 1, measuring how behaviourally alike the two filtered processes are: 0.4 × variant alignment + 0.4 × scored-node agreement + 0.2 × joint coverage. Green from 0.70, blue from 0.30, red below. The badge is hidden when either side exceeds 500 variants.</dd>
+
+  <dt>Project</dt>
+  <dd>The top-level container for one process, identified by PROJECT_ID and listed in the PROJECTS table. Every journey, step definition, meta title, note, preset, norm, happy path and saved layout belongs to exactly one project.</dd>
+
+  <dt>PROJECTS</dt>
+  <dd>The table holding one row per project: PROJECT_ID, TITLE and DESCRIPTION. The project picker lists projects ordered by title.</dd>
+
+  <dt>Provisioning</dt>
+  <dd>Creating the schema and the process-mining tables (PROJECTS, JOURNEYS, STEPS, METAS, NOTES) with the <b>Create schema &amp; tables</b> button. All provisioning DDL uses IF NOT EXISTS, so re-running never disturbs existing data. It requires a database account with CREATE SCHEMA and CREATE TABLE rights.</dd>
+</dl>
+
+<h2 id="glo-q">Q</h2>
+<dl>
+  <dt>Q score</dt>
+  <dd>See Process Similarity.</dd>
+
+  <dt>queryMs</dt>
+  <dd>The server-side wall-clock time of the database queries behind a chart load, shown in the chart footer as, for example, "123 ms" or "1.23 s".</dd>
+</dl>
+
+<h2 id="glo-r">R</h2>
+<dl>
+  <dt>Rebuild token</dt>
+  <dd>A per-connection bearer token letting a scheduler or ETL step trigger that connection's <code>TRANSITIONS_RAW</code> rebuild without an admin login. It is shown once, stored only as a hash, scoped to its own connection, and rate-limited to one rebuild per 60 seconds.</dd>
+
+  <dt>Recovery codes</dt>
+  <dd>The one-time codes issued when two-factor authentication is set up, each of which signs the user in once if the authenticator is unavailable. They are shown once, stored only as hashes, and can be regenerated — which invalidates the previous set.</dd>
+
+  <dt>Regular user</dt>
+  <dd>The baseline role, and the default for a new account. A Regular user views maps, charts and KPIs, applies filters and presets, reads and writes notes, and manages their own settings and layout on the connections assigned to them.</dd>
+
+  <dt>Required steps</dt>
+  <dd>In Simulation, a post-run filter keeping only journeys that visit every required step at least once. Because non-qualifying journeys are generated and then discarded, the reported total can be lower than the configured Journey Count.</dd>
+
+  <dt>Role</dt>
+  <dd>The permission level carried by a signed-in account: Regular, Power or Administrator, each building on the previous one. The Developer grant is separate and additional. Roles require a signed-in identity — see Anonymous mode.</dd>
+
+  <dt>Rotation</dt>
+  <dd>Replacement of a log file that keeps the same name. The watchdog detects it by the file shrinking below the stored offset, or by the MD5 signature of the first 64 bytes changing, and re-reads from the start. Files shorter than 64 bytes cannot be fingerprinted.</dd>
+</dl>
+
+<h2 id="glo-s">S</h2>
+<dl>
+  <dt>Sample set</dt>
+  <dd>A named subset of a project's journeys, stored as physical copies of their rows in JOURNEYS under a SAMPLE_SET value of SAMPLE_1, SAMPLE_2 or SAMPLE_3. Up to three exist per project; original rows are never modified, and deleting a sample removes only its own rows. Samples live in the database and are therefore shared by every user of that project.</dd>
+
+  <dt>Sampling strategy</dt>
+  <dd>How journeys are chosen for a sample: <b>Random</b> (uniform, fast and unbiased), <b>Temporal Stratified</b> (proportional across calendar-month buckets) or <b>Path Diversity</b> (coverage-maximising across distinct variants, so rare paths appear).</dd>
+
+  <dt>Sandbox</dt>
+  <dd>The directory under which file sources may read, <code>PMW_INTEGRATION_FILES_DIR</code>, defaulting to <code>&lt;data dir&gt;/integration_files</code>. Relative paths resolve inside it and any path escaping it — via <code>..</code> or a symlink — is rejected with "That path is outside the allowed sources directory."</dd>
+
+  <dt>Schema</dt>
+  <dd>The Exasol schema named on a connection, into which every table is read and written. It is optional for merely connecting but required for provisioning, demo generation, project listing and every import.</dd>
+
+  <dt>Score</dt>
+  <dd>The optional numeric value on a step in STEPS, shown as a badge on the node — green for positive, red for negative, blue for zero. Scores drive Journey Score, Graph Value, Process Goodness and the node-agreement term of Process Similarity. Steps without a score contribute zero.</dd>
+
+  <dt>Severity</dt>
+  <dd>The cumulative ladder of log levels — INFO, USAGE, WARN, ERROR, DEBUG. Choosing a maximum level always keeps the cheaper levels; DEBUG is recorded only when explicitly selected.</dd>
+
+  <dt>Shape</dt>
+  <dd>The outline of a node, taken from STEPS: stadium, round, hex or circle. Steps created automatically by an import get a shape and colour chosen deterministically from the step name, so the same name always looks the same.</dd>
+
+  <dt>Signature</dt>
+  <dd>The MD5 of a file's first 64 bytes, stored in the checkpoint so that an appended file is recognised as the same file while a replaced one is not. See Rotation.</dd>
+
+  <dt>Sim-A / Sim-B</dt>
+  <dd>The two slots in which a simulation run can be stored so that it can be selected as an A or B data source in the Sampling section, and thus compared in A/B Comparison against real data or against the other simulation.</dd>
+
+  <dt>Simulation</dt>
+  <dd>The advanced view that builds a first-order Markov chain from the graph currently loaded in Chart A and walks it to generate synthetic journeys, with lognormal edge durations and Poisson arrivals. Available to Power users and administrators only.</dd>
+
+  <dt>Source</dt>
+  <dd>In the Integration console, a concrete thing to import — today a File: a path, an encoding, a linked source type, a transaction bracket and an optional watchdog block.</dd>
+
+  <dt>Source type</dt>
+  <dd>A reusable recipe for parsing one log format: an example line plus the regular expressions that extract the timestamp, case id, step, up to three meta fields and any helper fields, together with any compound-step rules. Every field is defined by hand, by design.</dd>
+
+  <dt>SSRF guard</dt>
+  <dd>The check applied to a connection's LLM URL before it is contacted: only http and https are allowed, every resolved address is vetted, the outbound connection is pinned to the vetted address and redirects are disabled. Loopback and private addresses are permitted by default so that local model servers work.</dd>
+
+  <dt>Statistics</dt>
+  <dd>The view analysing all journey routes matching Chart A's filters, with a <b>Routes</b> table of distinct variants and an <b>Analytics</b> set of visualisations — duration histogram, step traffic and transition heat map.</dd>
+
+  <dt>Std Dev</dt>
+  <dd>Both a transition metric (the standard deviation of a transition's elapsed times, indicating inconsistent durations) and a KPI (the standard deviation of whole-journey durations).</dd>
+
+  <dt>Step</dt>
+  <dd>A single activity within a journey — one row of JOURNEYS — and, in aggregate, one node on the map. Also called an event.</dd>
+
+  <dt>Step editor</dt>
+  <dd>The Configuration → Steps panel where a step's background and foreground colour, shape, score, group and description are set. Changes are written straight to the STEPS table and the map redraws.</dd>
+
+  <dt>Step group</dt>
+  <dd>The dashed, coloured box with a name pill wrapping every step sharing a BELONGS_TO value. A group can be collapsed, in which case connection counts are summed and times weight-averaged, and moved as a whole by dragging its box.</dd>
+
+  <dt>STEPS</dt>
+  <dd>The table holding per-step presentation and scoring: DESCRIPTION, BG_COLOR, FG_COLOR, SCORE, SHAPE, END_OF_PROCESS and BELONGS_TO, keyed by PROJECT_ID and STEP.</dd>
+</dl>
+
+<h2 id="glo-t">T</h2>
+<dl>
+  <dt>Tag</dt>
+  <dd>The log field that groups an entire activity across operations and severities. Three exist: <b>SQL</b> (every entry quoting an executed statement), <b>BACKUP/RESTORE</b> (the whole custody trail of a backup file) and <b>DATA</b> (data imports).</dd>
+
+  <dt>TLS mode</dt>
+  <dd>The application-wide setting <b>Off</b>, <b>Optional</b> or <b>Required</b>, governing the main application (8080/8443), the admin interface (8090/8453) and the Integration console (8100/8463) alike, all sharing one active certificate. If a mode needs a certificate and none is active, each server falls back to HTTP so nothing becomes unreachable. Not to be confused with a connection's certificate mode, which concerns the database link.</dd>
+
+  <dt>Total Journeys</dt>
+  <dd>The KPI counting distinct journeys in the project with no filters applied. It does not change when filters do. Contrast Filtered Journeys.</dd>
+
+  <dt>Transaction bracket</dt>
+  <dd>The number of rows an import commits together, set per source. The default is 5000; other values are clamped to between 1000 and 1,000,000; 0 means one single transaction for the whole import. On failure the open bracket is rolled back while already-committed brackets remain.</dd>
+
+  <dt>Transition</dt>
+  <dd>A chronologically consecutive pair of steps within the same journey, drawn as one arrow on the map. Its metric values — count and the four time statistics — are aggregated over every occurrence in the filtered population.</dd>
+
+  <dt>Transition metric</dt>
+  <dd>The value driving each arrow's thickness, opacity, colour and label: Count, Avg Time, Min Time, Max Time or Std Dev. Each chart view remembers its own selection and each metric has its own colour scale.</dd>
+
+  <dt>TRANSITIONS_RAW</dt>
+  <dd>The optional table storing one row per consecutive step pair — PROJECT_ID, EVENT_ID, FROM_STEP, TO_STEP, FROM_TIME, TO_TIME, DUR_SECS, SAMPLE_SET — so the map query becomes a plain aggregate. It goes stale as soon as JOURNEYS changes and must be rebuilt after each load. See Pre-materialized transitions.</dd>
+
+  <dt>Trigger</dt>
+  <dd>What started an import: <code>manual</code> (a ▷ Run in the console) or <code>watchdog</code> (a background poll). The console splits its import KPIs along this distinction.</dd>
+
+  <dt>Two-factor authentication</dt>
+  <dd>A time-based one-time code from an authenticator application, required after the password once an administrator enables it for an account. Enabling it makes enrolment mandatory at the next sign-in. A passkey sign-in skips the code step.</dd>
+</dl>
+
+<h2 id="glo-v">V</h2>
+<dl>
+  <dt>Valve</dt>
+  <dd>The ⇄ control on the divider in A/B Comparison. Open, both panels share one viewport and every pan, zoom and node drag mirrors instantly; closed, they move independently — and closing first snapshots A's view into B. A is always the master.</dd>
+
+  <dt>Variant</dt>
+  <dd>A distinct journey path — one ordered sequence of steps, however many journeys followed it. Variants are what the Statistics Routes table lists, what Process Similarity aligns, and what Process Goodness weights by relative frequency.</dd>
+
+  <dt>View</dt>
+  <dd>One of the ten screens reached from the ☰ menu at the top right: A-Chart, B-Chart, A/B Comparison, Individual Journey, AI supported Documentation, Statistics, Conformance Check, Happy Path, Notes and Simulation. Each remembers its own filters and metric, and the last three named are hidden from Regular users.</dd>
+</dl>
+
+<h2 id="glo-w">W</h2>
+<dl>
+  <dt>Watchdog</dt>
+  <dd>The background job that polls a file source at its configured interval and imports only newly appended lines, so a continuously written log streams into the database on its own. It runs headless, acts as the source's owner, uses the connection's stored credentials, and re-checks the assignment on every poll — revoking it stops the watchdog.</dd>
+
+  <dt>WebAuthn</dt>
+  <dd>The standard behind passkeys. See Passkey.</dd>
+</dl>
+
+<h2 id="glo-x">X</h2>
+<dl>
+  <dt>X-PMW-User</dt>
+  <dd>The trusted header carrying the signed-in identity from the interface proxy to the compute backend after session validation. The backend refuses direct calls that do not carry the proxy-authentication secret, which is what makes the role checks impossible to bypass.</dd>
+</dl>
+
+<div class="tip"><strong>Tip</strong> The in-application help panel, opened with <b>⌘/</b> or <b>Ctrl+/</b>, carries a shorter version of many of these definitions in context. Use it while working and this chapter when you need the precise wording, the units or the limits.</div>
+
+<div class="warn"><strong>Warning</strong> Several pairs of terms look alike and mean different things: <b>Exclude Steps</b> (a journey filter) versus <b>Excluded steps</b> (a Simulation model change); <b>certificate mode</b> (the database link) versus <b>TLS mode</b> (the application's own ports); <b>sample set</b> (a stored subset of journeys) versus <b>delta upload</b> (an import that adds to what is already stored); and the Conformance Check <b>norm</b> versus the Happy Path <b>conformance score</b>. Check the entry before assuming which one a colleague means.</div>
+
+</section>

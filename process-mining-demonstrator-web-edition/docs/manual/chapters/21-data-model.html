@@ -1,0 +1,398 @@
+<section class="chapter" id="ch-data-model" data-title="Reference: The Exasol Data Model" data-num="21">
+  <h1><span class="chnum">21</span> Reference: The Exasol Data Model</h1>
+
+  <p class="chintro">Everything the application shows you comes out of one Exasol schema. This chapter is the complete reference for that schema: the six tables, every column with its type and default, what the <code>SAMPLE_SET</code> column means and how samples and simulations live alongside the original data, how <code>EVENT_ID</code> is formed in the demo datasets and what that means when you want to trace a journey back to a source record, how the process map is derived from the event log, and what changes when the optional <code>TRANSITIONS_RAW</code> table is in play. It closes with a summary of the provisioning DDL, guidance on sizing, and the list of database privileges the application needs. It is written for database administrators, ETL developers and anyone who has to load, size or govern the data — not for everyday chart users.</p>
+
+  <h2 id="ch21-overview">The schema at a glance</h2>
+
+  <p>The application reads and writes six tables inside a single Exasol schema. The schema name is part of each connection definition, so different connections may point at different schemas on the same or different servers. Five tables are the canonical set; the sixth, <code>TRANSITIONS_RAW</code>, is an optional performance table that the application builds for itself.</p>
+
+  <table>
+    <thead><tr><th>Table</th><th>Grain</th><th>Written by</th><th>Created by</th></tr></thead>
+    <tbody>
+      <tr><td><code>PROJECTS</code></td><td>One row per project</td><td>Demo generator; project deletion</td><td>Provisioning</td></tr>
+      <tr><td><code>JOURNEYS</code></td><td>One row per (event, step) — the event log</td><td>Your ETL; sampling; demo generator</td><td>Provisioning</td></tr>
+      <tr><td><code>STEPS</code></td><td>One row per (project, step)</td><td>The Step editor; demo generator</td><td>Provisioning</td></tr>
+      <tr><td><code>METAS</code></td><td>One row per project</td><td>Demo generator</td><td>Provisioning</td></tr>
+      <tr><td><code>NOTES</code></td><td>One row per note thread</td><td>The Notes feature</td><td>Lazily, on first use</td></tr>
+      <tr><td><code>TRANSITIONS_RAW</code></td><td>One row per consecutive step pair</td><td>The rebuild job</td><td>The rebuild job</td></tr>
+    </tbody>
+  </table>
+
+  <p>The source tables normally arrive with your own data — you load them from your ETL and the application only reads them. The application can also create them itself; see <a href="#ch21-provisioning">Schema provisioning</a>. All provisioning DDL uses <code>IF NOT EXISTS</code>, so re-running it never disturbs existing data and never alters an existing table.</p>
+
+  <h2 id="ch21-projects">PROJECTS</h2>
+
+  <p>One row per process-mining project. A project is the top-level unit of separation: every other table carries <code>PROJECT_ID</code> and every query the application issues is scoped to one project.</p>
+
+  <table>
+    <thead><tr><th>Column</th><th>Type</th><th>Constraint / default</th></tr></thead>
+    <tbody>
+      <tr><td><code>PROJECT_ID</code></td><td>VARCHAR(100)</td><td>NOT NULL, PRIMARY KEY</td></tr>
+      <tr><td><code>TITLE</code></td><td>VARCHAR(500)</td><td>default <code>''</code></td></tr>
+      <tr><td><code>DESCRIPTION</code></td><td>VARCHAR(2000)</td><td>default <code>''</code></td></tr>
+    </tbody>
+  </table>
+
+  <p>The project picker lists projects ordered by <code>TITLE</code>. A project with an empty title is displayed under its <code>PROJECT_ID</code> instead.</p>
+
+  <div class="note"><strong>Note</strong> A <code>PROJECTS</code> row is not strictly required for data to be visible. The project listing in the connection editor reports a project if it exists in <em>either</em> <code>PROJECTS</code> or <code>JOURNEYS</code>, so an orphan on either side is visible rather than silently invisible. This is deliberate: it lets you spot a load that wrote events without registering the project, and a project registration whose events never arrived.</div>
+
+  <h2 id="ch21-journeys">JOURNEYS — the event log</h2>
+
+  <p>One row per (event, step). This is the only large table in the schema, and the only one your ETL normally writes.</p>
+
+  <table>
+    <thead><tr><th>Column</th><th>Type</th><th>Constraint / default</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>PROJECT_ID</code></td><td>VARCHAR(100)</td><td>NOT NULL</td><td>Owning project</td></tr>
+      <tr><td><code>EVENT_ID</code></td><td>VARCHAR(200)</td><td>NOT NULL</td><td>The journey (case) identifier</td></tr>
+      <tr><td><code>STEP</code></td><td>VARCHAR(500)</td><td>NOT NULL</td><td>The activity name</td></tr>
+      <tr><td><code>STEP_ID</code></td><td>DECIMAL(18,0)</td><td>—</td><td>Orders steps that share the same <code>EVENT_TIME</code></td></tr>
+      <tr><td><code>EVENT_TIME</code></td><td>TIMESTAMP</td><td>NOT NULL</td><td>When the step happened</td></tr>
+      <tr><td><code>META_1</code></td><td>VARCHAR(1000)</td><td>—</td><td>Free-form attribute 1</td></tr>
+      <tr><td><code>META_2</code></td><td>VARCHAR(1000)</td><td>—</td><td>Free-form attribute 2</td></tr>
+      <tr><td><code>META_3</code></td><td>VARCHAR(1000)</td><td>—</td><td>Free-form attribute 3</td></tr>
+      <tr><td><code>SAMPLE_SET</code></td><td>VARCHAR(20)</td><td>default <code>'ORIGINAL'</code></td><td>Which data set the row belongs to</td></tr>
+    </tbody>
+  </table>
+
+  <p>A journey is the set of all rows sharing one <code>EVENT_ID</code> within one project and one sample set. Steps are ordered by <code>EVENT_TIME</code>, and where two steps carry the same timestamp — common when a source system stamps a whole batch at once — by <code>STEP_ID</code>. If your source has no natural sub-second ordering, populate <code>STEP_ID</code> with an increasing counter per journey; otherwise the order of same-second steps is arbitrary and the derived process map will show pairs that never occurred in that order.</p>
+
+  <h3 id="ch21-journeys-layout">Physical layout</h3>
+
+  <p>When the application creates <code>JOURNEYS</code> itself, the DDL declares a physical layout tuned for the queries the map issues:</p>
+
+  <dl>
+    <dt><code>DISTRIBUTE BY EVENT_ID</code></dt>
+    <dd>Co-locates all events of one journey on one cluster node, so the transition query's <code>LEAD()</code> window and every <code>GROUP BY EVENT_ID</code> filter run node-local instead of shuffling rows across the cluster. <code>EVENT_ID</code> is high-cardinality, so the rows still spread evenly.</dd>
+    <dt><code>PARTITION BY EVENT_TIME</code></dt>
+    <dd>Lets Exasol prune by date range. It helps the selection of event IDs that are active in the filter window more than it helps the final scan. Exasol requires the partition column to differ from the distribution column, which is why the two are split this way.</dd>
+  </dl>
+
+  <div class="warn"><strong>Warning</strong> Provisioning never alters an existing table. Because all DDL is written with <code>IF NOT EXISTS</code>, a <code>JOURNEYS</code> table that already exists keeps whatever layout it has — you get no error and no warning, only slower queries. A DBA must apply the layout by hand:
+    <pre><code>ALTER TABLE JOURNEYS DISTRIBUTE BY EVENT_ID;
+ALTER TABLE JOURNEYS PARTITION BY EVENT_TIME;</code></pre>
+  </div>
+
+  <h3 id="ch21-event-id">EVENT_ID: type tolerance and hashing</h3>
+
+  <p>The declared type of <code>EVENT_ID</code> is <code>VARCHAR(200)</code>, but in real deployments it varies — sites use <code>VARCHAR</code>, <code>HASHTYPE</code> or <code>DECIMAL</code> depending on what their source systems produce. The application tolerates all of them. This is also why <code>TRANSITIONS_RAW</code> is deliberately built with <code>CREATE TABLE AS SELECT</code> rather than an explicit column list: its <code>EVENT_ID</code> then inherits the exact type of the <code>JOURNEYS</code> column. Hard-coding a type there would make the semi-join against <code>JOURNEYS</code> raise Exasol's <em>Incomparable Types</em> error on any site whose column is not a <code>VARCHAR</code>.</p>
+
+  <p>The three built-in demo datasets do <strong>not</strong> use readable order numbers as journey identifiers. Each demo <code>EVENT_ID</code> is the <strong>MD5 hex hash</strong> of a synthetic key:</p>
+
+  <table>
+    <thead><tr><th>Dataset</th><th>Project</th><th>Synthetic key hashed into EVENT_ID</th></tr></thead>
+    <tbody>
+      <tr><td>Retail — Online Bookstore</td><td><code>BOOKSTORE</code></td><td><code>ORD-000001</code>, <code>ORD-000002</code>, …</td></tr>
+      <tr><td>Finance — Online Credit Application</td><td><code>CREDIT</code></td><td><code>CRA-000001</code>, <code>CRA-000002</code>, …</td></tr>
+      <tr><td>Transportation — Flight Booking &amp; Management</td><td><code>FLIGHTS</code></td><td><code>FLT-000001</code>, <code>FLT-000002</code>, …</td></tr>
+    </tbody>
+  </table>
+
+  <p>In each case the key is the three-letter prefix plus a six-digit sequence number, and the value stored in <code>EVENT_ID</code> is the MD5 hash of that string in hexadecimal.</p>
+
+  <div class="note"><strong>Note</strong> The consequence for tracing back to a source record: an <code>EVENT_ID</code> you read off the Individual Journey view or copy out of a variant listing is a one-way hash, not an order number. You cannot invert it. To find the underlying case you must hash forward — compute the MD5 of the candidate key and compare — or keep your own mapping table. The same reasoning applies to production loads: if your ETL hashes or pseudonymises the case key on the way in (a common requirement when the event log leaves the source system's access controls behind), plan for the lookup direction you will actually need before you load, because the application only ever shows you the stored identifier.</div>
+
+  <div class="tip"><strong>Tip</strong> If you need operators to be able to identify a case from the chart, carry a human-readable reference in one of the three <code>META</code> columns. Meta values are displayed and filterable; <code>EVENT_ID</code> is only ever matched exactly.</div>
+
+  <h2 id="ch21-sample-set">SAMPLE_SET: originals, samples and simulations</h2>
+
+  <p><code>SAMPLE_SET</code> is what lets one <code>JOURNEYS</code> table hold your real data and several derived working sets side by side. It takes four values.</p>
+
+  <table>
+    <thead><tr><th>Value</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>ORIGINAL</code></td><td>The source data as loaded. This is the default for new rows and cannot be deleted from the application.</td></tr>
+      <tr><td><code>SAMPLE_1</code></td><td>First derived working set.</td></tr>
+      <tr><td><code>SAMPLE_2</code></td><td>Second derived working set.</td></tr>
+      <tr><td><code>SAMPLE_3</code></td><td>Third derived working set.</td></tr>
+    </tbody>
+  </table>
+
+  <p>Everywhere the application filters by sample set, <code>NULL</code> is treated as <code>ORIGINAL</code>. The generated predicate is <code>SAMPLE_SET = 'ORIGINAL' OR SAMPLE_SET IS NULL</code>, so a legacy table whose rows were loaded before the column existed continues to work unchanged and its rows count as original data.</p>
+
+  <div class="warn"><strong>Warning</strong> Whenever a count differs from what you expect, check for <code>NULL</code> values in <code>SAMPLE_SET</code>. They are invisible in the sample picker but they are counted as <code>ORIGINAL</code> everywhere else.</div>
+
+  <h3 id="ch21-sample-migration">The quiet migration</h3>
+
+  <p>If the column is missing, the application adds it on demand rather than failing. It issues, ignoring failures (for instance because the column already exists):</p>
+
+  <pre><code>ALTER TABLE JOURNEYS ADD COLUMN SAMPLE_SET VARCHAR(20) DEFAULT 'ORIGINAL';
+UPDATE JOURNEYS SET SAMPLE_SET = 'ORIGINAL' WHERE SAMPLE_SET IS NULL;</code></pre>
+
+  <p>Because the failures are ignored, an account without <code>ALTER</code> rights simply leaves the table as it is — the application then keeps working through the <code>IS NULL</code> branch of the filter, but no samples can be created.</p>
+
+  <h3 id="ch21-sample-storage">Samples are physical copies</h3>
+
+  <p>Creating a sample does not create a view, a flag or a reference. It <code>INSERT</code>s the chosen journeys' rows back into <code>JOURNEYS</code> with the new <code>SAMPLE_SET</code> value, in batches of 200 event IDs per <code>INSERT</code>. Every row of every selected journey is duplicated. Three sample sets covering a quarter of the log each therefore add roughly 75&nbsp;% to the size of the table.</p>
+
+  <p>Three sampling strategies are offered: <code>random</code>, <code>temporal</code> and <code>pathDiverse</code>. Whichever you choose, the storage behaviour is the same.</p>
+
+  <p>Deleting a sample deletes only the rows carrying that <code>SAMPLE_SET</code> value. Deleting <code>ORIGINAL</code> is not possible through the application — the call is a no-op — so a mis-click can never destroy your source data through the sampling controls.</p>
+
+  <figure data-fig="app-06-sampling"><figcaption>The sampling controls. Each sample you create is a physical copy of the selected journeys' rows inside <code>JOURNEYS</code>.</figcaption></figure>
+
+  <div class="warn"><strong>Warning</strong> Sample deletion is irreversible. There is no recycle bin and no undo. The rows are removed with a <code>DELETE</code> and can only be recovered by re-running the sampling — which, for the <code>random</code> strategy, will not produce the same selection.</div>
+
+  <h2 id="ch21-steps">STEPS</h2>
+
+  <p>Presentation and scoring for each step, edited through the application's Step editor. This table is what makes the map look like your process rather than a set of grey boxes.</p>
+
+  <table>
+    <thead><tr><th>Column</th><th>Type</th><th>Constraint / default</th></tr></thead>
+    <tbody>
+      <tr><td><code>PROJECT_ID</code></td><td>VARCHAR(100)</td><td>NOT NULL, part of the primary key</td></tr>
+      <tr><td><code>STEP</code></td><td>VARCHAR(500)</td><td>NOT NULL, part of the primary key</td></tr>
+      <tr><td><code>DESCRIPTION</code></td><td>VARCHAR(2000)</td><td>default <code>''</code></td></tr>
+      <tr><td><code>BG_COLOR</code></td><td>VARCHAR(30)</td><td>default <code>''</code></td></tr>
+      <tr><td><code>FG_COLOR</code></td><td>VARCHAR(30)</td><td>default <code>''</code></td></tr>
+      <tr><td><code>SCORE</code></td><td>DECIMAL(18,2)</td><td>nullable</td></tr>
+      <tr><td><code>SHAPE</code></td><td>VARCHAR(50)</td><td>default <code>''</code></td></tr>
+      <tr><td><code>END_OF_PROCESS</code></td><td>BOOLEAN</td><td>default FALSE</td></tr>
+      <tr><td><code>BELONGS_TO</code></td><td>VARCHAR(500)</td><td>nullable — the step group</td></tr>
+    </tbody>
+  </table>
+
+  <p>Where a value is missing or is not a string, the reader falls back to: the step name for the description, <code>blue</code> for the background colour, <code>white</code> for the foreground colour and <code>stadium</code> for the shape. A step that appears in the transitions but has no <code>STEPS</code> row at all is synthesised on the fly in grey (<code>gray</code> background, <code>white</code> foreground, <code>stadium</code> shape). Grey nodes on the map are therefore a reliable signal that your event log contains an activity nobody has described yet.</p>
+
+  <div class="warn"><strong>Warning</strong> <code>STEPS</code> must hold exactly one row per (<code>PROJECT_ID</code>, <code>STEP</code>). The application caches the table per user and per project and joins it to the event log to attach scores; duplicate rows would multiply journey rows in that join and inflate every score-derived figure. If you load <code>STEPS</code> from an ETL rather than through the Step editor, enforce uniqueness there.</div>
+
+  <p>The cache is refreshed when a step is edited in the Step editor, when the user disconnects or connects to another connection (it is never carried across connections), when a manager deletes a project from the connection editor, and when demo content is generated. A <code>STEPS</code> row changed behind the application's back — by a direct SQL update, for example — is picked up only after one of those events.</p>
+
+  <h2 id="ch21-metas">METAS</h2>
+
+  <p>The display labels for the three free-form attribute columns of <code>JOURNEYS</code>. One row per project.</p>
+
+  <table>
+    <thead><tr><th>Column</th><th>Type</th><th>Constraint / default</th></tr></thead>
+    <tbody>
+      <tr><td><code>PROJECT_ID</code></td><td>VARCHAR(100)</td><td>NOT NULL, PRIMARY KEY</td></tr>
+      <tr><td><code>META_1_TITLE</code></td><td>VARCHAR(500)</td><td>default <code>''</code></td></tr>
+      <tr><td><code>META_2_TITLE</code></td><td>VARCHAR(500)</td><td>default <code>''</code></td></tr>
+      <tr><td><code>META_3_TITLE</code></td><td>VARCHAR(500)</td><td>default <code>''</code></td></tr>
+    </tbody>
+  </table>
+
+  <p>If a title is empty or the row is absent, the interface falls back to generic meta labels. Filling this table is the cheapest single improvement you can make to a new project: it turns "Meta 1" into "Payment Method" everywhere in the filter bar, the statistics and the exports.</p>
+
+  <h2 id="ch21-notes">NOTES</h2>
+
+  <p><code>NOTES</code> is not part of the provisioning set. It is created on demand with <code>CREATE TABLE IF NOT EXISTS</code> the first time anyone uses notes, and then quietly migrated — each migration statement's failure is ignored — to add the <code>IS_SHARED</code>, <code>EDITED_BY</code>, <code>IMPORTANCE</code>, <code>RESOLVED</code> and <code>TITLE</code> columns and to widen <code>NOTE</code> from the legacy <code>VARCHAR(8000)</code> to <code>VARCHAR(100000)</code>, so that append-only comment threads have room to grow.</p>
+
+  <table>
+    <thead><tr><th>Column</th><th>Type</th><th>Constraint / default</th></tr></thead>
+    <tbody>
+      <tr><td><code>ID</code></td><td>VARCHAR(36)</td><td>NOT NULL, PRIMARY KEY</td></tr>
+      <tr><td><code>PROJECT_ID</code></td><td>VARCHAR(100)</td><td>NOT NULL</td></tr>
+      <tr><td><code>NOTES_DATE</code></td><td>TIMESTAMP</td><td>NOT NULL — created at</td></tr>
+      <tr><td><code>EDITED_DATE</code></td><td>TIMESTAMP</td><td>nullable</td></tr>
+      <tr><td><code>NOTE_USER</code></td><td>VARCHAR(200)</td><td>default <code>''</code> — the author's login name</td></tr>
+      <tr><td><code>NOTE</code></td><td>VARCHAR(100000)</td><td>default <code>''</code> — the thread text, newest comment prepended on top</td></tr>
+      <tr><td><code>IS_SHARED</code></td><td>BOOLEAN</td><td>default FALSE</td></tr>
+      <tr><td><code>EDITED_BY</code></td><td>VARCHAR(200)</td><td>default <code>''</code></td></tr>
+      <tr><td><code>IMPORTANCE</code></td><td>VARCHAR(20)</td><td>default <code>'NORMAL'</code> — one of NORMAL, INFO, IMPORTANT, URGENT</td></tr>
+      <tr><td><code>RESOLVED</code></td><td>BOOLEAN</td><td>default FALSE</td></tr>
+      <tr><td><code>TITLE</code></td><td>VARCHAR(500)</td><td>default <code>''</code></td></tr>
+      <tr><td><code>TARGET_TYPE</code></td><td>VARCHAR(10)</td><td>default <code>'node'</code> — <code>node</code> or <code>edge</code></td></tr>
+      <tr><td><code>TARGET_FROM</code></td><td>VARCHAR(500)</td><td>default <code>''</code></td></tr>
+      <tr><td><code>TARGET_TO</code></td><td>VARCHAR(500)</td><td>nullable — set for edge notes</td></tr>
+      <tr><td><code>FILTER_SNAPSHOT</code></td><td>VARCHAR(4000)</td><td>JSON snapshot of the filters in force when the note was written</td></tr>
+    </tbody>
+  </table>
+
+  <p>Any <code>IMPORTANCE</code> value other than the four listed normalises to <code>NORMAL</code> on read. Visibility fails closed: a user sees their own notes plus unowned notes (<code>NOTE_USER = ''</code>) and shared ones. Only the author may delete a note; when sign-in is disabled the author is the empty string, so in anonymous mode every note is unowned and visible to everyone.</p>
+
+  <h2 id="ch21-map-derivation">How the process map is derived from the event log</h2>
+
+  <p>Nothing in the schema stores a process model. The directly-follows graph you see on the canvas is computed from <code>JOURNEYS</code> every time you load or filter a map.</p>
+
+  <h3 id="ch21-live-query">The live query</h3>
+
+  <p>The derivation is a self-join expressed as a window function. Conceptually the application does this:</p>
+
+  <ol class="steps">
+    <li>Select the rows of the chosen project and sample set that survive the current filters.</li>
+    <li>Within each journey, order the rows by <code>EVENT_TIME</code> and then by <code>STEP_ID</code>, and use <code>LEAD()</code> to pair every row with its immediate successor. Each pair is one observed transition, and the difference between the two timestamps is its duration.</li>
+    <li>Aggregate the pairs by (from-step, to-step), producing <code>COUNT</code> and the <code>AVG</code>, <code>MIN</code>, <code>MAX</code> and <code>STDDEV</code> of the gap. Those five figures are what the edge labels, the metric colouring and the duration statistics display.</li>
+  </ol>
+
+  <pre><code>-- conceptually equivalent to
+SELECT FROM_STEP, TO_STEP,
+       COUNT(*), AVG(DUR), MIN(DUR), MAX(DUR), STDDEV(DUR)
+FROM (
+  SELECT STEP AS FROM_STEP,
+         LEAD(STEP)       OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_STEP,
+         LEAD(EVENT_TIME) OVER (PARTITION BY EVENT_ID ORDER BY EVENT_TIME, STEP_ID) - EVENT_TIME AS DUR
+  FROM JOURNEYS
+  WHERE PROJECT_ID = ? AND (SAMPLE_SET = ? OR ...)
+)
+WHERE TO_STEP IS NOT NULL
+GROUP BY FROM_STEP, TO_STEP;</code></pre>
+
+  <p>The last row of every journey pairs with nothing and drops out; that is why a journey of <em>n</em> steps contributes <em>n</em>&nbsp;−&nbsp;1 transitions. On large logs the window function dominates the cost of the query, and it is paid again on every filter change.</p>
+
+  <h3 id="ch21-transitions-raw">TRANSITIONS_RAW: what the materialised table changes</h3>
+
+  <p><code>TRANSITIONS_RAW</code> performs the pairing once and stores the result, so that the map query at request time is a pure <code>GROUP BY</code> aggregate with no window function at all. The admin interface describes it as "much faster for interactive filtering on large logs".</p>
+
+  <table>
+    <thead><tr><th>Column</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>PROJECT_ID</code></td><td>Owning project</td></tr>
+      <tr><td><code>EVENT_ID</code></td><td>The journey — type inherited from <code>JOURNEYS</code></td></tr>
+      <tr><td><code>FROM_STEP</code></td><td>The predecessor activity</td></tr>
+      <tr><td><code>TO_STEP</code></td><td>The successor activity</td></tr>
+      <tr><td><code>FROM_TIME</code></td><td>Timestamp of the predecessor</td></tr>
+      <tr><td><code>TO_TIME</code></td><td>Timestamp of the successor</td></tr>
+      <tr><td><code>DUR_SECS</code></td><td>Precomputed gap in seconds</td></tr>
+      <tr><td><code>SAMPLE_SET</code></td><td>Which data set the pair belongs to</td></tr>
+    </tbody>
+  </table>
+
+  <p>The table carries <code>PROJECT_ID</code>, <code>SAMPLE_SET</code> and <code>EVENT_ID</code>, which is exactly what the filter clauses need, so the same filters apply unchanged. Build mechanics worth knowing:</p>
+
+  <ul>
+    <li>It is built with <code>CREATE OR REPLACE TABLE … AS SELECT</code> into a staging table <code>TRANSITIONS_RAW_STAGE</code>, so every column type — critically <code>EVENT_ID</code> — inherits from <code>JOURNEYS</code> exactly.</li>
+    <li>The pairing covers <strong>every project and every sample set in one pass</strong>. The window partitions by (<code>PROJECT_ID</code>, <code>SAMPLE_SET</code>, <code>EVENT_ID</code>), because an <code>EVENT_ID</code> is only unique within one project and one sample set.</li>
+    <li>After the build the job attempts <code>ALTER TABLE … DISTRIBUTE BY EVENT_ID</code> on a best-effort basis — a failure there never aborts the rebuild, since distribution is only an optimisation — then counts the rows, then swaps the table in with <code>DROP TABLE IF EXISTS TRANSITIONS_RAW</code> followed by a <code>RENAME TABLE</code>.</li>
+    <li>Readers are never blocked by the build. The swap leaves a sub-millisecond window in which no live table exists, during which reads simply fall back to the live query.</li>
+    <li>The operation is idempotent and safe to re-run. It requires a schema name and returns <code>{ok, error, rows, built_at}</code>, where <code>rows</code> is the pair count and <code>built_at</code> an ISO-8601 UTC timestamp.</li>
+  </ul>
+
+  <p>Reading is equally forgiving. With the per-connection flag <b>Use pre-materialized transitions</b> switched on, <em>any</em> read failure — table missing, never built, mid-swap — is non-fatal: the application falls back to the live query so that the map never breaks, and logs a warning under the operation <code>materialize</code>. The detail-pane pill tells you which path served the map: "⚡ Pre-materialized", "⚠ Live (not built)" or "↻ Live query".</p>
+
+  <div class="warn"><strong>Warning</strong> <code>TRANSITIONS_RAW</code> is a snapshot and goes stale the moment <code>JOURNEYS</code> changes. Loading data, generating demo content and creating or deleting a sample do <strong>not</strong> rebuild it automatically. If the table still exists you will see pairs computed from the old log; if it does not, you get the live fallback. Make the token-authenticated rebuild call the last step of every ETL run that touches <code>JOURNEYS</code>.</div>
+
+  <h2 id="ch21-provisioning">Schema provisioning DDL summary</h2>
+
+  <div class="role">Requires: <b>Administrator</b>, <b>Power user</b> or <b>Developer</b> in the application — <em>and</em> a database account permitted to CREATE SCHEMA and CREATE TABLE</div>
+
+  <p><b>Create schema &amp; tables</b> is available in the admin panel (Connections tab → connection editor → <b>Database</b> inner tab) and in the main application's connection editor sheet (<b>Database / LLM Details</b> tab). Both surfaces run the same backend routine:</p>
+
+  <ol class="steps">
+    <li>Connect <em>without</em> opening a schema, because the target schema may not exist yet.</li>
+    <li><code>CREATE SCHEMA IF NOT EXISTS</code> for the schema named in the form.</li>
+    <li><code>OPEN SCHEMA</code>.</li>
+    <li>Run each table's <code>CREATE TABLE IF NOT EXISTS</code> in the order <code>PROJECTS</code>, <code>JOURNEYS</code>, <code>STEPS</code>, <code>METAS</code>, <code>NOTES</code>.</li>
+  </ol>
+
+  <p>The routine returns <code>{ok, error, created}</code>. On failure, <code>created</code> lists what was made <em>before</em> the failure, so partial progress is reported honestly — schema created but a table refused, for example. On success the banner reads "Created: schema &lt;name&gt;, PROJECTS, JOURNEYS, STEPS, METAS, NOTES". A blank schema name is refused with "A schema name is required.", and the admin panel pre-checks with the toast "Enter a schema name first."</p>
+
+  <p>The schema identifier is safely double-quoted, with embedded quotes doubled, so mixed-case and special-character names work. Remember that a quoted identifier is case-sensitive in Exasol: a schema created as <code>"Demo"</code> is not the same object as <code>DEMO</code>.</p>
+
+  <p>The effective shape of the DDL is:</p>
+
+  <pre><code>CREATE SCHEMA IF NOT EXISTS "DEMO";
+OPEN SCHEMA "DEMO";
+
+CREATE TABLE IF NOT EXISTS PROJECTS (
+  PROJECT_ID   VARCHAR(100)  NOT NULL PRIMARY KEY,
+  TITLE        VARCHAR(500)  DEFAULT '',
+  DESCRIPTION  VARCHAR(2000) DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS JOURNEYS (
+  PROJECT_ID  VARCHAR(100)  NOT NULL,
+  EVENT_ID    VARCHAR(200)  NOT NULL,
+  STEP        VARCHAR(500)  NOT NULL,
+  STEP_ID     DECIMAL(18,0),
+  EVENT_TIME  TIMESTAMP     NOT NULL,
+  META_1      VARCHAR(1000),
+  META_2      VARCHAR(1000),
+  META_3      VARCHAR(1000),
+  SAMPLE_SET  VARCHAR(20)   DEFAULT 'ORIGINAL'
+)
+DISTRIBUTE BY EVENT_ID
+PARTITION BY EVENT_TIME;
+
+CREATE TABLE IF NOT EXISTS STEPS (
+  PROJECT_ID      VARCHAR(100)  NOT NULL,
+  STEP            VARCHAR(500)  NOT NULL,
+  DESCRIPTION     VARCHAR(2000) DEFAULT '',
+  BG_COLOR        VARCHAR(30)   DEFAULT '',
+  FG_COLOR        VARCHAR(30)   DEFAULT '',
+  SCORE           DECIMAL(18,2),
+  SHAPE           VARCHAR(50)   DEFAULT '',
+  END_OF_PROCESS  BOOLEAN       DEFAULT FALSE,
+  BELONGS_TO      VARCHAR(500),
+  PRIMARY KEY (PROJECT_ID, STEP)
+);
+
+CREATE TABLE IF NOT EXISTS METAS (
+  PROJECT_ID    VARCHAR(100) NOT NULL PRIMARY KEY,
+  META_1_TITLE  VARCHAR(500) DEFAULT '',
+  META_2_TITLE  VARCHAR(500) DEFAULT '',
+  META_3_TITLE  VARCHAR(500) DEFAULT ''
+);</code></pre>
+
+  <p><code>NOTES</code> follows with the columns listed in <a href="#ch21-notes">the NOTES section</a>. <code>TRANSITIONS_RAW</code> has no provisioning DDL at all — it only ever comes into existence through a rebuild.</p>
+
+  <div class="tip"><strong>Tip</strong> In the admin panel only, the checkbox <b>Also build pre-materialized transitions after provisioning</b> (default unchecked) runs a rebuild immediately after a successful provision. The resulting table is empty until <code>JOURNEYS</code> is loaded, but the structure exists and the per-connection flag can be switched on straight away. The result line gains the suffix " · transitions built (N pairs)" or " · transitions build failed: &lt;error&gt;".</div>
+
+  <div class="warn"><strong>Warning</strong> Provisioning, testing and demo generation all use the password <strong>typed into the form</strong>, not the stored one. On a saved connection whose password field shows the "unchanged" placeholder, the operation runs with an empty password and normally reports an authentication failure even though the connection itself works. Retype the password before using any of these three buttons.</div>
+
+  <figure data-fig="admin-05-database-connections"><figcaption>The admin panel's Connections tab, from which the schema is provisioned and <code>TRANSITIONS_RAW</code> is rebuilt.</figcaption></figure>
+
+  <h2 id="ch21-privileges">Privileges the application needs</h2>
+
+  <p>The provisioning banner states the boundary plainly: "This requires a database account permitted to CREATE SCHEMA and CREATE TABLE — only your database administrator can grant those rights; this application cannot." The application never attempts to grant anything to itself. Decide which of the following capabilities the connection's database account should have, according to what you want that connection to be able to do.</p>
+
+  <table>
+    <thead><tr><th>Capability</th><th>Needed for</th><th>Statements issued</th></tr></thead>
+    <tbody>
+      <tr><td>SELECT on the schema</td><td>Everything. A read-only connection can browse maps, statistics and journeys.</td><td><code>SELECT</code> on all six tables</td></tr>
+      <tr><td>INSERT, UPDATE, DELETE</td><td>The Step editor, project metadata, notes, sampling</td><td><code>INSERT</code> / <code>UPDATE</code> / <code>DELETE</code> on <code>STEPS</code>, <code>METAS</code>, <code>NOTES</code>, <code>JOURNEYS</code></td></tr>
+      <tr><td>CREATE TABLE in the schema</td><td>Creating <code>NOTES</code> lazily on first use; building <code>TRANSITIONS_RAW_STAGE</code></td><td><code>CREATE TABLE IF NOT EXISTS</code>, <code>CREATE OR REPLACE TABLE … AS SELECT</code></td></tr>
+      <tr><td>ALTER TABLE</td><td>The <code>SAMPLE_SET</code> migration, the <code>NOTES</code> column migrations, the distribution hint on <code>TRANSITIONS_RAW</code></td><td><code>ALTER TABLE … ADD COLUMN</code>, <code>ALTER TABLE … DISTRIBUTE BY</code></td></tr>
+      <tr><td>DROP TABLE and RENAME TABLE</td><td>The <code>TRANSITIONS_RAW</code> staging swap</td><td><code>DROP TABLE IF EXISTS</code>, <code>RENAME TABLE</code></td></tr>
+      <tr><td>CREATE SCHEMA</td><td><b>Create schema &amp; tables</b> and demo generation only</td><td><code>CREATE SCHEMA IF NOT EXISTS</code></td></tr>
+    </tbody>
+  </table>
+
+  <p>Demo generation additionally requires <code>INSERT</code>, and its replacement step requires <code>DELETE</code> on <code>PROJECTS</code>, <code>METAS</code> and <code>JOURNEYS</code> for the dataset's own project. Project deletion from the connection editor issues <code>DELETE … WHERE PROJECT_ID = '&lt;id&gt;'</code> against <code>JOURNEYS</code>, <code>STEPS</code>, <code>METAS</code>, <code>NOTES</code>, <code>TRANSITIONS_RAW</code> and <code>PROJECTS</code>, in that order — children before <code>PROJECTS</code>. Absent tables are skipped rather than treated as errors, and the response's <code>tables</code> array lists what was actually cleared.</p>
+
+  <div class="tip"><strong>Tip</strong> A practical split for production: give analysts' connections <code>SELECT</code> plus <code>INSERT</code>/<code>UPDATE</code>/<code>DELETE</code> so notes, steps and samples work, and keep <code>CREATE SCHEMA</code>, <code>DROP</code> and <code>RENAME</code> for a separate maintenance connection used by the administrator and by the scheduled rebuild. Because the rebuild endpoint uses the <em>stored</em> credentials of the connection it names, a scheduler can drive the maintenance connection without ever handling a database password.</div>
+
+  <div class="warn"><strong>Warning</strong> Project deletion is permanent. There is no undo and no application-level backup, and it erases every note attached to the project along with the events. The confirmation dialog spells out the six tables it clears; read it before confirming.</div>
+
+  <h2 id="ch21-sizing">Sizing the schema</h2>
+
+  <p>Only <code>JOURNEYS</code> and <code>TRANSITIONS_RAW</code> grow with your data. <code>PROJECTS</code>, <code>METAS</code> and <code>STEPS</code> are configuration-sized — tens to hundreds of rows — and <code>NOTES</code> grows with human activity, not with the log, although a single note row can hold up to 100,000 characters of thread text.</p>
+
+  <p>Work with row counts rather than bytes:</p>
+
+  <dl>
+    <dt><code>JOURNEYS</code>, original data</dt>
+    <dd><em>journeys × average steps per journey</em> rows. This is the base figure for every other estimate.</dd>
+    <dt><code>JOURNEYS</code>, with samples</dt>
+    <dd>Add the full row count of every sampled journey again, per sample set. Samples are physical copies, so a project with three 25&nbsp;% samples occupies about 1.75 times the base. Budget for the worst case — three sample sets at 100&nbsp;% would quadruple the table.</dd>
+    <dt><code>TRANSITIONS_RAW</code></dt>
+    <dd>Roughly <em>base rows − journeys</em> pairs per project and sample set, because the final step of each journey has no successor. Its rows are narrower than <code>JOURNEYS</code> rows (no <code>META</code> columns) but it covers <em>all</em> projects and <em>all</em> sample sets in one table, so size it against the whole schema, not one project.</dd>
+  </dl>
+
+  <p>Points that affect load and query time rather than storage:</p>
+
+  <ul>
+    <li>Inserts from the sampling and demo-generation paths are batched at 200 journeys' rows per <code>INSERT</code>. Your own ETL should batch at least as coarsely.</li>
+    <li>Demo generation is hard-capped at <strong>20,000 journeys</strong> server-side. A larger request is silently clamped to exactly 20,000; the field's own maximum is the same figure and its default is 500. Use a real load, not the demo generator, to build a volume-test data set beyond that size.</li>
+    <li>Demo event times are spread randomly over 2024-01-01 08:00 to 2024-12-31 22:00, so date filters on demo data always operate within that single year.</li>
+    <li>Heavy statistics queries — variants, routes and the goodness metric — are subject to a query timeout of 30&nbsp;s by default. On a log large enough to hit it you will see "Statistics query timed out (30 s). Narrow your date range or filters and try again." Variant and route listings are additionally capped at 10,000 rows.</li>
+    <li>Every statement runs under a 300&nbsp;s socket timeout. Rebuilds, provisioning and demo generation have no application-level timeout of their own and are bounded only by that per-statement limit.</li>
+  </ul>
+
+  <div class="note"><strong>Note</strong> One user's queries are serialised. The database driver is synchronous and a single connection cannot safely run concurrent statements, so each user's queries queue behind one another on that user's own session. Different users run in parallel on their own sessions. When you size the cluster, size it for concurrent <em>users</em>, and remember that a long rebuild launched from a scheduler runs on its own stored-credential session and does not block anybody's map.</div>
+
+  <h2 id="ch21-checklist">Loading checklist</h2>
+
+  <p>A summary of the operational rules that follow from the model above.</p>
+
+  <ol class="steps">
+    <li>Create or verify the schema and the five canonical tables, either from your own DDL or with <b>Create schema &amp; tables</b>.</li>
+    <li>If <code>JOURNEYS</code> pre-existed, apply <code>DISTRIBUTE BY EVENT_ID</code> and <code>PARTITION BY EVENT_TIME</code> by hand — provisioning will not do it for you.</li>
+    <li>Register the project in <code>PROJECTS</code> and fill its <code>METAS</code> row so the meta filters are labelled.</li>
+    <li>Load <code>JOURNEYS</code>. Populate <code>STEP_ID</code> wherever timestamps can collide, and set <code>SAMPLE_SET</code> to <code>ORIGINAL</code> (or leave it null — it is read as original).</li>
+    <li>Populate <code>STEPS</code> with one row per activity, unique on (<code>PROJECT_ID</code>, <code>STEP</code>), or let operators build it up in the Step editor and watch for grey nodes as the to-do list.</li>
+    <li>If the connection has <b>Use pre-materialized transitions</b> enabled, call the rebuild endpoint as the final step of the load. Confirm afterwards that the map's pill reads "⚡ Pre-materialized" and not "⚠ Live (not built)".</li>
+  </ol>
+</section>
