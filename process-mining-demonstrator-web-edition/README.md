@@ -7,7 +7,7 @@ status: demo
 
 <img src="frontend/web/public/logo.svg" width="128" height="128">
 
-# Process Mining Demonstrator -- Web-Edition
+# Process Mining Demonstrator — Web Edition
 
 [![Python](https://img.shields.io/badge/python-3.13%20%7C%203.14-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Exasol|database](https://img.shields.io/badge/Exasol-database-blue.svg)](https://www.exasol.com)
