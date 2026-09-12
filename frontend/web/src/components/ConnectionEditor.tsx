@@ -789,8 +789,8 @@ export function ConnectionEditor({
                       >
                         {p.title}
                       </span>
-                      {p.title !== p.projectId && (
-                        <span className="t-caption2 fg-tertiary">{p.projectId}</span>
+                      {p.title !== p.titleShort && (
+                        <span className="t-caption2 fg-tertiary">{p.titleShort}</span>
                       )}
                     </div>
                     <span className="t-caption2 fg-secondary" style={{ whiteSpace: 'nowrap' }}>

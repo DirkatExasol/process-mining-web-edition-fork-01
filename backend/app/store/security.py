@@ -1339,7 +1339,7 @@ class SecurityStore:
         """Upsert the Style & Sections for one (connection, project). A `logo` of None
         keeps that project's stored logo; "" clears it. Validates accent + logo."""
         connection_id = (connection_id or "").strip()
-        project_id = (project_id or "").strip()
+        project_id = project_id
         if not connection_id or not project_id:
             raise ValueError("A connection and a project are required")
         accent = (accent or "").strip()
@@ -1398,7 +1398,7 @@ class SecurityStore:
     def set_report_prompt(self, connection_id: str, project_id: str, prompt: str) -> list[dict]:
         """Upsert one (connection, project) → prompt mapping. An empty prompt removes it."""
         connection_id = (connection_id or "").strip()
-        project_id = (project_id or "").strip()
+        project_id = project_id
         prompt = (prompt or "").strip()
         if not connection_id or not project_id:
             raise ValueError("A connection and a project are required")
@@ -1434,7 +1434,7 @@ class SecurityStore:
 
     def actions_for(self, connection_id: str, project_id: str) -> list[dict]:
         """The saved actions for this (connection, project), in insertion order."""
-        cid, pid = (connection_id or "").strip(), (project_id or "").strip()
+        cid, pid = (connection_id or "").strip(), project_id
         return [
             dict(r)
             for r in self._actions_raw()
@@ -1450,7 +1450,7 @@ class SecurityStore:
     def upsert_action(self, connection_id: str, project_id: str, action: dict) -> dict:
         """Create or replace one saved action, keyed by (connection, project, id). The
         caller supplies the id (a fresh uuid on create, the existing id on update)."""
-        cid, pid = (connection_id or "").strip(), (project_id or "").strip()
+        cid, pid = (connection_id or "").strip(), project_id
         aid = (action.get("id") or "").strip()
         if not cid or not pid:
             raise ValueError("A connection and a project are required")
@@ -1486,7 +1486,7 @@ class SecurityStore:
         return record
 
     def delete_action(self, connection_id: str, project_id: str, action_id: str) -> None:
-        cid, pid = (connection_id or "").strip(), (project_id or "").strip()
+        cid, pid = (connection_id or "").strip(), project_id
         rows = [
             r
             for r in self._actions_raw()
@@ -1514,7 +1514,7 @@ class SecurityStore:
     def aggregates_for(self, connection_id: str, project_id: str) -> list[dict]:
         """Aggregate links whose HIGH-LEVEL project is this (connection, project) — used
         by the app to offer 'drill down' on a Σ step."""
-        cid, pid = (connection_id or "").strip(), (project_id or "").strip()
+        cid, pid = (connection_id or "").strip(), project_id
         return [
             dict(r)
             for r in self._aggregates_raw()
@@ -1525,7 +1525,7 @@ class SecurityStore:
         """Record a Σ step's drill-down target. Keyed by (connectionId, projectId, sigmaStep)
         where connectionId/projectId identify the HIGH-LEVEL project holding the Σ node."""
         cid = (link.get("connectionId") or "").strip()
-        pid = (link.get("projectId") or "").strip()
+        pid = link.get("projectId")
         sigma = (link.get("sigmaStep") or "").strip()
         record = {
             "connectionId": cid,
@@ -1567,54 +1567,47 @@ class SecurityStore:
         return data if isinstance(data, list) else []
 
     def aggregate_set_by_source(self, connection_id: str, project_id: str) -> dict | None:
-        cid, pid = (connection_id or "").strip(), (project_id or "").strip()
+        cid, pid = (connection_id or "").strip(), project_id
         for r in self._aggregate_sets_raw():
             if r.get("sourceConnectionId") == cid and r.get("sourceProjectId") == pid:
                 return dict(r)
         return None
 
     def aggregate_set_by_high_level(self, connection_id: str, project_id: str) -> dict | None:
-        cid, pid = (connection_id or "").strip(), (project_id or "").strip()
+        cid, pid = (connection_id or "").strip(), project_id
         for r in self._aggregate_sets_raw():
             if r.get("highLevelConnectionId") == cid and r.get("highLevelProjectId") == pid:
                 return dict(r)
         return None
 
-    def _agg_loc(self, conn_id: str, schema: str | None = None) -> tuple[str, str] | None:
-        """A (host, schema) location, resolving the connection's host (and its own schema
-        when ``schema`` is None). Lower-cased for a tolerant match."""
-        conn = self.get_connection((conn_id or "").strip(), with_secrets=False)
-        if conn is None:
-            return None
-        sch = schema if schema is not None else (conn.schema or "")
-        return ((conn.host or "").strip().lower(), (sch or "").strip().lower())
+    def aggregate_connection_roles(self) -> dict[str, set[str]]:
+        """The specific CONNECTION IDS chosen for each role across all stored aggregate
+        sets: ``source`` (the original), ``high`` (the high-level Σ map) and ``detail``
+        (the drill-down targets). A connection used SOLELY as a detail target is hideable;
+        one that is also a source or high-level connection is not (mirroring 'a high-level
+        map is always visible; details may be hidden').
 
-    def aggregate_locations(self) -> dict[str, set[tuple[str, str]]]:
-        """(host, schema) locations grouped by role across all stored aggregate sets:
-        ``source`` (the original), ``high`` (the high-level Σ map) and ``detail`` (the
-        drill-down projects). Used to mark aggregate-bearing connections and to decide which
-        may be hidden — a detail-only connection is hideable; a source/high-level one is not
-        (mirroring 'a high-level map is always visible; details may be hidden')."""
-        src: set[tuple[str, str]] = set()
-        high: set[tuple[str, str]] = set()
-        detail: set[tuple[str, str]] = set()
+        Matching is by the exact connection picked for the aggregate — NOT by (host,
+        schema) — so a *different*, normal connection that merely points at the same
+        database/schema as a detail project is never wrongly hidden. (Detail *projects*
+        are still hidden per-project via their '#'-prefixed TITLE_SHORT.)"""
+        src: set[str] = set()
+        high: set[str] = set()
+        detail: set[str] = set()
         for s in self._aggregate_sets_raw():
-            loc = self._agg_loc(s.get("sourceConnectionId", ""))
-            if loc:
-                src.add(loc)
-            loc = self._agg_loc(s.get("highLevelConnectionId", ""), s.get("highLevelSchema", ""))
-            if loc:
-                high.add(loc)
+            if cid := (s.get("sourceConnectionId") or "").strip():
+                src.add(cid)
+            if cid := (s.get("highLevelConnectionId") or "").strip():
+                high.add(cid)
             for a in s.get("aggregates") or []:
-                loc = self._agg_loc(a.get("detailConnectionId", ""), a.get("detailSchema", ""))
-                if loc:
-                    detail.add(loc)
+                if cid := (a.get("detailConnectionId") or "").strip():
+                    detail.add(cid)
         return {"source": src, "high": high, "detail": detail}
 
     def save_aggregate_set(self, record: dict) -> dict:
         """Upsert an aggregate set, keyed by its source (connection, project)."""
         cid = (record.get("sourceConnectionId") or "").strip()
-        pid = (record.get("sourceProjectId") or "").strip()
+        pid = record.get("sourceProjectId")  # PROJECT_ID is a SMALLINT (int)
         now = _now()
         existing = self.aggregate_set_by_source(cid, pid)
         record = dict(record)

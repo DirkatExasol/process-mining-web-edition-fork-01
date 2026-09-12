@@ -32,18 +32,19 @@ def _request_user(request: Request) -> str | None:
 def list_connections(request: Request) -> list[dict]:
     """Connections assigned to the signed-in user (secrets stripped)."""
     user = _request_user(request)
-    # Aggregate-bearing (host, schema) locations, by role. A connection is marked when its
-    # schema holds an aggregate output (high-level or detail); it is *hideable* only when it
-    # holds detail(s) and is neither a source nor a high-level connection — mirroring "a
-    # high-level map is always visible; details may be hidden".
-    loc = security_store.aggregate_locations()
-    keep = loc["source"] | loc["high"]
+    # The exact connections chosen for each aggregate role. A connection is marked when it
+    # IS an aggregate output (high-level or detail); it is *hideable* only when it is a
+    # detail target and is neither a source nor a high-level connection — mirroring "a
+    # high-level map is always visible; details may be hidden". Matching is by connection
+    # id (not host/schema), so a normal connection to the same database/schema as a detail
+    # project is never wrongly hidden.
+    roles = security_store.aggregate_connection_roles()
+    keep = roles["source"] | roles["high"]
     out: list[dict] = []
     for c in security_store.connections_for_user(user):
         d = c.user_public()
-        here = ((c.host or "").strip().lower(), (c.schema or "").strip().lower())
-        d["hasAggregates"] = here in loc["high"] or here in loc["detail"]
-        d["aggregateDetailOnly"] = here in loc["detail"] and here not in keep
+        d["hasAggregates"] = c.id in roles["high"] or c.id in roles["detail"]
+        d["aggregateDetailOnly"] = c.id in roles["detail"] and c.id not in keep
         out.append(d)
     return out
 
@@ -214,7 +215,7 @@ async def delete_managed_connection(conn_id: str, request: Request) -> dict:
 
 
 class ProjectDeleteBody(BaseModel):
-    projectId: str = Field(min_length=1, max_length=100)
+    projectId: int  # PROJECT_ID is a SMALLINT
 
 
 def _managed_connection_secrets(conn_id: str, request: Request):

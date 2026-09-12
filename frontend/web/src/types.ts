@@ -54,7 +54,8 @@ export interface ManagedConnection {
 
 /** One project stored in a connection's schema, with its journey/event counts. */
 export interface ConnectionProject {
-  projectId: string
+  projectId: number
+  titleShort: string
   title: string
   journeys: number
   events: number
@@ -75,9 +76,10 @@ export interface ConnectionProjectDeleteResult {
 }
 
 export interface Project {
-  projectId: string
+  projectId: number
   title: string
   description: string
+  titleShort: string
 }
 
 export interface StepInfo {

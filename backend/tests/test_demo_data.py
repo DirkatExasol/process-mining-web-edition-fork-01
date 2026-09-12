@@ -16,14 +16,28 @@ from app.db import demo_data as d
 from app.db import manager
 
 
+class _Result:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchval(self):
+        return self._rows[0][0] if self._rows else None
+
+
 class FakeConn:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.committed = False
         self.closed = False
 
-    def execute(self, sql: str) -> None:
+    def execute(self, sql: str):
         self.calls.append(sql)
+        if "MAX(PROJECT_ID)" in sql:
+            return _Result([[0]])          # empty PROJECTS → next id = 1
+        return _Result([])                 # e.g. no existing project for this TITLE_SHORT
 
     def commit(self) -> None:
         self.committed = True
@@ -54,9 +68,14 @@ def _by_journey(rows):
 def test_retail_journeys_start_with_login_and_are_ordered():
     grouped = _by_journey(d.generate_retail_rows(40, random.Random(1)))
     assert len(grouped) == 40
+    ids = d.step_id_map(d._RETAIL_STEP_DEFS)
     for events in grouped.values():
         assert events[0].step == "Login"
-        assert [e.step_id for e in events] == list(range(1, len(events) + 1))
+        # STEP_ID is now the stable activity id (not a 1..N sequence); ordering is
+        # carried by strictly-increasing timestamps.
+        times = [e.event_time for e in events]
+        assert times == sorted(times) and len(set(times)) == len(times)
+        assert all(e.step_id == ids[e.step] for e in events)
         assert events[0].meta1 in {"Credit Card", "PayPal", "Bank Transfer"}
 
 
@@ -129,7 +148,7 @@ def test_loader_provisions_and_loads_retail(monkeypatch):
     assert conn.calls[0] == 'CREATE SCHEMA IF NOT EXISTS "PM"'
     for tbl in ("PROJECTS", "JOURNEYS", "STEPS", "METAS", "NOTES"):
         assert f"CREATE TABLE IF NOT EXISTS {tbl}" in joined
-    assert "PROJECT_ID = 'BOOKSTORE'" in joined and "Online Bookstore" in joined
+    assert "PROJECT_ID = 1" in joined and "BOOKSTORE" in joined and "Online Bookstore" in joined
     assert joined.count("INSERT INTO STEPS") == 24
     assert conn.committed and conn.closed
 
@@ -139,7 +158,7 @@ def test_loader_provisions_and_loads_finance(monkeypatch):
     res = _run(monkeypatch, conn, dataset="finance", journeys=3)
     assert res["ok"] and res["project"] == "Online Credit Application"
     joined = "\n".join(conn.calls)
-    assert "PROJECT_ID = 'CREDIT'" in joined
+    assert "PROJECT_ID = 1" in joined and "CREDIT" in joined
     assert "Applied Credit Sum" in joined  # META titles inserted
     assert joined.count("INSERT INTO STEPS") == len(d._FINANCE_STEP_DEFS)
     assert "INSERT INTO JOURNEYS" in joined
@@ -150,7 +169,7 @@ def test_loader_touches_only_the_dataset_project(monkeypatch):
     _run(monkeypatch, conn, dataset="finance", journeys=1)
     for verb in ("DELETE FROM PROJECTS", "DELETE FROM METAS", "DELETE FROM JOURNEYS"):
         stmts = [c for c in conn.calls if c.startswith(verb)]
-        assert stmts and all("PROJECT_ID = 'CREDIT'" in s for s in stmts)
+        assert stmts and all("PROJECT_ID = 1" in s for s in stmts)
 
 
 def test_loader_rejects_unknown_dataset(monkeypatch):
@@ -183,10 +202,11 @@ def test_loader_validates_schema_and_count(monkeypatch):
 
 def test_loader_reports_a_friendly_error(monkeypatch):
     class BoomConn(FakeConn):
-        def execute(self, sql: str) -> None:
-            super().execute(sql)
+        def execute(self, sql: str):
+            r = super().execute(sql)
             if "INSERT INTO JOURNEYS" in sql:
                 raise RuntimeError("insufficient privileges: INSERT denied")
+            return r
 
     conn = BoomConn()
     res = _run(monkeypatch, conn, journeys=2)
@@ -199,7 +219,7 @@ def test_loader_reports_a_friendly_error(monkeypatch):
 
 def test_transportation_structure_and_metas():
     spec = d.DATASETS["transportation"]
-    assert spec.project_id == "FLIGHTS"
+    assert spec.title_short == "FLIGHTS"
     assert spec.meta_titles == ("Journey Type", "Airline", "Payment Method")
 
     grouped = _by_journey(d.generate_transportation_rows(1200, random.Random(3)))
@@ -246,7 +266,7 @@ def test_loader_provisions_and_loads_transportation(monkeypatch):
     assert res["project"] == "Flight Booking & Management"
     assert res["dataset"] == "transportation"
     joined = "\n".join(conn.calls)
-    assert "PROJECT_ID = 'FLIGHTS'" in joined
+    assert "PROJECT_ID = 1" in joined and "FLIGHTS" in joined
     assert joined.count("INSERT INTO STEPS") == 15
     assert conn.committed and conn.closed
 
@@ -270,12 +290,15 @@ def test_dataset_is_well_formed(key):
     defined = set(names)
     grouped = _by_journey(spec.generate(200, random.Random(123)))
     assert grouped
+    ids = d.step_id_map(spec.step_defs)
     for evs in grouped.values():
-        ordered = sorted(evs, key=lambda r: r.step_id)
-        # sequential 1..N step ids, only defined steps, three meta values each.
-        assert [e.step_id for e in ordered] == list(range(1, len(ordered) + 1))
-        for e in ordered:
+        # STEP_ID is the stable activity id for the step name; events are emitted in
+        # (strictly increasing) time order. Only defined steps, three meta values each.
+        times = [e.event_time for e in evs]
+        assert times == sorted(times), f"{key} journey is not time-ordered"
+        for e in evs:
             assert e.step in defined, f"{key} emits undefined step {e.step!r}"
+            assert e.step_id == ids[e.step], f"{key} step_id != activity id for {e.step!r}"
             assert e.meta1 is not None and e.meta2 is not None and e.meta3 is not None
 
 

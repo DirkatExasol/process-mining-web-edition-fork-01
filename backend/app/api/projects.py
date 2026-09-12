@@ -102,7 +102,7 @@ async def list_projects() -> list[Project]:
 
 @router.get("/projects/{project_id}/bootstrap", response_model=ProjectBootstrap)
 async def bootstrap(
-    project_id: str, sampleSet: SampleSet = SampleSet.original
+    project_id: int, sampleSet: SampleSet = SampleSet.original
 ) -> ProjectBootstrap:
     """Everything AppViewModel.selectProject() loaded before the first graph."""
     require_connection()
@@ -178,7 +178,7 @@ async def bootstrap(
 
 
 @router.post("/projects/{project_id}/graph", response_model=GraphResult)
-async def load_graph(project_id: str, request: GraphRequest) -> GraphResult:
+async def load_graph(project_id: int, request: GraphRequest) -> GraphResult:
     """One round trip for everything a chart panel shows: graph, journey count,
     duration KPIs, process goodness and (optionally) the variant list."""
     require_connection()
@@ -225,7 +225,7 @@ async def load_graph(project_id: str, request: GraphRequest) -> GraphResult:
 
 @router.post("/projects/{project_id}/journey-paths", response_model=list[JourneyPath])
 async def journey_paths(
-    project_id: str, request: GraphRequest
+    project_id: int, request: GraphRequest
 ) -> list[JourneyPath]:
     require_connection()
     r = repo(request.filter.sampleSet)
@@ -248,7 +248,7 @@ def similarity(request: SimilarityRequest) -> dict[str, float | None]:
 
 
 @router.post("/projects/{project_id}/statistics", response_model=StatisticsResponse)
-async def statistics(project_id: str, request: StatisticsRequest) -> StatisticsResponse:
+async def statistics(project_id: int, request: StatisticsRequest) -> StatisticsResponse:
     require_connection()
     f = request.filter
     r = repo(f.sampleSet)
@@ -292,7 +292,7 @@ async def statistics(project_id: str, request: StatisticsRequest) -> StatisticsR
 
 @router.get("/projects/{project_id}/event-ids", response_model=list[str])
 async def event_ids(
-    project_id: str,
+    project_id: int,
     prefix: str = Query(""),
     limit: int = 10,
     sampleSet: SampleSet = SampleSet.original,
@@ -305,7 +305,7 @@ async def event_ids(
 
 @router.get("/projects/{project_id}/journey")
 async def journey(
-    project_id: str,
+    project_id: int,
     eventId: str,
     sampleSet: SampleSet = SampleSet.original,
 ) -> dict[str, object]:
@@ -337,7 +337,7 @@ async def journey(
 
 @router.put("/projects/{project_id}/steps/{step}")
 async def update_step(
-    project_id: str, step: str, payload: StepUpdate
+    project_id: int, step: str, payload: StepUpdate
 ) -> dict[str, object]:
     require_connection()
     r = repo()
@@ -362,7 +362,7 @@ async def update_step(
 
 @router.post("/projects/{project_id}/nearest-day")
 async def nearest_day(
-    project_id: str, request: NearestDayRequest
+    project_id: int, request: NearestDayRequest
 ) -> dict[str, datetime | None]:
     require_connection()
     found = await repo(request.sampleSet).find_nearest_day_with_data(

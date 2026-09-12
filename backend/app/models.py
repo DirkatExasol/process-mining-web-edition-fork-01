@@ -66,9 +66,10 @@ class ConnectionProfile(Base):
 
 
 class Project(Base):
-    projectId: str
+    projectId: int  # PROJECT_ID is a SMALLINT (an allocated integer)
     title: str
     description: str = ""
+    titleShort: str = ""  # human-readable code; '#'-prefix = aggregate detail, 'Σ' = high-level
 
 
 class StepInfo(Base):

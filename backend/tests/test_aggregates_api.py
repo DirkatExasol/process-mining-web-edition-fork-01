@@ -68,7 +68,7 @@ def test_non_developer_cannot_create(backend):
     _user(store, "pat", power=True)  # power user is NOT allowed
     cid = _conn(store, assignments=["pat"])
     client = TestClient(app)
-    r = client.post(f"/api/projects/P/aggregate", json=_body(cid, ["A", "B"]), headers={"X-PMW-User": "pat"})
+    r = client.post(f"/api/projects/7/aggregate", json=_body(cid, ["A", "B"]), headers={"X-PMW-User": "pat"})
     assert r.status_code == 403
 
 
@@ -77,7 +77,7 @@ def test_developer_needs_at_least_two_members(backend):
     _user(store, "dev", developer=True)
     cid = _conn(store, assignments=["dev"])
     client = TestClient(app)
-    r = client.post(f"/api/projects/P/aggregate", json=_body(cid, ["A"]), headers={"X-PMW-User": "dev"})
+    r = client.post(f"/api/projects/7/aggregate", json=_body(cid, ["A"]), headers={"X-PMW-User": "dev"})
     assert r.status_code == 400
 
 
@@ -87,7 +87,7 @@ def test_idor_unassigned_connection(backend):
     _user(store, "owner", developer=True)
     cid = _conn(store, assignments=["owner"])
     client = TestClient(app)
-    r = client.post(f"/api/projects/P/aggregate", json=_body(cid, ["A", "B"]), headers={"X-PMW-User": "dev"})
+    r = client.post(f"/api/projects/7/aggregate", json=_body(cid, ["A", "B"]), headers={"X-PMW-User": "dev"})
     assert r.status_code == 403
 
 
@@ -96,7 +96,7 @@ def test_list_aggregates_empty(backend):
     _user(store, "dev", developer=True)
     cid = _conn(store, assignments=["dev"])
     client = TestClient(app)
-    r = client.get("/api/projects/P/aggregates", params={"connectionId": cid}, headers={"X-PMW-User": "dev"})
+    r = client.get("/api/projects/7/aggregates", params={"connectionId": cid}, headers={"X-PMW-User": "dev"})
     assert r.status_code == 200 and r.json()["aggregates"] == []
 
 
@@ -114,7 +114,7 @@ def test_set_create_rejects_overlapping_members(backend):
     cid = _conn(store, assignments=["dev"])
     client = TestClient(app)
     body = _set_body(cid, [_group("Σ1", ["A", "B"]), _group("Σ2", ["B", "C"])])  # B in both
-    r = client.post("/api/projects/P/aggregate-set", json=body, headers={"X-PMW-User": "dev"})
+    r = client.post("/api/projects/7/aggregate-set", json=body, headers={"X-PMW-User": "dev"})
     assert r.status_code == 400 and "only one aggregate" in r.json()["detail"]
 
 
@@ -123,7 +123,7 @@ def test_set_create_needs_developer(backend):
     _user(store, "pat", power=True)
     cid = _conn(store, assignments=["pat"])
     client = TestClient(app)
-    r = client.post("/api/projects/P/aggregate-set", json=_set_body(cid, [_group("Σ1", ["A", "B"])]), headers={"X-PMW-User": "pat"})
+    r = client.post("/api/projects/7/aggregate-set", json=_set_body(cid, [_group("Σ1", ["A", "B"])]), headers={"X-PMW-User": "pat"})
     assert r.status_code == 403
 
 
@@ -133,7 +133,7 @@ def test_add_to_missing_set_is_404(backend):
     cid = _conn(store, assignments=["dev"])
     client = TestClient(app)
     body = {"connectionId": cid, "aggregates": [_group("Σ1", ["A", "B"])]}
-    r = client.post("/api/projects/nope/aggregate-set/add", json=body, headers={"X-PMW-User": "dev"})
+    r = client.post("/api/projects/999/aggregate-set/add", json=body, headers={"X-PMW-User": "dev"})
     assert r.status_code == 404
 
 
@@ -155,7 +155,7 @@ def test_aggregate_set_roundtrips_in_store(backend):
     assert len(store.aggregate_set_by_source("c1", "P")["aggregates"]) == 2
 
 
-def test_aggregate_locations_group_by_role(backend):
+def test_aggregate_connection_roles_group_by_role(backend):
     _app, store = backend
     cid = _conn(store, assignments=[])  # host db.example.com, schema MINING
     store.save_aggregate_set({
@@ -164,10 +164,11 @@ def test_aggregate_locations_group_by_role(backend):
         "highLevelSchema": "MINING", "highLevelTitle": "High",
         "aggregates": [{"sigmaStep": "Σ1", "members": ["A", "B"], "detailConnectionId": cid, "detailProjectId": "d1", "detailSchema": "AGG_DETAIL", "detailTitle": "D"}],
     })
-    loc = store.aggregate_locations()
-    assert ("db.example.com", "mining") in loc["source"]  # source uses the conn's own schema
-    assert ("db.example.com", "mining") in loc["high"]
-    assert ("db.example.com", "agg_detail") in loc["detail"]
+    roles = store.aggregate_connection_roles()
+    # Matching is by the exact connection picked for each role, not by (host, schema).
+    assert cid in roles["source"]
+    assert cid in roles["high"]
+    assert cid in roles["detail"]
 
 
 def test_connection_flags_source_marked_but_not_hideable(backend):

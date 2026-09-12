@@ -413,7 +413,9 @@ def detect_file_structure(body: StructureBody) -> dict:
 
 
 class RunBody(BaseModel):
-    projectId: str = Field(min_length=1, max_length=100)
+    # The human-readable project CODE (→ PROJECTS.TITLE_SHORT). The integer PROJECT_ID
+    # is allocated (or reused for this code) by the extractor.
+    titleShort: str = Field(min_length=1, max_length=10)
     # The destination connection, picked in the Run dialog. Optional only for callers
     # that still rely on the signed-in session's active connection; naming it here is
     # what lets a run be triggered without a session at all (remote push, scheduler).
@@ -460,7 +462,7 @@ def reset_source_checkpoint(source_id: str, request: Request) -> dict:
     return {"ok": True}
 
 
-def _remember_last_run(source, user: str | None, *, connection_id: str, project_id: str) -> None:
+def _remember_last_run(source, user: str | None, *, connection_id: str, title_short: str) -> None:
     """Persist the destination an import used, so the Run dialog reopens on it.
 
     Best-effort bookkeeping: a failure here must never turn an import that already wrote
@@ -469,9 +471,9 @@ def _remember_last_run(source, user: str | None, *, connection_id: str, project_
     try:
         cfg = source.public()["config"]
         last = cfg.get("lastRun") or {}
-        if last.get("connectionId") == connection_id and last.get("projectId") == project_id:
+        if last.get("connectionId") == connection_id and last.get("titleShort") == title_short:
             return  # unchanged — no write needed
-        cfg["lastRun"] = {"connectionId": connection_id, "projectId": project_id}
+        cfg["lastRun"] = {"connectionId": connection_id, "titleShort": title_short}
         security_store.update_source(
             source.id, user, name=source.name, kind=source.kind, config=json.dumps(cfg)
         )
@@ -593,7 +595,7 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
     record_path = st.public().get("recordPath") or ""
     checkpoint = security_store.get_source_checkpoint(source_id)
     prev_records = int(checkpoint["records"]) if checkpoint else 0
-    project_id = body.projectId.strip()
+    title_short = body.titleShort.strip()
     transaction_rows = _transaction_rows(cfg)
     target = f"{conn.name if conn is not None else schema}/{schema}"
     compound = st.public().get("compound") or []
@@ -631,7 +633,7 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
         # the run still happens (so it shows in the pipeline) and simply writes no rows.
         reader = DeltaReader(path, encoding, prev_offset, prev_sig)
         extractor = FileExtractor(
-            path=path, encoding=encoding, fields=fields, project_id=project_id,
+            path=path, encoding=encoding, fields=fields, project_id=title_short,
             fmt=fmt, line_stream=reader, compound=compound,
         )
     else:
@@ -654,7 +656,7 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
             if opened is not None:
                 await asyncio.to_thread(opened.close)
             logx.usage(
-                f"import skipped: {source.name!r} → {target} project {project_id} — "
+                f"import skipped: {source.name!r} → {target} project {title_short} — "
                 f"file unchanged since the last import",
                 request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
             )
@@ -675,14 +677,14 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
             raise HTTPException(status_code=400, detail=detail)
         read_count = len(records)
         extractor = FileExtractor(
-            path=path, encoding=encoding, fields=fields, project_id=project_id,
+            path=path, encoding=encoding, fields=fields, project_id=title_short,
             fmt=fmt, record_path=record_path, records=records, record_total=read_count,
             compound=compound,
         )
 
     logx.usage(
         f"import started: {source.name!r} (source type {st.name!r}) → {target} "
-        f"project {project_id} — {'delta' if body.delta else 'full'} [{fmt}]",
+        f"project {title_short} — {'delta' if body.delta else 'full'} [{fmt}]",
         request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
     )
     try:
@@ -695,13 +697,13 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
         )
     except FileAccessError as exc:
         logx.error(
-            f"import failed: {source.name!r} → {target} project {project_id} — {exc}",
+            f"import failed: {source.name!r} → {target} project {title_short} — {exc}",
             request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
         )
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:  # noqa: BLE001 — surfaced to the caller + the status panel
         logx.error(
-            f"import failed: {source.name!r} → {target} project {project_id} — {exc}",
+            f"import failed: {source.name!r} → {target} project {title_short} — {exc}",
             request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
         )
         raise HTTPException(status_code=400, detail=f"Extraction failed: {exc}")
@@ -729,9 +731,9 @@ async def run_source(source_id: str, body: RunBody, request: Request) -> dict:
         )
         lines_read = read_count
 
-    _remember_last_run(source, user, connection_id=conn_id, project_id=project_id)
+    _remember_last_run(source, user, connection_id=conn_id, title_short=title_short)
     logx.usage(
-        f"import finished: {source.name!r} → {target} project {project_id} — "
+        f"import finished: {source.name!r} → {target} project {title_short} — "
         f"{result.detail} ({lines_read} record(s) read)",
         request=request, username=user or "", operation="import", tag=logx.TAG_DATA,
     )

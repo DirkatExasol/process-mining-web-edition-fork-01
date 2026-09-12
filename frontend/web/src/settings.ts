@@ -196,13 +196,13 @@ export function readEdgeSchema(metric: string): EdgeColorSchema {
 
 /** Per-project JSON blobs, keyed exactly like the Swift UserDefaults entries. */
 export const projectKeys = {
-  filterGroups: (projectId: string) => `filterGroups_${projectId}`,
-  happyPaths: (projectId: string) => `happyPaths_${projectId}`,
-  norms: (projectId: string) => `norms_${projectId}`,
-  normsMetric: (projectId: string) => `norms_metric_${projectId}`,
-  llmPrompt: (projectId: string) => `llm_prompt_${projectId}`,
-  layout: (projectId: string, chartMode: string) => `layout_${projectId}_${chartMode}`,
-  collapsedGroups: (projectId: string, chartMode: string) =>
+  filterGroups: (projectId: number | string) => `filterGroups_${projectId}`,
+  happyPaths: (projectId: number | string) => `happyPaths_${projectId}`,
+  norms: (projectId: number | string) => `norms_${projectId}`,
+  normsMetric: (projectId: number | string) => `norms_metric_${projectId}`,
+  llmPrompt: (projectId: number | string) => `llm_prompt_${projectId}`,
+  layout: (projectId: number | string, chartMode: string) => `layout_${projectId}_${chartMode}`,
+  collapsedGroups: (projectId: number | string, chartMode: string) =>
     `graph.collapsedGroups_${projectId}_${chartMode}`,
 }
 

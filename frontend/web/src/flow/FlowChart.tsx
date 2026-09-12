@@ -97,7 +97,7 @@ export function createSyncState(): SyncState {
 
 export interface FlowChartProps {
   graph: ProcessGraph
-  projectId: string
+  projectId: number | string
   /** Included in the persistence key, exactly like the Swift `chartMode`. */
   chartMode: string
   metric: TransitionMetric
@@ -159,7 +159,7 @@ export interface FlowChartProps {
    *  to make room), so surrounding steps/groups don't move or re-layout. */
   explode?: {
     baseGraph: ProcessGraph
-    baseProjectId: string
+    baseProjectId: number | string
     baseChartMode: string
     aggregates: { sigmaStep: string; members: string[] }[]
     expanded: string[]
@@ -293,7 +293,7 @@ function FlowChartInner(props: FlowChartProps) {
   )
 
   // ── Initial collapse state (per project, per graph.startMode) ────────────
-  const appliedGroupProject = useRef<string>('')
+  const appliedGroupProject = useRef<number | string>(-1)
   useEffect(() => {
     if (allGroupNames.size === 0) return
     if (appliedGroupProject.current === projectId) return

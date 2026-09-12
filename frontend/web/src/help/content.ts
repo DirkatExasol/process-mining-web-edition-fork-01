@@ -111,9 +111,9 @@ const database: HelpTopic = {
 
 CREATE TABLE JOURNEYS (
   PROJECT_ID  VARCHAR(100) NOT NULL,
-  EVENT_ID    VARCHAR(200) NOT NULL,   -- one journey = rows sharing an EVENT_ID
+  EVENT_ID    HASHTYPE(16 BYTE) NOT NULL, -- MD5 id; one journey = rows sharing an EVENT_ID
   STEP        VARCHAR(200) NOT NULL,   -- activity name → a node in the map
-  STEP_ID     DECIMAL(18,0),           -- tie-breaker when EVENT_TIME is equal
+  STEP_ID     DECIMAL(18,0),           -- activity id of STEP (joins STEPS.STEP_ID)
   EVENT_TIME  TIMESTAMP    NOT NULL,   -- orders steps; drives date filters
   META_1      VARCHAR(500),
   META_2      VARCHAR(500),
@@ -123,6 +123,7 @@ CREATE TABLE JOURNEYS (
 CREATE TABLE STEPS (
   PROJECT_ID     VARCHAR(100) NOT NULL,
   STEP           VARCHAR(200) NOT NULL,
+  STEP_ID        DECIMAL(18,0),         -- stable activity id; JOURNEYS.STEP_ID matches it
   DESCRIPTION    VARCHAR(500),
   BG_COLOR       VARCHAR(50),          -- colour name or 6-digit hex (e.g. FF8000)
   FG_COLOR       VARCHAR(50),

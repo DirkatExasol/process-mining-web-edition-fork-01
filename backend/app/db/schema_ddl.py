@@ -19,7 +19,7 @@ from __future__ import annotations
 NOTES_DDL = """
 CREATE TABLE IF NOT EXISTS NOTES (
     ID              VARCHAR(36)   NOT NULL,
-    PROJECT_ID      VARCHAR(100)  NOT NULL,
+    PROJECT_ID      SMALLINT     NOT NULL,
     NOTES_DATE      TIMESTAMP     NOT NULL,
     EDITED_DATE     TIMESTAMP,
     NOTE_USER       VARCHAR(200)  DEFAULT '',
@@ -39,9 +39,12 @@ CREATE TABLE IF NOT EXISTS NOTES (
 
 _PROJECTS_DDL = """
 CREATE TABLE IF NOT EXISTS PROJECTS (
-    PROJECT_ID  VARCHAR(100)  NOT NULL,
-    TITLE       VARCHAR(500)  DEFAULT '',
+    PROJECT_ID  SMALLINT      NOT NULL,
+    TITLE       VARCHAR(100)  DEFAULT '',
     DESCRIPTION VARCHAR(2000) DEFAULT '',
+    -- Human-readable short code (e.g. 'APF'); the PROJECT_ID is an allocated integer.
+    -- A leading '#' marks an aggregate DETAIL project (hidden), 'Σ' a high-level one.
+    TITLE_SHORT VARCHAR(10)   DEFAULT '',
     PRIMARY KEY (PROJECT_ID)
 )
 """
@@ -68,8 +71,14 @@ CREATE TABLE IF NOT EXISTS PROJECTS (
 #   ALTER TABLE JOURNEYS PARTITION  BY EVENT_TIME;
 _JOURNEYS_DDL = """
 CREATE TABLE IF NOT EXISTS JOURNEYS (
-    PROJECT_ID VARCHAR(100)  NOT NULL,
-    EVENT_ID   VARCHAR(200)  NOT NULL,
+    PROJECT_ID SMALLINT     NOT NULL,
+    -- EVENT_ID holds a 32-char MD5 hash (from _md5_id / the integration
+    -- extractors), so a 16-byte HASHTYPE stores it exactly. HASHTYPE is a
+    -- fixed-length binary type: joins, GROUP BY, DISTRIBUTE BY and the
+    -- transition window run on 16 bytes instead of a 32-char string, which
+    -- speeds up the whole DFG pipeline. Hex string literals convert implicitly,
+    -- so inserts and `EVENT_ID = '<hex>'` comparisons keep working unchanged.
+    EVENT_ID   HASHTYPE(16 BYTE) NOT NULL,
     STEP       VARCHAR(500)  NOT NULL,
     STEP_ID    DECIMAL(18,0),
     EVENT_TIME TIMESTAMP     NOT NULL,
@@ -82,11 +91,29 @@ CREATE TABLE IF NOT EXISTS JOURNEYS (
 )
 """
 
+# `CREATE TABLE IF NOT EXISTS` above sets the distribution on a NEW JOURNEYS, but is a
+# no-op for one that already exists — e.g. a table that predates this change or was loaded
+# by an external ETL. Provisioning enforces it with this ALTER, but only when EVENT_ID is
+# not already the distribution key (the check below reads EXA_ALL_COLUMNS), so a
+# re-provision is a genuine no-op and never triggers a needless (and costly) redistribution.
+_JOURNEYS_DISTRIBUTE_SQL = "ALTER TABLE JOURNEYS DISTRIBUTE BY EVENT_ID"
+_JOURNEYS_HAS_DIST_KEY_SQL = """
+SELECT COUNT(*) FROM EXA_ALL_COLUMNS
+WHERE COLUMN_SCHEMA = CURRENT_SCHEMA
+  AND COLUMN_TABLE = 'JOURNEYS'
+  AND COLUMN_NAME = 'EVENT_ID'
+  AND COLUMN_IS_DISTRIBUTION_KEY = TRUE
+"""
+
 # Per-step presentation and scoring, edited from the app's Step editor.
 _STEPS_DDL = """
 CREATE TABLE IF NOT EXISTS STEPS (
-    PROJECT_ID     VARCHAR(100)  NOT NULL,
+    PROJECT_ID     SMALLINT     NOT NULL,
     STEP           VARCHAR(500)  NOT NULL,
+    -- Stable integer activity id (unique per PROJECT_ID). JOURNEYS.STEP_ID carries
+    -- the same value, so the transition query groups/joins/partitions on this
+    -- integer and maps back to STEP names only in its final projection.
+    STEP_ID        DECIMAL(18,0),
     DESCRIPTION    VARCHAR(2000) DEFAULT '',
     BG_COLOR       VARCHAR(30)   DEFAULT '',
     FG_COLOR       VARCHAR(30)   DEFAULT '',
@@ -101,7 +128,7 @@ CREATE TABLE IF NOT EXISTS STEPS (
 # Human-readable titles for the three META columns, per project.
 _METAS_DDL = """
 CREATE TABLE IF NOT EXISTS METAS (
-    PROJECT_ID   VARCHAR(100) NOT NULL,
+    PROJECT_ID   SMALLINT    NOT NULL,
     META_1_TITLE VARCHAR(500) DEFAULT '',
     META_2_TITLE VARCHAR(500) DEFAULT '',
     META_3_TITLE VARCHAR(500) DEFAULT '',
@@ -199,23 +226,24 @@ async def rebuild_materialized_transitions(
             conn.execute(
                 f"""
                 CREATE OR REPLACE TABLE {stage} AS
-                SELECT PROJECT_ID, EVENT_ID, FROM_STEP, TO_STEP, FROM_TIME, TO_TIME,
+                SELECT PROJECT_ID, EVENT_ID, FROM_STEP_ID, TO_STEP_ID, FROM_TIME, TO_TIME,
                        SECONDS_BETWEEN(TO_TIME, FROM_TIME) AS DUR_SECS, SAMPLE_SET
                 FROM (
-                    -- This builds pairs for EVERY project + sample set at once, so
-                    -- the window MUST partition by (PROJECT_ID, SAMPLE_SET, EVENT_ID),
-                    -- not EVENT_ID alone: EVENT_ID is only unique within one project
-                    -- and sample set (the same id recurs across projects and in a
-                    -- sample's copy of ORIGINAL). The live query scopes this by
-                    -- filtering to one project+sample before the LEAD.
+                    -- Pairs are built on the integer STEP_ID (activity id); the read
+                    -- query maps id → STEP name. This builds pairs for EVERY project +
+                    -- sample set at once, so the window MUST partition by (PROJECT_ID,
+                    -- SAMPLE_SET, EVENT_ID), not EVENT_ID alone: EVENT_ID is only unique
+                    -- within one project and sample set (the same id recurs across
+                    -- projects and in a sample's copy of ORIGINAL). The live query scopes
+                    -- this by filtering to one project+sample before the LEAD.
                     SELECT PROJECT_ID, EVENT_ID, SAMPLE_SET,
-                           STEP       AS FROM_STEP,
+                           STEP_ID    AS FROM_STEP_ID,
                            EVENT_TIME AS FROM_TIME,
-                           LEAD(STEP)       OVER (PARTITION BY PROJECT_ID, SAMPLE_SET, EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_STEP,
+                           LEAD(STEP_ID)    OVER (PARTITION BY PROJECT_ID, SAMPLE_SET, EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_STEP_ID,
                            LEAD(EVENT_TIME) OVER (PARTITION BY PROJECT_ID, SAMPLE_SET, EVENT_ID ORDER BY EVENT_TIME, STEP_ID) AS TO_TIME
                     FROM JOURNEYS
                 ) AS t
-                WHERE TO_STEP IS NOT NULL AND TO_TIME IS NOT NULL
+                WHERE TO_STEP_ID IS NOT NULL AND TO_TIME IS NOT NULL
                 """
             )
             # Co-locate by EVENT_ID for the semi-join. Distribution is a pure
@@ -299,6 +327,16 @@ async def provision_process_mining_schema(
             for name, ddl in PROCESS_MINING_TABLES:
                 conn.execute(ddl)
                 created.append(name)
+            # Enforce EVENT_ID distribution on a JOURNEYS that already existed (the CREATE
+            # above skipped it). Guarded so a re-provision, an ETL-loaded table already
+            # keyed on EVENT_ID, or a metadata view we can't read never redistributes or
+            # aborts provisioning.
+            try:
+                if not conn.execute(_JOURNEYS_HAS_DIST_KEY_SQL).fetchval():
+                    conn.execute(_JOURNEYS_DISTRIBUTE_SQL)
+                    created.append("JOURNEYS distribution (EVENT_ID)")
+            except Exception:  # noqa: BLE001 — best-effort; keep schema creation green
+                pass
             conn.commit()
         finally:
             conn.close()
@@ -366,27 +404,33 @@ async def list_projects_with_counts(
         conn = mgr._open(server, password)
         try:
             conn.execute(f"OPEN SCHEMA {ident}")
-            titles: dict[str, str] = {}
+            titles: dict[int, tuple[str, str]] = {}  # pid → (title, title_short)
             try:
-                for row in conn.execute("SELECT PROJECT_ID, TITLE FROM PROJECTS").fetchall():
-                    titles[str(row[0])] = row[1] or ""
+                for row in conn.execute(
+                    "SELECT PROJECT_ID, TITLE, TITLE_SHORT FROM PROJECTS"
+                ).fetchall():
+                    if row[0] is not None:
+                        titles[int(row[0])] = (row[1] or "", row[2] or "")
             except Exception:  # noqa: BLE001 — PROJECTS may not exist yet
                 pass
-            aggs: dict[str, tuple[int, int]] = {}
+            aggs: dict[int, tuple[int, int]] = {}
             try:
                 for row in conn.execute(
                     "SELECT PROJECT_ID, COUNT(*), COUNT(DISTINCT EVENT_ID) "
                     "FROM JOURNEYS WHERE SAMPLE_SET = 'ORIGINAL' GROUP BY PROJECT_ID"
                 ).fetchall():
-                    aggs[str(row[0])] = (int(row[1] or 0), int(row[2] or 0))
+                    if row[0] is not None:
+                        aggs[int(row[0])] = (int(row[1] or 0), int(row[2] or 0))
             except Exception:  # noqa: BLE001 — JOURNEYS may not exist yet
                 pass
             out: list[dict] = []
             for pid in sorted(set(titles) | set(aggs)):
                 events, journeys = aggs.get(pid, (0, 0))
+                title, short = titles.get(pid, ("", ""))
                 out.append({
                     "projectId": pid,
-                    "title": titles.get(pid) or pid,
+                    "title": title or short or str(pid),
+                    "titleShort": short,
                     "journeys": journeys,
                     "events": events,
                 })
@@ -433,11 +477,12 @@ async def delete_project(
     from .manager import DatabaseManager, friendly_error
 
     schema = (schema or "").strip()
-    project_id = (project_id or "").strip()
     if not schema:
         return {"ok": False, "error": "A schema name is required."}
-    if not project_id:
-        return {"ok": False, "error": "A project id is required."}
+    try:
+        pid_int = int(project_id)  # PROJECT_ID is a SMALLINT
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "A valid (integer) project id is required."}
 
     server = _server_for(
         schema, host=host, port=port, username=username, use_tls=use_tls,
@@ -445,8 +490,8 @@ async def delete_project(
     )
     mgr = DatabaseManager.__new__(DatabaseManager)
     ident = _quote_ident(schema)
-    # Escaped string literal for the WHERE clause (the only user-supplied value).
-    lit = "'" + project_id.replace("'", "''") + "'"
+    # PROJECT_ID is an integer column — an unquoted, int-coerced literal (injection-safe).
+    lit = str(pid_int)
 
     def _run() -> dict:
         conn = mgr._open(server, password)

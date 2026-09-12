@@ -240,7 +240,7 @@ describe('auth isPower', () => {
 
 describe('selectProject sampling methods', () => {
   const bootstrap = {
-    project: { projectId: 'BOOKSTORE', title: 'Online Bookstore', description: '' },
+    project: { projectId: 1, title: 'Online Bookstore', description: '', titleShort: 'BOOKSTORE' },
     allSteps: [],
     allStepInfos: {},
     meta1Title: null,
@@ -301,7 +301,7 @@ describe('transitions mode indicator', () => {
   it('reloadGraph records the effective mode and query time from the backend', async () => {
     mockApi.graph.mockResolvedValue({ ...base, transitionsMode: 'materialized' })
     useStore.setState({
-      selectedProject: { projectId: 'P', title: 'P', description: '' },
+      selectedProject: { projectId: 7, title: 'P', description: '', titleShort: 'P' },
       transitionsMode: null,
       queryMs: null,
     })
@@ -312,7 +312,7 @@ describe('transitions mode indicator', () => {
 
   it('surfaces the fallback mode (enabled but TRANSITIONS_RAW not built)', async () => {
     mockApi.graph.mockResolvedValue({ ...base, transitionsMode: 'fallback' })
-    useStore.setState({ selectedProject: { projectId: 'P', title: 'P', description: '' } })
+    useStore.setState({ selectedProject: { projectId: 7, title: 'P', description: '', titleShort: 'P' } })
     await useStore.getState().reloadGraph()
     expect(useStore.getState().transitionsMode).toBe('fallback')
   })
@@ -329,7 +329,7 @@ describe('restoreLastSession (resume where you left off)', () => {
   }
 
   const assigned = { id: 'c1', name: 'Prod', host: 'db', port: 8563, schema: 'S', hasLLM: false, llmURL: '' }
-  const projectA = { projectId: 'p1', title: 'P1', description: '' }
+  const projectA = { projectId: 1, title: 'P1', description: '', titleShort: 'p1' }
   const connected = { isConnected: true, isLLMReachable: false, activeProfileId: 'c1', username: '', lastError: null }
   const disconnected = { isConnected: false, isLLMReachable: false, activeProfileId: null, username: '', lastError: null }
 
@@ -359,7 +359,7 @@ describe('restoreLastSession (resume where you left off)', () => {
   it('reconnects, reopens the last project and restores the last view', async () => {
     replaceSettings({
       'session.lastConnectionId': 'c1',
-      'session.lastProjectId': 'p1',
+      'session.lastProjectId': 1,
       'session.lastChartMode': 'Statistics',
     })
     const connectSpy = vi.fn(async () => {
@@ -385,7 +385,7 @@ describe('restoreLastSession (resume where you left off)', () => {
   })
 
   it('skips reconnect when the saved connection is no longer assigned', async () => {
-    replaceSettings({ 'session.lastConnectionId': 'gone', 'session.lastProjectId': 'p1' })
+    replaceSettings({ 'session.lastConnectionId': 'gone', 'session.lastProjectId': 1 })
     const connectSpy = vi.fn()
     useStore.setState({ connectConnection: connectSpy as never })
     await useStore.getState().restoreLastSession()
@@ -395,7 +395,7 @@ describe('restoreLastSession (resume where you left off)', () => {
   it('does not switch the view when the saved mode is A-Chart (the default)', async () => {
     replaceSettings({
       'session.lastConnectionId': 'c1',
-      'session.lastProjectId': 'p1',
+      'session.lastProjectId': 1,
       'session.lastChartMode': 'A-Chart',
     })
     const connectSpy = vi.fn(async () => {
@@ -419,7 +419,7 @@ describe('restoreLastSession (resume where you left off)', () => {
   })
 
   it('does not reconnect when already on the saved connection, just restores project/view', async () => {
-    replaceSettings({ 'session.lastConnectionId': 'c1', 'session.lastProjectId': 'p1' })
+    replaceSettings({ 'session.lastConnectionId': 'c1', 'session.lastProjectId': 1 })
     useStore.setState({ connection: connected, projects: [projectA] })
     const connectSpy = vi.fn()
     const selectSpy = vi.fn(async (p: typeof projectA) =>

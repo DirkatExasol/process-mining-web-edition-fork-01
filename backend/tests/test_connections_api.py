@@ -678,10 +678,10 @@ def test_developer_manages_projects_on_owned_connection(backend, monkeypatch):
     async def _fake_list(**kw):
         assert kw["schema"] == "S" and kw["password"] == "s3cret"
         return {"ok": True, "error": None,
-                "projects": [{"projectId": "P1", "title": "Proj 1", "journeys": 3, "events": 9}]}
+                "projects": [{"projectId": 1, "title": "Proj 1", "journeys": 3, "events": 9}]}
 
     async def _fake_delete(**kw):
-        assert kw["project_id"] == "P1"
+        assert kw["project_id"] == 1
         return {"ok": True, "error": None, "events": 9, "journeys": 3, "tables": ["JOURNEYS", "PROJECTS"]}
 
     monkeypatch.setattr(ddl, "list_projects_with_counts", _fake_list)
@@ -689,11 +689,11 @@ def test_developer_manages_projects_on_owned_connection(backend, monkeypatch):
 
     listed = client.get(f"/api/connections/{created['id']}/projects", headers={"X-PMW-User": dev})
     assert listed.status_code == 200
-    assert listed.json()["projects"][0]["projectId"] == "P1"
+    assert listed.json()["projects"][0]["projectId"] == 1
 
     deleted = client.post(
         f"/api/connections/{created['id']}/projects/delete",
-        headers={"X-PMW-User": dev}, json={"projectId": "P1"},
+        headers={"X-PMW-User": dev}, json={"projectId": 1},
     )
     assert deleted.status_code == 200 and deleted.json()["events"] == 9
 
@@ -715,5 +715,5 @@ def test_projects_forbidden_for_non_manager_or_non_owner(backend):
     ).status_code == 403
     assert client.post(
         f"/api/connections/{conn.id}/projects/delete",
-        headers={"X-PMW-User": "dev"}, json={"projectId": "P1"},
+        headers={"X-PMW-User": "dev"}, json={"projectId": 1},
     ).status_code == 403

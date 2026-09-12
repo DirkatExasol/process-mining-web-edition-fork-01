@@ -45,7 +45,7 @@ class JEvent:
 @dataclass
 class DemoDataset:
     key: str
-    project_id: str
+    title_short: str
     title: str
     description: str
     meta_titles: tuple[str, str, str]
@@ -120,12 +120,14 @@ def _generate_retail_journey(
     event_id: str, t0: datetime, payment: str, segment: str, order_val: str, rng: random.Random
 ) -> list[JEvent]:
     rows: list[JEvent] = []
-    state = {"t": t0, "sid": 1}
+    ids = step_id_map(_RETAIL_STEP_DEFS)
+    state = {"t": t0}
 
     def add(step: str, lo: int, hi: int) -> None:
-        state["t"] = state["t"] + timedelta(seconds=rng.randint(lo, hi))
-        rows.append(JEvent(event_id, step, state["sid"], state["t"], payment, segment, order_val))
-        state["sid"] += 1
+        # STEP_ID is now the stable activity id; advance the clock by ≥1s so events
+        # within a journey have strictly increasing timestamps (unambiguous order).
+        state["t"] = state["t"] + timedelta(seconds=max(1, rng.randint(lo, hi)))
+        rows.append(JEvent(event_id, step, ids[step], state["t"], payment, segment, order_val))
 
     add("Login", 5, 60)
     for _ in range(rng.randint(1, 4)):
@@ -261,13 +263,14 @@ def _generate_finance_journey(
     rng: random.Random,
 ) -> list[JEvent]:
     rows: list[JEvent] = []
-    state = {"t": t0, "sid": 1}
+    ids = step_id_map(_FINANCE_STEP_DEFS)
+    state = {"t": t0}
 
     def add(step: str, lo: int, hi: int) -> None:
-        state["t"] = state["t"] + timedelta(seconds=rng.randint(lo, hi))
+        state["t"] = state["t"] + timedelta(seconds=max(1, rng.randint(lo, hi)))
         # meta1 = applied credit sum, meta2 = income class, meta3 = channel (Bank/Affiliate).
-        rows.append(JEvent(event_id, step, state["sid"], state["t"], sum_label, income, channel))
-        state["sid"] += 1
+        # STEP_ID is the stable activity id; ≥1s advance keeps order unambiguous.
+        rows.append(JEvent(event_id, step, ids[step], state["t"], sum_label, income, channel))
 
     add(channel, 0, 60)  # entry point — "Bank" or "Affiliate"
     add("Application Received", 30, 300)
@@ -394,13 +397,14 @@ def _generate_flight_journey(
     rng: random.Random,
 ) -> list[JEvent]:
     rows: list[JEvent] = []
-    state = {"t": t0, "sid": 1}
+    ids = step_id_map(_TRANSPORT_STEP_DEFS)
+    state = {"t": t0}
 
     def add(step: str, lo: int, hi: int) -> None:
-        state["t"] = state["t"] + timedelta(seconds=rng.randint(lo, hi))
+        state["t"] = state["t"] + timedelta(seconds=max(1, rng.randint(lo, hi)))
         # meta1 = journey type, meta2 = airline, meta3 = payment method.
-        rows.append(JEvent(event_id, step, state["sid"], state["t"], journey_type, airline, payment))
-        state["sid"] += 1
+        # STEP_ID is the stable activity id; ≥1s advance keeps order unambiguous.
+        rows.append(JEvent(event_id, step, ids[step], state["t"], journey_type, airline, payment))
 
     add("Login", 0, 120)
 
@@ -471,7 +475,7 @@ def generate_transportation_rows(
 DATASETS: dict[str, DemoDataset] = {
     "retail": DemoDataset(
         key="retail",
-        project_id="BOOKSTORE",
+        title_short="BOOKSTORE",
         title="Online Bookstore",
         description=(
             "End-to-end order flow: login, browse, basket, checkout, payment, fulfilment, "
@@ -483,7 +487,7 @@ DATASETS: dict[str, DemoDataset] = {
     ),
     "finance": DemoDataset(
         key="finance",
-        project_id="CREDIT",
+        title_short="CREDIT",
         title="Online Credit Application",
         description=(
             "Bank/affiliate intake, application check with a rework loop, credit "
@@ -496,7 +500,7 @@ DATASETS: dict[str, DemoDataset] = {
     ),
     "transportation": DemoDataset(
         key="transportation",
-        project_id="FLIGHTS",
+        title_short="FLIGHTS",
         title="Flight Booking & Management",
         description=(
             "Star Alliance-style flight booking: login, search with a modify loop, "
@@ -519,18 +523,26 @@ def _sq(value: str) -> str:
     return value.replace("'", "''")
 
 
+def step_id_map(step_defs: list[StepDef]) -> dict[str, int]:
+    """Stable per-activity id for each step name — its 1-based position in the
+    dataset's step list. JOURNEYS.STEP_ID and STEPS.STEP_ID both carry this id so
+    the transition query groups/joins on an integer instead of the step name."""
+    return {sd[0]: i + 1 for i, sd in enumerate(step_defs)}
+
+
 def _insert_steps_sqls(step_defs: list[StepDef], project_id: str) -> list[str]:
     # Insert each step only if it doesn't already exist, so operator customisations
     # (colours, shapes, scores set via the Step editor) are preserved.
     out: list[str] = []
-    for name, desc, bg, fg, score, shape, eop, group in step_defs:
+    for idx, (name, desc, bg, fg, score, shape, eop, group) in enumerate(step_defs):
+        step_id = idx + 1  # stable activity id (matches step_id_map)
         eop_sql = "TRUE" if eop else "FALSE"
         out.append(
-            "INSERT INTO STEPS (PROJECT_ID, STEP, DESCRIPTION, BG_COLOR, FG_COLOR, SCORE, "
+            "INSERT INTO STEPS (PROJECT_ID, STEP, STEP_ID, DESCRIPTION, BG_COLOR, FG_COLOR, SCORE, "
             "SHAPE, END_OF_PROCESS, BELONGS_TO) "
-            f"SELECT '{_sq(project_id)}', '{_sq(name)}', '{_sq(desc)}', '{bg}', '{fg}', "
+            f"SELECT {int(project_id)}, '{_sq(name)}', {step_id}, '{_sq(desc)}', '{bg}', '{fg}', "
             f"{score}, '{shape}', {eop_sql}, '{_sq(group)}' "
-            f"WHERE NOT EXISTS (SELECT 1 FROM STEPS WHERE PROJECT_ID = '{_sq(project_id)}' "
+            f"WHERE NOT EXISTS (SELECT 1 FROM STEPS WHERE PROJECT_ID = {int(project_id)} "
             f"AND STEP = '{_sq(name)}')"
         )
     return out
@@ -538,7 +550,7 @@ def _insert_steps_sqls(step_defs: list[StepDef], project_id: str) -> list[str]:
 
 def _insert_journeys_sql(rows: list[JEvent], project_id: str) -> str:
     vals = ",\n  ".join(
-        f"('{_sq(project_id)}', '{_sq(r.event_id)}', '{_sq(r.step)}', {r.step_id}, "
+        f"({int(project_id)}, '{_sq(r.event_id)}', '{_sq(r.step)}', {r.step_id}, "
         f"TIMESTAMP '{r.event_time:%Y-%m-%d %H:%M:%S}', '{_sq(r.meta1)}', '{_sq(r.meta2)}', "
         f"'{_sq(r.meta3)}')"
         for r in rows
@@ -605,7 +617,7 @@ async def generate_demo_content(
     )
     mgr = DatabaseManager.__new__(DatabaseManager)
     ident = _quote_ident(schema)
-    pid = spec.project_id
+    short = spec.title_short  # the human code (e.g. "CREDIT"); PROJECT_ID is allocated
 
     def _run() -> None:
         conn = mgr._open(server, password)
@@ -614,20 +626,30 @@ async def generate_demo_content(
             conn.execute(f"OPEN SCHEMA {ident}")
             for _name, ddl in PROCESS_MINING_TABLES:
                 conn.execute(ddl)
-            conn.execute(f"DELETE FROM PROJECTS WHERE PROJECT_ID = '{_sq(pid)}'")
+            # Idempotent by the TITLE_SHORT code: reuse this demo project's id if it
+            # already exists, else allocate the next free SMALLINT.
+            row = conn.execute(
+                f"SELECT PROJECT_ID FROM PROJECTS WHERE TITLE_SHORT = '{_sq(short)}'"
+            ).fetchall()
+            if row:
+                pid = int(row[0][0])
+            else:
+                mx = conn.execute("SELECT COALESCE(MAX(PROJECT_ID), 0) FROM PROJECTS").fetchval()
+                pid = int(mx or 0) + 1
+            conn.execute(f"DELETE FROM PROJECTS WHERE PROJECT_ID = {pid}")
             conn.execute(
-                "INSERT INTO PROJECTS (PROJECT_ID, TITLE, DESCRIPTION) VALUES "
-                f"('{_sq(pid)}', '{_sq(spec.title)}', '{_sq(spec.description)}')"
+                "INSERT INTO PROJECTS (PROJECT_ID, TITLE, DESCRIPTION, TITLE_SHORT) VALUES "
+                f"({pid}, '{_sq(spec.title)}', '{_sq(spec.description)}', '{_sq(short)}')"
             )
-            conn.execute(f"DELETE FROM METAS WHERE PROJECT_ID = '{_sq(pid)}'")
+            conn.execute(f"DELETE FROM METAS WHERE PROJECT_ID = {pid}")
             conn.execute(
                 "INSERT INTO METAS (PROJECT_ID, META_1_TITLE, META_2_TITLE, META_3_TITLE) "
-                f"VALUES ('{_sq(pid)}', '{_sq(spec.meta_titles[0])}', "
+                f"VALUES ({pid}, '{_sq(spec.meta_titles[0])}', "
                 f"'{_sq(spec.meta_titles[1])}', '{_sq(spec.meta_titles[2])}')"
             )
             for sql in _insert_steps_sqls(spec.step_defs, pid):
                 conn.execute(sql)
-            conn.execute(f"DELETE FROM JOURNEYS WHERE PROJECT_ID = '{_sq(pid)}'")
+            conn.execute(f"DELETE FROM JOURNEYS WHERE PROJECT_ID = {pid}")
             for offset in range(0, len(rows), _BATCH_SIZE):
                 conn.execute(_insert_journeys_sql(rows[offset : offset + _BATCH_SIZE], pid))
             conn.commit()

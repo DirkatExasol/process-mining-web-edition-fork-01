@@ -49,7 +49,7 @@ export function ChartView({
 
   // A drill-down detail project (id "aggd_…") is a black-box sub-process: no Sankey, and a
   // Return button back to the high-level map it was reached from.
-  const isDetailProject = !!store.selectedProject?.projectId.startsWith('aggd_')
+  const isDetailProject = !!store.selectedProject?.titleShort?.startsWith('#')
   // In-place drill: the detail graph is shown in this canvas (high-level project stays
   // selected). Treated like a detail view (no Sankey) with a Drill-up affordance.
   const inPlace = store.inPlaceDrill
@@ -70,7 +70,7 @@ export function ChartView({
 
   const runNodeAction = async (action: SavedAction, node: string) => {
     const connId = store.connection.activeProfileId ?? ''
-    const projectId = store.selectedProject?.projectId ?? ''
+    const projectId = store.selectedProject?.projectId ?? 0
     const resolvedSteps = resolveScope(action.spec.from.selectors, node, store.processGraph.transitions)
     setActionModal({ title: `${action.name} · ${node}`, result: null, busy: true, error: null })
     try {

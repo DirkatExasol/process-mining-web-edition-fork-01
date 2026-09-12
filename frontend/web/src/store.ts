@@ -157,7 +157,7 @@ export interface AppState {
   projectAggregates: AggregateLink[]
   /** When the current project was reached by drilling into a Σ step, the high-level map to
    *  return to (a "Return" button). Null when not viewing a drilled-into detail project. */
-  drillReturn: { projectId: string; title: string } | null
+  drillReturn: { projectId: number; title: string } | null
   /** In-place drill-down: one or more Σ nodes expanded within the high-level map, using the
    *  ORIGINAL source graph so the revealed steps carry real, un-aggregated numbers. Null
    *  unless a drill is active; drill up clears it. */
@@ -355,7 +355,7 @@ export interface AppActions {
   listConnectionProjects: (id: string) => Promise<ConnectionProjectsResult>
   deleteConnectionProject: (
     id: string,
-    projectId: string,
+    projectId: number,
   ) => Promise<ConnectionProjectDeleteResult>
 
 
@@ -1368,7 +1368,7 @@ export const useStore = create<Store>((set, get) => {
 
     restoreLastSession: async () => {
       const connId = readSetting<string>('session.lastConnectionId', '')
-      const projId = readSetting<string>('session.lastProjectId', '')
+      const projId = readSetting<number>('session.lastProjectId', 0)
       const mode = readSetting<string>('session.lastChartMode', '')
 
       // 1) Auto-reconnect to the last connection, unless we are already on it (e.g. the

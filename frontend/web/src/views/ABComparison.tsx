@@ -289,7 +289,7 @@ function ABPanel({
       ) : (
         <FlowChart
           graph={graph}
-          projectId={store.selectedProject?.projectId ?? ''}
+          projectId={store.selectedProject?.projectId ?? 0}
           chartMode={label}
           metric={metric}
           journeyTotal={(side === 'a' ? store.abJourneyCountA : store.abJourneyCountB) ?? 0}
