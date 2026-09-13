@@ -195,15 +195,40 @@ def test_connection_flags_source_marked_but_not_hideable(backend):
 
 
 def test_aggregate_link_roundtrips_in_store(backend):
+    # PROJECT_ID is a SMALLINT: projectId/detailProjectId are ints. Guards against
+    # .strip()-ing them (which crashed link storage, so Σ nodes had no drill target).
     _app, store = backend
     store.add_aggregate_link(
-        {"connectionId": "c1", "projectId": "agg_1", "sigmaStep": "Σ", "detailConnectionId": "c1", "detailProjectId": "d1"}
+        {"connectionId": "c1", "projectId": 2, "sigmaStep": "Σ", "detailConnectionId": "c1", "detailProjectId": 3}
     )
-    got = store.aggregates_for("c1", "agg_1")
-    assert len(got) == 1 and got[0]["detailProjectId"] == "d1"
+    got = store.aggregates_for("c1", 2)
+    assert len(got) == 1 and got[0]["detailProjectId"] == 3
     # keyed by (connection, project, sigma) — a second call with the same key replaces.
     store.add_aggregate_link(
-        {"connectionId": "c1", "projectId": "agg_1", "sigmaStep": "Σ", "detailConnectionId": "c2", "detailProjectId": "d2"}
+        {"connectionId": "c1", "projectId": 2, "sigmaStep": "Σ", "detailConnectionId": "c2", "detailProjectId": 4}
     )
-    got2 = store.aggregates_for("c1", "agg_1")
-    assert len(got2) == 1 and got2[0]["detailProjectId"] == "d2"
+    got2 = store.aggregates_for("c1", 2)
+    assert len(got2) == 1 and got2[0]["detailProjectId"] == 4
+
+
+def test_aggregates_for_falls_back_to_the_set_when_links_are_missing(backend):
+    # A set saved without its per-Σ link rows (e.g. an older build) must still offer
+    # drill targets, derived from the set's aggregates.
+    _app, store = backend
+    store.save_aggregate_set({
+        "sourceConnectionId": "c1", "sourceProjectId": 1,
+        "highLevelConnectionId": "c1", "highLevelProjectId": 2,
+        "highLevelSchema": "MINING", "highLevelTitle": "High",
+        "aggregates": [
+            {"sigmaStep": "Σ1", "members": ["A", "B"], "detailConnectionId": "c1", "detailProjectId": 3, "detailSchema": "MINING", "detailTitle": "D1"},
+            {"sigmaStep": "Σ2", "members": ["C", "D"], "detailConnectionId": "c1", "detailProjectId": 4, "detailSchema": "MINING", "detailTitle": "D2"},
+        ],
+    })
+    got = store.aggregates_for("c1", 2)  # no explicit link rows exist
+    assert {g["sigmaStep"]: g["detailProjectId"] for g in got} == {"Σ1": 3, "Σ2": 4}
+    # An explicit link takes precedence over the derived fallback.
+    store.add_aggregate_link(
+        {"connectionId": "c1", "projectId": 2, "sigmaStep": "Σ1", "detailConnectionId": "c1", "detailProjectId": 9}
+    )
+    got2 = store.aggregates_for("c1", 2)
+    assert len(got2) == 1 and got2[0]["detailProjectId"] == 9

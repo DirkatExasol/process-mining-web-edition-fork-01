@@ -1511,28 +1511,51 @@ class SecurityStore:
             data = []
         return data if isinstance(data, list) else []
 
-    def aggregates_for(self, connection_id: str, project_id: str) -> list[dict]:
+    def aggregates_for(self, connection_id: str, project_id: int) -> list[dict]:
         """Aggregate links whose HIGH-LEVEL project is this (connection, project) — used
-        by the app to offer 'drill down' on a Σ step."""
+        by the app to offer 'drill down' on a Σ step.
+
+        Falls back to deriving the links from the aggregate SET whose high-level map is
+        this (connection, project) when no explicit link rows exist — so drill-down
+        works even for aggregates whose link write didn't land (e.g. an older build) and
+        without a manual re-create."""
         cid, pid = (connection_id or "").strip(), project_id
-        return [
+        direct = [
             dict(r)
             for r in self._aggregates_raw()
             if r.get("connectionId") == cid and r.get("projectId") == pid
+        ]
+        if direct:
+            return direct
+        aset = self.aggregate_set_by_high_level(cid, pid)
+        if not aset:
+            return []
+        return [
+            {
+                "connectionId": cid,
+                "projectId": pid,
+                "sigmaStep": a.get("sigmaStep", ""),
+                "detailConnectionId": a.get("detailConnectionId", ""),
+                "detailProjectId": a.get("detailProjectId"),
+            }
+            for a in (aset.get("aggregates") or [])
+            if a.get("sigmaStep")
         ]
 
     def add_aggregate_link(self, link: dict) -> dict:
         """Record a Σ step's drill-down target. Keyed by (connectionId, projectId, sigmaStep)
         where connectionId/projectId identify the HIGH-LEVEL project holding the Σ node."""
         cid = (link.get("connectionId") or "").strip()
-        pid = link.get("projectId")
+        pid = link.get("projectId")  # PROJECT_ID is a SMALLINT (int) — stored as-is
         sigma = (link.get("sigmaStep") or "").strip()
         record = {
             "connectionId": cid,
             "projectId": pid,
             "sigmaStep": sigma,
             "detailConnectionId": (link.get("detailConnectionId") or "").strip(),
-            "detailProjectId": (link.get("detailProjectId") or "").strip(),
+            # detailProjectId is an int PROJECT_ID — keep it as-is (never .strip(): that
+            # would raise AttributeError on the int and leave the Σ node with no drill link).
+            "detailProjectId": link.get("detailProjectId"),
             "createdAt": _now(),
         }
         rows = [
@@ -1566,14 +1589,14 @@ class SecurityStore:
             data = []
         return data if isinstance(data, list) else []
 
-    def aggregate_set_by_source(self, connection_id: str, project_id: str) -> dict | None:
+    def aggregate_set_by_source(self, connection_id: str, project_id: int) -> dict | None:
         cid, pid = (connection_id or "").strip(), project_id
         for r in self._aggregate_sets_raw():
             if r.get("sourceConnectionId") == cid and r.get("sourceProjectId") == pid:
                 return dict(r)
         return None
 
-    def aggregate_set_by_high_level(self, connection_id: str, project_id: str) -> dict | None:
+    def aggregate_set_by_high_level(self, connection_id: str, project_id: int) -> dict | None:
         cid, pid = (connection_id or "").strip(), project_id
         for r in self._aggregate_sets_raw():
             if r.get("highLevelConnectionId") == cid and r.get("highLevelProjectId") == pid:
