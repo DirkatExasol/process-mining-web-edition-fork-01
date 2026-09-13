@@ -185,6 +185,11 @@ export interface AppState {
   projects: Project[]
   selectedProject: Project | null
   isLoading: boolean
+  // Bumped on every connect/disconnect. In-flight per-connection work (e.g. a
+  // graph load) captures it and discards its result if it changed meanwhile — so a
+  // request whose DB session was torn down by a concurrent connection switch is
+  // superseded silently instead of surfacing a spurious "Not connected" error.
+  connectionGen: number
   errorMessage: string | null
   pendingAlert: AppAlert | null
 
@@ -534,6 +539,7 @@ const INITIAL_STATE: AppState = {
   projects: [],
   selectedProject: null,
   isLoading: false,
+  connectionGen: 0,
   errorMessage: null,
   pendingAlert: null,
 
@@ -853,7 +859,9 @@ export const useStore = create<Store>((set, get) => {
     },
 
     connectConnection: async (conn) => {
-      set({ isLoading: true })
+      // Bump immediately: switching connections tears down the shared DB session
+      // server-side, so any graph load already in flight must be superseded.
+      set((st) => ({ isLoading: true, connectionGen: st.connectionGen + 1 }))
       try {
         const connection = await api.connectConnection(conn.id)
         set({ connection })
@@ -900,6 +908,8 @@ export const useStore = create<Store>((set, get) => {
       const s = get()
       set({
         ...INITIAL_STATE,
+        // Supersede any in-flight per-connection work (INITIAL_STATE would reset this to 0).
+        connectionGen: s.connectionGen + 1,
         // Disconnecting the database must not sign the user out of the app.
         authChecked: s.authChecked,
         authUser: s.authUser,
@@ -1799,6 +1809,11 @@ export const useStore = create<Store>((set, get) => {
     reloadGraph: async () => {
       const s = get()
       if (!s.selectedProject) return
+      // Tie this load to the current connection. If a connect/disconnect happens
+      // while the request is in flight (the shared DB session is torn down), the
+      // response — or a "Not connected" error — belongs to a connection that is no
+      // longer active, so it is discarded rather than shown or alerted.
+      const gen = s.connectionGen
       set({ isLoading: true, errorMessage: null })
       try {
         const result = await api.graph(
@@ -1806,6 +1821,7 @@ export const useStore = create<Store>((set, get) => {
           get().currentFilterSpec(),
           { totalJourneyCount: s.totalJourneyCount },
         )
+        if (get().connectionGen !== gen) return  // superseded by a connection switch
         set({
           processGraph: result.processGraph,
           journeyCount: result.journeyCount,
@@ -1849,6 +1865,10 @@ export const useStore = create<Store>((set, get) => {
           await get().refreshHappyPathConformance()
         }
       } catch (error) {
+        // A load whose connection was swapped out mid-flight failed because the
+        // session is gone, not because anything is wrong — swallow it; the newer
+        // load owns the UI now.
+        if (get().connectionGen !== gen) return
         const message = error instanceof ApiError ? error.message : String(error)
         set({ errorMessage: message })
         get().showAlert({
@@ -1859,7 +1879,9 @@ export const useStore = create<Store>((set, get) => {
           secondaryLabel: 'Cancel',
         })
       } finally {
-        set({ isLoading: false })
+        // Only clear the spinner if this load is still the current one; a superseded
+        // load must not switch off the spinner a newer load turned on.
+        if (get().connectionGen === gen) set({ isLoading: false })
       }
     },
 

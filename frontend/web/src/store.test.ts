@@ -483,3 +483,67 @@ describe('A/B simulation source survives view switches (regression)', () => {
     expect(useStore.getState().processGraph).toBe(simGraph)
   })
 })
+
+describe('reloadGraph supersession (connection-switch race)', () => {
+  const project = { projectId: 1, title: 'P', description: '', titleShort: 'P' }
+  const result = {
+    processGraph: { steps: {}, transitions: [] },
+    journeyCount: 42,
+    durations: null,
+    processGoodness: null,
+    transitionsMode: 'live',
+    queryMs: 1,
+  }
+
+  it('discards a graph result whose connection was swapped out mid-flight', async () => {
+    useStore.setState({
+      selectedProject: project as never,
+      connectionGen: 1,
+      processGraph: undefined,
+      journeyCount: null,
+      activeChartMode: 'A-Chart',
+    })
+    // The request "completes" only after a concurrent connect/disconnect bumped the gen.
+    mockApi.graph.mockImplementation(async () => {
+      useStore.setState((st) => ({ connectionGen: st.connectionGen + 1 }))
+      return result
+    })
+
+    await useStore.getState().reloadGraph()
+
+    expect(useStore.getState().processGraph).toBeUndefined() // stale result discarded
+    expect(useStore.getState().journeyCount).toBeNull()
+  })
+
+  it('swallows a "Not connected" error from a superseded load (no alert)', async () => {
+    useStore.setState({
+      selectedProject: project as never,
+      connectionGen: 1,
+      pendingAlert: null,
+      activeChartMode: 'A-Chart',
+    })
+    mockApi.graph.mockImplementation(async () => {
+      useStore.setState((st) => ({ connectionGen: st.connectionGen + 1 }))
+      throw new ApiError('Not connected.', 500)
+    })
+
+    await useStore.getState().reloadGraph()
+
+    expect(useStore.getState().pendingAlert).toBeNull() // not surfaced as a chart error
+  })
+
+  it('applies the result normally when the connection stays stable', async () => {
+    useStore.setState({
+      selectedProject: project as never,
+      connectionGen: 1,
+      processGraph: undefined,
+      journeyCount: null,
+      activeChartMode: 'A-Chart',
+    })
+    mockApi.graph.mockResolvedValue(result)
+
+    await useStore.getState().reloadGraph()
+
+    expect(useStore.getState().journeyCount).toBe(42) // current load applied
+  })
+})
