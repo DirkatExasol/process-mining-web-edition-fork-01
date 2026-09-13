@@ -271,6 +271,77 @@ def test_loader_provisions_and_loads_transportation(monkeypatch):
     assert conn.committed and conn.closed
 
 
+# ── transportation: Airport Passenger Flow ────────────────────────────────────
+
+
+def test_airport_step_defs_shape():
+    # 10 pre-airside steps + 9 airside/boarding steps each for the Dom and Int sides.
+    assert len(d._AIRPORT_STEP_DEFS) == 28
+
+
+def test_airport_topology_and_dom_int_split():
+    grouped = _by_journey(d.generate_airport_rows(500, random.Random(11)))
+    assert grouped
+    saw_dom = saw_int = saw_denied = saw_early_exit = False
+    for evs in grouped.values():
+        steps = [e.step for e in evs]
+        assert steps[0] == "ENTER Departure Hall"
+        assert all(e.meta1.startswith("Terminal-") for e in evs)
+        assert all(e.meta2 == "-" and e.meta3 == "-" for e in evs)
+        assert [e.event_time for e in evs] == sorted(e.event_time for e in evs)
+        # A passenger is on exactly one airside: the Int variant iff they cleared
+        # Passport Control, the Dom variant otherwise (or neither, if they left early).
+        has_passport = "ENTER Passport Control" in steps
+        dom = [s for s in steps if s.endswith(" Dom")]
+        intl = [s for s in steps if s.endswith(" Int")]
+        if has_passport:
+            assert intl and not dom
+        else:
+            assert not intl
+        assert steps[-1].startswith(("BOARD Aircraft", "DENIED Boarding", "LEAVE Departure Hall"))
+        saw_dom = saw_dom or bool(dom)
+        saw_int = saw_int or bool(intl)
+        saw_denied = saw_denied or any(s.startswith("DENIED Boarding") for s in steps)
+        saw_early_exit = saw_early_exit or steps == ["ENTER Departure Hall", "LEAVE Departure Hall"]
+    assert saw_dom and saw_int and saw_denied and saw_early_exit
+
+
+def test_airport_streams_through_the_per_journey_generator(monkeypatch):
+    # The airport dataset carries a per-journey generator; the loader must stream
+    # through it (never the batch `generate`) and still load the APF project.
+    spec = d.DATASETS["airport"]
+    assert spec.generate_one is not None and spec.title_short == "APF"
+
+    def _boom(*_a, **_k):
+        raise AssertionError("batch generate path used for a streamed dataset")
+
+    monkeypatch.setattr(spec, "generate", _boom)
+    conn = FakeConn()
+    res = _run(monkeypatch, conn, dataset="airport", journeys=3)
+    assert res["ok"] and res["journeys"] == 3 and res["dataset"] == "airport"
+    joined = "\n".join(conn.calls)
+    assert "APF" in joined and "PROJECT_ID = 1" in joined and "INSERT INTO JOURNEYS" in joined
+    assert conn.committed and conn.closed
+
+
+def test_airport_uses_the_streamed_ceiling(monkeypatch):
+    # Streamed datasets clamp to MAX_JOURNEYS_STREAMED, not the in-memory limit.
+    # Shrink the ceiling so the assertion stays fast.
+    monkeypatch.setattr(d, "MAX_JOURNEYS_STREAMED", 5)
+    spec = d.DATASETS["airport"]
+    calls = {"n": 0}
+    real = spec.generate_one
+
+    def _counting(i, rng):
+        calls["n"] += 1
+        return real(i, rng)
+
+    monkeypatch.setattr(spec, "generate_one", _counting)
+    conn = FakeConn()
+    res = _run(monkeypatch, conn, dataset="airport", journeys=1000)
+    assert res["journeys"] == 5 and calls["n"] == 5
+
+
 # ── cross-dataset invariants (guards every dataset, incl. future ones) ────────
 
 import pytest  # noqa: E402

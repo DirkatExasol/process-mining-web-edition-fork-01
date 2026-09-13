@@ -1,7 +1,7 @@
 """Demo-data generators — synthetic process-mining event logs that can be loaded
 into a target schema so a fresh connection has something to explore.
 
-Two datasets are available:
+The datasets (registered in ``DATASETS``):
 
 * ``retail``  — "Online Bookstore" order lifecycle (a faithful port of the macOS
   app's BookstoreGen). Login → browse → basket → checkout → payment → fulfilment →
@@ -9,6 +9,11 @@ Two datasets are available:
 * ``finance`` — "Online Credit Application". Bank/Affiliate intake → application
   check (with a rework loop) → credit assessment → score/sum-driven approval (with
   agent review loops) → acceptance and payment, or rejection.
+* ``transportation`` — "Flight Booking & Management". Star-Alliance-style search /
+  select / book / pay, with interline itineraries and a manage-booking branch.
+* ``airport`` — "Airport Passenger Flow" (a port of the ``paxflow`` generator).
+  A departing passenger's terminal walk; a *streamed* dataset, so it scales to
+  1,000,000+ journeys without materialising every event in memory.
 
 Both reuse the canonical tables from schema_ddl (so NOTES et al. exist too) and only
 ever touch their own project's rows. Loading requires a database account with
@@ -24,8 +29,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-MAX_JOURNEYS = 20_000  # bound insert time / request duration
+MAX_JOURNEYS = 20_000  # in-memory datasets: bound insert time / request duration
+# Streamed datasets (a per-journey generator, so memory stays flat) allow far more —
+# the Airport Passenger Flow demo defaults to 1,000,000. This ceiling only guards
+# against a pathological request; raise it if a larger single load is ever needed.
+MAX_JOURNEYS_STREAMED = 10_000_000
 _BATCH_SIZE = 200
+_STREAM_BATCH_ROWS = 2_000  # rows per INSERT on the streamed path
 
 # name, description, bg, fg, score, shape, end_of_process, belongs_to
 StepDef = tuple[str, str, str, str, int, str, int, str]
@@ -51,6 +61,11 @@ class DemoDataset:
     meta_titles: tuple[str, str, str]
     step_defs: list[StepDef]
     generate: Callable[[int, random.Random], list[JEvent]]
+    # Optional per-journey generator. When present, the loader streams journeys in
+    # batches (flat memory) instead of materialising them all, which is what lets a
+    # dataset go to millions of journeys. `generate` stays the batch entry point
+    # (used by tests and the in-memory path).
+    generate_one: Callable[[int, random.Random], list[JEvent]] | None = None
 
 
 # ── shared helpers ────────────────────────────────────────────────────────────
@@ -470,6 +485,161 @@ def generate_transportation_rows(
     return rows
 
 
+# ── transportation: Airport Passenger Flow ────────────────────────────────────
+#
+# A faithful port of the `paxflow` generator (Building-Demo-Data/swift): a departing
+# passenger's walk through the terminal, as a probabilistic state machine. From the
+# Departure Hall 2% leave immediately; otherwise 28% drop a bag, 30% check in at a
+# desk, 40% go straight to Security. After Security they wander the airside amenities
+# (Duty Free / Lounge / Dining) in any order before boarding. Clearing Passport
+# Control flips every following airside/boarding step from its domestic ("Dom") to
+# its international ("Int") variant; 5% of boardings are denied.
+#
+# META_1 = Terminal-{1,2,3} (weights .4/.4/.2); META_2/META_3 are unused ("-").
+# Dwell ranges are in MINUTES and match the Swift generator exactly.
+
+_APF_TERMINALS = [("Terminal-1", 0.40), ("Terminal-2", 0.40), ("Terminal-3", 0.20)]
+
+_APF_PRE_STEP_DEFS: list[StepDef] = [
+    ("ENTER Departure Hall", "Passenger enters the departure hall", "2C3E50", "FFFFFF", 0, "round", 0, "Departure Hall"),
+    ("LEAVE Departure Hall", "Passenger leaves without travelling", "7F8C8D", "FFFFFF", -5, "hex", 1, "Departure Hall"),
+    ("ENTER Baggage Drop", "Passenger drops checked baggage", "2980B9", "FFFFFF", 0, "round", 0, "Check-in"),
+    ("LEAVE Baggage Drop", "Checked baggage accepted", "5DADE2", "000000", 0, "round", 0, "Check-in"),
+    ("ENTER Check-In", "Passenger checks in at the desk", "2471A3", "FFFFFF", 0, "round", 0, "Check-in"),
+    ("LEAVE Check-In", "Check-in complete", "5499C7", "FFFFFF", 0, "round", 0, "Check-in"),
+    ("ENTER Security Check", "Passenger enters security screening", "E67E22", "000000", 0, "round", 0, "Security"),
+    ("LEAVE Security Check", "Passenger cleared security", "F39C12", "000000", 0, "round", 0, "Security"),
+    ("ENTER Passport Control", "Passenger enters passport control", "8E44AD", "FFFFFF", 0, "round", 0, "Border"),
+    ("LEAVE Passport Control", "Passenger cleared passport control", "9B59B6", "FFFFFF", 0, "round", 0, "Border"),
+]
+
+
+def _apf_airside_step_defs(sfx: str) -> list[StepDef]:
+    """The airside amenity + boarding steps for one side — ``sfx`` is 'Dom' or 'Int'.
+    Grouped by BELONGS_TO so the aggregate designer can collapse each airside into a
+    single Σ super-step (Σ Airside Dom / Σ Airside Int)."""
+    airside = "Airside Domestic" if sfx == "Dom" else "Airside International"
+    return [
+        (f"ENTER Duty Free {sfx}", "Passenger enters the duty-free area", "16A085", "FFFFFF", 3, "round", 0, airside),
+        (f"LEAVE Duty Free {sfx}", "Passenger leaves the duty-free area", "1ABC9C", "FFFFFF", 0, "round", 0, airside),
+        (f"ENTER Lounge {sfx}", "Passenger enters the lounge", "2E86C1", "FFFFFF", 3, "round", 0, airside),
+        (f"LEAVE Lounge {sfx}", "Passenger leaves the lounge", "5DADE2", "000000", 0, "round", 0, airside),
+        (f"ENTER Dining Area {sfx}", "Passenger enters the dining area", "CA6F1E", "FFFFFF", 2, "round", 0, airside),
+        (f"LEAVE Dining Area {sfx}", "Passenger leaves the dining area", "E59866", "000000", 0, "round", 0, airside),
+        (f"ENTER Boarding Gate {sfx}", "Passenger arrives at the boarding gate", "27AE60", "FFFFFF", 5, "round", 0, "Boarding"),
+        (f"BOARD Aircraft {sfx}", "Passenger boards the aircraft", "1E8449", "FFFFFF", 15, "stadium", 1, "Boarding"),
+        (f"DENIED Boarding {sfx}", "Passenger is denied boarding", "C0392B", "FFFFFF", -10, "hex", 1, "Boarding"),
+    ]
+
+
+# Pre-airside steps first, then the Dom side, then the Int side. Order fixes each
+# step's STEP_ID (its 1-based position), so never reorder without a reason.
+_AIRPORT_STEP_DEFS: list[StepDef] = (
+    _APF_PRE_STEP_DEFS + _apf_airside_step_defs("Dom") + _apf_airside_step_defs("Int")
+)
+# Lazily cached: step_id_map is defined further down, so this can't run at import.
+_APF_IDS: dict[str, int] = {}
+
+
+def _apf_ids() -> dict[str, int]:
+    if not _APF_IDS:
+        _APF_IDS.update(step_id_map(_AIRPORT_STEP_DEFS))
+    return _APF_IDS
+
+
+def _generate_airport_journey(event_id: str, rng: random.Random) -> list[JEvent]:
+    ids = _apf_ids()
+    terminal = _weighted_choice(_APF_TERMINALS, rng)
+    rows: list[JEvent] = []
+    t = _rand_start(rng)
+    # META_2/META_3 are unused in this dataset — always '-' (matches the source).
+    rows.append(JEvent(event_id, "ENTER Departure Hall", ids["ENTER Departure Hall"], t, terminal, "-", "-"))
+
+    def add(step: str, lo: int, hi: int) -> None:
+        nonlocal t
+        # Advance by whole minutes; ≥1 keeps EVENT_TIME strictly increasing so the
+        # step order is unambiguous.
+        t = t + timedelta(minutes=max(1, rng.randint(lo, hi)))
+        rows.append(JEvent(event_id, step, ids[step], t, terminal, "-", "-"))
+
+    r0 = rng.randint(1, 100)
+    if r0 <= 2:  # leaves the hall without travelling → END
+        add("LEAVE Departure Hall", 2, 10)
+        return rows
+    if r0 <= 30:  # checked baggage
+        add("ENTER Baggage Drop", 2, 4)
+        add("LEAVE Baggage Drop", 2, 15)
+    elif r0 <= 60:  # desk check-in
+        add("ENTER Check-In", 2, 4)
+        add("LEAVE Check-In", 2, 15)
+    # else: straight to Security (carry-on / online check-in)
+
+    add("ENTER Security Check", 2, 4)
+    add("LEAVE Security Check", 4, 30)
+
+    r1 = rng.randint(1, 100)
+    node = (
+        "passport" if r1 <= 25
+        else "dutyfree" if r1 <= 50
+        else "dining" if r1 <= 70
+        else "lounge" if r1 <= 85
+        else "boarding"
+    )
+    has_passport = False
+
+    guard = 0
+    while True:
+        guard += 1
+        if guard > 100:  # mirrors the source's recursion cap (effectively never hit)
+            node = "boarding"
+
+        if node == "passport":
+            add("ENTER Passport Control", 2, 10)
+            add("LEAVE Passport Control", 2, 10)
+            has_passport = True  # everything after is the international ("Int") side
+            r = rng.randint(1, 100)
+            node = "dutyfree" if r <= 35 else "dining" if r <= 50 else "lounge" if r <= 75 else "boarding"
+        elif node == "dutyfree":
+            sfx = "Int" if has_passport else "Dom"
+            add(f"ENTER Duty Free {sfx}", 2, 6)
+            add(f"LEAVE Duty Free {sfx}", 5, 30)
+            r = rng.randint(1, 100)
+            node = "lounge" if r <= 20 else "dining" if r <= 55 else "boarding"
+        elif node == "lounge":
+            sfx = "Int" if has_passport else "Dom"
+            add(f"ENTER Lounge {sfx}", 2, 10)
+            add(f"LEAVE Lounge {sfx}", 2, 10)
+            r = rng.randint(1, 100)
+            node = "dutyfree" if r <= 20 else "dining" if r <= 45 else "boarding"
+        elif node == "dining":
+            sfx = "Int" if has_passport else "Dom"
+            add(f"ENTER Dining Area {sfx}", 2, 10)
+            add(f"LEAVE Dining Area {sfx}", 2, 10)
+            r = rng.randint(1, 100)
+            node = "dutyfree" if r <= 20 else "lounge" if r <= 35 else "boarding"
+        else:  # boarding
+            sfx = "Int" if has_passport else "Dom"
+            add(f"ENTER Boarding Gate {sfx}", 2, 10)
+            if rng.randint(1, 100) <= 5:
+                add(f"DENIED Boarding {sfx}", 2, 10)
+            else:
+                add(f"BOARD Aircraft {sfx}", 2, 10)
+            return rows
+
+
+def _airport_journey_at(index: int, rng: random.Random) -> list[JEvent]:
+    # EVENT_ID = MD5 of "APF-<7-digit sequence>" — deterministic and unique per journey.
+    return _generate_airport_journey(_md5_id("APF-%07d" % (index + 1)), rng)
+
+
+def generate_airport_rows(count: int, rng: random.Random | None = None) -> list[JEvent]:
+    rng = rng or random.Random()
+    rows: list[JEvent] = []
+    for i in range(count):
+        rows.extend(_airport_journey_at(i, rng))
+    return rows
+
+
 # ── dataset registry ──────────────────────────────────────────────────────────
 
 DATASETS: dict[str, DemoDataset] = {
@@ -512,6 +682,22 @@ DATASETS: dict[str, DemoDataset] = {
         meta_titles=("Journey Type", "Airline", "Payment Method"),
         step_defs=_TRANSPORT_STEP_DEFS,
         generate=generate_transportation_rows,
+    ),
+    "airport": DemoDataset(
+        key="airport",
+        title_short="APF",
+        title="Airport Passenger Flow",
+        description=(
+            "A departing passenger's walk through the terminal: departure hall, baggage "
+            "drop / check-in, security, then the airside amenities (duty free, lounge, "
+            "dining) in any order before boarding. Passport Control switches the airside "
+            "and boarding steps from their domestic (Dom) to their international (Int) "
+            "variant; 2% leave the hall without travelling and 5% of boardings are denied."
+        ),
+        meta_titles=("Terminal", "-", "-"),
+        step_defs=_AIRPORT_STEP_DEFS,
+        generate=generate_airport_rows,
+        generate_one=_airport_journey_at,  # streamed → supports up to 1,000,000+ journeys
     ),
 }
 
@@ -600,9 +786,9 @@ async def generate_demo_content(
         count = 0
     if count < 1:
         return {"ok": False, "error": "Enter how many journeys to generate.", "journeys": 0}
-    count = min(count, MAX_JOURNEYS)
-
-    rows = spec.generate(count, random.Random())
+    # Streamed datasets carry a per-journey generator, so they can go far higher than
+    # the in-memory ceiling without holding every event in memory at once.
+    count = min(count, MAX_JOURNEYS_STREAMED if spec.generate_one else MAX_JOURNEYS)
 
     server = DatabaseServer(
         id="demo",
@@ -650,8 +836,22 @@ async def generate_demo_content(
             for sql in _insert_steps_sqls(spec.step_defs, pid):
                 conn.execute(sql)
             conn.execute(f"DELETE FROM JOURNEYS WHERE PROJECT_ID = {pid}")
-            for offset in range(0, len(rows), _BATCH_SIZE):
-                conn.execute(_insert_journeys_sql(rows[offset : offset + _BATCH_SIZE], pid))
+            rng = random.Random()
+            if spec.generate_one is not None:
+                # Streamed: build one journey at a time and flush in row-batches, so
+                # memory stays flat regardless of the journey count.
+                buffer: list[JEvent] = []
+                for i in range(count):
+                    buffer.extend(spec.generate_one(i, rng))
+                    if len(buffer) >= _STREAM_BATCH_ROWS:
+                        conn.execute(_insert_journeys_sql(buffer, pid))
+                        buffer = []
+                if buffer:
+                    conn.execute(_insert_journeys_sql(buffer, pid))
+            else:
+                rows = spec.generate(count, rng)
+                for offset in range(0, len(rows), _BATCH_SIZE):
+                    conn.execute(_insert_journeys_sql(rows[offset : offset + _BATCH_SIZE], pid))
             conn.commit()
         finally:
             conn.close()
