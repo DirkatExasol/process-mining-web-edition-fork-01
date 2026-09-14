@@ -1383,11 +1383,19 @@ export const useStore = create<Store>((set, get) => {
 
       // 1) Auto-reconnect to the last connection, unless we are already on it (e.g. the
       //    server session survived a plain reload). connectConnection loads the projects.
+      //    This is the key "resume after a backend restart" path — the in-memory Exasol
+      //    session is lost on any restart/redeploy, so on reload we transparently
+      //    reconnect instead of leaving the user to reconnect + reselect by hand.
       const before = get()
       if (connId && before.connection.activeProfileId !== connId) {
         const match = before.connections.find((c) => c.id === connId)
-        if (!match) return // connection revoked / no longer assigned — nothing to resume
-        const ok = await get().connectConnection(match)
+        // A loaded list without this connection means it was revoked / unassigned —
+        // nothing to resume. But an EMPTY list is a boot race (the assigned connections
+        // haven't arrived yet); connectConnection only needs the id and the server
+        // re-checks assignment, so attempt the resume with a bare {id} rather than
+        // silently giving up and leaving the user to reconnect by hand.
+        if (!match && before.connections.length > 0) return
+        const ok = await get().connectConnection(match ?? ({ id: connId } as AssignedConnection))
         if (!ok) return // reconnect failed (its own alert already explains why)
       } else if (connId && before.connection.isConnected && before.projects.length === 0) {
         await get().loadProjects()

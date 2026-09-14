@@ -65,6 +65,34 @@ class ExasolError(RuntimeError):
     pass
 
 
+# Substrings that identify a dropped/dead connection (vs a genuine SQL error), so a query
+# can reconnect and retry once. Kept to connection-loss wording — NOT timeouts, so a
+# long-running statement is never silently re-run.
+_DEAD_CONN_MARKERS = (
+    "connection was closed",
+    "connection is closed",
+    "connection was lost",
+    "not connected",
+    "broken pipe",
+    "connection reset",
+    "reset by peer",
+    "connection aborted",
+    "eof occurred",
+)
+
+
+def _is_dead_connection(exc: BaseException) -> bool:
+    """True when ``exc`` means the Exasol socket is gone (so reopening is worth a retry).
+    A real SQL error (ExaQueryError) is never treated as reconnectable."""
+    query_error = getattr(pyexasol, "ExaQueryError", None)
+    if query_error is not None and isinstance(exc, query_error):
+        return False
+    conn_error = getattr(pyexasol, "ExaConnectionError", None)
+    if conn_error is not None and isinstance(exc, conn_error):
+        return True
+    return any(marker in str(exc).lower() for marker in _DEAD_CONN_MARKERS)
+
+
 class DatabaseManager:
     """Holds one live Exasol connection plus server definitions. One instance per
     signed-in user (see ConnectionRegistry) so users never share a connection."""
@@ -82,6 +110,9 @@ class DatabaseManager:
         self.last_error: str | None = None
         # Set when connected via an admin-defined connection (the current model).
         self._active_db_server: DatabaseServer | None = None
+        # The password for the active connection, kept so a socket dropped by the
+        # network/DB after idle can be transparently reopened without a manual reconnect.
+        self._active_password: str | None = None
         # Whether the active connection opts into reading transitions from the
         # pre-materialised TRANSITIONS_RAW table (ProcessRepository reads this).
         self.use_materialized_transitions = False
@@ -315,6 +346,7 @@ class DatabaseManager:
         self._conn = exa
         self.is_connected = True
         self._active_db_server = server
+        self._active_password = conn_def.password
         self.use_materialized_transitions = bool(
             getattr(conn_def, "use_materialized_transitions", False)
         )
@@ -354,6 +386,7 @@ class DatabaseManager:
                 self.is_connected = False
                 self.is_llm_reachable = False
                 self._active_db_server = None
+                self._active_password = None
                 self.use_materialized_transitions = False
                 # A different connection may have different STEPS for the same
                 # project id — never carry the cache across connections.
@@ -368,15 +401,50 @@ class DatabaseManager:
 
     # ── query execution ──────────────────────────────────────────────────────
 
+    @staticmethod
+    def _stmt_result(conn: "pyexasol.ExaConnection", sql: str) -> QueryResult:
+        stmt = conn.execute(sql)
+        columns = list(stmt.column_names())
+        rows = [list(r) for r in stmt.fetchall()] if stmt.result_type == "resultSet" else []
+        return QueryResult(rows, columns)
+
+    def _reopen_locked(self) -> "pyexasol.ExaConnection":
+        """Rebuild the active connection in place. Caller holds ``self._lock``. Used to
+        replace a socket the network/DB closed while idle, so a query can transparently
+        retry instead of failing with 'Exasol connection was closed'."""
+        old, self._conn = self._conn, None
+        if old is not None:
+            try:
+                old.close()
+            except Exception:  # noqa: BLE001 — already going away
+                pass
+        conn = self._open(self._active_db_server, self._active_password or "")
+        self._conn = conn
+        self.is_connected = True
+        return conn
+
     def _execute_sync(self, sql: str) -> QueryResult:
         with self._lock:
             conn = self._conn
             if conn is None:
                 raise ExasolError("Not connected.")
-            stmt = conn.execute(sql)
-            columns = list(stmt.column_names())
-            rows = [list(r) for r in stmt.fetchall()] if stmt.result_type == "resultSet" else []
-            return QueryResult(rows, columns)
+            try:
+                return self._stmt_result(conn, sql)
+            except Exception as exc:  # noqa: BLE001
+                # A connection dropped by the network/DB after idle raises here while
+                # is_connected is still True. If it's a dead connection (not a genuine SQL
+                # error) and we know how to rebuild it, reopen and retry ONCE — so the user
+                # never sees a 500 or has to reconnect by hand. If reopening fails, mark the
+                # manager disconnected so the next request prompts a clean reconnect.
+                if self._active_db_server is None or not _is_dead_connection(exc):
+                    raise
+                log.info("Exasol connection was dropped — reconnecting and retrying once")
+                try:
+                    new = self._reopen_locked()
+                except Exception:  # noqa: BLE001 — reopen failed; surface as not-connected
+                    self.is_connected = False
+                    raise
+                return self._stmt_result(new, sql)
 
     async def _run(
         self, sql: str, timeout: float | None, log_errors: bool
