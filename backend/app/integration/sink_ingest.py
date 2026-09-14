@@ -20,12 +20,17 @@ from .backends import IngestBackend, valid_identifier
 from .contract import IngestError
 from .extractors import (
     _JOURNEYS_COLUMNS,
+    _METAS_COLUMNS,
     _PROJECTS_COLUMNS,
     _STEPS_COLUMNS,
     _md5,
     _step_color,
     _step_shape,
 )
+
+# The business titles the sink gives its three META columns (shown in the UI's Metas
+# table): the free-text action description, the calling client, and the end user.
+_META_TITLES = ("Action", "Client", "User")
 
 RunSql = Callable[[str], Any]
 
@@ -86,10 +91,11 @@ def ingest_entries(
     title_short: str,
     entries: Iterable[dict],
 ) -> dict:
-    """Write ``entries`` (each a JSON object with at least ``eventId`` and ``step``, and
-    optionally a ``description`` written onto the STEP record) into ``schema``.JOURNEYS
-    under the project coded ``title_short``. Unknown steps are added to STEPS with a
-    freshly allocated activity id and the posted description. Returns
+    """Write ``entries`` (each a JSON object with at least ``eventId`` and ``step``, plus
+    optional ``description`` → META_1, ``client`` → META_2, ``user`` → META_3) into
+    ``schema``.JOURNEYS under the project coded ``title_short``. The three META columns
+    are titled Action / Client / User (a METAS row) so the UI labels them. Unknown steps
+    are added to STEPS with a freshly allocated activity id. Returns
     ``{ingested, newSteps, projectId}``.
 
     The caller owns the connection; ``commit`` is invoked once the write succeeds. The
@@ -99,6 +105,7 @@ def ingest_entries(
     backend.create_table(schema, "JOURNEYS", _JOURNEYS_COLUMNS, ["PROJECT_ID", "EVENT_ID", "STEP"])
     backend.create_table(schema, "PROJECTS", _PROJECTS_COLUMNS, ["PROJECT_ID"])
     backend.create_table(schema, "STEPS", _STEPS_COLUMNS, ["PROJECT_ID", "STEP"])
+    backend.create_table(schema, "METAS", _METAS_COLUMNS, ["PROJECT_ID"])
 
     # Resolve the target project id (reuse by TITLE_SHORT code, else next free SMALLINT).
     projects = backend.existing_project_ids(schema)
@@ -120,11 +127,6 @@ def ingest_entries(
     journey_cols = list(_JOURNEYS_COLUMNS)
     rows: list[list[Any]] = []
     seen: set[str] = set()
-    # First non-empty `description` seen for each step name → written onto the STEP record
-    # (STEPS.DESCRIPTION), which is where a step's human label lives. A step (a KIND like
-    # SKILL / DATABASE / WEB) is created once per project, so its description is taken from
-    # the first event that introduces it.
-    step_desc: dict[str, str] = {}
     for entry in entries:
         if not isinstance(entry, dict):
             raise IngestError("Each journey entry must be a JSON object.")
@@ -133,18 +135,18 @@ def ingest_entries(
         if not event_id or not step:
             raise IngestError("Each entry needs a non-empty 'eventId' and 'step'.")
         seen.add(step)
-        description = _clean(entry.get("description")).strip()
-        if description and step not in step_desc:
-            step_desc[step] = description
         rows.append([
             project_id,
             _md5(event_id),  # 32-char hex → HASHTYPE(16 BYTE)
             step,
             activity_id(step),
             _parse_time(entry.get("eventTime") or entry.get("event_time")),
-            _clean(entry.get("meta1") or entry.get("meta_1")),
-            _clean(entry.get("meta2") or entry.get("meta_2")),
-            _clean(entry.get("meta3") or entry.get("meta_3")),
+            # META_1 = the free-text action description; META_2 = the calling client
+            # (Claude / ChatGPT / …); META_3 = the end user. Titled in the METAS row below.
+            # The plain metaN keys stay accepted as aliases.
+            _clean(entry.get("description") or entry.get("meta1") or entry.get("meta_1")),
+            _clean(entry.get("client") or entry.get("meta2") or entry.get("meta_2")),
+            _clean(entry.get("user") or entry.get("meta3") or entry.get("meta_3")),
             "ORIGINAL",
         ])
     if not rows:
@@ -158,13 +160,19 @@ def ingest_entries(
             [project_id, title_short, "", title_short],
         ])
 
-    # Create any step seen for the first time (deterministic colour/shape, zero score),
-    # carrying the posted `description` onto the STEP's DESCRIPTION column.
+    # Ensure the META business titles (Action / Client / User) exist for the project, so
+    # the UI's Metas table labels the three columns instead of showing them unnamed.
+    if (str(project_id),) not in backend.existing_keys(schema, "METAS", ["PROJECT_ID"]):
+        backend.insert(schema, "METAS", list(_METAS_COLUMNS), [
+            [project_id, *_META_TITLES],
+        ])
+
+    # Create any step seen for the first time (deterministic colour/shape, zero score).
     existing_steps = backend.existing_keys(schema, "STEPS", ["PROJECT_ID", "STEP"])
     new_steps = [s for s in sorted(seen) if (str(project_id), s) not in existing_steps]
     if new_steps:
         backend.insert(schema, "STEPS", list(_STEPS_COLUMNS), [
-            [project_id, s, activity_id(s), step_desc.get(s, ""), _step_color(s), "#ffffff", 0,
+            [project_id, s, activity_id(s), "", _step_color(s), "#ffffff", 0,
              _step_shape(s), False, None]
             for s in new_steps
         ])

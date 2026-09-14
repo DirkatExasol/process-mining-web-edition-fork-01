@@ -24,12 +24,13 @@ function ingestUrl(info: Info): string {
 }
 
 // One journey (all sharing eventId): the FIRST event names the TYPE of request; each
-// later event names the KIND of action taken. `description` (≤50 chars) says the specifics.
+// later event names the KIND of action taken. `description` (≤50 chars) is the specifics
+// (stored as the "Action" attribute); `client`/`user` record who ran it.
 const SAMPLE_BODY =
-  `[{"eventId":"req-42","step":"SKILL","description":"Summarize quarterly sales","eventTime":"2026-09-13T10:00:00"},\n` +
-  ` {"eventId":"req-42","step":"DATABASE","description":"Query sales table","eventTime":"2026-09-13T10:00:03"},\n` +
-  ` {"eventId":"req-42","step":"WEB","description":"Fetch exchange rates","eventTime":"2026-09-13T10:00:05"},\n` +
-  ` {"eventId":"req-42","step":"EMAIL","description":"Send report to requester","eventTime":"2026-09-13T10:00:09"}]`
+  `[{"eventId":"req-42","step":"SKILL","description":"Summarize quarterly sales","client":"Claude","user":"alice","eventTime":"2026-09-13T10:00:00"},\n` +
+  ` {"eventId":"req-42","step":"DATABASE","description":"Query sales table","client":"Claude","user":"alice","eventTime":"2026-09-13T10:00:03"},\n` +
+  ` {"eventId":"req-42","step":"WEB","description":"Fetch exchange rates","client":"Claude","user":"alice","eventTime":"2026-09-13T10:00:05"},\n` +
+  ` {"eventId":"req-42","step":"EMAIL","description":"Send report to requester","client":"Claude","user":"alice","eventTime":"2026-09-13T10:00:09"}]`
 
 function downloadText(filename: string, text: string) {
   const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
@@ -73,7 +74,9 @@ and \`description\`:
   \`"Fetch exchange rates"\`, \`"Send report to requester"\`.
 
 Keep \`step\` to a small, stable vocabulary of KINDS (they become the nodes on the map);
-let \`description\` carry the detail (it is written onto the STEP as its description).
+let \`description\` carry the detail (stored as the event's **Action** attribute). Add
+\`client\` (which agent — Claude, ChatGPT, …) and \`user\` (the end user) so the runs can
+be filtered by who ran what.
 
 ## Endpoint
 - **Method / URL:** \`POST ${o.url}\`
@@ -91,9 +94,10 @@ A single JSON object, or an array of them. Each object:
 |-------|----------|-------|
 | \`eventId\` | yes | The journey / request id. Reuse it across all events of one run. |
 | \`step\` | yes | The KIND of request/action (see above) — becomes a node. Unknown kinds are created automatically. |
-| \`description\` | recommended | Free text, ≤ 50 chars, describing the request/action. Written onto the STEP record (its description), set from the first event that introduces the step. |
+| \`description\` | recommended | Free text, ≤ 50 chars, describing the request/action. Stored as the event's **Action** attribute (META_1). |
+| \`client\` | recommended | The calling client — e.g. \`Claude\`, \`ChatGPT\`. Stored as the **Client** attribute (META_2). |
+| \`user\` | optional | The end user, if known. Stored as the **User** attribute (META_3). |
 | \`eventTime\` | no | ISO-8601 timestamp; defaults to the server's current time. |
-| \`meta1\`, \`meta2\`, \`meta3\` | no | Optional extra free-text attributes carried on the event. |
 
 ## Example
 \`\`\`bash
@@ -220,9 +224,10 @@ export function SinkIngestModal({
 
             <div className="t-caption2 fg-tertiary">
               Each entry needs <code>eventId</code> (the journey) and <code>step</code> (the
-              request/action KIND); add a <code>description</code> (≤50 chars, becomes the
-              step's description). <code>eventTime</code> defaults to now. See the SKILL.md
-              for how to model a journey. TLS mode: <strong>{info.tlsMode}</strong>{' '}
+              request/action KIND); add <code>description</code> (→ Action),{' '}
+              <code>client</code> (→ Client) and <code>user</code> (→ User).{' '}
+              <code>eventTime</code> defaults to now. See the SKILL.md for how to model a
+              journey. TLS mode: <strong>{info.tlsMode}</strong>{' '}
               (container port {info.activeContainerPort}).
             </div>
           </>

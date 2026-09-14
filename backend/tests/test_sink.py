@@ -44,23 +44,35 @@ def test_ingest_writes_journeys_and_creates_unknown_steps():
     assert len(_rows(backend, "MINING", "STEPS")) == 2
 
 
-def test_description_is_written_onto_the_step_record():
+def test_action_client_user_map_to_titled_meta_columns():
     backend = InMemoryIngestBackend()
     si.ingest_entries(
         backend, lambda: None, schema="S", title_short="APP",
         entries=[
-            {"eventId": "req-1", "step": "SKILL", "description": "Summarize sales"},
-            {"eventId": "req-1", "step": "DATABASE", "description": "Query sales table"},
-            # A second DATABASE event with a different description does not change the
-            # already-created step (first-seen wins).
-            {"eventId": "req-2", "step": "DATABASE", "description": "Update user row"},
+            {"eventId": "r1", "step": "SKILL", "description": "Summarize sales",
+             "client": "Claude", "user": "alice"},
+            {"eventId": "r1", "step": "DATABASE", "description": "Query sales table",
+             "client": "Claude"},  # user omitted
         ],
     )
+    j = {r["STEP"]: r for r in _rows(backend, "S", "JOURNEYS")}
+    # description → META_1 (Action), client → META_2 (Client), user → META_3 (User).
+    assert j["SKILL"]["META_1"] == "Summarize sales"
+    assert j["SKILL"]["META_2"] == "Claude"
+    assert j["SKILL"]["META_3"] == "alice"
+    assert j["DATABASE"]["META_1"] == "Query sales table"
+    assert j["DATABASE"]["META_3"] == ""  # user omitted → blank
+
+    # The description is NOT written onto the STEP record any more.
     steps = {r["STEP"]: r for r in _rows(backend, "S", "STEPS")}
-    assert steps["SKILL"]["DESCRIPTION"] == "Summarize sales"
-    assert steps["DATABASE"]["DESCRIPTION"] == "Query sales table"
-    # description is NOT written into the journey META columns.
-    assert all(not r["META_1"] for r in _rows(backend, "S", "JOURNEYS"))
+    assert steps["SKILL"]["DESCRIPTION"] == ""
+
+    # A single METAS row titles the three columns Action / Client / User for the UI.
+    metas = _rows(backend, "S", "METAS")
+    assert len(metas) == 1
+    assert metas[0]["META_1_TITLE"] == "Action"
+    assert metas[0]["META_2_TITLE"] == "Client"
+    assert metas[0]["META_3_TITLE"] == "User"
 
 
 def test_ingest_reuses_ids_and_appends_to_existing_project():
