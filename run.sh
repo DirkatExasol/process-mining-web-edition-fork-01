@@ -95,6 +95,13 @@ else
   echo "→ actions surface (HTTP ${PMW_ACTIONS_PORT:-8110} / HTTPS ${PMW_ACTIONS_HTTPS_PORT:-8473}, per TLS mode)"
   "$VENV/python" actions/launch.py &
   pids+=($!)
+
+  # The AI Agent Logging Sink supervisor — runs one HTTP/HTTPS ingestion server per
+  # configured sink, each on its own port from the pool (admin port + 30 onwards).
+  # Follows the same TLS plan; enable the module in the admin panel's Logging Sink tab.
+  echo "→ AI Agent Logging Sink supervisor (HTTP ${PMW_SINK_PORT_BASE:-8120}.. / HTTPS ${PMW_SINK_HTTPS_PORT_BASE:-8483}.., per TLS mode)"
+  "$VENV/python" sink/launch.py &
+  pids+=($!)
 fi
 
 wait

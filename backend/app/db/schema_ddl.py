@@ -381,9 +381,10 @@ async def list_projects_with_counts(
     """List the projects stored in ``schema`` with, for each, the number of journeys
     (distinct EVENT_ID) and events (rows) in its ORIGINAL data.
 
-    Returns ``{"ok", "error", "projects": [{"projectId", "title", "journeys",
-    "events"}]}``. Projects present in either PROJECTS or JOURNEYS are included, so a
-    project shows even if one of the tables is missing a row for it.
+    Returns ``{"ok", "error", "projects": [{"projectId", "title", "titleShort",
+    "journeys", "events", "lastEventAt"}]}`` (``lastEventAt`` = the newest EVENT_TIME
+    as an ISO string, or null). Projects present in either PROJECTS or JOURNEYS are
+    included, so a project shows even if one of the tables is missing a row for it.
     """
     import asyncio
 
@@ -413,19 +414,26 @@ async def list_projects_with_counts(
                         titles[int(row[0])] = (row[1] or "", row[2] or "")
             except Exception:  # noqa: BLE001 — PROJECTS may not exist yet
                 pass
-            aggs: dict[int, tuple[int, int]] = {}
+            # events, journeys, last-event-time (MAX(EVENT_TIME) — the newest row's
+            # timestamp; lets a caller show "last activity" without its own query).
+            aggs: dict[int, tuple[int, int, str | None]] = {}
             try:
                 for row in conn.execute(
-                    "SELECT PROJECT_ID, COUNT(*), COUNT(DISTINCT EVENT_ID) "
+                    "SELECT PROJECT_ID, COUNT(*), COUNT(DISTINCT EVENT_ID), MAX(EVENT_TIME) "
                     "FROM JOURNEYS WHERE SAMPLE_SET = 'ORIGINAL' GROUP BY PROJECT_ID"
                 ).fetchall():
                     if row[0] is not None:
-                        aggs[int(row[0])] = (int(row[1] or 0), int(row[2] or 0))
+                        last = row[3]
+                        last_iso = (
+                            last.isoformat() if hasattr(last, "isoformat")
+                            else str(last) if last is not None else None
+                        )
+                        aggs[int(row[0])] = (int(row[1] or 0), int(row[2] or 0), last_iso)
             except Exception:  # noqa: BLE001 — JOURNEYS may not exist yet
                 pass
             out: list[dict] = []
             for pid in sorted(set(titles) | set(aggs)):
-                events, journeys = aggs.get(pid, (0, 0))
+                events, journeys, last_event = aggs.get(pid, (0, 0, None))
                 title, short = titles.get(pid, ("", ""))
                 out.append({
                     "projectId": pid,
@@ -433,6 +441,7 @@ async def list_projects_with_counts(
                     "titleShort": short,
                     "journeys": journeys,
                     "events": events,
+                    "lastEventAt": last_event,
                 })
             return out
         finally:

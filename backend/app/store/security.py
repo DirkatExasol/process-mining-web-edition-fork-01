@@ -31,6 +31,7 @@ from ..config import (
     DEFAULT_ADMIN_PASSWORD,
     DEFAULT_ADMIN_USERNAME,
     SECURITY_DB_PATH,
+    SINK_SOURCE_KIND,
 )
 from ..services import certs as cert_service
 from .crypto import (
@@ -587,6 +588,18 @@ class SecurityStore:
     def set_actions_enabled(self, enabled: bool) -> None:
         with self._lock:
             self._set_config("actions_enabled", "1" if enabled else "0")
+            self._conn.commit()
+
+    @property
+    def sink_enabled(self) -> bool:
+        """Whether the AI Agent Logging Sink module is available: the per-sink ingestion
+        servers accept posts. Opt-in, so OFF by default until an admin turns it on."""
+        with self._lock:
+            return self._get_config("sink_enabled") == "1"
+
+    def set_sink_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._set_config("sink_enabled", "1" if enabled else "0")
             self._conn.commit()
 
     @property
@@ -2602,6 +2615,11 @@ class SecurityStore:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM sources").fetchall()
             return [self._row_to_source(r) for r in rows]
+
+    def list_all_sinks(self) -> list[Source]:
+        """Every AI Agent Logging Sink across all owners — the sink supervisor binds one
+        ingestion server per row (see app.sink_launcher)."""
+        return [s for s in self.list_all_sources() if s.kind == SINK_SOURCE_KIND]
 
     # ── watchdog read checkpoints (per source file) ───────────────────────────
 

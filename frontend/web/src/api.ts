@@ -22,6 +22,7 @@ import type {
   IntegrationStatus,
   RecordDetection,
   SampleSet,
+  SinkMonitor,
   Source,
   SourceCheckpoint,
   SourceInput,
@@ -213,10 +214,29 @@ export const api = {
   parseTimestamp: (value: string) =>
     post<{ format: string; normalized: string }>('/api/integration/parse/timestamp', { value }),
   listSources: () => get<Source[]>('/api/integration/sources'),
-  createSource: (body: SourceInput) => post<Source>('/api/integration/sources', body),
+  // Creating an AI-Agent-Logging-Sink returns a one-time `token` (only its hash is stored).
+  createSource: (body: SourceInput) =>
+    post<Source & { token?: string }>('/api/integration/sources', body),
   updateSource: (id: string, body: SourceInput) =>
     put<Source>(`/api/integration/sources/${enc(id)}`, body),
   deleteSource: (id: string) => del<{ ok: boolean }>(`/api/integration/sources/${enc(id)}`),
+  // The sink port pool + ports already taken (by port → sink name), for the wizard.
+  listSinkPorts: () =>
+    get<{ pool: number[]; used: Record<string, string> }>('/api/integration/sink-ports'),
+  // Mint a fresh bearer token for a sink; the new plaintext is returned once.
+  regenerateSinkToken: (id: string) =>
+    post<{ token: string }>(`/api/integration/sources/${enc(id)}/regenerate-token`, {}),
+  // Everything needed to build a sink's exact ingest request (scheme/port live under
+  // the current TLS mode, + the console container ports for host-offset detection).
+  sinkIngestInfo: (id: string) =>
+    get<{
+      method: string; path: string
+      httpPort: number; httpsPort: number
+      tlsMode: string; activeScheme: string; activeContainerPort: number
+      consoleHttpPort: number; consoleHttpsPort: number; titleShort: string
+    }>(`/api/integration/sources/${enc(id)}/ingest-info`),
+  // The live sink monitor: per-sink liveness + destination-DB counts (one poll).
+  sinkMonitor: () => get<SinkMonitor>('/api/integration/sinks/monitor'),
   previewSource: (path: string, limit: number) =>
     post<{ lines: string[]; truncated: boolean }>('/api/integration/sources/preview', { path, limit }),
   // Source-type wizard file picker: list the sandbox files, and detect a file's record

@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { SOURCE_KINDS, sourceKind, type SourceKindDef } from '../integration/sourceKinds'
 import type { AssignedConnection, Source, SourceCheckpoint, SourceType, WatchdogConfig } from '../types'
+import { SinkIngestModal } from './SinkIngestModal'
 import { Sheet } from './ui'
 
 const LAST_STEP = 3
@@ -51,12 +52,26 @@ export function SourceWizard({
   )
   const [connections, setConnections] = useState<AssignedConnection[]>([])
   const [checkpoint, setCheckpoint] = useState<SourceCheckpoint | null>(null)
+  // AI-Agent-Logging-Sink: the port pool + those already taken, and the one-time token
+  // shown after a sink is created (only its hash is stored server-side).
+  const [sinkPorts, setSinkPorts] = useState<{ pool: number[]; used: Record<string, string> }>({
+    pool: [],
+    used: {},
+  })
+  const [created, setCreated] = useState<{ id: string; token: string; port: string } | null>(null)
+  const [showDetails, setShowDetails] = useState(false)
 
   const kind = sourceKind(kindId)
 
   useEffect(() => {
     void api.listConnections().then(setConnections).catch(() => setConnections([]))
   }, [])
+
+  // Load the sink port pool when the sink kind is in play (for the port picker).
+  useEffect(() => {
+    if (kindId !== 'ai-agent-logging-sink') return
+    void api.listSinkPorts().then(setSinkPorts).catch(() => setSinkPorts({ pool: [], used: {} }))
+  }, [kindId])
 
   // Show the watchdog's read checkpoint (records imported, last run, any error).
   const loadCheckpoint = () => {
@@ -148,8 +163,19 @@ export function SourceWizard({
     }
     const body = { name: name.trim(), kind: kindId, config: cleaned }
     try {
-      if (existing) await api.updateSource(existing.id, body)
-      else await api.createSource(body)
+      if (existing) {
+        await api.updateSource(existing.id, body)
+      } else {
+        const res = await api.createSource(body)
+        if (res.token) {
+          // A new sink — show its one-time bearer token; keep the wizard open until the
+          // user has copied it (it is never shown again). The list is refreshed underneath.
+          await onSaved()
+          setCreated({ id: res.id, token: res.token, port: String(config.port ?? '') })
+          setBusy(false)
+          return
+        }
+      }
       await onSaved()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -191,6 +217,62 @@ export function SourceWizard({
       )}
     </>
   )
+
+  if (created) {
+    return (
+      <Sheet
+        title="Sink created"
+        icon="🤖"
+        onClose={onClose}
+        footer={
+          <>
+            <span className="spacer" />
+            <button className="btn prominent" onClick={onClose}>Done</button>
+          </>
+        }
+      >
+        <div className="iwiz-col narrow">
+          <div className="t-body">
+            Your AI Agent Logging Sink is ready. <strong>Copy its bearer token now</strong> — it
+            is shown only once (only its hash is stored).
+          </div>
+          <Field label="Bearer token">
+            <input
+              className="text-input"
+              readOnly
+              value={created.token}
+              onFocus={(e) => e.currentTarget.select()}
+              style={{ fontFamily: 'var(--mono, monospace)' }}
+            />
+          </Field>
+          <div className="row" style={{ gap: 8 }}>
+            <button
+              className="btn small"
+              onClick={() => void navigator.clipboard?.writeText(created.token)}
+            >
+              Copy token
+            </button>
+            {/* The exact request — URL + curl with the right scheme/port/host — computed
+                for the user so they don't build the endpoint by hand. */}
+            <button className="btn small" onClick={() => setShowDetails(true)}>
+              🔌 Show the exact request
+            </button>
+          </div>
+          <div className="t-caption2 fg-tertiary">
+            The module must be enabled in the admin interface (Logging Sink tab).
+          </div>
+        </div>
+        {showDetails && (
+          <SinkIngestModal
+            sourceId={created.id}
+            token={created.token}
+            name={name.trim()}
+            onClose={() => setShowDetails(false)}
+          />
+        )}
+      </Sheet>
+    )
+  }
 
   return (
     <Sheet
@@ -277,6 +359,30 @@ export function SourceWizard({
                   {sourceTypes.map((st) => (
                     <option key={st.id} value={st.id}>{st.name}</option>
                   ))}
+                </select>
+              ) : f.type === 'connection' ? (
+                <select
+                  className="text-input"
+                  value={config[f.key] ?? ''}
+                  onChange={(e) => setField(f.key, e.target.value)}
+                >
+                  <option value="">— pick a connection —</option>
+                  {connections.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              ) : f.type === 'sinkPort' ? (
+                <select
+                  className="text-input"
+                  value={config[f.key] ?? ''}
+                  onChange={(e) => setField(f.key, e.target.value)}
+                >
+                  <option value="">— pick a port —</option>
+                  {sinkPorts.pool
+                    .filter((p) => !sinkPorts.used[String(p)] || String(p) === config[f.key])
+                    .map((p) => (
+                      <option key={p} value={String(p)}>{p}</option>
+                    ))}
                 </select>
               ) : (
                 <input
@@ -480,7 +586,9 @@ export function SourceWizard({
                     ? '••••••'
                     : f.type === 'sourceType'
                       ? sourceTypes.find((st) => st.id === config[f.key])?.name ?? '(unknown)'
-                      : config[f.key]
+                      : f.type === 'connection'
+                        ? connections.find((c) => c.id === config[f.key])?.name ?? '(unknown)'
+                        : config[f.key]
                   : <span className="fg-tertiary">—</span>}
               </span>
             </div>

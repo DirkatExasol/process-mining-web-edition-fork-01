@@ -662,6 +662,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <button data-tab="reporting" onclick="selectTab('reporting')">Reporting</button>
     <button data-tab="integration" onclick="selectTab('integration')">Integration</button>
     <button data-tab="actions" onclick="selectTab('actions')">Actions</button>
+    <button data-tab="sink" onclick="selectTab('sink')">Logging Sink</button>
   </div>
 
   <div class="tabpanel sel" id="tab-appcontrol">
@@ -1359,6 +1360,30 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     </p>
   </div>
   </div><!-- /tab-actions -->
+
+  <div class="tabpanel" id="tab-sink">
+  <div class="card">
+    <h2>AI Agent Logging Sink</h2>
+    <p class="muted" style="margin-top:0">
+      An HTTP/HTTPS API that AI agents <strong>POST journey entries</strong> to as JSON; each
+      entry is written to the <strong>JOURNEYS</strong> table of the connection chosen when the
+      sink is defined, and unknown steps are created automatically. Sinks are defined in the
+      <strong>Integration console</strong> (kind <em>AI AGENT LOGGING SINK</em>) by developers
+      and admins; each runs on its own port from a fixed pool.
+    </p>
+    <label class="row" style="font-size:14px; cursor:pointer; gap:8px; align-items:center">
+      <input type="checkbox" id="sink_enabled" style="width:auto" onchange="toggleSinkEnabled()">
+      Enable the AI Agent Logging Sink module
+    </label>
+    <div id="sink_status" class="col" style="margin-top:12px; gap:6px"></div>
+    <p class="subtle" style="margin-top:10px">
+      Enabling/disabling takes effect <strong>immediately</strong> (no restart) — while off, the
+      ports stay open but return 503. The sinks follow the same TLS mode &amp; certificate as the
+      app and this admin interface; a TLS change takes effect after
+      <strong>↻ Restart app server</strong> in the <strong>App Control</strong> tab.
+    </p>
+  </div>
+  </div><!-- /tab-sink -->
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -1851,6 +1876,7 @@ function selectTab(name) {
   if (name === 'backup') loadSchedule().catch(e => toast(e.message, true));
   if (name === 'integration') loadIntegration().catch(e => toast(e.message, true));
   if (name === 'actions') loadActions().catch(e => toast(e.message, true));
+  if (name === 'sink') loadSink().catch(e => toast(e.message, true));
 }
 
 // ── AI Reporting ─────────────────────────────────────────────────────────────
@@ -2202,6 +2228,24 @@ async function toggleActionsEnabled() {
                   : 'Actions disabled — restart to apply');
     await loadActions();
   } catch (e) { toast(e.message, true); $('act_enabled').checked = !enabled; }
+}
+async function loadSink() {
+  const s = await api('/api/sink');
+  $('sink_enabled').checked = !!s.enabled;
+  const running = s.running
+    ? '<span class="pill neutral">supervisor running</span>'
+    : '<span class="pill off">supervisor not detected</span>';
+  $('sink_status').innerHTML =
+    '<div class="row" style="gap:8px; align-items:center">' + running + '</div>' +
+    '<div class="subtle">' + s.sinkCount + ' sink(s) configured · pool of ' + s.poolSize + ' port(s)</div>';
+}
+async function toggleSinkEnabled() {
+  const enabled = $('sink_enabled').checked;
+  try {
+    await api('/api/sink/enabled', { method: 'POST', body: JSON.stringify({ enabled }) });
+    toast(enabled ? 'AI Agent Logging Sink enabled' : 'AI Agent Logging Sink disabled');
+    await loadSink();
+  } catch (e) { toast(e.message, true); $('sink_enabled').checked = !enabled; }
 }
 
 // ── Customize (login page background) ───────────────────────────────────────

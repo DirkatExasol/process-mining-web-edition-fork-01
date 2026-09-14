@@ -627,6 +627,35 @@ export interface IntegrationStatus {
   watchdogEnabled: boolean
 }
 
+/** One AI Agent Logging Sink in the live monitor: its config, whether its listener
+ *  answered a localhost /health probe, and the destination-DB counts for its project. */
+export interface SinkMonitorEntry {
+  id: string
+  name: string
+  port: number
+  activeScheme: string
+  titleShort: string
+  connectionId: string
+  connectionName: string | null
+  schema: string | null
+  /** The sink's /health answered 200 on its live listener (true per-port liveness). */
+  live: boolean
+  /** Destination-DB counts for the sink's project (null when the DB couldn't be read). */
+  events: number | null
+  journeys: number | null
+  lastEventAt: string | null
+  /** Per-sink problem (connection not assigned, DB unreachable, …); null when fine. */
+  error: string | null
+}
+
+export interface SinkMonitor {
+  /** The AI Agent Logging Sink module is switched on in the admin interface. */
+  moduleEnabled: boolean
+  /** The sink supervisor process is running (its PID file exists). */
+  supervisorRunning: boolean
+  sinks: SinkMonitorEntry[]
+}
+
 /** "aux" is a helper field: extracted like the others but written to no column — it
  *  exists so a compound-step rule can match on a value (an HTTP status, a result code)
  *  that doesn't belong in META. */

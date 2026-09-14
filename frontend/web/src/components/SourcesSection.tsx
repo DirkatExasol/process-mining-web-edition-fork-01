@@ -9,7 +9,11 @@ import type { Source } from '../types'
 import { ConfirmDialog } from './ConfirmDialog'
 import { RunSourceDialog } from './RunSourceDialog'
 import { SectionHeader } from './SectionHeader'
+import { SinkIngestModal } from './SinkIngestModal'
 import { SourceWizard } from './SourceWizard'
+import { Sheet } from './ui'
+
+const SINK_KIND = 'ai-agent-logging-sink'
 
 export function SourcesSection({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   const [sources, setSources] = useState<Source[]>([])
@@ -18,6 +22,19 @@ export function SourcesSection({ open, onToggle }: { open: boolean; onToggle: ()
   const [confirming, setConfirming] = useState<Source | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // A freshly regenerated sink token, shown once (only its hash is stored server-side).
+  const [newToken, setNewToken] = useState<{ sourceId: string; token: string; name: string } | null>(null)
+  // The "exact request" popup (URL + curl + SKILL.md); token present when just minted.
+  const [details, setDetails] = useState<{ sourceId: string; token?: string; name: string } | null>(null)
+
+  const regenerate = async (s: Source) => {
+    try {
+      const { token } = await api.regenerateSinkToken(s.id)
+      setNewToken({ sourceId: s.id, token, name: s.name })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   const refresh = useCallback(async () => {
     try {
@@ -103,6 +120,34 @@ export function SourcesSection({ open, onToggle }: { open: boolean; onToggle: ()
                     {kind ? ` · ${kind.summary(s.config)}` : ''}
                   </span>
                 </div>
+                {s.kind === SINK_KIND && (
+                  <button
+                    className="icon-btn"
+                    style={{ width: 22, height: 22 }}
+                    title="Show the exact ingest request (URL + curl)"
+                    aria-label="Show ingest request"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setDetails({ sourceId: s.id, name: s.name })
+                    }}
+                  >
+                    🔌
+                  </button>
+                )}
+                {s.kind === SINK_KIND && (
+                  <button
+                    className="icon-btn"
+                    style={{ width: 22, height: 22, color: 'var(--accent)' }}
+                    title="Regenerate the ingest token (invalidates the old one)"
+                    aria-label="Regenerate token"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void regenerate(s)
+                    }}
+                  >
+                    🔑
+                  </button>
+                )}
                 {s.kind === 'file' && (
                   <button
                     className="icon-btn"
@@ -168,6 +213,60 @@ export function SourcesSection({ open, onToggle }: { open: boolean; onToggle: ()
           busy={busy}
           onConfirm={() => void remove(confirming)}
           onCancel={() => setConfirming(null)}
+        />
+      )}
+
+      {newToken && (
+        <Sheet
+          title="New token"
+          icon="🔑"
+          onClose={() => setNewToken(null)}
+          footer={
+            <>
+              <span className="spacer" />
+              <button className="btn prominent" onClick={() => setNewToken(null)}>Done</button>
+            </>
+          }
+        >
+          <div className="col" style={{ gap: 8 }}>
+            <div className="t-body">
+              A new bearer token was generated. <strong>Copy it now</strong> — it is shown only
+              once (only its hash is stored). The previous token stops working once the sink
+              rebinds.
+            </div>
+            <input
+              className="text-input"
+              readOnly
+              value={newToken.token}
+              onFocus={(e) => e.currentTarget.select()}
+              style={{ fontFamily: 'var(--mono, monospace)' }}
+            />
+            <div className="row" style={{ gap: 8 }}>
+              <button
+                className="btn small"
+                onClick={() => void navigator.clipboard?.writeText(newToken.token)}
+              >
+                Copy token
+              </button>
+              <button
+                className="btn small"
+                onClick={() =>
+                  setDetails({ sourceId: newToken.sourceId, token: newToken.token, name: newToken.name })
+                }
+              >
+                🔌 Show the exact request
+              </button>
+            </div>
+          </div>
+        </Sheet>
+      )}
+
+      {details && (
+        <SinkIngestModal
+          sourceId={details.sourceId}
+          token={details.token}
+          name={details.name}
+          onClose={() => setDetails(null)}
         />
       )}
     </>

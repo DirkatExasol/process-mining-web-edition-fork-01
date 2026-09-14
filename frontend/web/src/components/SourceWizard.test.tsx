@@ -6,7 +6,8 @@ vi.mock('../api', () => ({
     createSource: vi.fn(async () => ({})),
     updateSource: vi.fn(async () => ({})),
     listSourceTypes: vi.fn(async () => []),
-    listConnections: vi.fn(async () => []),
+    listConnections: vi.fn(async () => [{ id: 'c1', name: 'Prod DB' }]),
+    listSinkPorts: vi.fn(async () => ({ pool: [8120, 8121, 8122], used: {} })),
     sourceCheckpoint: vi.fn(async () => ({
       byteOffset: 0, size: 0, signature: '', records: 0, updatedAt: null, lastError: null,
     })),
@@ -47,8 +48,37 @@ describe('SourceWizard', () => {
     expect(onSaved).toHaveBeenCalled()
   })
 
-  it('lists future kinds as coming soon', async () => {
+  it('offers the AI Agent Logging Sink kind with connection + port fields', async () => {
     await renderSettled(<SourceWizard onClose={() => {}} onSaved={() => {}} />)
-    expect(screen.getAllByText(/coming soon/i).length).toBeGreaterThan(0)
+    // Pick the sink kind (it is selectable, not a "coming soon" placeholder).
+    fireEvent.click(screen.getByText('AI AGENT LOGGING SINK'))
+    fireEvent.click(screen.getByRole('button', { name: /^Next$/ }))
+    // Step 2 renders the sink's fields: a connection picker, a project code, a port.
+    expect(await screen.findByText(/Project code/)).toBeTruthy()
+    expect(screen.getByText(/Connection/)).toBeTruthy()
+    expect(screen.getByText(/^Port/)).toBeTruthy()
+    // The port pool is offered as options (from listSinkPorts, loaded async).
+    expect(await screen.findByRole('option', { name: '8120' })).toBeTruthy()
+  })
+
+  it('creates a sink and shows its one-time token', async () => {
+    ;(api.createSource as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 's1', name: 'Agent sink', kind: 'ai-agent-logging-sink', token: 'secret-token-xyz',
+    })
+    const onSaved = vi.fn()
+    await renderSettled(<SourceWizard onClose={() => {}} onSaved={onSaved} />)
+    fireEvent.click(screen.getByText('AI AGENT LOGGING SINK'))
+    fireEvent.click(screen.getByRole('button', { name: /^Next$/ }))
+    fireEvent.change(screen.getByPlaceholderText(/access log/i), {
+      target: { value: 'Agent sink' },
+    })
+    await screen.findByRole('option', { name: '8120' }) // ports loaded
+    fireEvent.change(screen.getByDisplayValue('— pick a connection —'), { target: { value: 'c1' } })
+    fireEvent.change(screen.getByPlaceholderText(/AGENTLOG/i), { target: { value: 'AGENTLOG' } })
+    fireEvent.change(screen.getByDisplayValue('— pick a port —'), { target: { value: '8120' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Next$/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Create source/i }))
+    expect(await screen.findByDisplayValue('secret-token-xyz')).toBeTruthy()
+    expect(onSaved).toHaveBeenCalled()
   })
 })

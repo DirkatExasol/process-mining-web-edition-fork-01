@@ -46,6 +46,8 @@ from app.config import (  # noqa: E402
     ACTIONS_HTTPS_PORT,
     ACTIONS_PID_PATH,
     ACTIONS_PORT,
+    SINK_PID_PATH,
+    SINK_POOL_SIZE,
 )
 from app import licensing  # noqa: E402
 from app import log_events as logx  # noqa: E402
@@ -1692,6 +1694,14 @@ def api_restart(user: User = Depends(require_admin)):
             os.kill(actions_pid, signal.SIGHUP)
         except (ValueError, OSError):
             actions_pid = None
+    # The AI Agent Logging Sink supervisor, best-effort — rebinds all sink listeners.
+    sink_pid: int | None = None
+    if SINK_PID_PATH.exists():
+        try:
+            sink_pid = int(SINK_PID_PATH.read_text().strip())
+            os.kill(sink_pid, signal.SIGHUP)
+        except (ValueError, OSError):
+            sink_pid = None
     # Restart the admin launcher too, best-effort: signalling our own launcher tears
     # down this very listener, so don't fail the request if the response races it.
     admin_pid: int | None = None
@@ -1706,6 +1716,7 @@ def api_restart(user: User = Depends(require_admin)):
         "pid": gui_pid,
         "integrationPid": integration_pid,
         "actionsPid": actions_pid,
+        "sinkPid": sink_pid,
         "adminPid": admin_pid,
     }
 
@@ -1769,6 +1780,33 @@ def api_set_actions_enabled(
         username=user.username, operation="config",
     )
     return {"ok": True, "enabled": store.actions_enabled}
+
+
+class SinkEnabledBody(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/sink")
+def api_sink_status(user: User = Depends(require_admin)):
+    """State of the AI Agent Logging Sink module: whether it's enabled, the size of the
+    port pool, how many sinks are configured, and whether the supervisor is running."""
+    return {
+        "enabled": store.sink_enabled,
+        "poolSize": SINK_POOL_SIZE,
+        "sinkCount": len(store.list_all_sinks()),
+        "running": SINK_PID_PATH.exists(),
+    }
+
+
+@app.post("/api/sink/enabled")
+def api_set_sink_enabled(body: SinkEnabledBody, user: User = Depends(require_admin)):
+    store.set_sink_enabled(body.enabled)
+    logx.usage(
+        f"admin {user.username} {'enabled' if body.enabled else 'disabled'} "
+        f"the AI Agent Logging Sink module",
+        username=user.username, operation="config",
+    )
+    return {"ok": True, "enabled": store.sink_enabled}
 
 
 # ── API: connections (admin-defined, assigned to users) ───────────────────────

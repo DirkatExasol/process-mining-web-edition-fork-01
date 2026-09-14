@@ -12,12 +12,24 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+import secrets
+import signal
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import log_events as logx
-from ..config import INTEGRATION_WATCHDOG_ENABLED
+from ..config import (
+    INTEGRATION_PORT,
+    INTEGRATION_HTTPS_PORT,
+    INTEGRATION_WATCHDOG_ENABLED,
+    SINK_HTTP_PORTS,
+    SINK_PID_PATH,
+    SINK_SOURCE_KIND,
+    sink_https_port_for,
+)
 from ..db.manager import current_db
 from ..integration import SqlIngestBackend, layer
 from ..integration.backends import DEFAULT_TRANSACTION_ROWS, clamp_transaction_rows
@@ -39,6 +51,7 @@ from ..integration.files import (
 )
 from ..integration.compound import OPS as COMPOUND_OPS
 from ..integration.destinations import open_stored_connection
+from ..integration.sink_ingest import hash_sink_token
 from ..integration.structured import iter_json_from_text, iter_xml_records, parse_xml
 from ..integration.parsing import ROLES, analyze_timestamp, detect_fields, regex_from_segment
 from ..store.security import store as security_store
@@ -271,7 +284,56 @@ def delete_source_type(source_type_id: str, request: Request) -> dict:
 
 # Source kinds the backend accepts. Kept small on purpose — extend as new kinds ship;
 # the frontend registry drives the per-kind form, this just gates what may be stored.
-SOURCE_KINDS = {"file"}
+SOURCE_KINDS = {"file", SINK_SOURCE_KIND}
+
+
+def _signal_sink_rebind() -> None:
+    """Tell the sink supervisor to rebind its listeners (a sink was added/edited/removed).
+    Best-effort: no PID file (supervisor not running) is fine."""
+    try:
+        pid = int(SINK_PID_PATH.read_text().strip())
+        os.kill(pid, signal.SIGHUP)
+    except (OSError, ValueError):
+        pass
+
+
+def _prepare_sink_config(body: "SourceBody", user: str | None, source_id: str | None) -> tuple[str, str]:
+    """Validate + finalise an AI-Agent-Logging-Sink config. Returns (config JSON, token):
+    ``token`` is the freshly generated plaintext (shown once) on create, else ""."""
+    cfg = dict(body.config or {})
+    conn_id = str(cfg.get("connectionId") or "").strip()
+    if not conn_id or not security_store.user_can_use(conn_id, user):
+        raise HTTPException(status_code=400, detail="Choose a connection that is assigned to you.")
+    conn = security_store.get_connection(conn_id)
+    if conn is None or not (conn.schema or "").strip():
+        raise HTTPException(status_code=400, detail="The chosen connection has no schema.")
+    title_short = str(cfg.get("titleShort") or "").strip()
+    if not (1 <= len(title_short) <= 10):
+        raise HTTPException(status_code=400, detail="A project code (1–10 characters) is required.")
+    try:
+        port = int(cfg.get("port"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Choose a port for the sink.") from None
+    if port not in SINK_HTTP_PORTS:
+        raise HTTPException(status_code=400, detail="That port is not in the sink pool.")
+    taken = {
+        int(json.loads(s.config or "{}").get("port") or 0)
+        for s in security_store.list_all_sinks() if s.id != source_id
+    }
+    if port in taken:
+        raise HTTPException(status_code=400, detail="Another sink already uses that port.")
+
+    # Token: generate on create (returned once); carry the existing hash across edits.
+    token = ""
+    existing_hash = str(cfg.get("tokenHash") or "").strip()
+    if not existing_hash:
+        token = secrets.token_urlsafe(32)
+        existing_hash = hash_sink_token(token)
+    clean = {
+        "connectionId": conn_id, "titleShort": title_short,
+        "port": port, "tokenHash": existing_hash,
+    }
+    return json.dumps(clean), token
 
 
 def _transaction_rows(cfg: dict) -> int:
@@ -318,6 +380,14 @@ def list_sources(request: Request) -> list[dict]:
 @router.post("/sources")
 def create_source(body: SourceBody, request: Request) -> dict:
     user = _request_user(request)
+    if body.kind == SINK_SOURCE_KIND:
+        config, token = _prepare_sink_config(body, user, source_id=None)
+        created = security_store.add_source(user or "", name=body.name, kind=body.kind, config=config)
+        _signal_sink_rebind()
+        result = created.public()
+        if token:
+            result["token"] = token  # shown once — only the hash is stored
+        return result
     config = _source_config(body, user)
     created = security_store.add_source(user or "", name=body.name, kind=body.kind, config=config)
     return created.public()
@@ -328,6 +398,17 @@ def update_source(source_id: str, body: SourceBody, request: Request) -> dict:
     user = _request_user(request)
     old = _source_owned(source_id, user)
     old_cfg = old.public()["config"] if old else {}
+    if body.kind == SINK_SOURCE_KIND:
+        # Carry the stored token hash across edits so the token stays valid; the wizard
+        # never sends it back. (Token rotation is a deferred feature.)
+        if not body.config.get("tokenHash") and old_cfg.get("tokenHash"):
+            body.config["tokenHash"] = old_cfg["tokenHash"]
+        config, _token = _prepare_sink_config(body, user, source_id=source_id)
+        updated = security_store.update_source(source_id, user, name=body.name, kind=body.kind, config=config)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Source not found.")
+        _signal_sink_rebind()
+        return updated.public()
     # `lastRun` is written by the run endpoint, never edited in the wizard, so carry it
     # across a save — otherwise renaming a source would forget where it last imported to.
     if "lastRun" not in body.config and old_cfg.get("lastRun"):
@@ -348,9 +429,218 @@ def update_source(source_id: str, body: SourceBody, request: Request) -> dict:
 @router.delete("/sources/{source_id}")
 def delete_source(source_id: str, request: Request) -> dict:
     user = _request_user(request)
+    existing = _source_owned(source_id, user)
+    was_sink = existing is not None and existing.kind == SINK_SOURCE_KIND
     if not security_store.delete_source(source_id, user):
         raise HTTPException(status_code=404, detail="Source not found.")
+    if was_sink:
+        _signal_sink_rebind()
     return {"ok": True}
+
+
+@router.post("/sources/{source_id}/regenerate-token")
+def regenerate_sink_token(source_id: str, request: Request) -> dict:
+    """Mint a fresh bearer token for a sink the caller owns, replacing the stored hash.
+    Returns the new plaintext ONCE; the previous token stops working once the sink
+    supervisor rebinds (signalled here)."""
+    user = _request_user(request)
+    src = _source_owned(source_id, user)
+    if src is None:
+        raise HTTPException(status_code=404, detail="Source not found.")
+    if src.kind != SINK_SOURCE_KIND:
+        raise HTTPException(status_code=400, detail="Only an AI Agent Logging Sink has a token.")
+    cfg = src.public()["config"]
+    token = secrets.token_urlsafe(32)
+    cfg["tokenHash"] = hash_sink_token(token)
+    updated = security_store.update_source(
+        source_id, user, name=src.name, kind=src.kind, config=json.dumps(cfg)
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Source not found.")
+    _signal_sink_rebind()
+    return {"token": token}
+
+
+@router.get("/sources/{source_id}/ingest-info")
+def sink_ingest_info(source_id: str, request: Request) -> dict:
+    """Everything the client needs to build the exact ingest request for a sink — the
+    scheme/port that is actually live under the current TLS mode (mirroring what the sink
+    supervisor binds), plus the integration surface's own container ports so the UI can
+    detect the host port-mapping offset (e.g. Docker's +10000) and show a ready URL."""
+    user = _request_user(request)
+    src = _source_owned(source_id, user)
+    if src is None:
+        raise HTTPException(status_code=404, detail="Source not found.")
+    if src.kind != SINK_SOURCE_KIND:
+        raise HTTPException(status_code=400, detail="Not an AI Agent Logging Sink.")
+    cfg = src.public()["config"]
+    http_port = int(cfg.get("port") or 0)
+    https_port = sink_https_port_for(http_port) if http_port else 0
+    plan = security_store.tls_plan()
+    if plan["https"] and plan["hasActiveCert"]:
+        scheme, active = "https", https_port
+    else:  # 'off'/'optional' without HTTPS, or 'required' with no cert → HTTP fallback
+        scheme, active = "http", http_port
+    return {
+        "method": "POST", "path": "/ingest",
+        "httpPort": http_port, "httpsPort": https_port,
+        "tlsMode": plan["mode"], "activeScheme": scheme, "activeContainerPort": active,
+        "consoleHttpPort": INTEGRATION_PORT, "consoleHttpsPort": INTEGRATION_HTTPS_PORT,
+        "titleShort": cfg.get("titleShort", ""),
+    }
+
+
+@router.get("/sink-ports")
+def sink_ports(request: Request) -> dict:
+    """The AI-Agent-Logging-Sink port pool, with the ports already taken by other sinks
+    (so the wizard can offer the free ones). Ports are a fixed, pre-exposed pool."""
+    _request_user(request)
+    used: dict[str, str] = {}
+    for s in security_store.list_all_sinks():
+        try:
+            port = int(json.loads(s.config or "{}").get("port") or 0)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+        if port:
+            used[str(port)] = s.name
+    return {"pool": list(SINK_HTTP_PORTS), "used": used}
+
+
+async def _probe_sink_liveness(entries: list[dict]) -> None:
+    """Set ``live`` on each entry from a best-effort GET /health on the sink's own
+    listener. The sink servers run in the SAME container, so 127.0.0.1:<container port>
+    reaches whatever the supervisor bound — a 200 is true per-listener liveness (the one
+    signal we can't derive from stored config alone). Short timeout; never raises."""
+    import httpx
+
+    async with httpx.AsyncClient(verify=False, timeout=1.0) as client:
+        for e in entries:
+            port = int(e.get("activeContainerPort") or 0)
+            if not port:
+                continue
+            url = f"{e['activeScheme']}://127.0.0.1:{port}/health"
+            try:
+                resp = await client.get(url)
+                e["live"] = resp.status_code == 200
+            except Exception:  # noqa: BLE001 — unreachable/down → simply not live
+                e["live"] = False
+
+
+# Short-TTL cache of per-connection project counts for the monitor. The monitor is
+# polled every few seconds per open console, and each miss opens a fresh DB connection;
+# without this, several open consoles would churn connections against Exasol. Keyed by
+# connection id (the counts are the same for every viewer of that connection); a stale
+# hit is at most SINK_COUNTS_TTL_SECS old. Best-effort — failures are never cached.
+SINK_COUNTS_TTL_SECS = 12.0
+_SINK_COUNTS_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+async def _counts_for_connection(conn) -> dict:
+    """``list_projects_with_counts`` for ``conn``, memoised for a few seconds. Only a
+    successful (``ok``) read is cached; an error is returned but not stored, so a blip
+    doesn't stick around."""
+    from ..db.schema_ddl import list_projects_with_counts
+
+    now = time.monotonic()
+    cached = _SINK_COUNTS_CACHE.get(conn.id)
+    if cached is not None and (now - cached[0]) < SINK_COUNTS_TTL_SECS:
+        return cached[1]
+    result = await list_projects_with_counts(
+        host=conn.host, port=conn.port, username=conn.username, password=conn.password,
+        schema=conn.schema, use_tls=conn.use_tls, cert_mode=conn.cert_mode,
+        fingerprint=conn.fingerprint, min_rsa_bits=conn.min_rsa_bits,
+    )
+    if result.get("ok"):
+        _SINK_COUNTS_CACHE[conn.id] = (now, result)
+    return result
+
+
+async def _fill_sink_counts(entries: list[dict], user: str | None) -> None:
+    """Fill events/journeys/lastEventAt + connectionName/schema per sink from the
+    destination DB. Opens ONE connection per DISTINCT connection id (grouping sinks that
+    share one), reusing ``list_projects_with_counts`` — assignment is the gate, exactly
+    as in ``list_destination_projects``. A connection the caller can't use or that fails
+    to read leaves that sink's counts null with a per-sink ``error`` (never a 500)."""
+    by_conn: dict[str, list[dict]] = {}
+    for e in entries:
+        by_conn.setdefault(e["connectionId"], []).append(e)
+
+    for conn_id, group in by_conn.items():
+        if not conn_id:
+            for e in group:
+                e["error"] = "No connection is assigned to this sink."
+            continue
+        if not security_store.user_can_use(conn_id, user):
+            for e in group:
+                e["error"] = "The sink's connection is not assigned to you."
+            continue
+        conn = security_store.get_connection(conn_id, with_secrets=True)
+        if conn is None:
+            for e in group:
+                e["error"] = "The sink's connection no longer exists."
+            continue
+        for e in group:
+            e["connectionName"] = conn.name
+            e["schema"] = conn.schema
+        result = await _counts_for_connection(conn)
+        if not result.get("ok"):
+            for e in group:
+                e["error"] = result.get("error") or "Could not read the destination database."
+            continue
+        by_short = {p.get("titleShort"): p for p in result.get("projects", [])}
+        for e in group:
+            proj = by_short.get(e["titleShort"])
+            e["events"] = int(proj.get("events") or 0) if proj else 0
+            e["journeys"] = int(proj.get("journeys") or 0) if proj else 0
+            e["lastEventAt"] = proj.get("lastEventAt") if proj else None
+
+
+@router.get("/sinks/monitor")
+async def sinks_monitor(request: Request) -> dict:
+    """A live, node-based monitor of the caller's AI Agent Logging Sinks.
+
+    Assembled entirely on the compute backend: the sink servers run in a separate
+    supervisor process and keep no stats, so this reads what it *can* see without them —
+    each sink's stored config, whether the module is enabled and the supervisor is alive,
+    a localhost /health probe per sink (true per-listener liveness), and the
+    destination-DB counts for the sink's project. Fully failure-tolerant — a bad sink or
+    an unreachable connection surfaces as a per-sink ``error`` and never a 500."""
+    user = _request_user(request)
+    plan = security_store.tls_plan()
+    https_live = bool(plan["https"] and plan["hasActiveCert"])
+
+    entries: list[dict] = []
+    for s in security_store.list_sources(user):
+        if s.kind != SINK_SOURCE_KIND:
+            continue
+        cfg = s.public()["config"]
+        try:
+            http_port = int(cfg.get("port") or 0)
+        except (TypeError, ValueError):
+            http_port = 0
+        # Live scheme/port under the current TLS mode — mirrors ingest-info exactly.
+        scheme = "https" if https_live else "http"
+        active_port = sink_https_port_for(http_port) if (https_live and http_port) else http_port
+        entries.append({
+            "id": s.id, "name": s.name, "port": http_port,
+            "activeScheme": scheme, "activeContainerPort": active_port,
+            "titleShort": str(cfg.get("titleShort") or ""),
+            "connectionId": str(cfg.get("connectionId") or ""),
+            "connectionName": None, "schema": None,
+            "live": False, "events": None, "journeys": None, "lastEventAt": None,
+            "error": None,
+        })
+
+    await _probe_sink_liveness(entries)
+    await _fill_sink_counts(entries, user)
+    for e in entries:  # internal container port — of no use to a host client
+        e.pop("activeContainerPort", None)
+
+    return {
+        "moduleEnabled": security_store.sink_enabled,
+        "supervisorRunning": SINK_PID_PATH.exists(),
+        "sinks": entries,
+    }
 
 
 class PreviewBody(BaseModel):
