@@ -23,9 +23,13 @@ function ingestUrl(info: Info): string {
   return `${info.activeScheme}://${loc.hostname}:${hostPort}${info.path}`
 }
 
+// One journey (all sharing eventId): the FIRST event names the TYPE of request; each
+// later event names the KIND of action taken. `description` (≤50 chars) says the specifics.
 const SAMPLE_BODY =
-  `[{"eventId":"case-1","step":"ENTER Security Check","eventTime":"2026-09-13T10:00:00"},\n` +
-  ` {"eventId":"case-1","step":"BOARD Aircraft","eventTime":"2026-09-13T10:20:00"}]`
+  `[{"eventId":"req-42","step":"SKILL","description":"Summarize quarterly sales","eventTime":"2026-09-13T10:00:00"},\n` +
+  ` {"eventId":"req-42","step":"DATABASE","description":"Query sales table","eventTime":"2026-09-13T10:00:03"},\n` +
+  ` {"eventId":"req-42","step":"WEB","description":"Fetch exchange rates","eventTime":"2026-09-13T10:00:05"},\n` +
+  ` {"eventId":"req-42","step":"EMAIL","description":"Send report to requester","eventTime":"2026-09-13T10:00:09"}]`
 
 function downloadText(filename: string, text: string) {
   const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
@@ -51,10 +55,25 @@ function buildSkillMd(o: {
   return `# Skill: Emit process-mining journey events to "${o.name}"
 
 ## When to use
-Use this skill to record the steps an agent (or a process) goes through as **journey
-events**, so they appear as a live process map in the Process Mining Demonstrator. Emit
-one event per step you complete; reuse the same \`eventId\` for all steps that belong to
-the same run/case so they link into one journey.
+Use this skill to record what an agent does as **journey events**, so the runs appear as a
+live process map in the Process Mining Demonstrator. One **journey** = one request/run you
+handle; one **event** = one step within it. Emit an event as each step happens and reuse the
+same \`eventId\` for every event of that journey so they link into a single path.
+
+## How to model a journey
+Give every event of the same run the same \`eventId\`. Then choose each event's \`step\`
+and \`description\`:
+
+- **First event of the journey** — \`step\` is the **type of request** you received:
+  \`SKILL\`, \`REQUEST\`, \`TOOL USE\`, \`CHAT\`, … . Put what it is in \`description\`
+  (≤ 50 chars), e.g. \`"Summarize quarterly sales"\`.
+- **Every later event** — \`step\` is the **kind of action** you took: \`REQUEST\`,
+  \`SKILL\`, \`TOOL\`, \`DATABASE\`, \`WEB\`, \`EMAIL\`, \`FILE\`, \`APP\`, … . Put the
+  specifics in \`description\` (≤ 50 chars), e.g. \`"Query sales table"\`,
+  \`"Fetch exchange rates"\`, \`"Send report to requester"\`.
+
+Keep \`step\` to a small, stable vocabulary of KINDS (they become the nodes on the map);
+let \`description\` carry the detail (it is written onto the STEP as its description).
 
 ## Endpoint
 - **Method / URL:** \`POST ${o.url}\`
@@ -70,10 +89,11 @@ A single JSON object, or an array of them. Each object:
 
 | field | required | notes |
 |-------|----------|-------|
-| \`eventId\` | yes | The case / correlation id. Reuse it across the steps of one journey. |
-| \`step\` | yes | The activity name. An unknown step is created automatically. |
+| \`eventId\` | yes | The journey / request id. Reuse it across all events of one run. |
+| \`step\` | yes | The KIND of request/action (see above) — becomes a node. Unknown kinds are created automatically. |
+| \`description\` | recommended | Free text, ≤ 50 chars, describing the request/action. Written onto the STEP record (its description), set from the first event that introduces the step. |
 | \`eventTime\` | no | ISO-8601 timestamp; defaults to the server's current time. |
-| \`meta1\`, \`meta2\`, \`meta3\` | no | Optional free-text attributes carried on the event. |
+| \`meta1\`, \`meta2\`, \`meta3\` | no | Optional extra free-text attributes carried on the event. |
 
 ## Example
 \`\`\`bash
@@ -88,7 +108,8 @@ ${o.curl}
 
 ## Rules of thumb
 - Send events in the order they happen; \`eventTime\` (or arrival order) determines the path.
-- One \`step\` = one node in the map; keep names stable and human-readable.
+- \`step\` is a KIND (a node); keep the set small and stable. \`description\` is the detail.
+- Start every journey with the request-type event, then one event per action you take.
 - Batch multiple events in one array to reduce round-trips.
 - Treat the token as a secret; if it leaks, regenerate it (the old one stops working).
 `
@@ -198,9 +219,10 @@ export function SinkIngestModal({
             )}
 
             <div className="t-caption2 fg-tertiary">
-              Each entry needs <code>eventId</code> and <code>step</code>;{' '}
-              <code>eventTime</code> (ISO-8601, defaults to now) and <code>meta1</code>–
-              <code>meta3</code> are optional. TLS mode: <strong>{info.tlsMode}</strong>{' '}
+              Each entry needs <code>eventId</code> (the journey) and <code>step</code> (the
+              request/action KIND); add a <code>description</code> (≤50 chars, becomes the
+              step's description). <code>eventTime</code> defaults to now. See the SKILL.md
+              for how to model a journey. TLS mode: <strong>{info.tlsMode}</strong>{' '}
               (container port {info.activeContainerPort}).
             </div>
           </>

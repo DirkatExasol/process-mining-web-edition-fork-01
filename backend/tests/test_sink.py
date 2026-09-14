@@ -44,6 +44,25 @@ def test_ingest_writes_journeys_and_creates_unknown_steps():
     assert len(_rows(backend, "MINING", "STEPS")) == 2
 
 
+def test_description_is_written_onto_the_step_record():
+    backend = InMemoryIngestBackend()
+    si.ingest_entries(
+        backend, lambda: None, schema="S", title_short="APP",
+        entries=[
+            {"eventId": "req-1", "step": "SKILL", "description": "Summarize sales"},
+            {"eventId": "req-1", "step": "DATABASE", "description": "Query sales table"},
+            # A second DATABASE event with a different description does not change the
+            # already-created step (first-seen wins).
+            {"eventId": "req-2", "step": "DATABASE", "description": "Update user row"},
+        ],
+    )
+    steps = {r["STEP"]: r for r in _rows(backend, "S", "STEPS")}
+    assert steps["SKILL"]["DESCRIPTION"] == "Summarize sales"
+    assert steps["DATABASE"]["DESCRIPTION"] == "Query sales table"
+    # description is NOT written into the journey META columns.
+    assert all(not r["META_1"] for r in _rows(backend, "S", "JOURNEYS"))
+
+
 def test_ingest_reuses_ids_and_appends_to_existing_project():
     backend = InMemoryIngestBackend()
     noop = lambda: None

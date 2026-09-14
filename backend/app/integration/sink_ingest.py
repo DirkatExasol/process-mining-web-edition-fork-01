@@ -86,9 +86,11 @@ def ingest_entries(
     title_short: str,
     entries: Iterable[dict],
 ) -> dict:
-    """Write ``entries`` (each a JSON object with at least ``eventId`` and ``step``) into
-    ``schema``.JOURNEYS under the project coded ``title_short``. Unknown steps are added to
-    STEPS with a freshly allocated activity id. Returns ``{ingested, newSteps, projectId}``.
+    """Write ``entries`` (each a JSON object with at least ``eventId`` and ``step``, and
+    optionally a ``description`` written onto the STEP record) into ``schema``.JOURNEYS
+    under the project coded ``title_short``. Unknown steps are added to STEPS with a
+    freshly allocated activity id and the posted description. Returns
+    ``{ingested, newSteps, projectId}``.
 
     The caller owns the connection; ``commit`` is invoked once the write succeeds. The
     JOURNEYS/PROJECTS/STEPS tables are (idempotently) defined here too, so this works
@@ -118,6 +120,11 @@ def ingest_entries(
     journey_cols = list(_JOURNEYS_COLUMNS)
     rows: list[list[Any]] = []
     seen: set[str] = set()
+    # First non-empty `description` seen for each step name → written onto the STEP record
+    # (STEPS.DESCRIPTION), which is where a step's human label lives. A step (a KIND like
+    # SKILL / DATABASE / WEB) is created once per project, so its description is taken from
+    # the first event that introduces it.
+    step_desc: dict[str, str] = {}
     for entry in entries:
         if not isinstance(entry, dict):
             raise IngestError("Each journey entry must be a JSON object.")
@@ -126,6 +133,9 @@ def ingest_entries(
         if not event_id or not step:
             raise IngestError("Each entry needs a non-empty 'eventId' and 'step'.")
         seen.add(step)
+        description = _clean(entry.get("description")).strip()
+        if description and step not in step_desc:
+            step_desc[step] = description
         rows.append([
             project_id,
             _md5(event_id),  # 32-char hex → HASHTYPE(16 BYTE)
@@ -148,12 +158,13 @@ def ingest_entries(
             [project_id, title_short, "", title_short],
         ])
 
-    # Create any step seen for the first time (deterministic colour/shape, zero score).
+    # Create any step seen for the first time (deterministic colour/shape, zero score),
+    # carrying the posted `description` onto the STEP's DESCRIPTION column.
     existing_steps = backend.existing_keys(schema, "STEPS", ["PROJECT_ID", "STEP"])
     new_steps = [s for s in sorted(seen) if (str(project_id), s) not in existing_steps]
     if new_steps:
         backend.insert(schema, "STEPS", list(_STEPS_COLUMNS), [
-            [project_id, s, activity_id(s), "", _step_color(s), "#ffffff", 0,
+            [project_id, s, activity_id(s), step_desc.get(s, ""), _step_color(s), "#ffffff", 0,
              _step_shape(s), False, None]
             for s in new_steps
         ])
