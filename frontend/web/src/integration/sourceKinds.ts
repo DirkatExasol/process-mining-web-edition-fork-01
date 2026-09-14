@@ -11,6 +11,7 @@
 // port from the sink pool. The wizard populates these options at runtime.
 export type SourceFieldType =
   | 'text' | 'password' | 'number' | 'select' | 'sourceType' | 'connection' | 'sinkPort'
+  | 'checkbox'
 
 export interface SourceFieldDef {
   key: string
@@ -102,11 +103,20 @@ export const SOURCE_KINDS: SourceKindDef[] = [
         label: 'Port',
         type: 'sinkPort',
         required: true,
-        help: 'A free port from the sink pool; the ingestion server listens here.',
+        help: 'A free slot from the sink pool; each shows its HTTP and HTTPS port.',
+        layout: 'grow',
+      },
+      {
+        key: 'tls',
+        label: 'TLS (address agents over HTTPS)',
+        type: 'checkbox',
+        default: 'true',
+        help: 'Which scheme agents should use — sets the HTTPS or HTTP endpoint shown in the request and SKILL.md.',
         layout: 'narrow',
       },
     ],
-    summary: (c) => `port ${c.port ?? '—'} · ${c.titleShort ?? ''}`,
+    summary: (c) =>
+      `${c.tls === false ? 'HTTP' : 'HTTPS'} port ${c.port ?? '—'} · ${c.titleShort ?? ''}`,
   },
 ]
 

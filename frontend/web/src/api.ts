@@ -222,7 +222,9 @@ export const api = {
   deleteSource: (id: string) => del<{ ok: boolean }>(`/api/integration/sources/${enc(id)}`),
   // The sink port pool + ports already taken (by port → sink name), for the wizard.
   listSinkPorts: () =>
-    get<{ pool: number[]; used: Record<string, string> }>('/api/integration/sink-ports'),
+    get<{ pool: number[]; https: Record<string, number>; used: Record<string, string> }>(
+      '/api/integration/sink-ports',
+    ),
   // Mint a fresh bearer token for a sink; the new plaintext is returned once.
   regenerateSinkToken: (id: string) =>
     post<{ token: string }>(`/api/integration/sources/${enc(id)}/regenerate-token`, {}),

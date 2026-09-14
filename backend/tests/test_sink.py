@@ -232,6 +232,58 @@ def test_sink_ingest_info(api_backend):
     assert info["activeScheme"] == "http" and info["activeContainerPort"] == port
 
 
+def test_sink_ports_lists_the_https_peer_of_each_slot(api_backend):
+    from fastapi.testclient import TestClient
+
+    app, store, config = api_backend
+    store.create_user("dev", "pw", is_admin=False)
+    store.set_developer("dev", True)
+    client = TestClient(app)
+    data = client.get("/api/integration/sink-ports", headers={"X-PMW-User": "dev"}).json()
+    assert data["pool"] == list(config.SINK_HTTP_PORTS)
+    # Each pool (HTTP) port maps to its paired HTTPS port, for the wizard's dropdown.
+    p0 = config.SINK_HTTP_PORTS[0]
+    assert data["https"][str(p0)] == config.sink_https_port_for(p0)
+
+
+def test_sink_tls_preference_drives_shown_scheme(api_backend, monkeypatch):
+    """With the deployment able to serve BOTH schemes (TLS optional + cert), the per-sink
+    TLS checkbox decides which endpoint ingest-info advertises."""
+    from fastapi.testclient import TestClient
+    import app.api.integration as integration_api
+
+    app, store, config = api_backend
+    store.create_user("dev", "pw", is_admin=False)
+    store.set_developer("dev", True)
+    cid = _conn(store, "dev")
+    client = TestClient(app)
+    hdr = {"X-PMW-User": "dev"}
+    port = config.SINK_HTTP_PORTS[0]
+
+    # Pretend the deployment serves http AND https (TLS 'optional' with an active cert).
+    monkeypatch.setattr(
+        integration_api.security_store, "tls_plan",
+        lambda: {"mode": "optional", "hasActiveCert": True, "https": True, "http": True},
+    )
+
+    def make(name, port_, tls):
+        return client.post("/api/integration/sources", json={
+            "name": name, "kind": config.SINK_SOURCE_KIND,
+            "config": {"connectionId": cid, "titleShort": "AGENTLOG", "port": port_, "tls": tls},
+        }, headers=hdr).json()["id"]
+
+    sid_tls = make("TLS sink", port, True)
+    sid_plain = make("Plain sink", config.SINK_HTTP_PORTS[1], False)
+
+    tls_info = client.get(f"/api/integration/sources/{sid_tls}/ingest-info", headers=hdr).json()
+    assert tls_info["activeScheme"] == "https"
+    assert tls_info["activeContainerPort"] == config.sink_https_port_for(port)
+
+    plain_info = client.get(f"/api/integration/sources/{sid_plain}/ingest-info", headers=hdr).json()
+    assert plain_info["activeScheme"] == "http"
+    assert plain_info["activeContainerPort"] == config.SINK_HTTP_PORTS[1]
+
+
 def test_sink_app_ingest_requires_token_and_honours_the_gate(monkeypatch):
     import types
     from fastapi.testclient import TestClient

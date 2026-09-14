@@ -54,10 +54,11 @@ export function SourceWizard({
   const [checkpoint, setCheckpoint] = useState<SourceCheckpoint | null>(null)
   // AI-Agent-Logging-Sink: the port pool + those already taken, and the one-time token
   // shown after a sink is created (only its hash is stored server-side).
-  const [sinkPorts, setSinkPorts] = useState<{ pool: number[]; used: Record<string, string> }>({
-    pool: [],
-    used: {},
-  })
+  const [sinkPorts, setSinkPorts] = useState<{
+    pool: number[]
+    https: Record<string, number>
+    used: Record<string, string>
+  }>({ pool: [], https: {}, used: {} })
   const [created, setCreated] = useState<{ id: string; token: string; port: string } | null>(null)
   const [showDetails, setShowDetails] = useState(false)
 
@@ -70,7 +71,10 @@ export function SourceWizard({
   // Load the sink port pool when the sink kind is in play (for the port picker).
   useEffect(() => {
     if (kindId !== 'ai-agent-logging-sink') return
-    void api.listSinkPorts().then(setSinkPorts).catch(() => setSinkPorts({ pool: [], used: {} }))
+    void api
+      .listSinkPorts()
+      .then(setSinkPorts)
+      .catch(() => setSinkPorts({ pool: [], https: {}, used: {} }))
   }, [kindId])
 
   // Show the watchdog's read checkpoint (records imported, last run, any error).
@@ -381,9 +385,26 @@ export function SourceWizard({
                   {sinkPorts.pool
                     .filter((p) => !sinkPorts.used[String(p)] || String(p) === config[f.key])
                     .map((p) => (
-                      <option key={p} value={String(p)}>{p}</option>
+                      <option key={p} value={String(p)}>
+                        HTTP {p}
+                        {sinkPorts.https?.[String(p)] ? ` · HTTPS ${sinkPorts.https[String(p)]}` : ''}
+                      </option>
                     ))}
                 </select>
+              ) : f.type === 'checkbox' ? (
+                (() => {
+                  const checked = (config[f.key] ?? f.default) === 'true'
+                  return (
+                    <label className="row" style={{ gap: 6, alignItems: 'center', height: 30 }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => setField(f.key, e.target.checked ? 'true' : 'false')}
+                      />
+                      <span className="t-caption">{checked ? 'HTTPS' : 'HTTP'}</span>
+                    </label>
+                  )
+                })()
               ) : (
                 <input
                   className="text-input"

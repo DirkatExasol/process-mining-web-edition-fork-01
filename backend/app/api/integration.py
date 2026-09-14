@@ -287,6 +287,35 @@ def delete_source_type(source_type_id: str, request: Request) -> dict:
 SOURCE_KINDS = {"file", SINK_SOURCE_KIND}
 
 
+def _as_bool(value, *, default: bool) -> bool:
+    """Coerce a config value (bool, or a JSON/string form) to bool; None → ``default``."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in ("false", "0", "no", "off", "")
+    return bool(value)
+
+
+def _sink_active_scheme(prefer_tls: bool, plan: dict, http_port: int) -> tuple[str, int]:
+    """The scheme + container port a sink is actually reachable on, honouring the sink's
+    per-sink TLS preference where the deployment can serve it. HTTPS needs the deployment
+    to bind it (TLS optional/required) with an active certificate; HTTP needs a plain
+    listener (TLS off/optional). When the deployment can only serve one scheme, that one
+    wins regardless of the preference — we never advertise an endpoint that isn't bound."""
+    https_port = sink_https_port_for(http_port) if http_port else 0
+    https_ok = bool(plan.get("https") and plan.get("hasActiveCert"))
+    http_ok = bool(plan.get("http"))
+    if prefer_tls and https_ok:
+        return "https", https_port
+    if not prefer_tls and http_ok:
+        return "http", http_port
+    if https_ok:  # deployment forces TLS (e.g. 'required') — no HTTP listener
+        return "https", https_port
+    return "http", http_port
+
+
 def _signal_sink_rebind() -> None:
     """Tell the sink supervisor to rebind its listeners (a sink was added/edited/removed).
     Best-effort: no PID file (supervisor not running) is fine."""
@@ -332,6 +361,11 @@ def _prepare_sink_config(body: "SourceBody", user: str | None, source_id: str | 
     clean = {
         "connectionId": conn_id, "titleShort": title_short,
         "port": port, "tokenHash": existing_hash,
+        # Per-sink scheme preference: whether agents should address it over HTTPS. It
+        # drives the endpoint we SHOW (ingest-info, SKILL.md, monitor); the listeners
+        # still bind per the deployment TLS mode, and the shown scheme falls back to
+        # what the deployment can actually serve (see _sink_active_scheme). Default on.
+        "tls": _as_bool(cfg.get("tls"), default=True),
     }
     return json.dumps(clean), token
 
@@ -477,10 +511,7 @@ def sink_ingest_info(source_id: str, request: Request) -> dict:
     http_port = int(cfg.get("port") or 0)
     https_port = sink_https_port_for(http_port) if http_port else 0
     plan = security_store.tls_plan()
-    if plan["https"] and plan["hasActiveCert"]:
-        scheme, active = "https", https_port
-    else:  # 'off'/'optional' without HTTPS, or 'required' with no cert → HTTP fallback
-        scheme, active = "http", http_port
+    scheme, active = _sink_active_scheme(_as_bool(cfg.get("tls"), default=True), plan, http_port)
     return {
         "method": "POST", "path": "/ingest",
         "httpPort": http_port, "httpsPort": https_port,
@@ -503,7 +534,10 @@ def sink_ports(request: Request) -> dict:
             continue
         if port:
             used[str(port)] = s.name
-    return {"pool": list(SINK_HTTP_PORTS), "used": used}
+    # `https` maps each pool (HTTP) port to its paired HTTPS port, so the wizard can show
+    # both numbers per slot alongside the per-sink TLS checkbox.
+    https = {str(p): sink_https_port_for(p) for p in SINK_HTTP_PORTS}
+    return {"pool": list(SINK_HTTP_PORTS), "https": https, "used": used}
 
 
 async def _probe_sink_liveness(entries: list[dict]) -> None:
@@ -607,7 +641,6 @@ async def sinks_monitor(request: Request) -> dict:
     an unreachable connection surfaces as a per-sink ``error`` and never a 500."""
     user = _request_user(request)
     plan = security_store.tls_plan()
-    https_live = bool(plan["https"] and plan["hasActiveCert"])
 
     entries: list[dict] = []
     for s in security_store.list_sources(user):
@@ -618,9 +651,10 @@ async def sinks_monitor(request: Request) -> dict:
             http_port = int(cfg.get("port") or 0)
         except (TypeError, ValueError):
             http_port = 0
-        # Live scheme/port under the current TLS mode — mirrors ingest-info exactly.
-        scheme = "https" if https_live else "http"
-        active_port = sink_https_port_for(http_port) if (https_live and http_port) else http_port
+        # Live scheme/port honouring the sink's TLS preference — mirrors ingest-info.
+        scheme, active_port = _sink_active_scheme(
+            _as_bool(cfg.get("tls"), default=True), plan, http_port
+        )
         entries.append({
             "id": s.id, "name": s.name, "port": http_port,
             "activeScheme": scheme, "activeContainerPort": active_port,

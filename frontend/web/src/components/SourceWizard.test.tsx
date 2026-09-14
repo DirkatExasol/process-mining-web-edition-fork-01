@@ -7,7 +7,11 @@ vi.mock('../api', () => ({
     updateSource: vi.fn(async () => ({})),
     listSourceTypes: vi.fn(async () => []),
     listConnections: vi.fn(async () => [{ id: 'c1', name: 'Prod DB' }]),
-    listSinkPorts: vi.fn(async () => ({ pool: [8120, 8121, 8122], used: {} })),
+    listSinkPorts: vi.fn(async () => ({
+      pool: [8120, 8121, 8122],
+      https: { '8120': 8483, '8121': 8484, '8122': 8485 },
+      used: {},
+    })),
     sourceCheckpoint: vi.fn(async () => ({
       byteOffset: 0, size: 0, signature: '', records: 0, updatedAt: null, lastError: null,
     })),
@@ -57,8 +61,10 @@ describe('SourceWizard', () => {
     expect(await screen.findByText(/Project code/)).toBeTruthy()
     expect(screen.getByText(/Connection/)).toBeTruthy()
     expect(screen.getByText(/^Port/)).toBeTruthy()
-    // The port pool is offered as options (from listSinkPorts, loaded async).
-    expect(await screen.findByRole('option', { name: '8120' })).toBeTruthy()
+    // The TLS (HTTPS) preference checkbox is offered.
+    expect(screen.getByText(/TLS \(address agents over HTTPS\)/)).toBeTruthy()
+    // Each port slot is offered showing BOTH its HTTP and HTTPS port (loaded async).
+    expect(await screen.findByRole('option', { name: /HTTP 8120 · HTTPS 8483/ })).toBeTruthy()
   })
 
   it('creates a sink and shows its one-time token', async () => {
@@ -72,7 +78,7 @@ describe('SourceWizard', () => {
     fireEvent.change(screen.getByPlaceholderText(/access log/i), {
       target: { value: 'Agent sink' },
     })
-    await screen.findByRole('option', { name: '8120' }) // ports loaded
+    await screen.findByRole('option', { name: /HTTP 8120/ }) // ports loaded
     fireEvent.change(screen.getByDisplayValue('— pick a connection —'), { target: { value: 'c1' } })
     fireEvent.change(screen.getByPlaceholderText(/AGENTLOG/i), { target: { value: 'AGENTLOG' } })
     fireEvent.change(screen.getByDisplayValue('— pick a port —'), { target: { value: '8120' } })
