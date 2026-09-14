@@ -20,6 +20,9 @@ export function SourcesSection({ open, onToggle }: { open: boolean; onToggle: ()
   const [wizard, setWizard] = useState<'new' | Source | null>(null)
   const [running, setRunning] = useState<Source | null>(null)
   const [confirming, setConfirming] = useState<Source | null>(null)
+  // Regenerating a token invalidates the live one immediately, so guard it behind a
+  // confirmation — an accidental click would lock out every agent still using the old token.
+  const [confirmRegen, setConfirmRegen] = useState<Source | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // A freshly regenerated sink token, shown once (only its hash is stored server-side).
@@ -142,7 +145,7 @@ export function SourcesSection({ open, onToggle }: { open: boolean; onToggle: ()
                     aria-label="Regenerate token"
                     onClick={(e) => {
                       e.stopPropagation()
-                      void regenerate(s)
+                      setConfirmRegen(s)
                     }}
                   >
                     🔑
@@ -213,6 +216,23 @@ export function SourcesSection({ open, onToggle }: { open: boolean; onToggle: ()
           busy={busy}
           onConfirm={() => void remove(confirming)}
           onCancel={() => setConfirming(null)}
+        />
+      )}
+
+      {confirmRegen && (
+        <ConfirmDialog
+          title="Regenerate ingest token"
+          message={`Generate a new bearer token for “${confirmRegen.name}”? The current token stops working immediately — any agent still using it is rejected until you give it the new one.`}
+          confirmLabel="Regenerate token"
+          busy={busy}
+          onConfirm={async () => {
+            setBusy(true)
+            const s = confirmRegen
+            await regenerate(s)
+            setBusy(false)
+            setConfirmRegen(null)
+          }}
+          onCancel={() => setConfirmRegen(null)}
         />
       )}
 
