@@ -48,7 +48,11 @@ def repo(sample_set: SampleSet = SampleSet.original) -> ProcessRepository:
 
 
 def require_connection() -> None:
-    if not current_db().is_connected:
+    db = current_db()
+    # A socket the network/DB dropped after idle leaves is_connected False, but the
+    # manager still knows how to reopen it and will self-heal on the next query — so
+    # don't 409 (which forces a manual reconnect); let the query through to reconnect.
+    if not (db.is_connected or db.can_reconnect):
         raise HTTPException(status_code=409, detail="Not connected to a database.")
 
 
