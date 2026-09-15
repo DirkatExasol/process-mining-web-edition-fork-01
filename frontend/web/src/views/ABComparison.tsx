@@ -309,6 +309,7 @@ function ABPanel({
             store.switchABSide(side)
             store.handleNodeAction(node, action)
           }}
+          onMetaInfo={() => store.openMetaInfo()}
           notes={store.projectNotes}
           onNodeNote={notes.openNodeNotes}
           onEdgeNote={notes.openEdgeNotes}

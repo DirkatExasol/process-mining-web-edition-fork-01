@@ -129,6 +129,25 @@ def test_journey_qualifier_folds_all_filters_into_one_semijoin():
     assert "j.EVENT_TIME <= TIMESTAMP '2024-01-31 23:59:59'" in sql
 
 
+def test_journey_qualifier_folds_meta_value_include_exclude():
+    # The node "Meta Infos" panel adds list-based META include/exclude, journey-level
+    # like steps: kept when the journey has ≥1 event with an included META value and none
+    # with an excluded one, per column.
+    f = FilterSpec(
+        includedMeta1=["Visa", "SEPA"],
+        excludedMeta2=["Bank"],
+        includedMeta3=["alice"],
+    )
+    sql = repo()._journey_qualifier(7, f, include_date_meta=False)
+    assert "MAX(CASE WHEN META_1 IN ('Visa', 'SEPA') THEN 1 ELSE 0 END) = 1" in sql
+    assert "MAX(CASE WHEN META_2 IN ('Bank') THEN 1 ELSE 0 END) = 0" in sql
+    assert "MAX(CASE WHEN META_3 IN ('alice') THEN 1 ELSE 0 END) = 1" in sql
+    assert sql.count("EVENT_ID IN") == 1  # still one semi-join
+    # Values are escaped like everything else.
+    esc = FilterSpec(includedMeta1=["O'Neil"])
+    assert "'O''Neil'" in repo()._journey_qualifier(7, esc, include_date_meta=False)
+
+
 def test_journey_qualifier_without_score_needs_no_join():
     f = FilterSpec(includedSteps=["Login"], minSteps=3)
     sql = repo()._journey_qualifier(7, f, include_date_meta=False)

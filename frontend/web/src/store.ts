@@ -69,12 +69,33 @@ export interface AppAlert {
 
 let alertSeq = 0
 
+/** List-based META value include/exclude (from the node "Meta Infos" panel). Index 0 =
+ *  Meta_1, exactly mirroring includedSteps/excludedSteps but per META column. */
+export interface MetaListFilters {
+  included: [string[], string[], string[]]
+  excluded: [string[], string[], string[]]
+}
+export const emptyMetaFilters = (): MetaListFilters => ({
+  included: [[], [], []],
+  excluded: [[], [], []],
+})
+/** Defensive read: an older persisted snapshot (localStorage) has no metaFilters. */
+export const metaFiltersOf = (mf: MetaListFilters | undefined): MetaListFilters =>
+  mf ?? emptyMetaFilters()
+/** Expand the structured metaFilters into the flat FilterSpec fields the API expects. */
+export const metaFilterFields = (mf: MetaListFilters) => ({
+  includedMeta1: mf.included[0], excludedMeta1: mf.excluded[0],
+  includedMeta2: mf.included[1], excludedMeta2: mf.excluded[1],
+  includedMeta3: mf.included[2], excludedMeta3: mf.excluded[2],
+})
+
 /** Mirror of Swift's `ChartFilterState`. */
 export interface ChartFilterState {
   fromDate: string
   toDate: string
   includedSteps: string[]
   excludedSteps: string[]
+  metaFilters: MetaListFilters
   meta1Filter: string
   meta2Filter: string
   meta3Filter: string
@@ -111,6 +132,7 @@ function defaultChartState(
     toDate: to,
     includedSteps: [],
     excludedSteps: [],
+    metaFilters: emptyMetaFilters(),
     meta1Filter: '',
     meta2Filter: '',
     meta3Filter: '',
@@ -215,9 +237,12 @@ export interface AppState {
   toDate: string
   includedSteps: string[]
   excludedSteps: string[]
+  metaFilters: MetaListFilters
   meta1Filter: string
   meta2Filter: string
   meta3Filter: string
+  /** Whether the node "Meta Infos" panel is open. */
+  metaInfoOpen: boolean
   eventIdFilter: string
   eventIdSuggestions: string[]
   lastQueriedEventId: string
@@ -410,6 +435,12 @@ export interface AppActions {
   setJourneySwimlane: (on: boolean) => void
 
   handleNodeAction: (node: string, action: 'include' | 'exclude') => void
+  // Include/exclude a META value (col 0..2 = Meta_1..3) from the node "Meta Infos" panel.
+  handleMetaAction: (col: number, value: string, action: 'include' | 'exclude') => void
+  clearMetaFilters: () => void
+  // The node "Meta Infos" panel (a project-wide meta filter modal reachable from a node).
+  openMetaInfo: () => void
+  closeMetaInfo: () => void
   updateStep: (
     step: string,
     payload: {
@@ -564,6 +595,8 @@ const INITIAL_STATE: AppState = {
   toDate: today,
   includedSteps: [],
   excludedSteps: [],
+  metaFilters: emptyMetaFilters(),
+  metaInfoOpen: false,
   meta1Filter: '',
   meta2Filter: '',
   meta3Filter: '',
@@ -672,6 +705,7 @@ export const useStore = create<Store>((set, get) => {
       toDate: string
       includedSteps: string[]
       excludedSteps: string[]
+      metaFilters?: MetaListFilters
       meta1Filter: string
       meta2Filter: string
       meta3Filter: string
@@ -688,6 +722,7 @@ export const useStore = create<Store>((set, get) => {
     toDate: state.toDate,
     includedSteps: state.includedSteps,
     excludedSteps: state.excludedSteps,
+    ...metaFilterFields(metaFiltersOf(state.metaFilters)),
     meta1: state.meta1Filter,
     meta2: state.meta2Filter,
     meta3: state.meta3Filter,
@@ -707,6 +742,7 @@ export const useStore = create<Store>((set, get) => {
       toDate: s.toDate,
       includedSteps: s.includedSteps,
       excludedSteps: s.excludedSteps,
+      metaFilters: s.metaFilters,
       meta1Filter: s.meta1Filter,
       meta2Filter: s.meta2Filter,
       meta3Filter: s.meta3Filter,
@@ -733,6 +769,7 @@ export const useStore = create<Store>((set, get) => {
       toDate: state.toDate,
       includedSteps: state.includedSteps,
       excludedSteps: state.excludedSteps,
+      metaFilters: metaFiltersOf(state.metaFilters),
       meta1Filter: state.meta1Filter,
       meta2Filter: state.meta2Filter,
       meta3Filter: state.meta3Filter,
@@ -1181,6 +1218,7 @@ export const useStore = create<Store>((set, get) => {
         processGraph: EMPTY_GRAPH,
         includedSteps: [],
         excludedSteps: [],
+        metaFilters: emptyMetaFilters(),
         meta1Filter: '',
         meta2Filter: '',
         meta3Filter: '',
@@ -1532,6 +1570,7 @@ export const useStore = create<Store>((set, get) => {
           journeyCount: null,
           includedSteps: [],
           excludedSteps: [],
+          metaFilters: emptyMetaFilters(),
           meta1Filter: '',
           meta2Filter: '',
           meta3Filter: '',
@@ -1783,6 +1822,7 @@ export const useStore = create<Store>((set, get) => {
         toDate: s.toDate,
         includedSteps: s.includedSteps,
         excludedSteps: s.excludedSteps,
+        ...metaFilterFields(metaFiltersOf(s.metaFilters)),
         meta1: s.meta1Filter,
         meta2: s.meta2Filter,
         meta3: s.meta3Filter,
@@ -1802,6 +1842,7 @@ export const useStore = create<Store>((set, get) => {
         toDate: s.initialToDate,
         includedSteps: [],
         excludedSteps: [],
+        metaFilters: emptyMetaFilters(),
         meta1Filter: '',
         meta2Filter: '',
         meta3Filter: '',
@@ -2207,6 +2248,29 @@ export const useStore = create<Store>((set, get) => {
       void get().reloadGraph()
     },
 
+    handleMetaAction: (col, value, action) => {
+      if (col < 0 || col > 2) return
+      const mf = metaFiltersOf(get().metaFilters)
+      const included = mf.included.map((l) => [...l]) as [string[], string[], string[]]
+      const excluded = mf.excluded.map((l) => [...l]) as [string[], string[], string[]]
+      const already = (action === 'include' ? included : excluded)[col].includes(value)
+      // Toggle: clicking the active side again clears it; otherwise set that side and
+      // drop the value from the opposite side (a value is included OR excluded, not both).
+      included[col] = included[col].filter((v) => v !== value)
+      excluded[col] = excluded[col].filter((v) => v !== value)
+      if (!already) (action === 'include' ? included : excluded)[col].push(value)
+      set({ metaFilters: { included, excluded } })
+      void get().reloadGraph()
+    },
+
+    clearMetaFilters: () => {
+      set({ metaFilters: emptyMetaFilters() })
+      void get().reloadGraph()
+    },
+
+    openMetaInfo: () => set({ metaInfoOpen: true }),
+    closeMetaInfo: () => set({ metaInfoOpen: false }),
+
     updateStep: async (step, payload) => {
       const s = get()
       if (!s.selectedProject) return
@@ -2282,6 +2346,9 @@ export const useStore = create<Store>((set, get) => {
         toDate: toISODate(group.toDate),
         includedSteps: group.includedSteps,
         excludedSteps: group.excludedSteps,
+        // Saved presets don't carry META value lists yet — clear them on load so the
+        // preset's result is predictable rather than mixed with the current meta lists.
+        metaFilters: emptyMetaFilters(),
         meta1Filter: group.meta1,
         meta2Filter: group.meta2,
         meta3Filter: group.meta3,
@@ -2648,6 +2715,11 @@ export function aChartFilterSummary(state: AppState): string {
   if (s.includedSteps.length) parts.push(`include: ${[...s.includedSteps].sort().join(', ')}`)
   if (s.excludedSteps.length) parts.push(`exclude: ${[...s.excludedSteps].sort().join(', ')}`)
   for (const m of [s.meta1Filter, s.meta2Filter, s.meta3Filter]) if (m) parts.push(m)
+  const mf = metaFiltersOf(s.metaFilters)
+  for (let c = 0; c < 3; c++) {
+    if (mf.included[c].length) parts.push(`M${c + 1} include: ${[...mf.included[c]].sort().join(', ')}`)
+    if (mf.excluded[c].length) parts.push(`M${c + 1} exclude: ${[...mf.excluded[c]].sort().join(', ')}`)
+  }
   return parts.join(' · ')
 }
 

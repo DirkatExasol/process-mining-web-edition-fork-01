@@ -212,6 +212,15 @@ class FilterSpec(Base):
     meta1: str = ""
     meta2: str = ""
     meta3: str = ""
+    # List-based META value include/exclude (from the node "Meta Infos" panel), mirroring
+    # includedSteps/excludedSteps: a journey is kept when it has ≥1 event whose META_n is
+    # in the included set, and none whose META_n is in the excluded set.
+    includedMeta1: list[str] = Field(default_factory=list)
+    excludedMeta1: list[str] = Field(default_factory=list)
+    includedMeta2: list[str] = Field(default_factory=list)
+    excludedMeta2: list[str] = Field(default_factory=list)
+    includedMeta3: list[str] = Field(default_factory=list)
+    excludedMeta3: list[str] = Field(default_factory=list)
     minSteps: int = 0
     maxSteps: int = INT_MAX
     minJourneyTime: int = 0

@@ -303,6 +303,13 @@ export interface FilterSpec {
   meta1: string
   meta2: string
   meta3: string
+  // List-based META value include/exclude (optional; backend defaults to empty lists).
+  includedMeta1?: string[]
+  excludedMeta1?: string[]
+  includedMeta2?: string[]
+  excludedMeta2?: string[]
+  includedMeta3?: string[]
+  excludedMeta3?: string[]
   minSteps: number
   maxSteps: number
   minJourneyTime: number

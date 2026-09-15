@@ -258,6 +258,7 @@ export function HappyPathView() {
               journeyTotal={store.journeyCount ?? 0}
               isLoading={store.isLoading}
               onNodeAction={(node, action) => store.handleNodeAction(node, action)}
+              onMetaInfo={() => store.openMetaInfo()}
               notes={store.projectNotes}
               onNodeNote={notes.openNodeNotes}
               onEdgeNote={notes.openEdgeNotes}

@@ -7,6 +7,7 @@ import { LegalGate } from './components/Gates'
 import { IdleLogout } from './components/IdleLogout'
 import { LaunchPortal } from './components/LaunchPortal'
 import { LoginView } from './components/LoginView'
+import { MetaInfoModal } from './components/MetaInfoModal'
 import { Sidebar } from './components/Sidebar'
 import { Spinner } from './components/ui'
 import { hydrateSettings, useSetting } from './settings'
@@ -144,6 +145,7 @@ export function App() {
       </LegalGateHost>
 
       {showHelp && <HelpPanel onClose={() => setShowHelp(false)} />}
+      {store.metaInfoOpen && <MetaInfoModal onClose={() => store.closeMetaInfo()} />}
       <AlertHost />
       <IdleLogout />
     </>

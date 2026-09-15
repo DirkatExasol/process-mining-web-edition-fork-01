@@ -251,6 +251,21 @@ class ProcessRepository:
                 f"MAX(CASE WHEN {p}STEP IN ({in_list(excluded)}) THEN 1 ELSE 0 END) = 0"
             )
 
+        # META value include/exclude — same journey-level semantics as steps, per column.
+        for column, inc, exc in (
+            ("META_1", f.includedMeta1, f.excludedMeta1),
+            ("META_2", f.includedMeta2, f.excludedMeta2),
+            ("META_3", f.includedMeta3, f.excludedMeta3),
+        ):
+            if inc:
+                having.append(
+                    f"MAX(CASE WHEN {p}{column} IN ({in_list(inc)}) THEN 1 ELSE 0 END) = 1"
+                )
+            if exc:
+                having.append(
+                    f"MAX(CASE WHEN {p}{column} IN ({in_list(exc)}) THEN 1 ELSE 0 END) = 0"
+                )
+
         if f.minSteps > 0 or f.maxSteps < INT_MAX:
             if f.minSteps > 0 and f.maxSteps < INT_MAX:
                 having.append(f"COUNT(*) BETWEEN {f.minSteps} AND {f.maxSteps}")

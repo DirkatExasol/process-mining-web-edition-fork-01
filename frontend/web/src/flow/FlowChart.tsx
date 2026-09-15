@@ -110,6 +110,8 @@ export interface FlowChartProps {
   notes?: ProcessNote[]
   onNodeNote?: (node: string) => void
   onEdgeNote?: (transition: ProcessTransition) => void
+  /** Open the project-wide "Meta Infos" panel (from a node's context menu). */
+  onMetaInfo?: () => void
   /** Target-process / conformance overlay. */
   normValues?: Record<string, number> | null
   normMetric?: TransitionMetric
@@ -188,6 +190,7 @@ function FlowChartInner(props: FlowChartProps) {
     notes,
     onNodeNote,
     onEdgeNote,
+    onMetaInfo,
     normValues = null,
     normMetric = 'Count',
     showCompliance = false,
@@ -1434,6 +1437,17 @@ function FlowChartInner(props: FlowChartProps) {
                   ⊖ Exclude from journeys
                 </button>
               </>
+            )}
+            {onMetaInfo && (
+              <button
+                className="p-item"
+                onClick={() => {
+                  onMetaInfo()
+                  setMenu(null)
+                }}
+              >
+                ▤ Meta Infos
+              </button>
             )}
             {menuHasDescription && (
               <button
