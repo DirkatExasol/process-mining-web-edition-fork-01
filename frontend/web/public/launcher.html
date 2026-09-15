@@ -395,7 +395,10 @@
       var isPdf = g.type === "pdf" || /\.pdf$/i.test(g.file);
       var a = document.createElement("a");
       a.className = "guide" + (isPdf ? " guide-pdf" : "");
-      a.href = "/guides/" + encodeURIComponent(g.file);
+      // Resolve the guide URL against the launcher's own address (not a bare "/guides/…"),
+      // so it holds whether the launcher is served at the origin root or under a
+      // reverse-proxy sub-path — the same way the surface cards resolve their links.
+      a.href = new URL("guides/" + encodeURIComponent(g.file), document.baseURI).href;
       a.target = "_blank";
       a.rel = "noopener";
       var tile = document.createElement("span");
