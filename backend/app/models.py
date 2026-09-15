@@ -240,6 +240,12 @@ class FilterGroup(Base):
     meta1: str = ""
     meta2: str = ""
     meta3: str = ""
+    includedMeta1: list[str] = Field(default_factory=list)
+    excludedMeta1: list[str] = Field(default_factory=list)
+    includedMeta2: list[str] = Field(default_factory=list)
+    excludedMeta2: list[str] = Field(default_factory=list)
+    includedMeta3: list[str] = Field(default_factory=list)
+    excludedMeta3: list[str] = Field(default_factory=list)
     minSteps: int = 0
     maxSteps: int = INT_MAX
     minJourneyTime: int = 0

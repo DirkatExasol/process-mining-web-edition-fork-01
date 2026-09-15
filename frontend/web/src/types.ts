@@ -329,6 +329,13 @@ export interface FilterGroup {
   meta1: string
   meta2: string
   meta3: string
+  // List-based META value include/exclude (optional — older stored presets omit them).
+  includedMeta1?: string[]
+  excludedMeta1?: string[]
+  includedMeta2?: string[]
+  excludedMeta2?: string[]
+  includedMeta3?: string[]
+  excludedMeta3?: string[]
   minSteps: number
   maxSteps: number
   minJourneyTime: number

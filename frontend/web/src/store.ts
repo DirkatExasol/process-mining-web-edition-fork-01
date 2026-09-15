@@ -88,6 +88,15 @@ export const metaFilterFields = (mf: MetaListFilters) => ({
   includedMeta2: mf.included[1], excludedMeta2: mf.excluded[1],
   includedMeta3: mf.included[2], excludedMeta3: mf.excluded[2],
 })
+/** Rebuild the structured metaFilters from the flat fields (e.g. a saved preset). */
+export const metaFiltersFromFields = (g: {
+  includedMeta1?: string[]; excludedMeta1?: string[]
+  includedMeta2?: string[]; excludedMeta2?: string[]
+  includedMeta3?: string[]; excludedMeta3?: string[]
+}): MetaListFilters => ({
+  included: [g.includedMeta1 ?? [], g.includedMeta2 ?? [], g.includedMeta3 ?? []],
+  excluded: [g.excludedMeta1 ?? [], g.excludedMeta2 ?? [], g.excludedMeta3 ?? []],
+})
 
 /** Mirror of Swift's `ChartFilterState`. */
 export interface ChartFilterState {
@@ -2303,6 +2312,7 @@ export const useStore = create<Store>((set, get) => {
         toDate: s.toDate,
         includedSteps: s.includedSteps,
         excludedSteps: s.excludedSteps,
+        ...metaFilterFields(metaFiltersOf(s.metaFilters)),
         meta1: s.meta1Filter,
         meta2: s.meta2Filter,
         meta3: s.meta3Filter,
@@ -2346,9 +2356,8 @@ export const useStore = create<Store>((set, get) => {
         toDate: toISODate(group.toDate),
         includedSteps: group.includedSteps,
         excludedSteps: group.excludedSteps,
-        // Saved presets don't carry META value lists yet — clear them on load so the
-        // preset's result is predictable rather than mixed with the current meta lists.
-        metaFilters: emptyMetaFilters(),
+        // Restore the preset's META value include/exclude lists (empty for older presets).
+        metaFilters: metaFiltersFromFields(group),
         meta1Filter: group.meta1,
         meta2Filter: group.meta2,
         meta3Filter: group.meta3,

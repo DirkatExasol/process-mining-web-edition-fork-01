@@ -38,7 +38,12 @@ vi.mock('./api', () => ({
 }))
 
 import { api, ApiError } from './api'
-import { useStore } from './store'
+import {
+  emptyMetaFilters,
+  metaFilterFields,
+  metaFiltersFromFields,
+  useStore,
+} from './store'
 import { replaceSettings } from './settings'
 
 const mockApi = api as unknown as Record<string, ReturnType<typeof vi.fn>>
@@ -545,5 +550,22 @@ describe('reloadGraph supersession (connection-switch race)', () => {
     await useStore.getState().reloadGraph()
 
     expect(useStore.getState().journeyCount).toBe(42) // current load applied
+  })
+})
+
+describe('meta filter preset round-trip', () => {
+  it('flattens metaFilters to preset fields and back losslessly', () => {
+    const mf = {
+      included: [['Visa', 'SEPA'], ['Retail'], []],
+      excluded: [[], ['Business'], ['bob']],
+    } as ReturnType<typeof emptyMetaFilters>
+    const fields = metaFilterFields(mf)
+    expect(fields.includedMeta1).toEqual(['Visa', 'SEPA'])
+    expect(fields.excludedMeta3).toEqual(['bob'])
+    expect(metaFiltersFromFields(fields)).toEqual(mf)
+  })
+
+  it('reconstructs empty lists for an older preset without meta fields', () => {
+    expect(metaFiltersFromFields({})).toEqual(emptyMetaFilters())
   })
 })
