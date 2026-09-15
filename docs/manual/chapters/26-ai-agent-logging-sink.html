@@ -118,6 +118,56 @@
 <li>A <b>token field</b> is pre-filled the moment you create or regenerate the sink; otherwise paste the token you saved. Whatever is in the field is embedded into the curl and the SKILL.md. The token itself is never stored (only its hash is kept), so re-opening the popup in a later session needs a paste &mdash; the app says so.</li>
 </ul>
 
+<h3 id="sink-skill">26.6.1 An example SKILL.md</h3>
+
+<p>The downloaded file is plain Markdown with the sink's real URL and token filled in. Abbreviated, it reads:</p>
+
+<pre><code># Skill: Emit process-mining journey events to "Agent Sink"
+
+## How to model a journey
+Give every event of one run the same `eventId`. Each event's `step` is a
+KIND, qualified after a colon so the map is specific:
+- `SKILL:&lt;name&gt;`, `TOOL:&lt;type&gt;:&lt;name&gt;`, `DATABASE:&lt;db&gt;`,
+  `WEB:&lt;external|internal&gt;`, `EMAIL:…`, `FILE:…`, `APP:&lt;name&gt;`, `REQUEST`
+Put the detail in `description` (≤256 chars → the "Action" attribute);
+`client` (Claude/ChatGPT/…) and `user` record who ran it.
+
+## Endpoint
+- POST https://YOUR-HOST:18483/ingest
+- Authorization: Bearer &lt;YOUR-SINK-TOKEN&gt;
+- Content-Type: application/json
+- Target project: AGENTLOG
+
+## Request body  (one object, or an array of them)
+| field | required | notes |
+|-------|----------|-------|
+| eventId | yes | the journey id; reuse across a run |
+| step | yes | KIND:qualifier — becomes a node |
+| description | rec. | the step's detail, ≤256 chars → META_1 (Action) |
+| client | rec. | the calling client → META_2 (Client) |
+| user | opt. | the end user → META_3 (User) |
+| eventTime | no | ISO-8601; defaults to now |
+
+## Example
+curl -sk https://YOUR-HOST:18483/ingest \
+  -H "Authorization: Bearer &lt;YOUR-SINK-TOKEN&gt;" \
+  -H "Content-Type: application/json" \
+  -d '[{"eventId":"req-42","step":"SKILL:summarize-sales",
+        "description":"Summarize the Q3 sales report",
+        "client":"Claude","user":"alice","eventTime":"2026-09-14T10:00:00Z"},
+       {"eventId":"req-42","step":"DATABASE:sales_db",
+        "description":"SELECT region, SUM(amount) FROM sales WHERE quarter=Q3",
+        "client":"Claude","user":"alice","eventTime":"2026-09-14T10:00:03Z"},
+       {"eventId":"req-42","step":"EMAIL:external",
+        "description":"Send the compiled report to alice@example.com",
+        "client":"Claude","user":"alice","eventTime":"2026-09-14T10:00:09Z"}]'
+
+## Responses
+200 {ingested, newSteps, projectId} · 400 bad payload · 401 bad token
+· 413 too large · 503 module off · 502 destination DB unavailable</code></pre>
+
+<p>Hand that file to the agent and it can log a whole run &mdash; a request followed by each action it takes &mdash; with no further setup on your side.</p>
+
 <div class="tip"><strong>Tip</strong> Send a short batch (an array) rather than one request per event when your agent produces events in bursts. Each event still becomes one journey row; batching just cuts the number of round trips and transactions.</div>
 
 <h2 id="sink-limits">26.7 Limits and error codes</h2>

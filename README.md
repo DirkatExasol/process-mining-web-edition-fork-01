@@ -1062,6 +1062,16 @@ one or type to narrow the list. Steps sharing a `BELONGS_TO` value are wrapped i
 a dashed group box whose tint and border are tuned per theme so it stays clearly
 visible in both light and dark mode.
 
+**Node context menus.** Right-click a node on any process map for its actions: **✓ Require
+in journeys** / **⊖ Exclude from journeys** (the step include/exclude lists), **▤ Meta
+Infos**, **≡ Show description**, **✎ Show Notes**, plus **Actions**, aggregate and drill
+entries where they apply (role- and map-dependent). **Meta Infos** opens a tabbed,
+searchable panel of the case attributes (META_1–3, with their business names) listing only
+the values that occur on *that node's* events (`POST /api/projects/{id}/node-metas`); each
+value has **⊕ Include** / **⊖ Exclude** toggles that filter whole journeys exactly like the
+step Require/Exclude — per attribute value, saved with a preset. See the in-launcher guide
+*Node context menus* (`docs/53-Node-Context-Menus.html`).
+
 ## Aggregates (Σ high-level maps, developers)
 
 Developers can abstract a busy process map into a **high-level map** whose sub-processes
