@@ -47,34 +47,52 @@ export function App() {
     }
   }, [portal])
 
-  // Open a process picked on the launch page: connect to its connection, open the project,
-  // then land on the Work-Bench (selectProject forces the process-map view). On a failed
-  // connect, connectConnection surfaces its own alert and we stay on the launch page.
-  const openProcess = useCallback(async (connId: string, p: PortalProcess) => {
-    const conn =
-      useStore.getState().connections.find((c) => c.id === connId) ??
-      ({ id: connId } as AssignedConnection)
-    const ok = await useStore.getState().connectConnection(conn)
-    if (!ok) return
-    const project = useStore.getState().projects.find((pr) => pr.projectId === p.projectId)
-    if (project) await useStore.getState().selectProject(project)
-    navigate('/')
-  }, [navigate])
+  // Open a process picked on the launch page in a NEW Work-Bench tab, keeping the launch
+  // page open. The connection + project ride in the URL; the Work-Bench reads them on load
+  // (openFromUrlParams below) to connect and open the map. Opened during the click's user
+  // gesture so Safari doesn't swallow it; a blocked pop-up falls back to same-tab.
+  const openProcess = useCallback((connId: string, p: PortalProcess) => {
+    const target = `/?connect=${encodeURIComponent(connId)}&project=${encodeURIComponent(String(p.projectId))}`
+    const w = window.open(target, '_blank', 'noopener')
+    if (!w) window.location.assign(target)
+  }, [])
 
   // Loads everything that needs an authenticated session (settings live in the
   // backend and its API is gated when sign-in is required).
+  // A process opened in a new tab from the launch page arrives as /?connect=…&project=….
+  // Connect to that connection and open that project instead of resuming the last session.
+  const openFromUrlParams = useCallback(async (): Promise<boolean> => {
+    const params = new URLSearchParams(window.location.search)
+    const connectId = params.get('connect')
+    const projectId = params.get('project')
+    if (!connectId || !projectId) return false
+    // Tidy the URL right away so a refresh is a plain Work-Bench, not a re-open.
+    window.history.replaceState({}, '', '/')
+    const conn =
+      useStore.getState().connections.find((c) => c.id === connectId) ??
+      ({ id: connectId } as AssignedConnection)
+    const ok = await useStore.getState().connectConnection(conn)
+    if (ok) {
+      const project = useStore.getState().projects.find((pr) => pr.projectId === Number(projectId))
+      if (project) await useStore.getState().selectProject(project)
+    }
+    return true
+  }, [])
+
   const initAfterAuth = useCallback(async () => {
     await hydrateSettings()
     await store.refreshConnections()
     if (useStore.getState().connection.isConnected) {
       await useStore.getState().loadProjects()
     }
+    // A launch-page tile opened this tab at a specific process → open it and skip the resume.
+    if (await openFromUrlParams()) return
     // Resume where the user left off: reconnect to the last connection, reopen the last
     // project and restore the last view. Reads the per-user snapshot hydrated above, so
     // it works both on a cold boot with a live session and after an inactivity re-login.
     await useStore.getState().restoreLastSession()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [openFromUrlParams])
 
   useEffect(() => {
     void (async () => {
