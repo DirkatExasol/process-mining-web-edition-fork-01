@@ -32,6 +32,10 @@ from .extractors import (
 # table): the free-text action description, the calling client, and the end user.
 _META_TITLES = ("Action", "Client", "User")
 
+# META_1 (the step's action detail) is capped so a rogue/verbose caller can't stuff huge
+# blobs into the map's attribute; the SKILL.md tells agents to stay within this.
+_META1_MAXLEN = 256
+
 RunSql = Callable[[str], Any]
 
 
@@ -92,7 +96,7 @@ def ingest_entries(
     entries: Iterable[dict],
 ) -> dict:
     """Write ``entries`` (each a JSON object with at least ``eventId`` and ``step``, plus
-    optional ``description`` → META_1, ``client`` → META_2, ``user`` → META_3) into
+    optional ``description`` → META_1 (≤256 chars), ``client`` → META_2, ``user`` → META_3) into
     ``schema``.JOURNEYS under the project coded ``title_short``. The three META columns
     are titled Action / Client / User (a METAS row) so the UI labels them. Unknown steps
     are added to STEPS with a freshly allocated activity id. Returns
@@ -141,10 +145,10 @@ def ingest_entries(
             step,
             activity_id(step),
             _parse_time(entry.get("eventTime") or entry.get("event_time")),
-            # META_1 = the free-text action description; META_2 = the calling client
-            # (Claude / ChatGPT / …); META_3 = the end user. Titled in the METAS row below.
-            # The plain metaN keys stay accepted as aliases.
-            _clean(entry.get("description") or entry.get("meta1") or entry.get("meta_1")),
+            # META_1 = the step's action detail (capped at 256 chars); META_2 = the calling
+            # client (Claude / ChatGPT / …); META_3 = the end user. Titled in the METAS row
+            # below. The plain metaN keys stay accepted as aliases.
+            _clean(entry.get("description") or entry.get("meta1") or entry.get("meta_1"))[:_META1_MAXLEN],
             _clean(entry.get("client") or entry.get("meta2") or entry.get("meta_2")),
             _clean(entry.get("user") or entry.get("meta3") or entry.get("meta_3")),
             "ORIGINAL",

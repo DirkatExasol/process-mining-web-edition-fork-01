@@ -23,14 +23,14 @@ function ingestUrl(info: Info): string {
   return `${info.activeScheme}://${loc.hostname}:${hostPort}${info.path}`
 }
 
-// One journey (all sharing eventId): the FIRST event names the TYPE of request; each
-// later event names the KIND of action taken. `description` (≤50 chars) is the specifics
-// (stored as the "Action" attribute); `client`/`user` record who ran it.
+// One journey (all sharing eventId): each event's `step` is a KIND qualified after a
+// colon (SKILL:<name>, DATABASE:<db>, WEB:<external|internal>, …); `description` is the
+// step's detail (≤256 chars, stored as "Action"); `client`/`user` record who ran it.
 const SAMPLE_BODY =
-  `[{"eventId":"req-42","step":"SKILL","description":"Summarize quarterly sales","client":"Claude","user":"alice","eventTime":"2026-09-13T10:00:00"},\n` +
-  ` {"eventId":"req-42","step":"DATABASE","description":"Query sales table","client":"Claude","user":"alice","eventTime":"2026-09-13T10:00:03"},\n` +
-  ` {"eventId":"req-42","step":"WEB","description":"Fetch exchange rates","client":"Claude","user":"alice","eventTime":"2026-09-13T10:00:05"},\n` +
-  ` {"eventId":"req-42","step":"EMAIL","description":"Send report to requester","client":"Claude","user":"alice","eventTime":"2026-09-13T10:00:09"}]`
+  `[{"eventId":"req-42","step":"SKILL:summarize-sales","description":"Summarize the Q3 sales report and email it to the requester","client":"Claude","user":"alice","eventTime":"2026-09-13T10:00:00"},\n` +
+  ` {"eventId":"req-42","step":"DATABASE:sales_db","description":"SELECT region, SUM(amount) FROM sales WHERE quarter='Q3' GROUP BY region","client":"Claude","user":"alice","eventTime":"2026-09-13T10:00:03"},\n` +
+  ` {"eventId":"req-42","step":"WEB:external","description":"GET api.exchangerate.host/latest?base=EUR to convert totals","client":"Claude","user":"alice","eventTime":"2026-09-13T10:00:05"},\n` +
+  ` {"eventId":"req-42","step":"EMAIL:external","description":"Send the compiled Q3 report to alice@example.com","client":"Claude","user":"alice","eventTime":"2026-09-13T10:00:09"}]`
 
 function downloadText(filename: string, text: string) {
   const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
@@ -62,21 +62,25 @@ handle; one **event** = one step within it. Emit an event as each step happens a
 same \`eventId\` for every event of that journey so they link into a single path.
 
 ## How to model a journey
-Give every event of the same run the same \`eventId\`. Then choose each event's \`step\`
-and \`description\`:
+Give every event of the same run the same \`eventId\`. The **first event** names the
+originating request; **every later event** names one action you took. Each event's
+\`step\` is a **KIND**, qualified after a colon so the map is specific:
 
-- **First event of the journey** — \`step\` is the **type of request** you received:
-  \`SKILL\`, \`REQUEST\`, \`TOOL USE\`, \`CHAT\`, … . Put what it is in \`description\`
-  (≤ 50 chars), e.g. \`"Summarize quarterly sales"\`.
-- **Every later event** — \`step\` is the **kind of action** you took: \`REQUEST\`,
-  \`SKILL\`, \`TOOL\`, \`DATABASE\`, \`WEB\`, \`EMAIL\`, \`FILE\`, \`APP\`, … . Put the
-  specifics in \`description\` (≤ 50 chars), e.g. \`"Query sales table"\`,
-  \`"Fetch exchange rates"\`, \`"Send report to requester"\`.
+- \`SKILL:<skill name>\` — e.g. \`SKILL:summarize-sales\`
+- \`TOOL:<type>:<tool name>\` — e.g. \`TOOL:mcp:airfield_get\`
+- \`DATABASE:<database name>\` — e.g. \`DATABASE:sales_db\`
+- \`WEB:<external|internal>\` — e.g. \`WEB:external\`
+- \`EMAIL:<external|internal>\` — e.g. \`EMAIL:external\`
+- \`FILE:<local|remote>\` — e.g. \`FILE:local\`
+- \`APP:<app name>\` — e.g. \`APP:Slack\`
+- \`REQUEST\` — the first event (the originating request); or use the \`SKILL:\`/\`TOOL:\`
+  form when the request itself is a skill or tool call.
 
-Keep \`step\` to a small, stable vocabulary of KINDS (they become the nodes on the map);
-let \`description\` carry the detail (stored as the event's **Action** attribute). Add
-\`client\` (which agent — Claude, ChatGPT, …) and \`user\` (the end user) so the runs can
-be filtered by who ran what.
+Keep the KIND from this small set and add the specific target after the colon (the whole
+\`KIND:qualifier\` string becomes one node on the map). Put the **detail of the step** —
+what exactly it did — in \`description\` (**up to 256 characters**); it is stored as the
+event's **Action** attribute. Add \`client\` (which agent — Claude, ChatGPT, …) and
+\`user\` (the end user) so the runs can be filtered by who ran what.
 
 ## Endpoint
 - **Method / URL:** \`POST ${o.url}\`
@@ -93,8 +97,8 @@ A single JSON object, or an array of them. Each object:
 | field | required | notes |
 |-------|----------|-------|
 | \`eventId\` | yes | The journey / request id. Reuse it across all events of one run. |
-| \`step\` | yes | The KIND of request/action (see above) — becomes a node. Unknown kinds are created automatically. |
-| \`description\` | recommended | Free text, ≤ 50 chars, describing the request/action. Stored as the event's **Action** attribute (META_1). |
+| \`step\` | yes | A \`KIND:qualifier\` (see above) — becomes a node. Unknown steps are created automatically. |
+| \`description\` | recommended | The step's detail, **≤ 256 chars** (e.g. the query run, the URL fetched, the recipient). Stored as the event's **Action** attribute (META_1); longer text is truncated. |
 | \`client\` | recommended | The calling client — e.g. \`Claude\`, \`ChatGPT\`. Stored as the **Client** attribute (META_2). |
 | \`user\` | optional | The end user, if known. Stored as the **User** attribute (META_3). |
 | \`eventTime\` | no | ISO-8601 timestamp; defaults to the server's current time. |
@@ -112,8 +116,9 @@ ${o.curl}
 
 ## Rules of thumb
 - Send events in the order they happen; \`eventTime\` (or arrival order) determines the path.
-- \`step\` is a KIND (a node); keep the set small and stable. \`description\` is the detail.
-- Start every journey with the request-type event, then one event per action you take.
+- \`step\` is \`KIND:qualifier\` (a node): keep the KIND from the small set, put the target
+  after the colon. \`description\` (≤256 chars) is the detail of what the step did.
+- Start every journey with the request event, then one event per action you take.
 - Batch multiple events in one array to reduce round-trips.
 - Treat the token as a secret; if it leaks, regenerate it (the old one stops working).
 `

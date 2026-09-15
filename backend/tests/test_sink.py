@@ -75,6 +75,17 @@ def test_action_client_user_map_to_titled_meta_columns():
     assert metas[0]["META_3_TITLE"] == "User"
 
 
+def test_meta1_action_detail_is_capped_at_256_chars():
+    backend = InMemoryIngestBackend()
+    si.ingest_entries(
+        backend, lambda: None, schema="S", title_short="APP",
+        entries=[{"eventId": "r1", "step": "DATABASE:sales_db", "description": "x" * 400}],
+    )
+    row = _rows(backend, "S", "JOURNEYS")[0]
+    assert len(row["META_1"]) == 256  # long detail is truncated, not rejected
+    assert row["STEP"] == "DATABASE:sales_db"  # qualified step stored verbatim
+
+
 def test_ingest_reuses_ids_and_appends_to_existing_project():
     backend = InMemoryIngestBackend()
     noop = lambda: None
