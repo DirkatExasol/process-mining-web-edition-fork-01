@@ -263,6 +263,44 @@ def test_sink_ingest_info(api_backend):
     assert info["activeScheme"] == "http" and info["activeContainerPort"] == port
 
 
+def test_sink_endpoint_url_override_saves_and_surfaces(api_backend):
+    from fastapi.testclient import TestClient
+
+    app, store, config = api_backend
+    store.create_user("dev", "pw", is_admin=False)
+    store.set_developer("dev", True)
+    cid = _conn(store, "dev")
+    client = TestClient(app)
+    hdr = {"X-PMW-User": "dev"}
+    sid = client.post("/api/integration/sources", json={
+        "name": "S", "kind": config.SINK_SOURCE_KIND,
+        "config": {"connectionId": cid, "titleShort": "AGENTLOG", "port": config.SINK_HTTP_PORTS[0]},
+    }, headers=hdr).json()["id"]
+
+    # Save a public URL override → it comes back on ingest-info.
+    r = client.post(f"/api/integration/sources/{sid}/sink-endpoint",
+                    json={"url": "https://pm.example.com/ingest"}, headers=hdr)
+    assert r.status_code == 200 and r.json()["endpointUrl"] == "https://pm.example.com/ingest"
+    info = client.get(f"/api/integration/sources/{sid}/ingest-info", headers=hdr).json()
+    assert info["endpointUrl"] == "https://pm.example.com/ingest"
+
+    # A non-URL is rejected; an empty string clears the override.
+    assert client.post(f"/api/integration/sources/{sid}/sink-endpoint",
+                       json={"url": "not a url"}, headers=hdr).status_code == 400
+    assert client.post(f"/api/integration/sources/{sid}/sink-endpoint",
+                       json={"url": ""}, headers=hdr).json()["endpointUrl"] == ""
+    # The override survives a wizard edit (carried through _prepare_sink_config).
+    client.post(f"/api/integration/sources/{sid}/sink-endpoint",
+                json={"url": "https://pm.example.com/ingest"}, headers=hdr)
+    client.put(f"/api/integration/sources/{sid}", json={
+        "name": "S2", "kind": config.SINK_SOURCE_KIND,
+        "config": {"connectionId": cid, "titleShort": "AGENTLOG",
+                   "port": config.SINK_HTTP_PORTS[0], "endpointUrl": "https://pm.example.com/ingest"},
+    }, headers=hdr)
+    info2 = client.get(f"/api/integration/sources/{sid}/ingest-info", headers=hdr).json()
+    assert info2["endpointUrl"] == "https://pm.example.com/ingest"
+
+
 def test_sink_ports_lists_the_https_peer_of_each_slot(api_backend):
     from fastapi.testclient import TestClient
 

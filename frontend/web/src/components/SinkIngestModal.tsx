@@ -132,17 +132,28 @@ export function SinkIngestModal({
 }) {
   const [info, setInfo] = useState<Info | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Editable so the downloaded SKILL.md needs no hand-editing: the endpoint URL (persisted
+  // as a per-sink override) and the bearer token (pre-filled when just minted, else pasted
+  // — never stored, since only its hash is kept server-side).
+  const [urlOverride, setUrlOverride] = useState('')
+  const [tokenInput, setTokenInput] = useState(token ?? '')
+  const [savingUrl, setSavingUrl] = useState(false)
+  const [urlSaved, setUrlSaved] = useState(false)
 
   useEffect(() => {
     void api
       .sinkIngestInfo(sourceId)
-      .then(setInfo)
+      .then((i) => {
+        setInfo(i)
+        setUrlOverride(i.endpointUrl || ingestUrl(i)) // saved override, else auto-detected
+      })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
   }, [sourceId])
 
-  const url = info ? ingestUrl(info) : ''
-  const bearer = token ?? '<YOUR_TOKEN>'
-  const insecure = info?.activeScheme === 'https' ? ' -k' : '' // self-signed cert
+  const autoUrl = info ? ingestUrl(info) : ''
+  const url = urlOverride.trim() || autoUrl
+  const bearer = tokenInput.trim() || '<YOUR_TOKEN>'
+  const insecure = url.startsWith('https') ? ' -k' : '' // self-signed cert
   const curl =
     `curl${insecure} -X POST ${url} \\\n` +
     `  -H "Authorization: Bearer ${bearer}" \\\n` +
@@ -150,11 +161,25 @@ export function SinkIngestModal({
     `  -d '${SAMPLE_BODY}'`
   const copy = (text: string) => void navigator.clipboard?.writeText(text)
   const sinkName = name || info?.titleShort || 'AI Agent Logging Sink'
+  const saveUrl = async () => {
+    setSavingUrl(true)
+    setError(null)
+    try {
+      const { endpointUrl } = await api.setSinkEndpoint(sourceId, urlOverride.trim())
+      setUrlOverride(endpointUrl || autoUrl)
+      setUrlSaved(true)
+      setTimeout(() => setUrlSaved(false), 2000)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSavingUrl(false)
+    }
+  }
   const downloadSkill = () => {
     if (!info) return
     downloadText('SKILL.md', buildSkillMd({
       name: sinkName, url, curl, tlsMode: info.tlsMode,
-      titleShort: info.titleShort, hasToken: Boolean(token),
+      titleShort: info.titleShort, hasToken: Boolean(tokenInput.trim()),
     }))
   }
 
@@ -184,22 +209,54 @@ export function SinkIngestModal({
             </div>
 
             <label className="col" style={{ gap: 4 }}>
-              <span className="t-caption fg-secondary">Endpoint URL</span>
+              <span className="t-caption fg-secondary">Endpoint URL (editable — saved for this sink)</span>
               <div className="row" style={{ gap: 6 }}>
                 <input
                   className="text-input"
-                  readOnly
-                  value={url}
-                  onFocus={(e) => e.currentTarget.select()}
+                  value={urlOverride}
+                  onChange={(e) => setUrlOverride(e.target.value)}
+                  placeholder={autoUrl}
+                  spellCheck={false}
                   style={{ fontFamily: 'var(--mono, monospace)' }}
                 />
+                <button className="btn small" onClick={() => void saveUrl()} disabled={savingUrl}>
+                  {savingUrl ? 'Saving…' : urlSaved ? '✓ Saved' : 'Save'}
+                </button>
                 <button className="btn small" onClick={() => copy(url)}>Copy</button>
               </div>
+              <span className="t-caption2 fg-tertiary">
+                Override with a public URL (e.g. a reverse-proxy domain) so the SKILL.md is
+                ready to use.{' '}
+                {urlOverride.trim() && urlOverride.trim() !== autoUrl && (
+                  <button
+                    className="btn-link"
+                    onClick={() => setUrlOverride(autoUrl)}
+                    style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer', color: 'var(--accent)' }}
+                  >
+                    reset to auto-detected
+                  </button>
+                )}
+              </span>
             </label>
 
             <label className="col" style={{ gap: 4 }}>
               <span className="t-caption fg-secondary">
-                Ready-to-run curl {token ? '(with your token)' : '(paste your token)'}
+                Bearer token {token ? '(from creation — shown once)' : '(paste it to embed in the SKILL.md)'}
+              </span>
+              <input
+                className="text-input"
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+                placeholder="<YOUR_TOKEN>"
+                spellCheck={false}
+                autoComplete="off"
+                style={{ fontFamily: 'var(--mono, monospace)' }}
+              />
+            </label>
+
+            <label className="col" style={{ gap: 4 }}>
+              <span className="t-caption fg-secondary">
+                Ready-to-run curl {tokenInput.trim() ? '(with your token)' : '(paste your token above)'}
               </span>
               <textarea
                 className="text-input"
@@ -217,8 +274,9 @@ export function SinkIngestModal({
 
             {!token && (
               <div className="t-caption2 fg-tertiary">
-                The token is shown only when the sink is created or regenerated — use the 🔑
-                button on the sink to mint a fresh one.
+                The token is shown once, when the sink is created or regenerated — the server
+                keeps only its hash, so it can't be shown here again. Paste it above to embed
+                it in the download, or use the 🔑 button on the sink to mint a fresh one.
               </div>
             )}
 

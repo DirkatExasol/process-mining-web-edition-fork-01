@@ -16,6 +16,7 @@ import os
 import secrets
 import signal
 import time
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -361,6 +362,10 @@ def _prepare_sink_config(body: "SourceBody", user: str | None, source_id: str | 
     clean = {
         "connectionId": conn_id, "titleShort": title_short,
         "port": port, "tokenHash": existing_hash,
+        # Optional public endpoint URL override (e.g. a reverse-proxy domain) — the URL
+        # shown in the ingest details and baked into the downloadable SKILL.md, so the
+        # file needs no hand-editing. Empty → the console auto-detects the host URL.
+        "endpointUrl": str(cfg.get("endpointUrl") or "").strip(),
         # Per-sink scheme preference: whether agents should address it over HTTPS. It
         # drives the endpoint we SHOW (ingest-info, SKILL.md, monitor); the listeners
         # still bind per the deployment TLS mode, and the shown scheme falls back to
@@ -518,7 +523,45 @@ def sink_ingest_info(source_id: str, request: Request) -> dict:
         "tlsMode": plan["mode"], "activeScheme": scheme, "activeContainerPort": active,
         "consoleHttpPort": INTEGRATION_PORT, "consoleHttpsPort": INTEGRATION_HTTPS_PORT,
         "titleShort": cfg.get("titleShort", ""),
+        # The saved endpoint-URL override (empty → the client auto-detects the host URL).
+        "endpointUrl": str(cfg.get("endpointUrl") or "").strip(),
     }
+
+
+def _valid_endpoint_url(url: str) -> bool:
+    """A plausible http(s) ingest URL: scheme + host, no spaces, bounded length."""
+    if len(url) > 2000 or any(c.isspace() for c in url):
+        return False
+    parsed = urlsplit(url)
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
+class SinkEndpointBody(BaseModel):
+    url: str = Field(default="", max_length=2000)
+
+
+@router.post("/sources/{source_id}/sink-endpoint")
+def set_sink_endpoint(source_id: str, body: SinkEndpointBody, request: Request) -> dict:
+    """Save (or clear) a sink's public endpoint-URL override, so the ingest details and the
+    downloadable SKILL.md show that URL verbatim instead of the auto-detected host URL. An
+    empty string clears the override. No listener rebind — this only changes what is shown."""
+    user = _request_user(request)
+    src = _source_owned(source_id, user)
+    if src is None:
+        raise HTTPException(status_code=404, detail="Source not found.")
+    if src.kind != SINK_SOURCE_KIND:
+        raise HTTPException(status_code=400, detail="Not an AI Agent Logging Sink.")
+    url = body.url.strip()
+    if url and not _valid_endpoint_url(url):
+        raise HTTPException(status_code=400, detail="Enter a full http(s) URL, e.g. https://host/ingest.")
+    cfg = src.public()["config"]
+    cfg["endpointUrl"] = url
+    updated = security_store.update_source(
+        source_id, user, name=src.name, kind=src.kind, config=json.dumps(cfg)
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Source not found.")
+    return {"endpointUrl": url}
 
 
 @router.get("/sink-ports")

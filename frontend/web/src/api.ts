@@ -236,7 +236,11 @@ export const api = {
       httpPort: number; httpsPort: number
       tlsMode: string; activeScheme: string; activeContainerPort: number
       consoleHttpPort: number; consoleHttpsPort: number; titleShort: string
+      endpointUrl: string
     }>(`/api/integration/sources/${enc(id)}/ingest-info`),
+  // Save (or clear, with "") a sink's public endpoint-URL override.
+  setSinkEndpoint: (id: string, url: string) =>
+    post<{ endpointUrl: string }>(`/api/integration/sources/${enc(id)}/sink-endpoint`, { url }),
   // The live sink monitor: per-sink liveness + destination-DB counts (one poll).
   sinkMonitor: () => get<SinkMonitor>('/api/integration/sinks/monitor'),
   previewSource: (path: string, limit: number) =>
