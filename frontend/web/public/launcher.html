@@ -294,6 +294,19 @@
 <script>
   "use strict";
 
+  /* Open a link in a NEW TAB reliably across browsers. Safari can silently swallow a
+     plain target="_blank" on JS-built anchors, so on a normal left-click we open the tab
+     explicitly during the user gesture; a modified click (⌘/Ctrl/Shift/middle) is left to
+     the browser, and if a pop-up is blocked we fall back to same-tab so the doc still opens. */
+  function openInNewTab(e) {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var url = e.currentTarget.href;
+    if (!url) return;
+    e.preventDefault();
+    var w = window.open(url, "_blank", "noopener");
+    if (!w) location.href = url;
+  }
+
   /* ── links: derived from this page's own origin.
      The surface ports keep fixed offsets from the app port in every deployment
      (8080→8090/8100/8110 native, 10080→10090/10100/10110 in Docker, and the
@@ -313,6 +326,7 @@
       var p = surfaces[key];
       var card = document.getElementById("card-" + key);
       card.href = proto + "//" + host + ":" + p + "/";
+      card.addEventListener("click", openInNewTab);
       document.getElementById("port-" + key).textContent = ":" + p;
     });
   })();
@@ -399,9 +413,7 @@
       // so it holds whether the launcher is served at the origin root or under a
       // reverse-proxy sub-path — the same way the surface cards resolve their links.
       a.href = new URL("guides/" + encodeURIComponent(g.file), document.baseURI).href;
-      // Open in the SAME tab: a plain navigation always fires on click, whereas a
-      // target="_blank" new tab can be silently suppressed (popup handling) — which is
-      // why some setups saw "nothing happens". The reader can ⌘/Ctrl-click for a new tab.
+      a.addEventListener("click", openInNewTab); // reliable new tab (Safari-safe)
       var tile = document.createElement("span");
       tile.className = "g-tile";
       tile.innerHTML = isPdf ? DOC : BOOK;
