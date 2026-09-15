@@ -58,6 +58,33 @@ const STYLE = `
 .pl-warn{color:#ffb4a8;font-size:12.5px;padding:8px 2px}
 .pl-empty{margin-top:60px;color:rgba(234,240,250,.75);font-size:15px;text-align:center;max-width:520px}
 .pl-foot{margin-top:44px;color:rgba(234,240,250,.5);font-size:12px;text-align:center}
+.pl-docs{width:min(1080px,100%);margin-top:52px}
+.pl-docs-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.pl-docs-head .pl-line{flex:1;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.22),transparent)}
+.pl-docs-head .pl-label{font-size:12.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:rgba(234,240,250,.75)}
+.pl-dgroup{border:1px solid rgba(255,255,255,.12);border-radius:14px;background:rgba(18,24,38,.42);
+  margin-bottom:10px;overflow:hidden}
+.pl-dsum{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:13px 16px;
+  font-size:14px;font-weight:700;color:#eaf0fa;user-select:none}
+.pl-dsum::-webkit-details-marker{display:none}
+.pl-dsum:hover{background:rgba(255,255,255,.05)}
+.pl-dsum .pl-chev{transition:transform .18s ease;color:rgba(234,240,250,.6);font-size:12px}
+.pl-dgroup[open] .pl-chev{transform:rotate(90deg)}
+.pl-dcount{margin-left:auto;font-size:11px;font-weight:800;letter-spacing:.04em;color:rgba(234,240,250,.6);
+  border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:2px 8px;background:rgba(255,255,255,.05)}
+.pl-dbody{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;padding:4px 14px 16px}
+.pl-guide{display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:11px;text-decoration:none;
+  color:#eaf0fa;background:rgba(18,24,38,.5);border:1px solid rgba(255,255,255,.12);
+  transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
+.pl-guide:hover{transform:translateY(-4px);border-color:rgba(255,255,255,.3);box-shadow:0 12px 26px rgba(0,0,0,.4)}
+.pl-gtile{flex:0 0 auto;width:34px;height:34px;border-radius:10px;display:grid;place-items:center;
+  background:linear-gradient(135deg,#2e3d63,#22304f);box-shadow:inset 0 1px 0 rgba(255,255,255,.2)}
+.pl-gtile svg{width:18px;height:18px;fill:none;stroke:#9db8ef;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.pl-guide.pl-pdf .pl-gtile{background:linear-gradient(135deg,#e2574c,#b3372c)}
+.pl-guide.pl-pdf .pl-gtile svg{stroke:#fff}
+.pl-gtitle{font-size:13px;font-weight:600;line-height:1.3}
+.pl-gbadge{margin-left:auto;flex:0 0 auto;font-size:9.5px;font-weight:800;letter-spacing:.06em;color:#ff9d94;
+  border:1px solid rgba(226,87,76,.5);border-radius:5px;padding:2px 5px;background:rgba(226,87,76,.12)}
 `
 
 const FLOW_ICON = (
@@ -69,6 +96,71 @@ const FLOW_ICON = (
     <path d="M6.5 9v6" />
   </svg>
 )
+
+const BOOK_ICON = (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15.5H6.5A2.5 2.5 0 0 0 4 21z" />
+    <path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20" /><path d="M9 7.5h7M9 11h7" />
+  </svg>
+)
+const DOC_ICON = (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M6 3h8l4 4v14H6z" /><path d="M14 3v4h4" /><path d="M8.5 13.5h7M8.5 16.5h5" />
+  </svg>
+)
+
+interface Guide {
+  file: string
+  title: string
+  type: string
+}
+
+// Doc groups keyed by the leading number's DECADE (the tens of the "NN-" filename prefix),
+// mirroring how the guides are numbered (10s install, 20s admin, 30s integration, …). An
+// unknown decade falls back to a generic label; the PDF manual(s) get their own group.
+const DECADE_LABEL: Record<number, string> = {
+  0: 'Introduction',
+  1: 'Installation',
+  2: 'Administration',
+  3: 'Integration & Import',
+  4: 'Actions',
+  5: 'Work-Bench & Analysis',
+  8: 'Concepts Explained',
+}
+
+interface DocGroup {
+  key: string
+  label: string
+  order: number
+  guides: Guide[]
+}
+
+/** Group guides by the decade of their leading "NN-" number; PDFs in a trailing group. */
+function groupGuides(guides: Guide[]): DocGroup[] {
+  const groups = new Map<string, DocGroup>()
+  for (const g of guides) {
+    const isPdf = g.type === 'pdf' || /\.pdf$/i.test(g.file)
+    const m = /^(\d+)-/.exec(g.file)
+    let key: string, label: string, order: number
+    if (isPdf) {
+      key = 'pdf'
+      label = 'Full Manual'
+      order = 999
+    } else if (m) {
+      const decade = Math.floor(parseInt(m[1], 10) / 10)
+      key = `d${decade}`
+      label = DECADE_LABEL[decade] ?? `Guides ${decade}0–${decade}9`
+      order = decade
+    } else {
+      key = 'other'
+      label = 'More guides'
+      order = 500
+    }
+    if (!groups.has(key)) groups.set(key, { key, label, order, guides: [] })
+    groups.get(key)!.guides.push(g)
+  }
+  return [...groups.values()].sort((a, b) => a.order - b.order)
+}
 
 function relAge(iso: string | null): string | null {
   if (!iso) return null
@@ -94,6 +186,7 @@ export function LaunchPortal({
   const [data, setData] = useState<{ connections: PortalConnection[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [openingId, setOpeningId] = useState<number | null>(null)
+  const [guides, setGuides] = useState<Guide[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -102,10 +195,14 @@ export function LaunchPortal({
       .portal()
       .then((d) => !cancelled && setData(d))
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
+    // The training guides are best-effort: if the index can't be read, hide the section.
+    void api.guides().then((g) => !cancelled && Array.isArray(g) && setGuides(g)).catch(() => {})
     return () => {
       cancelled = true
     }
   }, [])
+
+  const docGroups = useMemo(() => groupGuides(guides), [guides])
 
   const bg = useMemo(
     () => (appearance ? loginBackground(appearance) : FALLBACK_BG),
@@ -207,6 +304,45 @@ export function LaunchPortal({
             )}
           </section>
         ))}
+
+        {docGroups.length > 0 && (
+          <section className="pl-docs">
+            <div className="pl-docs-head">
+              <span className="pl-line" />
+              <span className="pl-label">Training &amp; Documentation</span>
+              <span className="pl-line" />
+            </div>
+            {docGroups.map((grp) => (
+              <details className="pl-dgroup" key={grp.key}>
+                <summary className="pl-dsum">
+                  <span className="pl-chev">▶</span>
+                  {grp.label}
+                  <span className="pl-dcount">{grp.guides.length}</span>
+                </summary>
+                <div className="pl-dbody">
+                  {grp.guides.map((g) => {
+                    const isPdf = g.type === 'pdf' || /\.pdf$/i.test(g.file)
+                    return (
+                      <a
+                        className={`pl-guide${isPdf ? ' pl-pdf' : ''}`}
+                        key={g.file}
+                        href={`/guides/${encodeURIComponent(g.file)}`}
+                        target="_blank"
+                        rel="noopener"
+                      >
+                        <span className="pl-gtile">{isPdf ? DOC_ICON : BOOK_ICON}</span>
+                        <span className="pl-gtitle">
+                          {g.title || g.file.replace(/^\d+-/, '').replace(/\.(html|pdf)$/i, '').replace(/-/g, ' ')}
+                        </span>
+                        {isPdf && <span className="pl-gbadge">PDF</span>}
+                      </a>
+                    )
+                  })}
+                </div>
+              </details>
+            ))}
+          </section>
+        )}
 
         <div className="pl-foot">Process Mining Demonstrator · Process Launcher</div>
       </div>

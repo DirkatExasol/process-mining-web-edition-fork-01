@@ -161,6 +161,8 @@ export const api = {
     post<ConnectionStatus>(`/api/connections/${enc(id)}/connect`),
   // End-user launch page: the user's processes grouped by connection.
   portal: () => get<{ connections: PortalConnection[] }>('/api/portal'),
+  // The training-guide index (same list the suite launcher shows), for the launch page.
+  guides: () => get<{ file: string; title: string; type: string }[]>('/guides/index.json'),
 
   // Power-user connection management (create / edit / assign, from the app).
   listManageableConnections: () =>

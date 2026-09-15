@@ -5,10 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 
 const portal = vi.fn()
+const guides = vi.fn(async () => [] as { file: string; title: string; type: string }[])
 vi.mock('../api', () => ({
   api: {
     portal: () => portal(),
     loginAppearance: vi.fn(async () => null),
+    guides: () => guides(),
   },
 }))
 
@@ -57,5 +59,30 @@ describe('LaunchPortal', () => {
     portal.mockResolvedValue({ connections: [] })
     await renderSettled(<LaunchPortal onOpen={() => {}} onWorkbench={() => {}} />)
     expect(await screen.findByText(/No connections are assigned to you/)).toBeTruthy()
+  })
+
+  it('groups the docs by the leading-number decade into collapsible sections', async () => {
+    portal.mockResolvedValue({ connections: [] })
+    guides.mockResolvedValue([
+      { file: '20-Administration-Quick-Start.html', title: 'Administration Quick-Start', type: 'html' },
+      { file: '21-Users-and-Permissions.html', title: 'Users and Permissions', type: 'html' },
+      { file: '30-Integration-Console.html', title: 'Integration Console', type: 'html' },
+      { file: '31-Import-Unstructured-Logs.html', title: 'Import Unstructured Logs', type: 'html' },
+      { file: 'Process-Mining-Demonstrator-Manual.pdf', title: 'Demonstrator Manual', type: 'pdf' },
+    ])
+    const { container } = await renderSettled(<LaunchPortal onOpen={() => {}} onWorkbench={() => {}} />)
+
+    // Decade labels: 2x → Administration, 3x → Integration & Import, PDF → Full Manual.
+    expect(await screen.findByText('Administration')).toBeTruthy()
+    expect(screen.getByText('Integration & Import')).toBeTruthy()
+    expect(screen.getByText('Full Manual')).toBeTruthy()
+    // Each group is a collapsible <details>; the 2x group holds both 20- and 21- guides.
+    const groups = container.querySelectorAll('details.pl-dgroup')
+    expect(groups.length).toBe(3)
+    const admin = screen.getByText('Administration').closest('details') as HTMLElement
+    expect(admin.querySelectorAll('a.pl-guide').length).toBe(2)
+    // Guides link to /guides/<file>.
+    const link = screen.getByText('Integration Console').closest('a') as HTMLAnchorElement
+    expect(link.getAttribute('href')).toBe('/guides/30-Integration-Console.html')
   })
 })
