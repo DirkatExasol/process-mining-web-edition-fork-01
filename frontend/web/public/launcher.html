@@ -224,7 +224,7 @@
     </svg>
 
     <div class="row first">
-      <a class="app admin" id="card-admin" target="_blank" rel="noopener">
+      <a class="app admin" id="card-admin">
         <span class="open">↗</span>
         <span class="tile"><!-- gear -->
           <svg viewBox="0 0 24 24">
@@ -239,7 +239,7 @@
     </div>
 
     <div class="row second">
-      <a class="app integration" id="card-integration" target="_blank" rel="noopener">
+      <a class="app integration" id="card-integration">
         <span class="open">↗</span>
         <span class="tile"><!-- funnel -->
           <svg viewBox="0 0 24 24">
@@ -251,7 +251,7 @@
         <span class="port" id="port-integration"></span>
       </a>
 
-      <a class="app actions" id="card-actions" target="_blank" rel="noopener">
+      <a class="app actions" id="card-actions">
         <span class="open">↗</span>
         <span class="tile"><!-- hammer -->
           <svg viewBox="0 0 24 24">
@@ -265,7 +265,7 @@
         <span class="port" id="port-actions"></span>
       </a>
 
-      <a class="app workbench" id="card-workbench" target="_blank" rel="noopener">
+      <a class="app workbench" id="card-workbench">
         <span class="open">↗</span>
         <span class="tile"><!-- wrench -->
           <svg viewBox="0 0 24 24">
@@ -399,8 +399,9 @@
       // so it holds whether the launcher is served at the origin root or under a
       // reverse-proxy sub-path — the same way the surface cards resolve their links.
       a.href = new URL("guides/" + encodeURIComponent(g.file), document.baseURI).href;
-      a.target = "_blank";
-      a.rel = "noopener";
+      // Open in the SAME tab: a plain navigation always fires on click, whereas a
+      // target="_blank" new tab can be silently suppressed (popup handling) — which is
+      // why some setups saw "nothing happens". The reader can ⌘/Ctrl-click for a new tab.
       var tile = document.createElement("span");
       tile.className = "g-tile";
       tile.innerHTML = isPdf ? DOC : BOOK;
