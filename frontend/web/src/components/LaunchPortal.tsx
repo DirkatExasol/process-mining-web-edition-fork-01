@@ -164,6 +164,17 @@ function groupGuides(guides: Guide[]): DocGroup[] {
   return [...groups.values()].sort((a, b) => a.order - b.order)
 }
 
+/** Open a URL in a NEW tab on a plain left-click, robust across browsers. Opens explicitly
+ *  during the click gesture (Safari can swallow a plain target="_blank"); a modified click
+ *  falls through to the browser, and a blocked pop-up falls back to same-tab so it still
+ *  opens. No "noopener" — with it window.open returns null on success, which would double-open. */
+function openInNewTab(e: React.MouseEvent, url: string): void {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+  e.preventDefault()
+  const w = window.open(url, '_blank')
+  if (!w) window.location.assign(url)
+}
+
 function relAge(iso: string | null): string | null {
   if (!iso) return null
   const t = new Date(iso).getTime()
@@ -325,13 +336,13 @@ export function LaunchPortal({
                   <div className="pl-dbody">
                     {grp.guides.map((g) => {
                       const isPdf = g.type === 'pdf' || /\.pdf$/i.test(g.file)
+                      const url = `/guides/${encodeURIComponent(g.file)}`
                       return (
                         <a
                           className={`pl-guide${isPdf ? ' pl-pdf' : ''}`}
                           key={g.file}
-                          href={`/guides/${encodeURIComponent(g.file)}`}
-                          target="_blank"
-                          rel="noopener"
+                          href={url}
+                          onClick={(e) => openInNewTab(e, url)}
                         >
                           <span className="pl-gtile">{isPdf ? DOC_ICON : BOOK_ICON}</span>
                           <span className="pl-gtitle">
