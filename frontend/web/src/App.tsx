@@ -37,6 +37,16 @@ export function App() {
   }, [])
   const portal = isPortalPath(route)
 
+  // The /home route (login gate + launcher) gets its own browser-tab title.
+  useEffect(() => {
+    if (!portal) return
+    const previous = document.title
+    document.title = 'Process Launcher'
+    return () => {
+      document.title = previous
+    }
+  }, [portal])
+
   // Open a process picked on the launch page: connect to its connection, open the project,
   // then land on the Work-Bench (selectProject forces the process-map view). On a failed
   // connect, connectConnection surfaces its own alert and we stay on the launch page.
