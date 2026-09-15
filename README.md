@@ -41,6 +41,7 @@ Four independent Python processes:
 | **Admin Interface** (`admin/`) | 8090 / 8453 | TLS/certificate management, the user allow-list, and per-user database connections |
 | **Integration Console** (`integration/`) | 8100 / 8463 | Data-source configuration; developers and admins only |
 | **Actions** (`actions/`) | 8110 / 8473 | Author business-readable node-menu actions; developers and admins only (off until an admin enables it) |
+| **AI Agent Logging Sink** (`sink/`) | 8120–8129 / 8483–8492 | One HTTP/HTTPS ingest API per configured sink (a pre-exposed port pool); external agents POST journey events; off until an admin enables it |
 
 ```
 Browser ──► GUI Server (:8080 / :8443) ──proxy /api──► Compute Backend (:8000) ──► Exasol
@@ -432,6 +433,13 @@ Leaving a password or API-key field blank on an existing connection keeps the st
 value; the backend decrypts secrets only when a user actually connects. Connection
 definitions, ownership and assignments live in `data/security.sqlite3`.
 
+Each connected user keeps one long-lived Exasol session. A network device (commonly the
+`host.docker.internal` NAT) can silently drop an **idle** socket; the backend now detects
+the dead handle on the next query, transparently **reopens and retries once**, and
+self-heals a session left disconnected by a failed reopen on the following request — so a
+refresh or a first action after idle no longer 500s with *"Unable to load data"* and forces
+a manual reconnect. A genuine SQL error is never retried.
+
 **Provisioning a process-mining schema.** Both the admin connection editor and the
 power-user editor offer **Create schema & tables** — using the entered credentials it
 creates the named schema and the required tables (`PROJECTS`, `JOURNEYS`, `STEPS`,
@@ -815,8 +823,60 @@ interval).
 
 > **Status:** the contract, ingest backends, registry, per-user status, the File
 > extractor **and the file watchdog** are in place and tested
-> (`backend/tests/test_integration_{layer,extractor,files,watchdog}.py`).
-> Next: non-file source kinds.
+> (`backend/tests/test_integration_{layer,extractor,files,watchdog}.py`). The first
+> non-file source kind — the **AI Agent Logging Sink** (below) — has shipped.
+
+## AI Agent Logging Sink
+
+A second data-source kind, alongside File: instead of the demonstrator *pulling* from a
+file, the **AI Agent Logging Sink** opens a small HTTP/HTTPS API that an external program —
+typically an AI agent — *pushes* journey events into as they happen. Each sink writes into
+one connection's `JOURNEYS` table under one project, auto-creating any step it has never
+seen. It is a fifth surface, run by its own supervisor process (`sink/`), and is **off
+until an admin enables it** (Admin → *Logging Sink*).
+
+- **A sink per port, from a fixed pool.** Because Docker publishes ports statically, sinks
+  bind a **pre-exposed pool**: HTTP `8120–8129` and the paired HTTPS `8483–8492` (host
+  `+10000` under the default compose mapping). You pick a free port when defining the sink;
+  each sink is one port, one connection, one project code. The supervisor runs one uvicorn
+  listener per sink and **rebinds on SIGHUP**, so adding/editing/removing a sink — or a TLS
+  change — takes effect with no restart.
+- **Defining a sink** (integration console → *Sources* → ＋ → *AI Agent Logging Sink*):
+  choose the destination **connection** (must have a schema), a 1–10-char **project code**
+  (`TITLE_SHORT`; created on first write), a **port** from the pool, and a **TLS**
+  preference (address agents over HTTPS or HTTP — the dropdown shows both ports per slot).
+- **Per-sink bearer token.** Only a **SHA-256 hash** is stored; the plaintext is shown
+  **once** on creation and can be **regenerated** (🔑, behind a confirmation — it
+  invalidates the old token immediately). Authentn is `Authorization: Bearer <token>`.
+- **The API.** `POST /ingest` (bearer-auth) takes one JSON object or an array of them;
+  `GET /health` is unauthenticated liveness (`{ok, enabled}` only — no identifying detail).
+  Responses: `200 {ingested, newSteps, projectId}`, `400` bad payload, `401` bad token,
+  `413` body/entry cap exceeded (2 MB / 5000 entries by default, refused before any DB
+  work), `503` module disabled, `502` destination DB unavailable (generic — the driver
+  detail with the internal DSN/user/schema is logged, never returned).
+- **Event schema.** `eventId` (the journey; reused across a run's events), `step` (a
+  `KIND:qualifier` — `SKILL:<name>`, `TOOL:<type>:<name>`, `DATABASE:<db>`,
+  `WEB:<external|internal>`, `EMAIL:…`, `FILE:…`, `APP:<name>`, `REQUEST` — each becomes a
+  node), optional `description` → **META_1** (the step's *Action* detail, ≤256 chars,
+  capped server-side), `client` → **META_2** (*Client*: Claude/ChatGPT/…), `user` →
+  **META_3** (*User*), and `eventTime` (ISO-8601; defaults to now). A per-project `METAS`
+  row titles the three columns **Action / Client / User** so the app labels them.
+- **Ready-to-use SKILL.md.** The sink's *ingest details* popup shows the live endpoint URL
+  and a ready-to-run `curl`, and downloads a **SKILL.md** an agent can be handed as-is: the
+  **endpoint URL is editable and saved per sink** (override the auto-detected host URL with,
+  say, a reverse-proxy domain), and a **token field** (pre-filled right after create/
+  regenerate, else pasted) is embedded so the file needs no hand-editing.
+- **Live monitor.** The integration console shows a node-based monitor for sinks — one lane
+  `[AI agents] → [sink :port] → [project] → [connection]` per sink — with a `/health`
+  liveness dot, destination-DB event/journey counts and last-event time, animating a lane
+  when its event count grows. Counts are cached briefly so several open consoles can't
+  churn DB connections. Backend + frontend tests in `backend/tests/test_sink.py` and the
+  `Sink*`/`useSinkMonitor` frontend specs.
+
+The write path reuses the File extractor's `SqlIngestBackend` (strict identifier
+validation + escaped literals — no injection), and the sink reuses one DB connection with
+idle-reconnect + reconnect-and-retry-once so a socket dropped after idle doesn't surface as
+a failed post.
 
 ## Database schema
 

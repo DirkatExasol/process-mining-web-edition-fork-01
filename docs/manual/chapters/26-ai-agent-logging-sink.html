@@ -39,7 +39,8 @@
 <li>Give the sink a <b>name</b> (how it appears in the console and the monitor).</li>
 <li>Choose the <b>Connection</b> it writes into. The dropdown lists only the connections assigned to you; the connection must have a schema. This is where the events land, using the connection's stored credentials.</li>
 <li>Enter a <b>project code</b> of 1&ndash;10 characters (the project's <code>TITLE_SHORT</code>). All of this sink's events go into the one project with that code; it is created on the first write if it does not exist, and reused if it does.</li>
-<li>Pick a <b>port</b> from the free ports in the pool. Ports already taken by other sinks are not offered; a sink cannot share a port.</li>
+<li>Pick a <b>port</b> from the free ports in the pool. Each option shows <em>both</em> its ports &mdash; e.g. <code>HTTP 8120 &middot; HTTPS 8483</code> &mdash; so you can see what an agent will address. Ports already taken by other sinks are not offered; a sink cannot share a port.</li>
+<li>Set the <b>TLS</b> preference: ticked (the default) means agents are told to use the sink's <b>HTTPS</b> port, unticked means plain <b>HTTP</b>. This is a per-sink preference for the endpoint shown in the request and the SKILL.md; the listeners still bind whatever the deployment TLS mode allows, and the shown scheme falls back to what the deployment can actually serve, so it never advertises a port that isn't bound.</li>
 <li>Save. The confirmation screen shows the sink's <b>bearer token once</b> (see 26.4) and a link to the exact request an agent should send (see 26.6).</li>
 </ol>
 
@@ -49,7 +50,7 @@
 
 <p>Each sink has one secret bearer token that the caller must send on every request. Only a <b>SHA-256 hash</b> of the token is ever stored; the plaintext is shown <b>once</b>, on the confirmation screen right after you create the sink, and cannot be retrieved afterwards. Copy it then and store it wherever the agent keeps its secrets.</p>
 
-<p>If a token is lost or leaked, open the sink in the <b>Sources</b> list and use the <b>&#128273; regenerate</b> action. A fresh token is minted and shown once; the previous token stops working as soon as the supervisor rebinds (which the console triggers for you). There is deliberately no way to read an existing token back &mdash; regeneration is the only recovery.</p>
+<p>If a token is lost or leaked, open the sink in the <b>Sources</b> list and use the <b>&#128273; regenerate</b> action. Because regenerating invalidates the live token the instant it runs &mdash; locking out every agent still using the old one &mdash; it asks for confirmation first. A fresh token is then minted and shown once; the previous token stops working as soon as the supervisor rebinds (which the console triggers for you). There is deliberately no way to read an existing token back &mdash; regeneration is the only recovery.</p>
 
 <div class="warn"><strong>Handle the token like a password</strong> Anyone who holds it can write events into the sink's project for as long as the module is enabled. Send it only over the HTTPS endpoint in any real deployment, never commit it to a repository, and regenerate it if in doubt.</div>
 
@@ -69,12 +70,29 @@
 <table>
 <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
 <tbody>
-<tr><td><code>eventId</code> <b>(required)</b></td><td>The case identifier &mdash; the &ldquo;journey&rdquo; this event belongs to. It is MD5-pseudonymised on write, so the raw value never reaches the database. Also accepted as <code>event_id</code>.</td></tr>
-<tr><td><code>step</code> <b>(required)</b></td><td>The activity name. An unknown step name is created on the fly.</td></tr>
+<tr><td><code>eventId</code> <b>(required)</b></td><td>The journey / request id &mdash; reuse it across every event of one run. It is MD5-pseudonymised on write, so the raw value never reaches the database. Also accepted as <code>event_id</code>.</td></tr>
+<tr><td><code>step</code> <b>(required)</b></td><td>A <code>KIND:qualifier</code> naming the request or action (see below) &mdash; the whole string becomes one node on the map. An unknown step is created on the fly.</td></tr>
+<tr><td><code>description</code></td><td>The step's detail (the query run, URL fetched, recipient &hellip;), up to <b>256 characters</b>; longer text is truncated. Stored as the event's <b>Action</b> attribute (<code>META_1</code>). Also accepted as <code>meta1</code>.</td></tr>
+<tr><td><code>client</code></td><td>The calling client &mdash; <code>Claude</code>, <code>ChatGPT</code>, &hellip;. Stored as the <b>Client</b> attribute (<code>META_2</code>). Also accepted as <code>meta2</code>.</td></tr>
+<tr><td><code>user</code></td><td>The end user, if known. Stored as the <b>User</b> attribute (<code>META_3</code>). Also accepted as <code>meta3</code>.</td></tr>
 <tr><td><code>eventTime</code></td><td>ISO-8601 timestamp (a trailing <code>Z</code> is accepted). Missing or blank means &ldquo;now&rdquo; on the server. Also accepted as <code>event_time</code>.</td></tr>
-<tr><td><code>meta1</code>, <code>meta2</code>, <code>meta3</code></td><td>Optional free-text attributes stored alongside the event (also <code>meta_1</code> &hellip;).</td></tr>
 </tbody>
 </table>
+
+<p>The sink writes a per-project <code>METAS</code> row titling the three attribute columns <b>Action</b>, <b>Client</b> and <b>User</b>, so the app labels them in its Metas table and case-level filters &mdash; you can filter a project's journeys by client or user.</p>
+
+<h3 id="sink-steps">26.5.1 Naming steps: <code>KIND:qualifier</code></h3>
+
+<p>Keep the <code>step</code> KIND from a small, stable vocabulary and add the specific target after a colon, so each node is self-describing. The first event of a journey names the originating request; each later event names one action taken:</p>
+
+<ul>
+<li><code>SKILL:&lt;skill name&gt;</code> &mdash; e.g. <code>SKILL:summarize-sales</code></li>
+<li><code>TOOL:&lt;type&gt;:&lt;tool name&gt;</code> &mdash; e.g. <code>TOOL:mcp:airfield_get</code></li>
+<li><code>DATABASE:&lt;database name&gt;</code> &mdash; e.g. <code>DATABASE:sales_db</code></li>
+<li><code>WEB:&lt;external|internal&gt;</code>, <code>EMAIL:&lt;external|internal&gt;</code>, <code>FILE:&lt;local|remote&gt;</code></li>
+<li><code>APP:&lt;app name&gt;</code> &mdash; e.g. <code>APP:Slack</code></li>
+<li><code>REQUEST</code> &mdash; the first event, when the request is not itself a skill or tool call</li>
+</ul>
 
 <p>All the events in one sink land in the one project the sink is coded for; you do not send a project id, and you cannot write into another project through the same sink.</p>
 
@@ -86,12 +104,19 @@
   -H "Authorization: Bearer YOUR-SINK-TOKEN" \
   -H "Content-Type: application/json" \
   -d '[
-    {"eventId": "order-4711", "step": "Received",  "eventTime": "2026-09-14T10:00:00Z"},
-    {"eventId": "order-4711", "step": "Picked",    "eventTime": "2026-09-14T10:03:00Z", "meta1": "aisle-7"},
-    {"eventId": "order-4711", "step": "Shipped"}
+    {"eventId":"req-42","step":"SKILL:summarize-sales","description":"Summarize the Q3 sales report","client":"Claude","user":"alice","eventTime":"2026-09-14T10:00:00Z"},
+    {"eventId":"req-42","step":"DATABASE:sales_db","description":"SELECT region, SUM(amount) FROM sales WHERE quarter='Q3'","client":"Claude","user":"alice","eventTime":"2026-09-14T10:00:03Z"},
+    {"eventId":"req-42","step":"EMAIL:external","description":"Send the compiled report to alice@example.com","client":"Claude","user":"alice","eventTime":"2026-09-14T10:00:09Z"}
   ]'</code></pre>
 
-<p>You do not have to work the URL out by hand. The confirmation screen (and the <b>&#128268; details</b> action on a sink in the <b>Sources</b> list) shows the exact endpoint URL for the current TLS mode, with the host port offset already resolved, the curl command with the token filled in, and a <b>&#11015; Download SKILL.md</b> button. The downloaded <code>SKILL.md</code> is a self-contained instruction file &mdash; endpoint, authentication, JSON schema, an example and the field meanings &mdash; that you hand to the AI agent so it can start logging without you transcribing anything.</p>
+<p>You do not have to work the URL out by hand. The confirmation screen (and the <b>&#128268; details</b> action on a sink in the <b>Sources</b> list) opens the ingest-details popup: the exact endpoint URL, a ready-to-run curl, and a <b>&#11015; Download SKILL.md</b> button. The downloaded <code>SKILL.md</code> is a self-contained instruction file &mdash; endpoint, authentication, the <code>KIND:qualifier</code> step vocabulary, the JSON schema, an example and the field meanings &mdash; that you hand to the AI agent so it can start logging without you transcribing anything.</p>
+
+<p>Two fields in that popup make the download ready to use as-is:</p>
+
+<ul>
+<li>The <b>endpoint URL is editable and saved per sink</b>. The console auto-detects the host URL, but if agents reach the sink through a reverse proxy or a public domain, type that URL and press <b>Save</b> &mdash; it is then shown here and baked into every future curl and SKILL.md.</li>
+<li>A <b>token field</b> is pre-filled the moment you create or regenerate the sink; otherwise paste the token you saved. Whatever is in the field is embedded into the curl and the SKILL.md. The token itself is never stored (only its hash is kept), so re-opening the popup in a later session needs a paste &mdash; the app says so.</li>
+</ul>
 
 <div class="tip"><strong>Tip</strong> Send a short batch (an array) rather than one request per event when your agent produces events in bursts. Each event still becomes one journey row; batching just cuts the number of round trips and transactions.</div>
 
