@@ -49,6 +49,37 @@ def list_connections(request: Request) -> list[dict]:
     return out
 
 
+@router.get("/portal")
+async def portal_processes(request: Request) -> dict:
+    """Every process (project) available to the signed-in user, grouped by the connection
+    it lives in — powers the end-user launch page (/home). Assignment is the gate (exactly
+    like /connect), so a plain user sees only their assigned connections. Fully
+    failure-tolerant: a connection whose schema can't be read yields an ``error`` on that
+    group, never a 500."""
+    from ..db.schema_ddl import list_projects_with_counts
+
+    user = _request_user(request)
+    groups: list[dict] = []
+    for c in security_store.connections_for_user(user):
+        group = {"id": c.id, "name": c.name, "schema": c.schema, "projects": [], "error": None}
+        conn = security_store.get_connection(c.id, with_secrets=True)
+        if conn is None:
+            group["error"] = "Connection not found."
+            groups.append(group)
+            continue
+        result = await list_projects_with_counts(
+            host=conn.host, port=conn.port, username=conn.username, password=conn.password,
+            schema=conn.schema, use_tls=conn.use_tls, cert_mode=conn.cert_mode,
+            fingerprint=conn.fingerprint, min_rsa_bits=conn.min_rsa_bits,
+        )
+        if result.get("ok"):
+            group["projects"] = result.get("projects", [])
+        else:
+            group["error"] = result.get("error") or "Could not read the database."
+        groups.append(group)
+    return {"connections": groups}
+
+
 @router.post("/connections/{conn_id}/connect", response_model=ConnectionStatus)
 async def connect_connection(conn_id: str, request: Request) -> ConnectionStatus:
     user = _request_user(request)

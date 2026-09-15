@@ -94,6 +94,48 @@ def test_list_without_user_header_returns_all(backend):
     assert [c["id"] for c in listed] == [conn.id]
 
 
+# ── End-user launch page: /api/portal ─────────────────────────────────────────
+
+
+def test_portal_groups_the_users_processes_by_connection(backend, monkeypatch):
+    import app.db.schema_ddl as schema_ddl
+
+    app, store, _ = backend
+    store.create_user("alice", "pw", is_admin=False)
+    store.create_user("bob", "pw", is_admin=False)
+    a1 = _make_conn(store, name="Prod", schema="MINING", assignments=["alice"])
+    a2 = _make_conn(store, name="Sandbox", schema="SBX", assignments=["alice"])
+    _make_conn(store, name="Bob only", assignments=["bob"])  # must not leak to alice
+
+    async def fake_counts(**kwargs):
+        # A distinct project list per schema; the SBX schema fails to read.
+        if kwargs["schema"] == "MINING":
+            return {"ok": True, "error": None, "projects": [
+                {"projectId": 1, "title": "Bookstore", "titleShort": "BOOK",
+                 "journeys": 10, "events": 40, "lastEventAt": "2026-09-14T10:00:00"},
+            ]}
+        return {"ok": False, "error": "schema unreachable", "projects": []}
+
+    monkeypatch.setattr(schema_ddl, "list_projects_with_counts", fake_counts)
+
+    data = TestClient(app).get("/api/portal", headers={"X-PMW-User": "alice"}).json()
+    groups = {g["name"]: g for g in data["connections"]}
+    # Only alice's two connections; bob's is absent.
+    assert set(groups) == {"Prod", "Sandbox"}
+    assert groups["Prod"]["projects"][0]["title"] == "Bookstore"
+    assert groups["Prod"]["error"] is None
+    # A connection that can't be read yields a per-group error, never a 500.
+    assert groups["Sandbox"]["projects"] == []
+    assert groups["Sandbox"]["error"] == "schema unreachable"
+
+
+def test_portal_is_empty_for_a_user_with_no_connections(backend):
+    app, store, _ = backend
+    store.create_user("carol", "pw", is_admin=False)
+    data = TestClient(app).get("/api/portal", headers={"X-PMW-User": "carol"}).json()
+    assert data == {"connections": []}
+
+
 # ── Connect authorization gate ────────────────────────────────────────────────
 
 

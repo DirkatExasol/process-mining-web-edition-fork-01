@@ -656,6 +656,26 @@ export interface SinkMonitor {
   sinks: SinkMonitorEntry[]
 }
 
+/** One process (project) shown as a tile on the end-user launch page (/home). */
+export interface PortalProcess {
+  projectId: number
+  title: string
+  titleShort: string
+  journeys: number
+  events: number
+  lastEventAt: string | null
+}
+
+/** The processes available to the user in one connection, for the launch page. */
+export interface PortalConnection {
+  id: string
+  name: string
+  schema: string | null
+  /** Set when the connection's schema couldn't be read (its tile group shows the note). */
+  error: string | null
+  projects: PortalProcess[]
+}
+
 /** "aux" is a helper field: extracted like the others but written to no column — it
  *  exists so a compound-step rule can match on a value (an HTTP status, a result code)
  *  that doesn't belong in META. */

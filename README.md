@@ -199,6 +199,20 @@ so the same page works in every deployment.
 > (`https://…:8443/launcher.html`, or `…:18443` under Docker) — the plain-HTTP
 > ports are not bound in that mode.
 
+### The end-user launch page (`/home`)
+
+Alongside the suite launcher there is a **second, authenticated launch page for end
+users**, served by the main app at **`/home`** (`http://127.0.0.1:8080/home`, or
+`…:18080/home` under Docker). It is **protected by the normal sign-in** — the same login
+panel, background and full stack (password, two-factor, passkey, idle sign-out) as the
+Work-Bench. After signing in it shows, in the same glassy launcher style, the **processes
+available to that user as tiles, grouped by connection** — each tile a project with its
+event/journey counts. Clicking a tile connects to that connection, opens the project and
+drops the user straight onto its **process map**. It's the simplest entry point for people
+who just want to open "their" process, while the full Work-Bench (`/`) stays unchanged. The
+tile data comes from `GET /api/portal`, gated by connection assignment exactly like
+connecting.
+
 ## First use
 
 1. Database connections are defined by an administrator (see below) and assigned

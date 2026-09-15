@@ -5,18 +5,50 @@ import { useCallback, useEffect, useState } from 'react'
 import { HelpPanel } from './components/HelpPanel'
 import { LegalGate } from './components/Gates'
 import { IdleLogout } from './components/IdleLogout'
+import { LaunchPortal } from './components/LaunchPortal'
 import { LoginView } from './components/LoginView'
 import { Sidebar } from './components/Sidebar'
 import { Spinner } from './components/ui'
 import { hydrateSettings, useSetting } from './settings'
 import { useStore } from './store'
+import type { AssignedConnection, PortalProcess } from './types'
 import { DetailPane } from './views/DetailPane'
+
+/** True on the end-user launch page route (/home), tolerant of a trailing slash. */
+const isPortalPath = (path: string) => path.replace(/\/+$/, '') === '/home'
 
 export function App() {
   const store = useStore()
   const [ready, setReady] = useState(false)
   const [sidebarHidden, setSidebarHidden] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  // Client-side route so /home renders the end-user launch page (LaunchPortal) after the
+  // same sign-in, while / stays the Work-Bench. Kept in sync with the Back/Forward buttons.
+  const [route, setRoute] = useState(() => window.location.pathname)
+  useEffect(() => {
+    const onPop = () => setRoute(window.location.pathname)
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+  const navigate = useCallback((path: string) => {
+    window.history.pushState({}, '', path)
+    setRoute(path)
+  }, [])
+  const portal = isPortalPath(route)
+
+  // Open a process picked on the launch page: connect to its connection, open the project,
+  // then land on the Work-Bench (selectProject forces the process-map view). On a failed
+  // connect, connectConnection surfaces its own alert and we stay on the launch page.
+  const openProcess = useCallback(async (connId: string, p: PortalProcess) => {
+    const conn =
+      useStore.getState().connections.find((c) => c.id === connId) ??
+      ({ id: connId } as AssignedConnection)
+    const ok = await useStore.getState().connectConnection(conn)
+    if (!ok) return
+    const project = useStore.getState().projects.find((pr) => pr.projectId === p.projectId)
+    if (project) await useStore.getState().selectProject(project)
+    navigate('/')
+  }, [navigate])
 
   // Loads everything that needs an authenticated session (settings live in the
   // backend and its API is gated when sign-in is required).
@@ -74,12 +106,25 @@ export function App() {
       <>
         <ThemeSync />
         <LoginView
-          subtitle="Work-Bench"
+          subtitle={portal ? 'Process Launcher' : 'Work-Bench'}
           onSignedIn={() => {
             void initAfterAuth()
           }}
         />
         <AlertHost />
+      </>
+    )
+  }
+
+  // The end-user launch page: signed in (or sign-in not required), the launcher-styled
+  // tiles of the user's processes grouped by connection.
+  if (portal) {
+    return (
+      <>
+        <ThemeSync />
+        <LaunchPortal onOpen={openProcess} onWorkbench={() => navigate('/')} />
+        <AlertHost />
+        <IdleLogout />
       </>
     )
   }
