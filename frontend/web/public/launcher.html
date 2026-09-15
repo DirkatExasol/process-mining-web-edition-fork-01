@@ -303,8 +303,10 @@
     var url = e.currentTarget.href;
     if (!url) return;
     e.preventDefault();
-    var w = window.open(url, "_blank", "noopener");
-    if (!w) location.href = url;
+    // NB: no "noopener" here — with it, window.open returns null even on SUCCESS, which
+    // would trip the fallback below and open the page in this tab too (a double-open).
+    var w = window.open(url, "_blank");
+    if (!w) location.href = url; // genuinely blocked → same tab, so the page still opens
   }
 
   /* ── links: derived from this page's own origin.

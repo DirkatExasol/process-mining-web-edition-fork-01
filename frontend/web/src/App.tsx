@@ -53,7 +53,9 @@ export function App() {
   // gesture so Safari doesn't swallow it; a blocked pop-up falls back to same-tab.
   const openProcess = useCallback((connId: string, p: PortalProcess) => {
     const target = `/?connect=${encodeURIComponent(connId)}&project=${encodeURIComponent(String(p.projectId))}`
-    const w = window.open(target, '_blank', 'noopener')
+    // No "noopener": with it window.open returns null even on success, which would trip
+    // the fallback and also navigate this tab (a double-open).
+    const w = window.open(target, '_blank')
     if (!w) window.location.assign(target)
   }, [])
 
