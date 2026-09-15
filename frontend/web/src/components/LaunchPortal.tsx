@@ -62,8 +62,10 @@ const STYLE = `
 .pl-docs-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
 .pl-docs-head .pl-line{flex:1;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.22),transparent)}
 .pl-docs-head .pl-label{font-size:12.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:rgba(234,240,250,.75)}
+.pl-dgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+@media (max-width:720px){.pl-dgrid{grid-template-columns:1fr}}
 .pl-dgroup{border:1px solid rgba(255,255,255,.12);border-radius:14px;background:rgba(18,24,38,.42);
-  margin-bottom:10px;overflow:hidden}
+  overflow:hidden}
 .pl-dsum{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:13px 16px;
   font-size:14px;font-weight:700;color:#eaf0fa;user-select:none}
 .pl-dsum::-webkit-details-marker{display:none}
@@ -72,7 +74,7 @@ const STYLE = `
 .pl-dgroup[open] .pl-chev{transform:rotate(90deg)}
 .pl-dcount{margin-left:auto;font-size:11px;font-weight:800;letter-spacing:.04em;color:rgba(234,240,250,.6);
   border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:2px 8px;background:rgba(255,255,255,.05)}
-.pl-dbody{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;padding:4px 14px 16px}
+.pl-dbody{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;padding:4px 14px 16px}
 .pl-guide{display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:11px;text-decoration:none;
   color:#eaf0fa;background:rgba(18,24,38,.5);border:1px solid rgba(255,255,255,.12);
   transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
@@ -312,35 +314,37 @@ export function LaunchPortal({
               <span className="pl-label">Training &amp; Documentation</span>
               <span className="pl-line" />
             </div>
-            {docGroups.map((grp) => (
-              <details className="pl-dgroup" key={grp.key}>
-                <summary className="pl-dsum">
-                  <span className="pl-chev">▶</span>
-                  {grp.label}
-                  <span className="pl-dcount">{grp.guides.length}</span>
-                </summary>
-                <div className="pl-dbody">
-                  {grp.guides.map((g) => {
-                    const isPdf = g.type === 'pdf' || /\.pdf$/i.test(g.file)
-                    return (
-                      <a
-                        className={`pl-guide${isPdf ? ' pl-pdf' : ''}`}
-                        key={g.file}
-                        href={`/guides/${encodeURIComponent(g.file)}`}
-                        target="_blank"
-                        rel="noopener"
-                      >
-                        <span className="pl-gtile">{isPdf ? DOC_ICON : BOOK_ICON}</span>
-                        <span className="pl-gtitle">
-                          {g.title || g.file.replace(/^\d+-/, '').replace(/\.(html|pdf)$/i, '').replace(/-/g, ' ')}
-                        </span>
-                        {isPdf && <span className="pl-gbadge">PDF</span>}
-                      </a>
-                    )
-                  })}
-                </div>
-              </details>
-            ))}
+            <div className="pl-dgrid">
+              {docGroups.map((grp) => (
+                <details className="pl-dgroup" key={grp.key}>
+                  <summary className="pl-dsum">
+                    <span className="pl-chev">▶</span>
+                    {grp.label}
+                    <span className="pl-dcount">{grp.guides.length}</span>
+                  </summary>
+                  <div className="pl-dbody">
+                    {grp.guides.map((g) => {
+                      const isPdf = g.type === 'pdf' || /\.pdf$/i.test(g.file)
+                      return (
+                        <a
+                          className={`pl-guide${isPdf ? ' pl-pdf' : ''}`}
+                          key={g.file}
+                          href={`/guides/${encodeURIComponent(g.file)}`}
+                          target="_blank"
+                          rel="noopener"
+                        >
+                          <span className="pl-gtile">{isPdf ? DOC_ICON : BOOK_ICON}</span>
+                          <span className="pl-gtitle">
+                            {g.title || g.file.replace(/^\d+-/, '').replace(/\.(html|pdf)$/i, '').replace(/-/g, ' ')}
+                          </span>
+                          {isPdf && <span className="pl-gbadge">PDF</span>}
+                        </a>
+                      )
+                    })}
+                  </div>
+                </details>
+              ))}
+            </div>
           </section>
         )}
 
