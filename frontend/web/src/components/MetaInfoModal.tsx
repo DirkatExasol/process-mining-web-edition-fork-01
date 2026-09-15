@@ -1,10 +1,10 @@
-/** The "Meta Infos" panel, opened from a flowchart node's context menu. Lists the
- *  project's distinct META values in three tabs (Meta_1/2/3), each searchable, and gives
- *  every value an Include / Exclude toggle — the list-based journey filter that mirrors the
- *  node Include/Exclude for steps. Project-wide (the same values the sidebar filters show),
- *  so it's the same panel from any node. */
+/** The "Meta Infos" panel, opened from a flowchart node's context menu. Lists the META
+ *  values that actually occur on THAT node's events, in three tabs (Meta_1/2/3), each
+ *  searchable, and gives every value an Include / Exclude toggle — the list-based journey
+ *  filter that mirrors the node Include/Exclude for steps. */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { api } from '../api'
 import { useStore } from '../store'
 import { Sheet } from './ui'
 
@@ -12,20 +12,34 @@ export function MetaInfoModal({ onClose }: { onClose: () => void }) {
   const meta1Title = useStore((s) => s.meta1Title)
   const meta2Title = useStore((s) => s.meta2Title)
   const meta3Title = useStore((s) => s.meta3Title)
-  const meta1Values = useStore((s) => s.meta1Values)
-  const meta2Values = useStore((s) => s.meta2Values)
-  const meta3Values = useStore((s) => s.meta3Values)
+  const node = useStore((s) => s.metaInfoNode)
+  const projectId = useStore((s) => s.selectedProject?.projectId)
   const metaFilters = useStore((s) => s.metaFilters)
   const handleMetaAction = useStore((s) => s.handleMetaAction)
   const clearMetaFilters = useStore((s) => s.clearMetaFilters)
 
+  // The values valid for this node, fetched when the panel opens.
+  const [values, setValues] = useState<{ meta1: string[]; meta2: string[]; meta3: string[] } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!node || projectId == null) return
+    let cancelled = false
+    setValues(null)
+    setError(null)
+    void api
+      .nodeMetaValues(projectId, node, 'ORIGINAL')
+      .then((v) => !cancelled && setValues(v))
+      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
+    return () => { cancelled = true }
+  }, [node, projectId])
+
   const cols = useMemo(
     () => [
-      { title: meta1Title, values: meta1Values },
-      { title: meta2Title, values: meta2Values },
-      { title: meta3Title, values: meta3Values },
+      { title: meta1Title, values: values?.meta1 ?? [] },
+      { title: meta2Title, values: values?.meta2 ?? [] },
+      { title: meta3Title, values: values?.meta3 ?? [] },
     ],
-    [meta1Title, meta2Title, meta3Title, meta1Values, meta2Values, meta3Values],
+    [meta1Title, meta2Title, meta3Title, values],
   )
   const [tab, setTab] = useState(0)
   const [query, setQuery] = useState('')
@@ -44,7 +58,7 @@ export function MetaInfoModal({ onClose }: { onClose: () => void }) {
 
   return (
     <Sheet
-      title="Meta Infos"
+      title={node ? `Meta Infos — ${node}` : 'Meta Infos'}
       icon="▤"
       onClose={onClose}
       footer={
@@ -92,9 +106,13 @@ export function MetaInfoModal({ onClose }: { onClose: () => void }) {
         />
 
         <div className="col" style={{ gap: 4, maxHeight: 360, overflowY: 'auto', paddingRight: 2 }}>
-          {(active.values ?? []).length === 0 ? (
+          {error ? (
+            <span className="t-caption2 fg-red" style={{ padding: '8px 2px' }}>{error}</span>
+          ) : values === null ? (
+            <span className="t-caption2 fg-tertiary" style={{ padding: '8px 2px' }}>Loading…</span>
+          ) : (active.values ?? []).length === 0 ? (
             <span className="t-caption2 fg-tertiary" style={{ padding: '8px 2px' }}>
-              No values in this column for the current project.
+              This node has no values in this column.
             </span>
           ) : filtered.length === 0 ? (
             <span className="t-caption2 fg-tertiary" style={{ padding: '8px 2px' }}>

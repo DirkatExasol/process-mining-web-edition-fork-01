@@ -593,6 +593,31 @@ class ProcessRepository:
                 out[col].append(val)
         return out
 
+    async def load_node_meta_values(
+        self, project_id: str, step: str
+    ) -> dict[str, list[str]]:
+        """DISTINCT META_1/2/3 values that actually occur on the events of ONE step
+        (node) — what the node's "Meta Infos" panel offers, so it lists only the metas
+        valid for that node. One round trip (UNION ALL tagged by column), sorted."""
+        cols = ["META_1", "META_2", "META_3"]
+        out: dict[str, list[str]] = {c: [] for c in cols}
+        safe = _pid(project_id)
+        frag = self.active_sample_set.sql_fragment()
+        step_sql = f"STEP = '{esc(step)}'"
+        parts = [
+            f"SELECT '{c}' AS col, {c} AS val FROM JOURNEYS "
+            f"WHERE PROJECT_ID = {safe} AND {frag} AND {step_sql} AND {c} IS NOT NULL "
+            f"GROUP BY {c}"
+            for c in cols
+        ]
+        sql = " UNION ALL ".join(parts) + " ORDER BY col, val"
+        result = await self.db.execute(sql)
+        for row in result.rows:
+            col, val = row[0], row[1]
+            if isinstance(col, str) and col in out and isinstance(val, str):
+                out[col].append(val)
+        return out
+
     async def find_nearest_day_with_data(
         self, day: datetime, project_id: str
     ) -> datetime | None:

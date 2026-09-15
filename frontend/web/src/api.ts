@@ -280,6 +280,12 @@ export const api = {
     get<ProjectBootstrap>(
       `/api/projects/${projectId}/bootstrap?sampleSet=${sampleSet}`,
     ),
+  // The META values that occur on ONE node's (step's) events, for its Meta Infos panel.
+  nodeMetaValues: (projectId: number, step: string, sampleSet: SampleSet) =>
+    post<{ meta1: string[]; meta2: string[]; meta3: string[] }>(
+      `/api/projects/${projectId}/node-metas`,
+      { step, sampleSet },
+    ),
   graph: (
     projectId: number,
     filter: FilterSpec,

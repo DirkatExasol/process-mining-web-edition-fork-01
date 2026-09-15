@@ -283,7 +283,7 @@ export function ChartView({
                 'simulation'
               }
               onNodeAction={(node, action) => store.handleNodeAction(node, action)}
-              onMetaInfo={() => store.openMetaInfo()}
+              onMetaInfo={(node) => store.openMetaInfo(node)}
               notes={store.projectNotes}
               onNodeNote={notes.openNodeNotes}
               onEdgeNote={notes.openEdgeNotes}

@@ -250,8 +250,9 @@ export interface AppState {
   meta1Filter: string
   meta2Filter: string
   meta3Filter: string
-  /** Whether the node "Meta Infos" panel is open. */
+  /** Whether the node "Meta Infos" panel is open, and the node it was opened for. */
   metaInfoOpen: boolean
+  metaInfoNode: string | null
   eventIdFilter: string
   eventIdSuggestions: string[]
   lastQueriedEventId: string
@@ -447,8 +448,9 @@ export interface AppActions {
   // Include/exclude a META value (col 0..2 = Meta_1..3) from the node "Meta Infos" panel.
   handleMetaAction: (col: number, value: string, action: 'include' | 'exclude') => void
   clearMetaFilters: () => void
-  // The node "Meta Infos" panel (a project-wide meta filter modal reachable from a node).
-  openMetaInfo: () => void
+  // The node "Meta Infos" panel — opened for a specific node, whose valid META values it
+  // lists; the include/exclude filters it sets are still journey-level.
+  openMetaInfo: (node: string) => void
   closeMetaInfo: () => void
   updateStep: (
     step: string,
@@ -606,6 +608,7 @@ const INITIAL_STATE: AppState = {
   excludedSteps: [],
   metaFilters: emptyMetaFilters(),
   metaInfoOpen: false,
+  metaInfoNode: null,
   meta1Filter: '',
   meta2Filter: '',
   meta3Filter: '',
@@ -2277,7 +2280,7 @@ export const useStore = create<Store>((set, get) => {
       void get().reloadGraph()
     },
 
-    openMetaInfo: () => set({ metaInfoOpen: true }),
+    openMetaInfo: (node) => set({ metaInfoOpen: true, metaInfoNode: node }),
     closeMetaInfo: () => set({ metaInfoOpen: false }),
 
     updateStep: async (step, payload) => {

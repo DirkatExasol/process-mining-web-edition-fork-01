@@ -1,16 +1,20 @@
-/** MetaInfoModal — the node "Meta Infos" panel: tabs per META column, searchable values,
- *  and include/exclude toggles that call handleMetaAction. */
+/** MetaInfoModal — the node "Meta Infos" panel: tabs per META column, node-scoped
+ *  searchable values (fetched for the clicked node), and include/exclude toggles. */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, cleanup } from '@testing-library/react'
+import { fireEvent, screen, cleanup } from '@testing-library/react'
 
 const handleMetaAction = vi.fn()
 const clearMetaFilters = vi.fn()
+const nodeMetaValues = vi.fn(async () => ({
+  meta1: ['Visa', 'SEPA', 'Apple Pay'],
+  meta2: ['Retail', 'Business'],
+  meta3: [],
+}))
 const state = {
   meta1Title: 'Payment', meta2Title: 'Segment', meta3Title: 'Channel',
-  meta1Values: ['Visa', 'SEPA', 'Apple Pay'],
-  meta2Values: ['Retail', 'Business'],
-  meta3Values: [],
+  metaInfoNode: 'Checkout',
+  selectedProject: { projectId: 7 },
   metaFilters: { included: [['Visa'], [], []], excluded: [[], ['Business'], []] },
   handleMetaAction,
   clearMetaFilters,
@@ -19,8 +23,10 @@ const state = {
 vi.mock('../store', () => ({
   useStore: (sel: (s: typeof state) => unknown) => sel(state),
 }))
+vi.mock('../api', () => ({ api: { nodeMetaValues: (...a: unknown[]) => nodeMetaValues(...(a as [])) } }))
 
 import { MetaInfoModal } from './MetaInfoModal'
+import { renderSettled } from '../test/renderSettled'
 
 afterEach(() => {
   cleanup()
@@ -28,14 +34,17 @@ afterEach(() => {
 })
 
 describe('MetaInfoModal', () => {
-  it('lists Meta_1 values, toggles include/exclude, and searches', () => {
-    render(<MetaInfoModal onClose={() => {}} />)
+  it('fetches the node values and toggles include/exclude', async () => {
+    await renderSettled(<MetaInfoModal onClose={() => {}} />)
 
-    // Tab labels use the META titles.
+    // Fetched the values for the clicked node.
+    expect(nodeMetaValues).toHaveBeenCalledWith(7, 'Checkout', 'ORIGINAL')
+    // Title names the node; tabs use the META titles.
+    expect(screen.getByText(/Meta Infos — Checkout/)).toBeTruthy()
     expect(screen.getByRole('button', { name: /Payment/ })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Segment/ })).toBeTruthy()
-    // Meta_1 values are listed; clicking Include on a value calls handleMetaAction(0, …).
-    expect(screen.getByText('SEPA')).toBeTruthy()
+
+    // Meta_1 values listed; Include/Exclude call handleMetaAction(0, …).
+    expect(await screen.findByText('SEPA')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Include SEPA' }))
     expect(handleMetaAction).toHaveBeenCalledWith(0, 'SEPA', 'include')
     fireEvent.click(screen.getByRole('button', { name: 'Exclude Visa' }))
@@ -46,14 +55,14 @@ describe('MetaInfoModal', () => {
     expect(screen.getByText('Apple Pay')).toBeTruthy()
     expect(screen.queryByText('SEPA')).toBeNull()
 
-    // Clear button reflects the active-count (1 included + 1 excluded = 2) and clears.
+    // Clear reflects the 2 active filters.
     fireEvent.click(screen.getByRole('button', { name: /Clear meta filters \(2\)/ }))
     expect(clearMetaFilters).toHaveBeenCalled()
   })
 
-  it('switches to an empty column and shows the no-values note', () => {
-    render(<MetaInfoModal onClose={() => {}} />)
+  it('shows a per-node empty note for a column the node never used', async () => {
+    await renderSettled(<MetaInfoModal onClose={() => {}} />)
     fireEvent.click(screen.getByRole('button', { name: /Channel/ }))
-    expect(screen.getByText(/No values in this column/)).toBeTruthy()
+    expect(screen.getByText(/This node has no values in this column/)).toBeTruthy()
   })
 })

@@ -148,6 +148,29 @@ def test_journey_qualifier_folds_meta_value_include_exclude():
     assert "'O''Neil'" in repo()._journey_qualifier(7, esc, include_date_meta=False)
 
 
+def test_load_node_meta_values_scopes_to_the_step():
+    import asyncio
+    import types
+
+    captured: dict[str, str] = {}
+
+    class _Cap:
+        async def execute(self, sql: str):
+            captured["sql"] = sql
+            return types.SimpleNamespace(rows=[
+                ("META_1", "Visa"), ("META_1", "SEPA"), ("META_2", "Retail"),
+            ])
+
+    r = repo()
+    r.db = _Cap()  # type: ignore[assignment]
+    out = asyncio.run(r.load_node_meta_values(7, "Check'out"))
+    # Scoped to the node's step (escaped), and grouped by column.
+    assert "STEP = 'Check''out'" in captured["sql"]
+    assert out["META_1"] == ["Visa", "SEPA"]
+    assert out["META_2"] == ["Retail"]
+    assert out["META_3"] == []
+
+
 def test_journey_qualifier_without_score_needs_no_join():
     f = FilterSpec(includedSteps=["Login"], minSteps=3)
     sql = repo()._journey_qualifier(7, f, include_date_meta=False)

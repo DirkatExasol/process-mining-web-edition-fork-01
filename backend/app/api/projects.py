@@ -307,6 +307,20 @@ async def event_ids(
     return await repo(sampleSet).load_event_id_suggestions(project_id, prefix, limit)
 
 
+class NodeMetasRequest(BaseModel):
+    step: str
+    sampleSet: SampleSet = SampleSet.original
+
+
+@router.post("/projects/{project_id}/node-metas")
+async def node_metas(project_id: int, request: NodeMetasRequest) -> dict:
+    """The distinct META_1/2/3 values that occur on one node's (step's) events — the values
+    the node "Meta Infos" panel offers, scoped to that node."""
+    require_connection()
+    vals = await repo(request.sampleSet).load_node_meta_values(project_id, request.step)
+    return {"meta1": vals["META_1"], "meta2": vals["META_2"], "meta3": vals["META_3"]}
+
+
 @router.get("/projects/{project_id}/journey")
 async def journey(
     project_id: int,
