@@ -1694,7 +1694,7 @@ def api_restart(user: User = Depends(require_admin)):
             os.kill(actions_pid, signal.SIGHUP)
         except (ValueError, OSError):
             actions_pid = None
-    # The AI Agent Logging Sink supervisor, best-effort — rebinds all sink listeners.
+    # The API Server - Event Receiver supervisor, best-effort — rebinds all sink listeners.
     sink_pid: int | None = None
     if SINK_PID_PATH.exists():
         try:
@@ -1788,7 +1788,7 @@ class SinkEnabledBody(BaseModel):
 
 @app.get("/api/sink")
 def api_sink_status(user: User = Depends(require_admin)):
-    """State of the AI Agent Logging Sink module: whether it's enabled, the size of the
+    """State of the API Server - Event Receiver module: whether it's enabled, the size of the
     port pool, how many sinks are configured, and whether the supervisor is running."""
     return {
         "enabled": store.sink_enabled,
@@ -1803,7 +1803,7 @@ def api_set_sink_enabled(body: SinkEnabledBody, user: User = Depends(require_adm
     store.set_sink_enabled(body.enabled)
     logx.usage(
         f"admin {user.username} {'enabled' if body.enabled else 'disabled'} "
-        f"the AI Agent Logging Sink module",
+        f"the API Server - Event Receiver module",
         username=user.username, operation="config",
     )
     return {"ok": True, "enabled": store.sink_enabled}

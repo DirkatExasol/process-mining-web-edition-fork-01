@@ -1,4 +1,4 @@
-"""Supervisor for the AI Agent Logging Sink module.
+"""Supervisor for the API Server - Event Receiver module.
 
 Reads every configured sink (across owners) and runs ONE uvicorn server per sink on
 its chosen port from the pre-exposed pool, under the shared TLS plan (the same mode +

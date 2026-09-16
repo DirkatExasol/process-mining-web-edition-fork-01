@@ -1,4 +1,4 @@
-"""Write JSON journey entries posted to an AI Agent Logging Sink into a connection's
+"""Write JSON journey entries posted to an API Server - Event Receiver into a connection's
 ``JOURNEYS`` table, creating any unknown ``STEP`` on the fly.
 
 This reuses the same building blocks as the File extractor — :class:`SqlIngestBackend`

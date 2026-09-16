@@ -1,4 +1,4 @@
-/** Polls the AI Agent Logging Sink monitor for the integration console. Slower than the
+/** Polls the API Server - Event Receiver monitor for the integration console. Slower than the
  *  file-status poll (5 s, not 1.5 s) because every tick reads the destination databases.
  *  Re-polls immediately when the active connection changes. On top of the raw payload it
  *  tracks the previous event count per sink so a lane whose count GREW since the last poll

@@ -1,4 +1,4 @@
-"""AI Agent Logging Sink — the JSON→JOURNEYS write path, token hashing, the port pool
+"""API Server - Event Receiver — the JSON→JOURNEYS write path, token hashing, the port pool
 and admin gate. The ingestion write is exercised against the in-memory backend."""
 
 from __future__ import annotations

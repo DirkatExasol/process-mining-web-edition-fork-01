@@ -219,7 +219,7 @@ export const api = {
   parseTimestamp: (value: string) =>
     post<{ format: string; normalized: string }>('/api/integration/parse/timestamp', { value }),
   listSources: () => get<Source[]>('/api/integration/sources'),
-  // Creating an AI-Agent-Logging-Sink returns a one-time `token` (only its hash is stored).
+  // Creating an API Server - Event Receiver returns a one-time `token` (only its hash is stored).
   createSource: (body: SourceInput) =>
     post<Source & { token?: string }>('/api/integration/sources', body),
   updateSource: (id: string, body: SourceInput) =>

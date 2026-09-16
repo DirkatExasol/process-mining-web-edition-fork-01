@@ -52,7 +52,7 @@ export function SourceWizard({
   )
   const [connections, setConnections] = useState<AssignedConnection[]>([])
   const [checkpoint, setCheckpoint] = useState<SourceCheckpoint | null>(null)
-  // AI-Agent-Logging-Sink: the port pool + those already taken, and the one-time token
+  // API Server - Event Receiver: the port pool + those already taken, and the one-time token
   // shown after a sink is created (only its hash is stored server-side).
   const [sinkPorts, setSinkPorts] = useState<{
     pool: number[]
@@ -237,7 +237,7 @@ export function SourceWizard({
       >
         <div className="iwiz-col narrow">
           <div className="t-body">
-            Your AI Agent Logging Sink is ready. <strong>Copy its bearer token now</strong> — it
+            Your API Server - Event Receiver is ready. <strong>Copy its bearer token now</strong> — it
             is shown only once (only its hash is stored).
           </div>
           <Field label="Bearer token">

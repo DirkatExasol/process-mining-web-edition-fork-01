@@ -19,7 +19,7 @@ services:
       - "18463:8463"   # integration console (HTTPS — active once TLS is enabled in admin)
       - "18110:8110"   # Actions surface (HTTP — developers / admins; off until enabled in admin)
       - "18473:8473"   # Actions surface (HTTPS — active once TLS is enabled in admin)
-      # AI Agent Logging Sink pool — one server per configured sink (HTTP 8120–8129,
+      # API Server - Event Receiver pool — one server per configured sink (HTTP 8120–8129,
       # HTTPS 8483–8492). A fixed pre-exposed pool because Docker can't publish ranges
       # dynamically; a sink picks a free port from it. Off until enabled in admin.
       - "18120-18129:8120-8129"   # sink ingestion servers (HTTP)

@@ -1,4 +1,4 @@
-"""Launcher for the AI Agent Logging Sink supervisor.
+"""Launcher for the API Server - Event Receiver supervisor.
 
 Runs one HTTP/HTTPS ingestion server per configured sink (see app.sink_launcher),
 following the same shared TLS plan as the app + admin and rebinding on SIGHUP.

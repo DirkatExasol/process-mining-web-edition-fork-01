@@ -1,4 +1,4 @@
-"""The FastAPI app for one AI Agent Logging Sink instance.
+"""The FastAPI app for one API Server - Event Receiver instance.
 
 Each configured sink gets its own app (and its own HTTP/HTTPS listener — see
 ``app.sink_launcher``). It exposes:
@@ -37,7 +37,7 @@ log = logging.getLogger("sink")
 
 def build_sink_app(*, name: str, title_short: str, token_hash: str, connection) -> FastAPI:
     """Build the ingestion app for one sink. ``connection`` is a Connection WITH secrets."""
-    app = FastAPI(title=f"AI Agent Logging Sink — {name}", docs_url=None, redoc_url=None)
+    app = FastAPI(title=f"API Server - Event Receiver — {name}", docs_url=None, redoc_url=None)
     schema = (connection.schema or "").strip()
     # One cached connection, reused across posts. `last` tracks when it was last used so a
     # long-idle (possibly network/server-dropped) connection is refreshed before reuse.
@@ -103,7 +103,7 @@ def build_sink_app(*, name: str, title_short: str, token_hash: str, connection) 
     async def ingest(request: Request):
         if not store.sink_enabled:
             return JSONResponse(
-                {"detail": "The AI Agent Logging Sink module is disabled."}, status_code=503
+                {"detail": "The API Server - Event Receiver module is disabled."}, status_code=503
             )
         auth = request.headers.get("authorization", "")
         token = auth[7:].strip() if auth[:7].lower() == "bearer " else ""

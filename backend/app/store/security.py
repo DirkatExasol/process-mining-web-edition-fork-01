@@ -592,7 +592,7 @@ class SecurityStore:
 
     @property
     def sink_enabled(self) -> bool:
-        """Whether the AI Agent Logging Sink module is available: the per-sink ingestion
+        """Whether the API Server - Event Receiver module is available: the per-sink ingestion
         servers accept posts. Opt-in, so OFF by default until an admin turns it on."""
         with self._lock:
             return self._get_config("sink_enabled") == "1"
@@ -2617,7 +2617,7 @@ class SecurityStore:
             return [self._row_to_source(r) for r in rows]
 
     def list_all_sinks(self) -> list[Source]:
-        """Every AI Agent Logging Sink across all owners — the sink supervisor binds one
+        """Every API Server - Event Receiver across all owners — the sink supervisor binds one
         ingestion server per row (see app.sink_launcher)."""
         return [s for s in self.list_all_sources() if s.kind == SINK_SOURCE_KIND]
 

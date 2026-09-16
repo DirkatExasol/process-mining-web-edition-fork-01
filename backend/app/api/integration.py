@@ -328,7 +328,7 @@ def _signal_sink_rebind() -> None:
 
 
 def _prepare_sink_config(body: "SourceBody", user: str | None, source_id: str | None) -> tuple[str, str]:
-    """Validate + finalise an AI-Agent-Logging-Sink config. Returns (config JSON, token):
+    """Validate + finalise an API Server - Event Receiver config. Returns (config JSON, token):
     ``token`` is the freshly generated plaintext (shown once) on create, else ""."""
     cfg = dict(body.config or {})
     conn_id = str(cfg.get("connectionId") or "").strip()
@@ -487,7 +487,7 @@ def regenerate_sink_token(source_id: str, request: Request) -> dict:
     if src is None:
         raise HTTPException(status_code=404, detail="Source not found.")
     if src.kind != SINK_SOURCE_KIND:
-        raise HTTPException(status_code=400, detail="Only an AI Agent Logging Sink has a token.")
+        raise HTTPException(status_code=400, detail="Only an API Server - Event Receiver has a token.")
     cfg = src.public()["config"]
     token = secrets.token_urlsafe(32)
     cfg["tokenHash"] = hash_sink_token(token)
@@ -511,7 +511,7 @@ def sink_ingest_info(source_id: str, request: Request) -> dict:
     if src is None:
         raise HTTPException(status_code=404, detail="Source not found.")
     if src.kind != SINK_SOURCE_KIND:
-        raise HTTPException(status_code=400, detail="Not an AI Agent Logging Sink.")
+        raise HTTPException(status_code=400, detail="Not an API Server - Event Receiver.")
     cfg = src.public()["config"]
     http_port = int(cfg.get("port") or 0)
     https_port = sink_https_port_for(http_port) if http_port else 0
@@ -550,7 +550,7 @@ def set_sink_endpoint(source_id: str, body: SinkEndpointBody, request: Request) 
     if src is None:
         raise HTTPException(status_code=404, detail="Source not found.")
     if src.kind != SINK_SOURCE_KIND:
-        raise HTTPException(status_code=400, detail="Not an AI Agent Logging Sink.")
+        raise HTTPException(status_code=400, detail="Not an API Server - Event Receiver.")
     url = body.url.strip()
     if url and not _valid_endpoint_url(url):
         raise HTTPException(status_code=400, detail="Enter a full http(s) URL, e.g. https://host/ingest.")
@@ -566,7 +566,7 @@ def set_sink_endpoint(source_id: str, body: SinkEndpointBody, request: Request) 
 
 @router.get("/sink-ports")
 def sink_ports(request: Request) -> dict:
-    """The AI-Agent-Logging-Sink port pool, with the ports already taken by other sinks
+    """The API Server - Event Receiver port pool, with the ports already taken by other sinks
     (so the wizard can offer the free ones). Ports are a fixed, pre-exposed pool."""
     _request_user(request)
     used: dict[str, str] = {}
@@ -674,7 +674,7 @@ async def _fill_sink_counts(entries: list[dict], user: str | None) -> None:
 
 @router.get("/sinks/monitor")
 async def sinks_monitor(request: Request) -> dict:
-    """A live, node-based monitor of the caller's AI Agent Logging Sinks.
+    """A live, node-based monitor of the caller's API Server - Event Receivers.
 
     Assembled entirely on the compute backend: the sink servers run in a separate
     supervisor process and keep no stats, so this reads what it *can* see without them —

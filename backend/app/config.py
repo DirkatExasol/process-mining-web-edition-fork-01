@@ -100,7 +100,7 @@ ACTIONS_HTTPS_PORT = int(
     os.environ.get("PMW_ACTIONS_HTTPS_PORT", str(ADMIN_HTTPS_PORT + 20))
 )
 
-# AI Agent Logging Sink — a supervisor process runs one HTTP/HTTPS ingestion server per
+# API Server - Event Receiver — a supervisor process runs one HTTP/HTTPS ingestion server per
 # configured sink, each on its own port from a FIXED, pre-exposed pool (Docker can only
 # publish statically-declared ports, not ranges). By convention the pool starts at the
 # admin port + 30 (HTTP 8120.. / HTTPS 8483.. with the defaults). All sinks follow the
@@ -119,7 +119,7 @@ SINK_PID_PATH = DATA_DIR / "sink.pid"
 # timeout on a dead socket. Kept well under typical NAT/idle drops.
 SINK_IDLE_RECONNECT_SECS = int(os.environ.get("PMW_SINK_IDLE_RECONNECT_SECS", "60"))
 
-# The `sources.kind` value that marks an AI Agent Logging Sink (vs a "file" source).
+# The `sources.kind` value that marks an API Server - Event Receiver (vs a "file" source).
 SINK_SOURCE_KIND = "ai-agent-logging-sink"
 
 # Ingest request limits (a sink is network-exposed and takes untrusted input): the

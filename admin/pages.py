@@ -1363,17 +1363,17 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
 
   <div class="tabpanel" id="tab-sink">
   <div class="card">
-    <h2>AI Agent Logging Sink</h2>
+    <h2>API Server - Event Receiver</h2>
     <p class="muted" style="margin-top:0">
       An HTTP/HTTPS API that AI agents <strong>POST journey entries</strong> to as JSON; each
       entry is written to the <strong>JOURNEYS</strong> table of the connection chosen when the
       sink is defined, and unknown steps are created automatically. Sinks are defined in the
-      <strong>Integration console</strong> (kind <em>AI AGENT LOGGING SINK</em>) by developers
+      <strong>Integration console</strong> (kind <em>API Server - Event Receiver</em>) by developers
       and admins; each runs on its own port from a fixed pool.
     </p>
     <label class="row" style="font-size:14px; cursor:pointer; gap:8px; align-items:center">
       <input type="checkbox" id="sink_enabled" style="width:auto" onchange="toggleSinkEnabled()">
-      Enable the AI Agent Logging Sink module
+      Enable the API Server - Event Receiver module
     </label>
     <div id="sink_status" class="col" style="margin-top:12px; gap:6px"></div>
     <p class="subtle" style="margin-top:10px">
@@ -2243,7 +2243,7 @@ async function toggleSinkEnabled() {
   const enabled = $('sink_enabled').checked;
   try {
     await api('/api/sink/enabled', { method: 'POST', body: JSON.stringify({ enabled }) });
-    toast(enabled ? 'AI Agent Logging Sink enabled' : 'AI Agent Logging Sink disabled');
+    toast(enabled ? 'API Server - Event Receiver enabled' : 'API Server - Event Receiver disabled');
     await loadSink();
   } catch (e) { toast(e.message, true); $('sink_enabled').checked = !enabled; }
 }

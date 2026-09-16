@@ -52,7 +52,7 @@ export function IntegrationConsole({ onShowHelp }: { onShowHelp: () => void }) {
       {sinkData && sinks.length > 0 && (
         <>
           <div className="ihist-head" style={{ marginTop: 18 }}>
-            <h2 style={{ margin: 0, fontSize: 15 }}>AI Agent Logging Sinks</h2>
+            <h2 style={{ margin: 0, fontSize: 15 }}>API Server - Event Receivers</h2>
             <span className="t-caption2 fg-tertiary">
               {sinks.length} sink{sinks.length === 1 ? '' : 's'} ·{' '}
               {sinkData.moduleEnabled

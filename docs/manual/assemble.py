@@ -26,7 +26,7 @@ PARTS = [
     (4, "Part IV", "The Integration Console", range(16, 21)),
     (5, "Part V", "Reference", range(21, 25)),
     (6, "Part VI", "Actions", range(25, 26)),
-    (7, "Part VII", "The AI Agent Logging Sink", range(26, 99)),
+    (7, "Part VII", "The API Server - Event Receiver", range(26, 99)),
 ]
 
 DATE = datetime.date.today().strftime("%d %B %Y")
@@ -158,7 +158,7 @@ def build_html(chapters, page_map=None):
   data through the integration console. <em>Part V</em> is reference material: the data
   model, the extractor API, troubleshooting and a glossary. <em>Part VI</em> covers Actions,
   the business-readable queries you attach to process-map nodes. <em>Part VII</em> covers the
-  AI Agent Logging Sink, the push API for logging events from an external program.</p>
+  API Server - Event Receiver, the push API for logging events from an external program.</p>
 
   <h2>Conventions</h2>
   <dl>

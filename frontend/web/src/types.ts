@@ -641,7 +641,7 @@ export interface IntegrationStatus {
   watchdogEnabled: boolean
 }
 
-/** One AI Agent Logging Sink in the live monitor: its config, whether its listener
+/** One API Server - Event Receiver in the live monitor: its config, whether its listener
  *  answered a localhost /health probe, and the destination-DB counts for its project. */
 export interface SinkMonitorEntry {
   id: string
@@ -663,7 +663,7 @@ export interface SinkMonitorEntry {
 }
 
 export interface SinkMonitor {
-  /** The AI Agent Logging Sink module is switched on in the admin interface. */
+  /** The API Server - Event Receiver module is switched on in the admin interface. */
   moduleEnabled: boolean
   /** The sink supervisor process is running (its PID file exists). */
   supervisorRunning: boolean

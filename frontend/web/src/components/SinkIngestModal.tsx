@@ -377,7 +377,7 @@ export function SinkIngestModal({
     `  -H "Content-Type: application/json" \\\n` +
     `  -d '${SAMPLE_BODY}'`
   const copy = (text: string) => void navigator.clipboard?.writeText(text)
-  const sinkName = name || info?.titleShort || 'AI Agent Logging Sink'
+  const sinkName = name || info?.titleShort || 'API Server - Event Receiver'
   const saveUrl = async () => {
     setSavingUrl(true)
     setError(null)

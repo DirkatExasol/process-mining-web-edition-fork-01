@@ -75,7 +75,7 @@ export const SOURCE_KINDS: SourceKindDef[] = [
   // ── Future kinds — structure only, not selectable yet ──────────────────────
   {
     id: 'ai-agent-logging-sink',
-    label: 'AI AGENT LOGGING SINK',
+    label: 'API Server - Event Receiver',
     icon: '🤖',
     description:
       'An HTTP/HTTPS API that AI agents POST journey entries to as JSON. Each entry is ' +

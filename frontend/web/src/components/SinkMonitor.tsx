@@ -1,4 +1,4 @@
-/** The AI Agent Logging Sinks as ONE live flowchart, the sink-side sibling of
+/** The API Server - Event Receivers as ONE live flowchart, the sink-side sibling of
  *  IntegrationPipeline. There is no run history here — sinks are pushed to by external
  *  agents and keep no stats — so each lane is assembled live from the monitor poll:
  *

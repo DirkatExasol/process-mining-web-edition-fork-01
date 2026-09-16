@@ -41,7 +41,7 @@ Four independent Python processes:
 | **Admin Interface** (`admin/`) | 8090 / 8453 | TLS/certificate management, the user allow-list, and per-user database connections |
 | **Integration Console** (`integration/`) | 8100 / 8463 | Data-source configuration; developers and admins only |
 | **Actions** (`actions/`) | 8110 / 8473 | Author business-readable node-menu actions; developers and admins only (off until an admin enables it) |
-| **AI Agent Logging Sink** (`sink/`) | 8120–8129 / 8483–8492 | One HTTP/HTTPS ingest API per configured sink (a pre-exposed port pool); external agents POST journey events; off until an admin enables it |
+| **API Server - Event Receiver** (`sink/`) | 8120–8129 / 8483–8492 | One HTTP/HTTPS ingest API per configured sink (a pre-exposed port pool); external agents POST journey events; off until an admin enables it |
 
 ```
 Browser ──► GUI Server (:8080 / :8443) ──proxy /api──► Compute Backend (:8000) ──► Exasol
@@ -838,12 +838,12 @@ interval).
 > **Status:** the contract, ingest backends, registry, per-user status, the File
 > extractor **and the file watchdog** are in place and tested
 > (`backend/tests/test_integration_{layer,extractor,files,watchdog}.py`). The first
-> non-file source kind — the **AI Agent Logging Sink** (below) — has shipped.
+> non-file source kind — the **API Server - Event Receiver** (below) — has shipped.
 
-## AI Agent Logging Sink
+## API Server - Event Receiver
 
 A second data-source kind, alongside File: instead of the demonstrator *pulling* from a
-file, the **AI Agent Logging Sink** opens a small HTTP/HTTPS API that an external program —
+file, the **API Server - Event Receiver** opens a small HTTP/HTTPS API that an external program —
 typically an AI agent — *pushes* journey events into as they happen. Each sink writes into
 one connection's `JOURNEYS` table under one project, auto-creating any step it has never
 seen. It is a fifth surface, run by its own supervisor process (`sink/`), and is **off
@@ -855,7 +855,7 @@ until an admin enables it** (Admin → *Logging Sink*).
   each sink is one port, one connection, one project code. The supervisor runs one uvicorn
   listener per sink and **rebinds on SIGHUP**, so adding/editing/removing a sink — or a TLS
   change — takes effect with no restart.
-- **Defining a sink** (integration console → *Sources* → ＋ → *AI Agent Logging Sink*):
+- **Defining a sink** (integration console → *Sources* → ＋ → *API Server - Event Receiver*):
   choose the destination **connection** (must have a schema), a 1–10-char **project code**
   (`TITLE_SHORT`; created on first write), a **port** from the pool, and a **TLS**
   preference (address agents over HTTPS or HTTP — the dropdown shows both ports per slot).

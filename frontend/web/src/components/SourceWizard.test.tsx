@@ -52,10 +52,10 @@ describe('SourceWizard', () => {
     expect(onSaved).toHaveBeenCalled()
   })
 
-  it('offers the AI Agent Logging Sink kind with connection + port fields', async () => {
+  it('offers the API Server - Event Receiver kind with connection + port fields', async () => {
     await renderSettled(<SourceWizard onClose={() => {}} onSaved={() => {}} />)
     // Pick the sink kind (it is selectable, not a "coming soon" placeholder).
-    fireEvent.click(screen.getByText('AI AGENT LOGGING SINK'))
+    fireEvent.click(screen.getByText('API Server - Event Receiver'))
     fireEvent.click(screen.getByRole('button', { name: /^Next$/ }))
     // Step 2 renders the sink's fields: a connection picker, a project code, a port.
     expect(await screen.findByText(/Project code/)).toBeTruthy()
@@ -73,7 +73,7 @@ describe('SourceWizard', () => {
     })
     const onSaved = vi.fn()
     await renderSettled(<SourceWizard onClose={() => {}} onSaved={onSaved} />)
-    fireEvent.click(screen.getByText('AI AGENT LOGGING SINK'))
+    fireEvent.click(screen.getByText('API Server - Event Receiver'))
     fireEvent.click(screen.getByRole('button', { name: /^Next$/ }))
     fireEvent.change(screen.getByPlaceholderText(/access log/i), {
       target: { value: 'Agent sink' },
