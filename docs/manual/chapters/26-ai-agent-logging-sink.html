@@ -120,8 +120,8 @@
 
 <h3 id="sink-code">26.6.1 Ready-to-run code in your language</h3>
 
-<p>The panel offers the same call in seven forms, sorted alphabetically along the tabs:
-<b>AI Agents (SKILL.md)</b>, <b>C#</b>, <b>CLI (curl)</b>, <b>Go</b>, <b>Mojo</b>, <b>Python</b> and <b>Rust</b>. Pick a tab, then <b>Copy</b> or <b>Download</b> it &mdash; the downloaded file is named for the language (<code>send_events.py</code>, <code>send_events.sh</code>, <code>SendEvents.cs</code>, <code>send_events.rs</code>, <code>send_events.go</code>, <code>send_events.mojo</code>) or <code>SKILL.md</code> for the agent tab. Each example already contains the endpoint URL and the bearer token from the fields above, the two headers, and the same journey body; when the endpoint is HTTPS (the certificate is self-signed by default) each also disables certificate verification the way that language expects &mdash; <code>curl -k</code>, Python <code>verify=False</code>, C#&rsquo;s <code>ServerCertificateCustomValidationCallback</code>, Rust&rsquo;s <code>danger_accept_invalid_certs</code>, Go&rsquo;s <code>InsecureSkipVerify</code> &mdash; so it runs against a fresh deployment without edits.</p>
+<p>The panel offers the same call in nine forms, sorted alphabetically along the tabs:
+<b>AI Agents (SKILL.md)</b>, <b>C#</b>, <b>CLI (curl)</b>, <b>Go</b>, <b>JavaScript</b>, <b>Mojo</b>, <b>Python</b>, <b>Rust</b> and <b>TypeScript</b>. Pick a tab, then <b>Copy</b> or <b>Download</b> it &mdash; the downloaded file is named for the language (<code>send_events.py</code>, <code>send_events.sh</code>, <code>SendEvents.cs</code>, <code>send_events.rs</code>, <code>send_events.go</code>, <code>send_events.mjs</code>, <code>send_events.ts</code>, <code>send_events.mojo</code>) or <code>SKILL.md</code> for the agent tab. Each example already contains the endpoint URL and the bearer token from the fields above, the two headers, and the same journey body; when the endpoint is HTTPS (the certificate is self-signed by default) each also disables certificate verification the way that language expects &mdash; <code>curl -k</code>, Python <code>verify=False</code>, C#&rsquo;s <code>ServerCertificateCustomValidationCallback</code>, Rust&rsquo;s <code>danger_accept_invalid_certs</code>, Go&rsquo;s <code>InsecureSkipVerify</code> &mdash; so it runs against a fresh deployment without edits.</p>
 
 <p>The <b>Python</b> tab, for example, uses <code>requests</code>:</p>
 
@@ -147,7 +147,7 @@ resp = requests.post(
 resp.raise_for_status()
 print(resp.json())</code></pre>
 
-<p>The compiled-language tabs are equally complete: <b>Go</b> uses <code>net/http</code>, <b>Rust</b> uses <code>reqwest</code>&#8239;+&#8239;<code>tokio</code>, <b>C#</b> is a .NET&#8202;6+ top-level program using <code>HttpClient</code>, and <b>Mojo</b> &mdash; which has no native HTTP client yet &mdash; drives Python&rsquo;s <code>requests</code> through Mojo&#8202;&#8596;&#8202;Python interop.</p>
+<p>The other tabs are equally complete: <b>Go</b> uses <code>net/http</code>, <b>Rust</b> uses <code>reqwest</code>&#8239;+&#8239;<code>tokio</code>, <b>C#</b> is a .NET&#8202;6+ top-level program using <code>HttpClient</code>, <b>JavaScript</b> and <b>TypeScript</b> use Node&#8202;18+&rsquo;s built-in <code>fetch</code> (the TypeScript tab adds an <code>interface</code> for the event shape), and <b>Mojo</b> &mdash; which has no native HTTP client yet &mdash; drives Python&rsquo;s <code>requests</code> through Mojo&#8202;&#8596;&#8202;Python interop.</p>
 
 <h3 id="sink-skill">26.6.2 An example SKILL.md</h3>
 

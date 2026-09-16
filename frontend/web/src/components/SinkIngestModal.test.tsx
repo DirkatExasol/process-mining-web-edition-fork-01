@@ -35,7 +35,7 @@ describe('SinkIngestModal', () => {
     // The token field is pre-filled from the just-minted token.
     expect(screen.getByDisplayValue('tok-abc')).toBeTruthy()
     // Every language tab is present, and the tabs are sorted alphabetically by label.
-    const labels = ['AI Agents (SKILL.md)', 'C#', 'CLI (curl)', 'Go', 'Mojo', 'Python', 'Rust']
+    const labels = ['AI Agents (SKILL.md)', 'C#', 'CLI (curl)', 'Go', 'JavaScript', 'Mojo', 'Python', 'Rust', 'TypeScript']
     for (const label of labels) {
       expect(screen.getByRole('button', { name: label })).toBeTruthy()
     }

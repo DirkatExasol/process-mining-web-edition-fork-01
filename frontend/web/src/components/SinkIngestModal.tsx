@@ -1,7 +1,7 @@
 /** A popup showing a sink's exact ingest request — the full URL, an editable token, and a
  *  tabbed set of ready-to-run code examples (Python, curl, AI-agent SKILL.md, C#, Rust, Go,
- *  Mojo — tabs sorted alphabetically), each with the correct scheme/port for the current TLS
- *  mode, hostname, token and JSON body,
+ *  JavaScript, TypeScript, Mojo — tabs sorted alphabetically), each with the correct
+ *  scheme/port for the current TLS mode, hostname, token and JSON body,
  *  so the user never has to construct the request by hand. The active tab is copyable and
  *  downloadable with a shared button. Opened from the "Sink created" panel, the
  *  regenerate-token dialog, and each sink badge. */
@@ -304,6 +304,65 @@ ${SAMPLE_PRETTY}
 `
 }
 
+/** A JavaScript example (Node 18+ built-in fetch, ESM top-level await). */
+function buildJs(o: { url: string; bearer: string; https: boolean }): string {
+  const tls = o.https
+    ? "// Self-signed cert — accept it (dev only). Drop this for a trusted certificate.\nprocess.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'\n\n"
+    : ''
+  return `// Node 18+ (built-in fetch), ESM. Run: node send_events.mjs
+const ENDPOINT = "${o.url}"
+const TOKEN = "${o.bearer}"
+
+${tls}// One journey: same eventId across events; step is a KIND:qualifier node.
+const events = ${SAMPLE_PRETTY}
+
+const resp = await fetch(ENDPOINT, {
+  method: "POST",
+  headers: {
+    Authorization: \`Bearer \${TOKEN}\`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify(events),
+})
+console.log(resp.status)
+console.log(await resp.json())
+`
+}
+
+/** A TypeScript example (Node 18+ fetch; run with tsx or ts-node). */
+function buildTs(o: { url: string; bearer: string; https: boolean }): string {
+  const tls = o.https
+    ? "// Self-signed cert — accept it (dev only). Drop this for a trusted certificate.\nprocess.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'\n\n"
+    : ''
+  return `// Node 18+ with tsx or ts-node. Run: npx tsx send_events.ts
+interface JourneyEvent {
+  eventId: string
+  step: string
+  description?: string
+  client?: string
+  user?: string
+  eventTime?: string
+}
+
+const ENDPOINT = "${o.url}"
+const TOKEN = "${o.bearer}"
+
+${tls}// One journey: same eventId across events; step is a KIND:qualifier node.
+const events: JourneyEvent[] = ${SAMPLE_PRETTY}
+
+const resp = await fetch(ENDPOINT, {
+  method: "POST",
+  headers: {
+    Authorization: \`Bearer \${TOKEN}\`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify(events),
+})
+console.log(resp.status)
+console.log(await resp.json())
+`
+}
+
 type Example = { key: string; label: string; filename: string; mime: string; code: string }
 
 /** All the code examples for the current sink, sorted alphabetically by tab label. */
@@ -330,6 +389,10 @@ function buildExamples(o: {
       code: buildRust({ url: o.url, bearer: o.bearer, https }) },
     { key: 'go', label: 'Go', filename: 'send_events.go', mime: 'text/plain',
       code: buildGo({ url: o.url, bearer: o.bearer, https }) },
+    { key: 'javascript', label: 'JavaScript', filename: 'send_events.mjs', mime: 'text/javascript',
+      code: buildJs({ url: o.url, bearer: o.bearer, https }) },
+    { key: 'typescript', label: 'TypeScript', filename: 'send_events.ts', mime: 'text/plain',
+      code: buildTs({ url: o.url, bearer: o.bearer, https }) },
     { key: 'mojo', label: 'Mojo', filename: 'send_events.mojo', mime: 'text/plain',
       code: buildMojo({ name: o.name, url: o.url, bearer: o.bearer, https }) },
   ].sort((a, b) => a.label.localeCompare(b.label))
