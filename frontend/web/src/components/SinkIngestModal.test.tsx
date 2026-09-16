@@ -20,27 +20,44 @@ import { renderSettled } from '../test/renderSettled'
 afterEach(() => vi.clearAllMocks())
 
 describe('SinkIngestModal', () => {
-  const curlText = () =>
-    (screen.getAllByRole('textbox') as HTMLTextAreaElement[])
-      .map((el) => el.value)
-      .find((v) => v.includes('curl')) ?? ''
+  // The read-only <textarea> holds the active tab's code; the URL/token <input>s are editable.
+  const codeText = () =>
+    (screen.getAllByRole('textbox') as HTMLTextAreaElement[]).find((el) => el.readOnly)?.value ?? ''
+  const clickTab = (name: string) =>
+    fireEvent.click(screen.getByRole('button', { name }))
 
-  it('computes the endpoint URL, embeds the token in curl, and offers SKILL.md', async () => {
+  it('computes the endpoint URL, embeds the token, and offers all example tabs', async () => {
     await renderSettled(
       <SinkIngestModal sourceId="s1" token="tok-abc" name="Agent sink" onClose={() => {}} />,
     )
     // The URL field is pre-filled with the auto-detected URL (no offset in jsdom).
     expect(await screen.findByDisplayValue('http://localhost:8129/ingest')).toBeTruthy()
-    // The token field is pre-filled from the just-minted token, and the curl embeds it.
+    // The token field is pre-filled from the just-minted token.
     expect(screen.getByDisplayValue('tok-abc')).toBeTruthy()
-    expect(curlText()).toContain('Authorization: Bearer tok-abc')
+    // Every requested language tab is present.
+    for (const label of ['Python', 'CLI (curl)', 'AI Agents (SKILL.md)', 'C#', 'Rust', 'Go']) {
+      expect(screen.getByRole('button', { name: label })).toBeTruthy()
+    }
+    // The default (Python) example embeds the token, and the download targets that file.
+    expect(codeText()).toContain('requests.post')
+    expect(codeText()).toContain('TOKEN = "tok-abc"')
+    expect(screen.getByRole('button', { name: /Download send_events\.py/ })).toBeTruthy()
+    // Switching to CLI shows the curl with the token; the download becomes the shell script.
+    clickTab('CLI (curl)')
+    expect(codeText()).toContain('Authorization: Bearer tok-abc')
+    expect(screen.getByRole('button', { name: /Download send_events\.sh/ })).toBeTruthy()
+    // The AI-agent SKILL.md is one of the tabs and downloads as SKILL.md.
+    clickTab('AI Agents (SKILL.md)')
+    expect(codeText()).toContain('# Skill: Emit process-mining journey events')
     expect(screen.getByRole('button', { name: /Download SKILL\.md/ })).toBeTruthy()
   })
 
   it('uses a placeholder token when opened without one', async () => {
     await renderSettled(<SinkIngestModal sourceId="s1" name="Agent sink" onClose={() => {}} />)
     await screen.findByDisplayValue('http://localhost:8129/ingest')
-    expect(curlText()).toContain('Bearer <YOUR_TOKEN>')
+    expect(codeText()).toContain('TOKEN = "<YOUR_TOKEN>"') // Python default tab
+    clickTab('CLI (curl)')
+    expect(codeText()).toContain('Bearer <YOUR_TOKEN>')
   })
 
   it('pre-fills a saved endpoint-URL override', async () => {
@@ -52,16 +69,17 @@ describe('SinkIngestModal', () => {
     })
     await renderSettled(<SinkIngestModal sourceId="s1" token="tok-abc" onClose={() => {}} />)
     expect(await screen.findByDisplayValue('https://pm.example.com/ingest')).toBeTruthy()
-    expect(curlText()).toContain('https://pm.example.com/ingest')
+    expect(codeText()).toContain('https://pm.example.com/ingest') // Python default tab
   })
 
-  it('lets the user override the URL and paste a token — both flow into the curl', async () => {
+  it('lets the user override the URL and paste a token — both flow into the examples', async () => {
     await renderSettled(<SinkIngestModal sourceId="s1" onClose={() => {}} />)
     const urlInput = await screen.findByDisplayValue('http://localhost:8129/ingest')
     fireEvent.change(urlInput, { target: { value: 'https://pm.example.com/ingest' } })
     fireEvent.change(screen.getByPlaceholderText('<YOUR_TOKEN>'), { target: { value: 'pasted-tok' } })
+    clickTab('CLI (curl)')
     await waitFor(() => {
-      const c = curlText()
+      const c = codeText()
       expect(c).toContain('https://pm.example.com/ingest')
       expect(c).toContain('Authorization: Bearer pasted-tok')
       expect(c).toContain('-k') // https → self-signed flag
