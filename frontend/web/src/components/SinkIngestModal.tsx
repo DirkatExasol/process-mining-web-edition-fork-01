@@ -61,7 +61,12 @@ function buildSkillMd(o: {
   titleShort: string
   hasToken: boolean
 }): string {
-  return `# Skill: Emit process-mining journey events to "${o.name}"
+  return `---
+name: AI-Agent-Logger
+description: A Skill for logging AI actions into the Process Mining Demonstrator
+---
+
+# Skill: Emit process-mining journey events to "${o.name}"
 
 ## When to use
 Use this skill to record what an agent does as **journey events**, so the runs appear as a

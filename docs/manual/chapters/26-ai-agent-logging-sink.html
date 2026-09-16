@@ -151,9 +151,14 @@ print(resp.json())</code></pre>
 
 <h3 id="sink-skill">26.6.2 An example SKILL.md</h3>
 
-<p>The downloaded file is plain Markdown with the sink's real URL and token filled in. Abbreviated, it reads:</p>
+<p>The downloaded file is plain Markdown with a YAML frontmatter header (so an agent runtime can register it as a skill) and the sink's real URL and token filled in. Abbreviated, it reads:</p>
 
-<pre><code># Skill: Emit process-mining journey events to "Agent Sink"
+<pre><code>---
+name: AI-Agent-Logger
+description: A Skill for logging AI actions into the Process Mining Demonstrator
+---
+
+# Skill: Emit process-mining journey events to "Agent Sink"
 
 ## How to model a journey
 Give every event of one run the same `eventId`. Each event's `step` is a

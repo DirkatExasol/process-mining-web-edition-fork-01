@@ -54,6 +54,8 @@ describe('SinkIngestModal', () => {
     expect(screen.getByRole('button', { name: /Download send_events\.sh/ })).toBeTruthy()
     // The AI-agent SKILL.md is one of the tabs and downloads as SKILL.md.
     clickTab('AI Agents (SKILL.md)')
+    // The SKILL.md leads with YAML frontmatter so an agent runtime can register it.
+    expect(codeText()).toMatch(/^---\nname: AI-Agent-Logger\ndescription: .+\n---/)
     expect(codeText()).toContain('# Skill: Emit process-mining journey events')
     expect(screen.getByRole('button', { name: /Download SKILL\.md/ })).toBeTruthy()
   })
