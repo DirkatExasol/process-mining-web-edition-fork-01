@@ -1,6 +1,7 @@
 /** A popup showing a sink's exact ingest request — the full URL, an editable token, and a
- *  tabbed set of ready-to-run code examples (Python, curl, AI-agent SKILL.md, C#, Rust, Go),
- *  each with the correct scheme/port for the current TLS mode, hostname, token and JSON body,
+ *  tabbed set of ready-to-run code examples (Python, curl, AI-agent SKILL.md, C#, Rust, Go,
+ *  Mojo — tabs sorted alphabetically), each with the correct scheme/port for the current TLS
+ *  mode, hostname, token and JSON body,
  *  so the user never has to construct the request by hand. The active tab is copyable and
  *  downloadable with a shared button. Opened from the "Sink created" panel, the
  *  regenerate-token dialog, and each sink badge. */
@@ -270,9 +271,42 @@ func main() {
 `
 }
 
+/** A Mojo example. Mojo has no native HTTP client yet, so it drives Python's `requests`
+ *  through Mojo↔Python interop (the idiomatic approach today). */
+function buildMojo(o: { name: string; url: string; bearer: string; https: boolean }): string {
+  const verify = o.https ? ', verify=False' : ''
+  const verifyNote = o.https ? '  # self-signed cert — trust the CA in production' : ''
+  return `# Mojo uses Python interop for HTTP. Requires "requests" in the Python
+# environment Mojo binds to:  pip install requests
+# Run with: mojo send_events.mojo   (emit journey events to "${o.name}")
+from python import Python
+
+fn main() raises:
+    var requests = Python.import_module("requests")
+    var json = Python.import_module("json")
+
+    var url = "${o.url}"
+    var token = "${o.bearer}"
+
+    # One journey: same eventId across events; step is a KIND:qualifier node.
+    var body = """
+${SAMPLE_PRETTY}
+"""
+    var events = json.loads(body)
+
+    var headers = Python.dict()
+    headers["Authorization"] = "Bearer " + token
+    headers["Content-Type"] = "application/json"
+
+    var resp = requests.post(url, headers=headers, json=events${verify})${verifyNote}
+    resp.raise_for_status()
+    print(resp.json())
+`
+}
+
 type Example = { key: string; label: string; filename: string; mime: string; code: string }
 
-/** All the code examples for the current sink, in the requested tab order. */
+/** All the code examples for the current sink, sorted alphabetically by tab label. */
 function buildExamples(o: {
   name: string
   url: string
@@ -296,7 +330,9 @@ function buildExamples(o: {
       code: buildRust({ url: o.url, bearer: o.bearer, https }) },
     { key: 'go', label: 'Go', filename: 'send_events.go', mime: 'text/plain',
       code: buildGo({ url: o.url, bearer: o.bearer, https }) },
-  ]
+    { key: 'mojo', label: 'Mojo', filename: 'send_events.mojo', mime: 'text/plain',
+      code: buildMojo({ name: o.name, url: o.url, bearer: o.bearer, https }) },
+  ].sort((a, b) => a.label.localeCompare(b.label))
 }
 
 export function SinkIngestModal({

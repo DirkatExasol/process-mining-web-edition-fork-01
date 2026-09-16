@@ -34,10 +34,16 @@ describe('SinkIngestModal', () => {
     expect(await screen.findByDisplayValue('http://localhost:8129/ingest')).toBeTruthy()
     // The token field is pre-filled from the just-minted token.
     expect(screen.getByDisplayValue('tok-abc')).toBeTruthy()
-    // Every requested language tab is present.
-    for (const label of ['Python', 'CLI (curl)', 'AI Agents (SKILL.md)', 'C#', 'Rust', 'Go']) {
+    // Every language tab is present, and the tabs are sorted alphabetically by label.
+    const labels = ['AI Agents (SKILL.md)', 'C#', 'CLI (curl)', 'Go', 'Mojo', 'Python', 'Rust']
+    for (const label of labels) {
       expect(screen.getByRole('button', { name: label })).toBeTruthy()
     }
+    const order = screen
+      .getAllByRole('button')
+      .map((b) => b.textContent ?? '')
+      .filter((t) => labels.includes(t))
+    expect(order).toEqual(labels)
     // The default (Python) example embeds the token, and the download targets that file.
     expect(codeText()).toContain('requests.post')
     expect(codeText()).toContain('TOKEN = "tok-abc"')
