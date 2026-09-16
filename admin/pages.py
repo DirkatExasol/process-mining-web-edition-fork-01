@@ -662,7 +662,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <button data-tab="reporting" onclick="selectTab('reporting')">Reporting</button>
     <button data-tab="integration" onclick="selectTab('integration')">Integration</button>
     <button data-tab="actions" onclick="selectTab('actions')">Actions</button>
-    <button data-tab="sink" onclick="selectTab('sink')">Logging Sink</button>
+    <button data-tab="sink" onclick="selectTab('sink')">Event Receiver</button>
   </div>
 
   <div class="tabpanel sel" id="tab-appcontrol">

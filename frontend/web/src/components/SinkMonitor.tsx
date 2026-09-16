@@ -195,7 +195,7 @@ export function SinkMonitor({ data, flowing }: { data: SinkMonitorData; flowing:
         id: `sink:${s.id}`, type: 'sink', draggable: true, ...NODE_DIMS,
         position: { x: COL.sink, y },
         data: {
-          icon: '🔌', kicker: 'Logging sink', title: s.name,
+          icon: '🔌', kicker: 'Event Receiver', title: s.name,
           subtitle: s.port ? `${s.activeScheme} · port ${s.port}` : 'no port',
           accent: 'var(--accent)', ports: ['l', 'r'], liveness: liveness(s),
         } satisfies SinkNodeData,

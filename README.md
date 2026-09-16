@@ -847,7 +847,7 @@ file, the **API Server - Event Receiver** opens a small HTTP/HTTPS API that an e
 typically an AI agent — *pushes* journey events into as they happen. Each sink writes into
 one connection's `JOURNEYS` table under one project, auto-creating any step it has never
 seen. It is a fifth surface, run by its own supervisor process (`sink/`), and is **off
-until an admin enables it** (Admin → *Logging Sink*).
+until an admin enables it** (Admin → *Event Receiver*).
 
 - **A sink per port, from a fixed pool.** Because Docker publishes ports statically, sinks
   bind a **pre-exposed pool**: HTTP `8120–8129` and the paired HTTPS `8483–8492` (host

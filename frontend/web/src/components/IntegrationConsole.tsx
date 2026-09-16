@@ -48,7 +48,7 @@ export function IntegrationConsole({ onShowHelp }: { onShowHelp: () => void }) {
 
       <IntegrationPipeline runs={runs} live={status} />
 
-      {/* The sink-side monitor: shown only once the user has defined a logging sink. */}
+      {/* The sink-side monitor: shown only once the user has defined an Event Receiver. */}
       {sinkData && sinks.length > 0 && (
         <>
           <div className="ihist-head" style={{ marginTop: 18 }}>

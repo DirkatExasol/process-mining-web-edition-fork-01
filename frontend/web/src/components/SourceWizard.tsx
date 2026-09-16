@@ -263,7 +263,7 @@ export function SourceWizard({
             </button>
           </div>
           <div className="t-caption2 fg-tertiary">
-            The module must be enabled in the admin interface (Logging Sink tab).
+            The module must be enabled in the admin interface (Event Receiver tab).
           </div>
         </div>
         {showDetails && (

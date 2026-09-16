@@ -1410,7 +1410,7 @@ const integrationConsole: HelpTopic = {
       body: [
         p('Besides files, a source can be a live HTTP/HTTPS ingestion server that AI agents (or any client) POST journey entries to as JSON. Add one under Sources → + → API Server - Event Receiver: pick the destination connection, a project code (TITLE_SHORT — entries land in that project, created if new) and a free port from the pool. On save you are shown a bearer token once (only its hash is stored) — copy it then.'),
         p('Each sink runs on its own port from a fixed pool (the admin port + 30 onwards — 8120–8129 by default; under Docker the published host port is that + 10000). POST a JSON object or an array to /ingest with header Authorization: Bearer <token>. Each entry needs eventId (the case / correlation id) and step; eventTime (ISO-8601, defaults to now) and meta1–3 are optional. Any unknown step is created automatically.'),
-        warn('The module is off by default — an administrator must enable “API Server - Event Receiver” in the admin interface (Logging Sink tab). While it is off, the ports stay open but return 503.'),
+        warn('The module is off by default — an administrator must enable “API Server - Event Receiver” in the admin interface (Event Receiver tab). While it is off, the ports stay open but return 503.'),
       ],
     },
     {

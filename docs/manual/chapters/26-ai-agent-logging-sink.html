@@ -24,7 +24,7 @@
 
 <h2 id="sink-enable">26.2 Enabling the module</h2>
 
-<p>The sink module is opt-in, like Actions. In the admin interface open the <strong>Logging Sink</strong> tab and tick <strong>Enable the API Server - Event Receiver</strong>. Toggling the switch takes effect immediately and needs no restart: the sink ports stay bound either way, but while the module is off every request is answered with <code>503</code> and nothing is written. The tab also shows how many sinks are configured and whether the sink supervisor process is running.</p>
+<p>The sink module is opt-in, like Actions. In the admin interface open the <strong>Event Receiver</strong> tab and tick <strong>Enable the API Server - Event Receiver</strong>. Toggling the switch takes effect immediately and needs no restart: the sink ports stay bound either way, but while the module is off every request is answered with <code>503</code> and nothing is written. The tab also shows how many sinks are configured and whether the sink supervisor process is running.</p>
 
 <p>Each sink listens on a fixed, pre-exposed port from a pool, so the container can publish them once. The pool is HTTP <code>8120&ndash;8129</code> and, under TLS, the paired HTTPS ports <code>8483&ndash;8492</code>. In the shipped Docker setup these are published on the host with a <code>+10000</code> offset &mdash; HTTP <code>18120&ndash;18129</code> and HTTPS <code>18483&ndash;18492</code> &mdash; so a caller outside the container uses the host port. The scheme and port that are actually live follow the deployment's TLS mode and certificate, exactly like the other surfaces (see chapter 2): with a certificate in <b>Optional</b> or <b>Required</b> mode a sink answers on its HTTPS port; otherwise on plain HTTP.</p>
 
