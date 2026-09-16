@@ -263,11 +263,14 @@ details summary { cursor: pointer; font-size: 13px; color: var(--accent); paddin
   background: rgba(120,120,128,.08); font-weight: 600; }
 .prof-ov-bar .spacer { flex: 1; }
 .prof-ov-body { flex: 1; overflow-y: auto; padding: 16px 22px 22px; }
-/* The admin tab strip is two stacked rows; the container carries the underline so a
-   selected tab in either row shows its accent mark directly beneath it. */
+/* The admin tab strip is two stacked rows, each a theme; the container carries the
+   underline so a selected tab in either row shows its accent mark directly beneath it. */
 .tabbar { border-bottom: 1px solid var(--border-soft); margin: 8px 0 4px; }
-.tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .tabs + .tabs { margin-top: 2px; }
+.tabs .tabgroup { align-self: center; color: var(--muted); font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .04em; opacity: .65; padding: 0 10px 0 2px;
+  min-width: 116px; }
 .tabs button { background: none; border: none; color: var(--muted); padding: 10px 16px; font-size: 14px;
   border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
 .tabs button.sel { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
@@ -656,20 +659,22 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
 
   <div class="tabbar">
     <div class="tabs">
+      <span class="tabgroup">Platform &amp; Security</span>
       <button data-tab="appcontrol" class="sel" onclick="selectTab('appcontrol')">App Control</button>
       <button data-tab="tls" onclick="selectTab('tls')">TLS / SSL</button>
       <button data-tab="users" onclick="selectTab('users')">Users</button>
-      <button data-tab="connections" onclick="selectTab('connections')">Database Connections</button>
       <button data-tab="ldap" onclick="selectTab('ldap')">Directory (LDAP)</button>
       <button data-tab="logging" onclick="selectTab('logging')">Logging</button>
+      <button data-tab="backup" onclick="selectTab('backup')">Backup</button>
     </div>
     <div class="tabs">
-      <button data-tab="backup" onclick="selectTab('backup')">Backup</button>
-      <button data-tab="customize" onclick="selectTab('customize')">Customize</button>
-      <button data-tab="reporting" onclick="selectTab('reporting')">Reporting</button>
+      <span class="tabgroup">Data &amp; Features</span>
+      <button data-tab="connections" onclick="selectTab('connections')">Database Connections</button>
       <button data-tab="integration" onclick="selectTab('integration')">Integration</button>
-      <button data-tab="actions" onclick="selectTab('actions')">Actions</button>
       <button data-tab="sink" onclick="selectTab('sink')">Event Receiver</button>
+      <button data-tab="actions" onclick="selectTab('actions')">Actions</button>
+      <button data-tab="reporting" onclick="selectTab('reporting')">Reporting</button>
+      <button data-tab="customize" onclick="selectTab('customize')">Customize</button>
     </div>
   </div>
 
