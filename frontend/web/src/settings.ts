@@ -40,6 +40,8 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   'graph.showTransitionTableButton': false,
   // A-Chart / B-Chart canvas view: false = flowchart, true = Sankey flow.
   'graph.sankeyView': false,
+  // Flowchart orientation: false = top-down (default), true = left-to-right (horizontal).
+  'graph.flowHorizontal': false,
   'sidebar.configGroupsExpanded': true,
   'sidebar.configFontsExpanded': true,
   'processmap.kpiExpanded': true,
