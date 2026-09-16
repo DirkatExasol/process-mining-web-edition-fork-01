@@ -875,11 +875,18 @@ until an admin enables it** (Admin → *Event Receiver*).
   capped server-side), `client` → **META_2** (*Client*: Claude/ChatGPT/…), `user` →
   **META_3** (*User*), and `eventTime` (ISO-8601; defaults to now). A per-project `METAS`
   row titles the three columns **Action / Client / User** so the app labels them.
-- **Ready-to-use SKILL.md.** The sink's *ingest details* popup shows the live endpoint URL
-  and a ready-to-run `curl`, and downloads a **SKILL.md** an agent can be handed as-is: the
+- **Ready-to-run examples in nine languages.** The sink's *ingest details* popup shows the
+  live endpoint URL and a tabbed **“Send data to the endpoint”** panel — the same call in
+  **Python, CLI (curl), AI Agents (SKILL.md), C#, Rust, Go, JavaScript, TypeScript and Mojo**
+  (tabs sorted alphabetically) — with a shared **Copy** / **Download** button that acts on
+  the active tab and names the file per language (`send_events.py`, `SendEvents.cs`,
+  `send_events.mjs`, `SKILL.md`, …). Every example is filled in ready to run: the
   **endpoint URL is editable and saved per sink** (override the auto-detected host URL with,
   say, a reverse-proxy domain), and a **token field** (pre-filled right after create/
-  regenerate, else pasted) is embedded so the file needs no hand-editing.
+  regenerate, else pasted) is embedded, and each disables self-signed-cert verification the
+  way its language expects when the endpoint is HTTPS — so nothing needs hand-editing. The
+  downloadable **SKILL.md** is one of those tabs: a self-contained instruction file an agent
+  can be handed as-is.
 - **Live monitor.** The integration console shows a node-based monitor for sinks — one lane
   `[AI agents] → [sink :port] → [project] → [connection]` per sink — with a `/health`
   liveness dot, destination-DB event/journey counts and last-event time, animating a lane
