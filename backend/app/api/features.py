@@ -276,7 +276,18 @@ async def create_sample(project_id: int, request: CreateSampleRequest) -> dict[s
         if db.active_profile_id
         else None
     )
-    if conn is not None and conn.use_indb_sampling:
+    use_indb = bool(conn and conn.use_indb_sampling)
+    # One line that answers "why was sampling slow?": which path, and the exact inputs
+    # to the decision. App-side (extract every id → pick → batched insert) is the slow
+    # one on large logs; if this says app-side, the connection's flag isn't set.
+    logx.info(
+        f"Sampling path: {'in-database' if use_indb else 'app-side'} — "
+        f"connection={db.active_profile_id!r}, resolved={conn is not None}, "
+        f"flag={getattr(conn, 'use_indb_sampling', None)}, "
+        f"count={request.count}, method={request.method.value}, slot={request.sampleSet.value}",
+        operation="sampling",
+    )
+    if use_indb:
         from ..db.schema_ddl import build_sample_in_db
 
         started = time.perf_counter()
@@ -309,13 +320,8 @@ async def create_sample(project_id: int, request: CreateSampleRequest) -> dict[s
         return {"counts": counts, "created": result["journeys"]}
 
     # App-side path (default): extract ids → pick in Python → batched re-insert.
-    # Logged so a "why is sampling slow?" can tell at a glance which path ran — the
-    # in-DB flag being off on this connection is the usual reason.
-    logx.info(
-        f"App-side sampling (in-DB flag off): project={project_id} "
-        f"slot={request.sampleSet.value} method={request.method.value}",
-        operation="sampling",
-    )
+    # The extract of every distinct EVENT_ID is what makes this slow on large logs,
+    # even for a tiny sample — enable the connection's in-database flag to avoid it.
     await r.delete_sample(project_id, request.sampleSet)
 
     if request.method is SamplingMethod.random:
