@@ -10,7 +10,7 @@ import asyncio
 import sqlite3
 
 from app.db.repository import ProcessRepository
-from app.models import FilterSpec
+from app.models import FilterSpec, SampleSet
 
 
 class _FakeTransDB:
@@ -65,6 +65,19 @@ def test_uses_live_query_when_disabled():
     assert len(db.executed) == 1
     assert "LEAD(" in db.executed[0] and "TRANSITIONS_RAW" not in db.executed[0]
     assert r.last_transitions_mode == "live"
+
+
+def test_sample_set_uses_live_even_when_materialized_enabled():
+    # A sample is created/rebuilt on demand and won't be in TRANSITIONS_RAW yet, so a
+    # materialised read would come back empty (blank map). Sample sets must use live.
+    db = _FakeTransDB(True, rows=_ONE_EDGE)
+    r = ProcessRepository(db)
+    r.active_sample_set = SampleSet.sample1
+    out = asyncio.run(r.load_transitions(7, FilterSpec(sampleSet=SampleSet.sample1)))
+    assert len(db.executed) == 1
+    assert "LEAD(" in db.executed[0] and "TRANSITIONS_RAW" not in db.executed[0]
+    assert r.last_transitions_mode == "live"
+    assert out[0].occurrences == 5
 
 
 def _dfg_live(con, pid, sample):

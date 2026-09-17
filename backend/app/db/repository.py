@@ -740,7 +740,15 @@ class ProcessRepository:
         # {filters} applies unchanged — TRANSITIONS_RAW carries PROJECT_ID,
         # SAMPLE_SET and EVENT_ID. Any failure (table not built yet, missing) is
         # non-fatal: fall back to the live query so the map never breaks.
+        #
+        # Sample sets always use the LIVE query, never TRANSITIONS_RAW. A sample is
+        # created/rebuilt on demand and TRANSITIONS_RAW is only rebuilt separately, so a
+        # materialised read of a just-made sample would come back EMPTY (its pairs aren't
+        # in the table yet) — the map would silently look blank. Samples are subsets, so
+        # the live LEAD() over them is cheap anyway.
         enabled = bool(getattr(self.db, "use_materialized_transitions", False))
+        if enabled and not self.active_sample_set.is_original:
+            enabled = False
         if enabled:
             try:
                 result = await self.db.execute(
