@@ -14,6 +14,14 @@ an existing schema's data.
 
 from __future__ import annotations
 
+import os
+
+# A long, one-shot in-database sample build must not be cut off by the interactive
+# 300 s socket-read timeout (pyexasol arms it once and never resets it per statement),
+# which is why the same INSERT finishes in DBVisualizer but stalls/errors here. Give the
+# build's own connection a generous read timeout (default 6 h; override with the env var).
+_SAMPLE_SOCKET_TIMEOUT = int(os.environ.get("PMW_SAMPLE_SOCKET_TIMEOUT_SECS", str(6 * 3600)))
+
 # Kept byte-for-byte in sync with ProcessRepository.ensure_notes_table (which
 # imports this constant), so a provisioned NOTES table matches what the app uses.
 NOTES_DDL = """
@@ -403,7 +411,9 @@ async def build_sample_in_db(
     insert_sql = _sample_insert_sql(pid, count, method, label)
 
     def _run() -> int:
-        conn = mgr._open(server, password)
+        # Generous socket-read timeout so the long INSERT isn't cut off mid-run (the
+        # difference from DBVisualizer); QUERY_TIMEOUT is also lifted below.
+        conn = mgr._open(server, password, socket_timeout=_SAMPLE_SOCKET_TIMEOUT)
         try:
             conn.execute(f"OPEN SCHEMA {ident}")
             try:

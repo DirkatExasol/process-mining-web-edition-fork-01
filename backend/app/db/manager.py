@@ -245,15 +245,21 @@ class DatabaseManager:
 
     # ── connecting ───────────────────────────────────────────────────────────
 
-    def _connect_kwargs(self, server: DatabaseServer, password: str) -> dict[str, Any]:
+    def _connect_kwargs(
+        self, server: DatabaseServer, password: str, *, socket_timeout: int | None = None
+    ) -> dict[str, Any]:
         dsn = f"{server.host}:{server.port}"
+        # pyexasol arms the WebSocket read timeout ONCE at connect and never resets it
+        # per statement, so this also caps how long a single statement may run. The
+        # interactive default (300 s) suits map queries; long one-shot builds (in-DB
+        # sampling, materialisation) pass a larger value so they aren't cut off mid-run.
         kwargs: dict[str, Any] = {
             "user": server.username,
             "password": password,
             "compression": True,
             "fetch_dict": False,
             "connection_timeout": 15,
-            "socket_timeout": 300,
+            "socket_timeout": socket_timeout if socket_timeout is not None else 300,
         }
         if server.schema_:
             kwargs["schema"] = server.schema_
@@ -288,8 +294,12 @@ class DatabaseManager:
         kwargs["dsn"] = dsn
         return kwargs
 
-    def _open(self, server: DatabaseServer, password: str) -> pyexasol.ExaConnection:
-        return pyexasol.connect(**self._connect_kwargs(server, password))
+    def _open(
+        self, server: DatabaseServer, password: str, *, socket_timeout: int | None = None
+    ) -> pyexasol.ExaConnection:
+        return pyexasol.connect(
+            **self._connect_kwargs(server, password, socket_timeout=socket_timeout)
+        )
 
     async def connect(self, profile: ConnectionProfile) -> str | None:
         """Connect and remember the profile. Returns an error message or None."""

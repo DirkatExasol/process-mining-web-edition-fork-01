@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
@@ -278,6 +279,7 @@ async def create_sample(project_id: int, request: CreateSampleRequest) -> dict[s
     if conn is not None and conn.use_indb_sampling:
         from ..db.schema_ddl import build_sample_in_db
 
+        started = time.perf_counter()
         result = await build_sample_in_db(
             host=conn.host, port=conn.port, username=conn.username,
             password=conn.password, schema=conn.schema,
@@ -285,6 +287,12 @@ async def create_sample(project_id: int, request: CreateSampleRequest) -> dict[s
             fingerprint=conn.fingerprint, min_rsa_bits=conn.min_rsa_bits,
             project_id=project_id, count=request.count,
             method=request.method.value, sample_set=request.sampleSet,
+        )
+        logx.info(
+            f"In-database sampling: project={project_id} slot={request.sampleSet.value} "
+            f"method={request.method.value} journeys={result.get('journeys', 0)} "
+            f"seconds={time.perf_counter() - started:.1f} ok={result['ok']}",
+            operation="sampling",
         )
         if not result["ok"]:
             raise HTTPException(
@@ -301,6 +309,13 @@ async def create_sample(project_id: int, request: CreateSampleRequest) -> dict[s
         return {"counts": counts, "created": result["journeys"]}
 
     # App-side path (default): extract ids → pick in Python → batched re-insert.
+    # Logged so a "why is sampling slow?" can tell at a glance which path ran — the
+    # in-DB flag being off on this connection is the usual reason.
+    logx.info(
+        f"App-side sampling (in-DB flag off): project={project_id} "
+        f"slot={request.sampleSet.value} method={request.method.value}",
+        operation="sampling",
+    )
     await r.delete_sample(project_id, request.sampleSet)
 
     if request.method is SamplingMethod.random:
