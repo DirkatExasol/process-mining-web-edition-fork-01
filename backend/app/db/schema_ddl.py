@@ -274,6 +274,160 @@ async def rebuild_materialized_transitions(
     }
 
 
+# ── In-database sampling ──────────────────────────────────────────────────────
+# Pick and materialise a sample slot entirely inside Exasol — no extract of every
+# EVENT_ID to the app and no thousands of batched INSERTs. One INSERT … SELECT
+# whose semi-join picks the journeys with pure SQL (window functions + RANDOM()).
+# RANDOM() is taken once per journey (on the grouped/distinct rows) so the pick is
+# unbiased w.r.t. journey length; temporal/path use clean proportional allocation
+# (per-bucket share, surplus trimmed in random order — no ordering bias).
+
+# The ORIGINAL-rows predicate, with an optional table alias.
+def _orig_pred(alias: str = "") -> str:
+    col = f"{alias}.SAMPLE_SET" if alias else "SAMPLE_SET"
+    return f"({col} = 'ORIGINAL' OR {col} IS NULL)"
+
+
+def _sample_chosen_ids_sql(project_id: int, count: int, method: str) -> str:
+    """Subquery selecting ``count`` EVENT_IDs from ORIGINAL by ``method``
+    ('random' | 'temporal' | 'pathDiverse')."""
+    pid = int(project_id)
+    n = int(count)
+    orig = _orig_pred()
+    if method == "random":
+        return f"""
+            SELECT EVENT_ID FROM (
+              SELECT EVENT_ID, ROW_NUMBER() OVER (ORDER BY r) AS rn
+              FROM (
+                SELECT EVENT_ID, RANDOM() AS r
+                FROM (
+                  SELECT DISTINCT EVENT_ID FROM JOURNEYS
+                  WHERE PROJECT_ID = {pid} AND {orig}
+                )
+              )
+            ) WHERE rn <= {n}
+        """
+    if method == "temporal":
+        bucket = "TO_CHAR(MIN(EVENT_TIME), 'YYYY-MM')"
+    elif method == "pathDiverse":
+        bucket = (
+            "HASH_MD5(LISTAGG(CAST(STEP_ID AS VARCHAR(20)), '>') "
+            "WITHIN GROUP (ORDER BY EVENT_TIME, STEP_ID))"
+        )
+    else:
+        raise ValueError(f"unknown sampling method: {method!r}")
+    # Proportional across buckets (calendar month, or journey variant), then a clean
+    # random global cap to {N}.
+    return f"""
+        WITH jr AS (
+          SELECT EVENT_ID, {bucket} AS bucket
+          FROM JOURNEYS WHERE PROJECT_ID = {pid} AND {orig}
+          GROUP BY EVENT_ID
+        ),
+        jrr AS (SELECT EVENT_ID, bucket, RANDOM() AS r FROM jr),
+        sz  AS (SELECT bucket, COUNT(*) AS cnt FROM jr GROUP BY bucket),
+        tot AS (SELECT COUNT(*) AS total FROM jr),
+        ranked AS (
+          SELECT jrr.EVENT_ID, jrr.r,
+                 ROW_NUMBER() OVER (PARTITION BY jrr.bucket ORDER BY jrr.r) AS rn_bucket,
+                 GREATEST(1, ROUND(sz.cnt / tot.total * {n})) AS share
+          FROM jrr JOIN sz ON jrr.bucket = sz.bucket CROSS JOIN tot
+        ),
+        picked AS (SELECT EVENT_ID, r FROM ranked WHERE rn_bucket <= share)
+        SELECT EVENT_ID FROM (
+          SELECT EVENT_ID, ROW_NUMBER() OVER (ORDER BY r) AS grn FROM picked
+        ) WHERE grn <= {n}
+    """
+
+
+def _sample_insert_sql(project_id: int, count: int, method: str, label: str) -> str:
+    """The single INSERT … SELECT that copies the chosen journeys' ORIGINAL rows,
+    tagged with the sample slot ``label`` (a SampleSet value, e.g. 'SAMPLE_1')."""
+    pid = int(project_id)
+    chosen = _sample_chosen_ids_sql(pid, count, method)
+    return f"""
+        INSERT INTO JOURNEYS
+            (PROJECT_ID, EVENT_ID, STEP, STEP_ID, EVENT_TIME, META_1, META_2, META_3, SAMPLE_SET)
+        SELECT j.PROJECT_ID, j.EVENT_ID, j.STEP, j.STEP_ID, j.EVENT_TIME,
+               j.META_1, j.META_2, j.META_3, '{label}'
+        FROM JOURNEYS j
+        WHERE j.PROJECT_ID = {pid} AND {_orig_pred('j')}
+          AND j.EVENT_ID IN ({chosen})
+    """
+
+
+async def build_sample_in_db(
+    *,
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    schema: str,
+    project_id: str,
+    count: int,
+    method: str,
+    sample_set,
+    use_tls: bool = False,
+    cert_mode: str = "verify",
+    fingerprint: str = "",
+    min_rsa_bits: int = 2048,
+) -> dict:
+    """(Re)build one sample slot for ``project_id`` inside ``schema`` with no app
+    round-trip: DELETE the slot, then one INSERT … SELECT that picks ``count``
+    journeys from ORIGINAL by ``method`` and copies their rows under the slot label.
+
+    Runs on its own connection with the statement timeout lifted (the whole point —
+    a set-based build survives where thousands of batched INSERTs time out).
+    Returns ``{"ok", "error", "journeys"}`` (journeys = distinct EVENT_IDs written).
+    """
+    import asyncio
+
+    from ..models import DatabaseServer
+    from .manager import DatabaseManager, friendly_error
+
+    if getattr(sample_set, "is_original", False):
+        return {"ok": False, "error": "Cannot overwrite the original data.", "journeys": 0}
+    schema = (schema or "").strip()
+    if not schema:
+        return {"ok": False, "error": "A schema name is required.", "journeys": 0}
+    label = sample_set.value
+    pid = int(project_id)
+
+    server = DatabaseServer(
+        id="sampling", host=host, port=port, username=username,
+        useTLS=use_tls, certModeRaw=cert_mode, fingerprint=fingerprint,
+        minRSAKeySizeBits=min_rsa_bits, **{"schema": ""},
+    )
+    mgr = DatabaseManager.__new__(DatabaseManager)  # no store side effects
+    ident = _quote_ident(schema)
+    insert_sql = _sample_insert_sql(pid, count, method, label)
+
+    def _run() -> int:
+        conn = mgr._open(server, password)
+        try:
+            conn.execute(f"OPEN SCHEMA {ident}")
+            try:
+                conn.execute("ALTER SESSION SET QUERY_TIMEOUT = 0")  # long, one-shot build
+            except Exception:  # noqa: BLE001 — not fatal if the role can't set it
+                pass
+            conn.execute(f"DELETE FROM JOURNEYS WHERE PROJECT_ID = {pid} AND SAMPLE_SET = '{label}'")
+            conn.execute(insert_sql)
+            written = conn.execute(
+                f"SELECT COUNT(DISTINCT EVENT_ID) FROM JOURNEYS "
+                f"WHERE PROJECT_ID = {pid} AND SAMPLE_SET = '{label}'"
+            ).fetchval()
+            conn.commit()
+            return int(written or 0)
+        finally:
+            conn.close()
+
+    try:
+        journeys = await asyncio.to_thread(_run)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": friendly_error(exc), "journeys": 0}
+    return {"ok": True, "error": None, "journeys": journeys}
+
+
 async def provision_process_mining_schema(
     *,
     host: str,

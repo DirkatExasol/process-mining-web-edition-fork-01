@@ -263,6 +263,44 @@ async def create_sample(project_id: int, request: CreateSampleRequest) -> dict[s
 
     r = repo()
     await r.ensure_sample_set_column()
+
+    # Per-connection opt-in: build the whole sample INSIDE the database — one
+    # set-based INSERT … SELECT, no extract of every EVENT_ID to the app and no
+    # thousands of batched re-inserts. Essential for very large logs (the app-side
+    # path times out at ~500M events). Falls back to the app path when the flag is
+    # off or the connection (with secrets) can't be resolved.
+    db = current_db()
+    conn = (
+        security_store.get_connection(db.active_profile_id, with_secrets=True)
+        if db.active_profile_id
+        else None
+    )
+    if conn is not None and conn.use_indb_sampling:
+        from ..db.schema_ddl import build_sample_in_db
+
+        result = await build_sample_in_db(
+            host=conn.host, port=conn.port, username=conn.username,
+            password=conn.password, schema=conn.schema,
+            use_tls=conn.use_tls, cert_mode=conn.cert_mode,
+            fingerprint=conn.fingerprint, min_rsa_bits=conn.min_rsa_bits,
+            project_id=project_id, count=request.count,
+            method=request.method.value, sample_set=request.sampleSet,
+        )
+        if not result["ok"]:
+            raise HTTPException(
+                status_code=502, detail=result["error"] or "In-database sampling failed."
+            )
+        if result["journeys"] == 0:
+            raise HTTPException(
+                status_code=404, detail="No journeys found in the original data."
+            )
+        store.set(
+            f"sampling.method.{request.sampleSet.value}.{project_id}", request.method.value
+        )
+        counts = await r.load_sample_journey_counts(project_id)
+        return {"counts": counts, "created": result["journeys"]}
+
+    # App-side path (default): extract ids → pick in Python → batched re-insert.
     await r.delete_sample(project_id, request.sampleSet)
 
     if request.method is SamplingMethod.random:

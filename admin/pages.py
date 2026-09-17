@@ -952,6 +952,19 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
           </div>
         </details>
       </div>
+
+      <div class="banner info" style="margin-top:14px">
+        <label class="row" style="font-size:13px">
+          <input type="checkbox" id="c_useInDbSampling" style="width:auto">
+          <strong>Build sample sets inside the database</strong>
+        </label>
+        <p class="subtle" style="margin:6px 0 0">
+          Creates each sample slot with a single set-based <code>INSERT … SELECT</code> that picks the
+          journeys in SQL, instead of extracting every id to the app and re-inserting them in batches.
+          Turn this on for very large logs (hundreds of millions of events), where the app-side path
+          times out; small projects can leave it off. Applies to the next sample you create.
+        </p>
+      </div>
       </div><!-- /ctab-db -->
 
       <div class="ctabpanel" id="ctab-llm">
@@ -2958,6 +2971,7 @@ function fillEditor(c) {
   $('c_llmKeyHint').textContent = c.hasLLMKey ? '(set — leave blank to keep)' : '';
   renderAssign(c.assignments);
   $('c_useMaterialized').checked = !!c.useMaterializedTransitions;
+  $('c_useInDbSampling').checked = !!c.useInDbSampling;
   renderMatStatus(c);
   $('c_matResult').textContent = '';
   $('c_rebuildBtn').disabled = !c.id;  // needs a saved connection to rebuild against
@@ -3073,6 +3087,7 @@ function editorBody() {
     llmModel: $('c_llmModel').value.trim(),
     assignments: selectedAssignments(),
     useMaterializedTransitions: $('c_useMaterialized').checked,
+    useInDbSampling: $('c_useInDbSampling').checked,
   };
   // Only send secrets when the user typed something (blank ⇒ keep existing).
   if ($('c_password').value) body.password = $('c_password').value;

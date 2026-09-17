@@ -1830,6 +1830,7 @@ class ConnectionBody(BaseModel):
     llmKey: str | None = None
     assignments: list[str] = []
     useMaterializedTransitions: bool = False
+    useInDbSampling: bool = False
 
     model_config = {"populate_by_name": True}
 
@@ -1872,6 +1873,7 @@ def _connection_payload(body: ConnectionBody) -> dict:
         "llmModel": body.llmModel,
         "assignments": body.assignments,
         "useMaterializedTransitions": body.useMaterializedTransitions,
+        "useInDbSampling": body.useInDbSampling,
     }
     # Only forward secrets that were explicitly provided (None ⇒ keep existing).
     if body.password is not None:

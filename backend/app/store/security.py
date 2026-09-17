@@ -386,6 +386,7 @@ class Connection:
     owner: str = ""  # power user who created it from the app; '' = admin-defined
     created_at: str = ""
     use_materialized_transitions: bool = False
+    use_indb_sampling: bool = False
 
     @property
     def has_llm(self) -> bool:
@@ -413,6 +414,7 @@ class Connection:
             "owner": self.owner,
             "createdAt": self.created_at,
             "useMaterializedTransitions": self.use_materialized_transitions,
+            "useInDbSampling": self.use_indb_sampling,
         }
 
     def user_public(self) -> dict:
@@ -498,6 +500,14 @@ class SecurityStore:
             self._conn.execute(
                 "ALTER TABLE connections ADD COLUMN "
                 "use_materialized_transitions INTEGER NOT NULL DEFAULT 0"
+            )
+        # Opt-in to building sample sets entirely inside the database (one set-based
+        # INSERT … SELECT) instead of extracting ids to the app and re-inserting —
+        # needed for very large logs where the round-trip times out.
+        if "use_indb_sampling" not in conn_cols:
+            self._conn.execute(
+                "ALTER TABLE connections ADD COLUMN "
+                "use_indb_sampling INTEGER NOT NULL DEFAULT 0"
             )
         # Directory sign-in to the admin interface is an explicit opt-in (default off).
         ldap_cols = {
@@ -2306,6 +2316,9 @@ class SecurityStore:
                 if "use_materialized_transitions" in row.keys()
                 else 0
             ),
+            use_indb_sampling=bool(
+                row["use_indb_sampling"] if "use_indb_sampling" in row.keys() else 0
+            ),
         )
 
     def list_connections(self) -> list[Connection]:
@@ -2403,8 +2416,8 @@ class SecurityStore:
                     (id, name, comment, host, port, username, db_schema, use_tls,
                      cert_mode, fingerprint, min_rsa_bits, password_enc,
                      llm_url, llm_model, llm_key_enc, owner,
-                     use_materialized_transitions, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     use_materialized_transitions, use_indb_sampling, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name, comment=excluded.comment, host=excluded.host,
                     port=excluded.port, username=excluded.username, db_schema=excluded.db_schema,
@@ -2412,7 +2425,8 @@ class SecurityStore:
                     fingerprint=excluded.fingerprint, min_rsa_bits=excluded.min_rsa_bits,
                     password_enc=excluded.password_enc, llm_url=excluded.llm_url,
                     llm_model=excluded.llm_model, llm_key_enc=excluded.llm_key_enc,
-                    use_materialized_transitions=excluded.use_materialized_transitions
+                    use_materialized_transitions=excluded.use_materialized_transitions,
+                    use_indb_sampling=excluded.use_indb_sampling
                 """,
                 (
                     conn_id,
@@ -2432,6 +2446,7 @@ class SecurityStore:
                     llm_key_enc,
                     (data.get("owner") or "").strip(),  # only applied on INSERT (immutable after)
                     int(bool(data.get("useMaterializedTransitions"))),
+                    int(bool(data.get("useInDbSampling"))),
                     _now(),
                 ),
             )
