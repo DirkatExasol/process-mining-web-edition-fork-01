@@ -420,13 +420,23 @@ async def build_sample_in_db(
                 conn.execute("ALTER SESSION SET QUERY_TIMEOUT = 0")  # long, one-shot build
             except Exception:  # noqa: BLE001 — not fatal if the role can't set it
                 pass
-            conn.execute(f"DELETE FROM JOURNEYS WHERE PROJECT_ID = {pid} AND SAMPLE_SET = '{label}'")
-            conn.execute(insert_sql)
-            written = conn.execute(
-                f"SELECT COUNT(DISTINCT EVENT_ID) FROM JOURNEYS "
-                f"WHERE PROJECT_ID = {pid} AND SAMPLE_SET = '{label}'"
-            ).fetchval()
-            conn.commit()
+            # One explicit transaction for the whole build: the DELETE + INSERT commit
+            # together (readers never see the slot half-empty) and there is exactly one
+            # COMMIT, instead of pyexasol's per-statement autocommit. Rolled back on error.
+            conn.set_autocommit(False)
+            try:
+                conn.execute(
+                    f"DELETE FROM JOURNEYS WHERE PROJECT_ID = {pid} AND SAMPLE_SET = '{label}'"
+                )
+                conn.execute(insert_sql)
+                written = conn.execute(
+                    f"SELECT COUNT(DISTINCT EVENT_ID) FROM JOURNEYS "
+                    f"WHERE PROJECT_ID = {pid} AND SAMPLE_SET = '{label}'"
+                ).fetchval()
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
             return int(written or 0)
         finally:
             conn.close()
