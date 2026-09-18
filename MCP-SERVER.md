@@ -116,6 +116,41 @@ takes `limit`.
 
 ---
 
+## Behind a reverse proxy
+
+The MCP server listens on its own port (container `8130`/`8493`, host `18130`/`18493`). If you
+expose it under a public domain path — e.g. `https://pm.example.com/mcp` — the proxy must:
+
+1. **Preserve the path.** Forward `/mcp` to the backend as `/mcp`, not stripped to `/`. In
+   nginx, `proxy_pass http://mcp-backend:8493;` (no trailing slash) preserves it;
+   `proxy_pass http://mcp-backend:8493/;` (trailing slash) **strips** the prefix and the
+   backend then sees `/` (you'd get a `404 {"detail":"Not Found"}`). The server also answers
+   at the root as a fallback, so a stripping proxy still works — but preserving the path is
+   cleaner. Route `/mcp`, `/.well-known/oauth-protected-resource` (and its `…/mcp` suffix) and
+   `/health` to the backend.
+2. **Send forwarding headers.** Set `X-Forwarded-Proto` and `X-Forwarded-Host` so the OAuth
+   discovery document advertises the public `https://pm.example.com/mcp`, not the internal
+   host:port.
+
+Example nginx:
+
+```nginx
+location /mcp {
+    proxy_pass https://127.0.0.1:18493;   # no trailing slash — keep the /mcp path
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host  $host;
+}
+location = /.well-known/oauth-protected-resource      { proxy_pass https://127.0.0.1:18493; proxy_set_header X-Forwarded-Host $host; proxy_set_header X-Forwarded-Proto $scheme; }
+location = /.well-known/oauth-protected-resource/mcp  { proxy_pass https://127.0.0.1:18493; proxy_set_header X-Forwarded-Host $host; proxy_set_header X-Forwarded-Proto $scheme; }
+```
+
+Point the client at the public URL (`https://pm.example.com/mcp`). Alternatively, skip the
+proxy and expose the MCP port directly (`https://<host>:18493/mcp`) if your firewall allows it
+and TLS is enabled in the admin console.
+
+---
+
 ## Part C — Add the server to an AI client
 
 ### Claude (claude.ai / Claude Desktop)

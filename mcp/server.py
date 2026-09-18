@@ -382,6 +382,16 @@ async def _dispatch(message: dict, user) -> dict | None:
     return _rpc_error(req_id, -32601, f"Method not found: {method}")
 
 
+def _external_base(request: Request) -> str:
+    """The externally visible base URL. Behind a reverse proxy (the usual deployment —
+    the MCP server sits on its own port and a proxy forwards a public path to it) the
+    proxy must send X-Forwarded-Proto / X-Forwarded-Host; we honour them so the OAuth
+    discovery documents advertise the public URL, not the internal host:port."""
+    proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip() or request.url.scheme
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip()
+    return f"{proto}://{host}" if host else str(request.base_url).rstrip("/")
+
+
 @app.post("/mcp")
 async def mcp_endpoint(request: Request):
     if not store.mcp_enabled:
@@ -391,7 +401,7 @@ async def mcp_endpoint(request: Request):
     except AuthError as exc:
         headers = {}
         if exc.challenge:
-            meta = str(request.base_url).rstrip("/") + "/.well-known/oauth-protected-resource"
+            meta = _external_base(request) + "/.well-known/oauth-protected-resource"
             headers["WWW-Authenticate"] = f'Bearer resource_metadata="{meta}"'
         return JSONResponse({"error": exc.message}, status_code=exc.status, headers=headers)
 
@@ -417,16 +427,25 @@ async def mcp_get() -> JSONResponse:
                         status_code=405)
 
 
+# Also answer at the ROOT, so a reverse proxy that forwards a public `/mcp` path to this
+# backend AND strips the prefix (nginx `proxy_pass http://backend/;`) still reaches the
+# handler — the request then arrives here as `/` rather than `/mcp`.
+app.add_api_route("/", mcp_endpoint, methods=["POST"])
+app.add_api_route("/", mcp_get, methods=["GET"])
+
+
 # ── discovery + health (unauthenticated) ───────────────────────────────────────
 
 
 @app.get("/.well-known/oauth-protected-resource")
+@app.get("/.well-known/oauth-protected-resource/mcp")
 async def protected_resource_metadata(request: Request) -> JSONResponse:
     """RFC 9728 metadata: tells the MCP client which authorization server (Authentik)
-    guards this resource, so it can run the OAuth flow on its own."""
+    guards this resource, so it can run the OAuth flow on its own. Served at both the bare
+    well-known path and the resource-suffixed one (`…/mcp`), since clients differ."""
     s = store.mcp_settings()
     return JSONResponse({
-        "resource": str(request.base_url).rstrip("/") + "/mcp",
+        "resource": _external_base(request) + "/mcp",
         "authorization_servers": [s["issuer"]] if s["issuer"] else [],
         "bearer_methods_supported": ["header"],
         "scopes_supported": ["openid", "profile", "email"],
