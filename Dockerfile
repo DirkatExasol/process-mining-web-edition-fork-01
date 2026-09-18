@@ -48,6 +48,7 @@ COPY admin/ ./admin/
 COPY integration/ ./integration/
 COPY actions/ ./actions/
 COPY sink/ ./sink/
+COPY mcp/ ./mcp/
 COPY frontend/ ./frontend/
 # Bundled demo logs — seeded into the integration files sandbox on first run.
 COPY examples/ ./examples/
