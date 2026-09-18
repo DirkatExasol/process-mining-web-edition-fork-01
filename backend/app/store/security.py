@@ -612,6 +612,40 @@ class SecurityStore:
             self._set_config("sink_enabled", "1" if enabled else "0")
             self._conn.commit()
 
+    # ── MCP server ──────────────────────────────────────────────────────────
+    # Config lives in the key-value security_config table (no secrets: offline JWKS
+    # validation needs only public settings). `mcp_username_claim` names the JWT claim
+    # (e.g. preferred_username / email) matched — case-insensitively — to an enabled
+    # Process Mining user, whose connection assignments then gate what may be queried.
+    _MCP_KEYS = ("issuer", "jwksUri", "audience", "requiredGroup", "usernameClaim")
+
+    @property
+    def mcp_enabled(self) -> bool:
+        """Whether the MCP query server accepts requests. Opt-in, OFF by default."""
+        with self._lock:
+            return self._get_config("mcp_enabled") == "1"
+
+    def set_mcp_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._set_config("mcp_enabled", "1" if enabled else "0")
+            self._conn.commit()
+
+    def mcp_settings(self) -> dict:
+        """The MCP OAuth/Authentik settings (no secrets). Missing values default to ''
+        except usernameClaim, which defaults to 'preferred_username'."""
+        with self._lock:
+            out = {k: (self._get_config(f"mcp_{k}") or "") for k in self._MCP_KEYS}
+        if not out["usernameClaim"]:
+            out["usernameClaim"] = "preferred_username"
+        return out
+
+    def set_mcp_settings(self, data: dict) -> None:
+        with self._lock:
+            for k in self._MCP_KEYS:
+                if k in data:
+                    self._set_config(f"mcp_{k}", str(data.get(k) or "").strip())
+            self._conn.commit()
+
     @property
     def idle_timeout_mins(self) -> int:
         """Auto sign-out after this many minutes of inactivity (0 = never)."""

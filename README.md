@@ -42,6 +42,7 @@ Four independent Python processes:
 | **Integration Console** (`integration/`) | 8100 / 8463 | Data-source configuration; developers and admins only |
 | **Actions** (`actions/`) | 8110 / 8473 | Author business-readable node-menu actions; developers and admins only (off until an admin enables it) |
 | **API Server - Event Receiver** (`sink/`) | 8120–8129 / 8483–8492 | One HTTP/HTTPS ingest API per configured sink (a pre-exposed port pool); external agents POST journey events; off until an admin enables it |
+| **MCP Server** (`mcp/`) | 8130 / 8493 | Read-only Model Context Protocol endpoint so AI clients query metrics/paths/metadata; OAuth via Authentik; off until an admin enables it (see [MCP-SERVER.md](MCP-SERVER.md)) |
 
 ```
 Browser ──► GUI Server (:8080 / :8443) ──proxy /api──► Compute Backend (:8000) ──► Exasol

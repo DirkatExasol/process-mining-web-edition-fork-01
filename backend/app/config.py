@@ -137,6 +137,25 @@ def sink_https_port_for(http_port: int) -> int:
     """The HTTPS listener port paired with a sink's chosen HTTP port (same pool offset)."""
     return SINK_HTTPS_PORT_BASE + (int(http_port) - SINK_PORT_BASE)
 
+
+# MCP server — a machine-facing surface that lets AI clients (Claude, ChatGPT, …) query the
+# process data over the Model Context Protocol (HTTP). By convention on the admin port + 40
+# (HTTP 8130 / HTTPS 8493 with the defaults). Follows the same shared TLS plan as the other
+# surfaces. It authenticates callers with an OAuth access token issued by an external
+# Authentik server (validated offline against its JWKS), then maps the token to a Process
+# Mining user and answers read-only queries against that user's assigned connections. Off
+# until enabled in the admin panel's MCP Server tab.
+MCP_HOST = os.environ.get("PMW_MCP_HOST", ADMIN_HOST)
+MCP_PORT = int(os.environ.get("PMW_MCP_PORT", str(ADMIN_PORT + 40)))
+MCP_HTTPS_PORT = int(os.environ.get("PMW_MCP_HTTPS_PORT", str(ADMIN_HTTPS_PORT + 40)))
+MCP_PID_PATH = DATA_DIR / "mcp.pid"
+
+# Cap on rows returned by the MCP query tools, so one call can't stream an unbounded result
+# to the client (variants/paths especially). Clients can page under this with their own limit.
+MCP_MAX_ROWS = int(os.environ.get("PMW_MCP_MAX_ROWS", "1000"))
+# How long a fetched JWKS (Authentik's signing keys) is cached before re-fetch, in seconds.
+MCP_JWKS_CACHE_SECS = int(os.environ.get("PMW_MCP_JWKS_CACHE_SECS", "3600"))
+
 # File sources for the integration console read from this sandbox directory by default —
 # nothing outside it can be opened (path traversal / symlink escapes are rejected). Set
 # PMW_INTEGRATION_ALLOW_ANY_PATH=1 to instead allow any absolute path the server can read

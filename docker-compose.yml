@@ -24,6 +24,8 @@ services:
       # dynamically; a sink picks a free port from it. Off until enabled in admin.
       - "18120-18129:8120-8129"   # sink ingestion servers (HTTP)
       - "18483-18492:8483-8492"   # sink ingestion servers (HTTPS — per TLS mode)
+      - "18130:8130"   # MCP server (HTTP — AI clients query process data over MCP; off until enabled)
+      - "18493:8493"   # MCP server (HTTPS — active once TLS is enabled in admin)
     environment:
       # First-run bootstrap admin — override the default password (recommended).
       # PMW_DEFAULT_ADMIN_USER: "Administrator"

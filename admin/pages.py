@@ -672,6 +672,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       <button data-tab="connections" onclick="selectTab('connections')">Database Connections</button>
       <button data-tab="integration" onclick="selectTab('integration')">Integration</button>
       <button data-tab="sink" onclick="selectTab('sink')">Event Receiver</button>
+      <button data-tab="mcp" onclick="selectTab('mcp')">MCP Server</button>
       <button data-tab="actions" onclick="selectTab('actions')">Actions</button>
       <button data-tab="reporting" onclick="selectTab('reporting')">Reporting</button>
       <button data-tab="customize" onclick="selectTab('customize')">Customize</button>
@@ -1410,6 +1411,59 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     </p>
   </div>
   </div><!-- /tab-sink -->
+
+  <div class="tabpanel" id="tab-mcp">
+  <div class="card">
+    <h2>MCP Server</h2>
+    <p class="muted" style="margin-top:0">
+      A read-only <strong>Model Context Protocol</strong> endpoint that lets AI clients
+      (Claude, ChatGPT, …) query your process data — <em>metrics, paths and metadata</em> — over
+      HTTP(S). Callers authenticate with an <strong>OAuth access token from your Authentik
+      server</strong>; the token is verified against Authentik&rsquo;s signing keys and mapped to a
+      Process Mining user, whose assigned database connections gate what they can see. See
+      <code>MCP-SERVER.md</code> for the full Authentik + client setup.
+    </p>
+    <label class="row" style="font-size:14px; cursor:pointer; gap:8px; align-items:center">
+      <input type="checkbox" id="mcp_enabled" style="width:auto" onchange="toggleMcpEnabled()">
+      Enable the MCP server
+    </label>
+    <div id="mcp_status" class="col" style="margin-top:12px; gap:6px"></div>
+
+    <h3 style="font-size:13px; margin:18px 0 6px">Authentik (OAuth) settings</h3>
+    <div class="field">
+      <label>Issuer URL</label>
+      <input type="text" id="mcp_issuer" placeholder="https://authentik.example.com:19443/application/o/process-mining/">
+    </div>
+    <div class="field">
+      <label>JWKS URL <span class="subtle">(leave blank to auto-discover from the issuer)</span></label>
+      <input type="text" id="mcp_jwksUri" placeholder="https://…/application/o/process-mining/jwks/">
+    </div>
+    <div class="field">
+      <label>Audience / Client ID <span class="subtle">(the token&rsquo;s <code>aud</code>; blank = skip the check)</span></label>
+      <input type="text" id="mcp_audience" placeholder="the OAuth application's Client ID">
+    </div>
+    <div class="field">
+      <label>Required group <span class="subtle">(optional — only members may connect)</span></label>
+      <input type="text" id="mcp_requiredGroup" placeholder="e.g. process-mining-users">
+    </div>
+    <div class="field">
+      <label>Username claim <span class="subtle">(the JWT claim matched to a Process Mining user)</span></label>
+      <input type="text" id="mcp_usernameClaim" placeholder="preferred_username">
+    </div>
+    <div class="row" style="align-items:center; gap:10px; margin-top:8px">
+      <button class="btn primary" onclick="saveMcpSettings()">Save settings</button>
+      <button class="btn" onclick="testMcp()">Test Authentik</button>
+      <span id="mcp_testResult" class="muted"></span>
+    </div>
+    <p class="subtle" style="margin-top:12px">
+      Enabling/disabling takes effect <strong>immediately</strong> (no restart) — while off, the
+      endpoint returns 503. The server follows the same TLS mode &amp; certificate as the app and
+      this admin interface; a TLS change takes effect after <strong>↻ Restart app server</strong>
+      in the <strong>App Control</strong> tab. The endpoint is <code>/mcp</code> on the MCP port
+      (see the status line above).
+    </p>
+  </div>
+  </div><!-- /tab-mcp -->
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -1903,6 +1957,7 @@ function selectTab(name) {
   if (name === 'integration') loadIntegration().catch(e => toast(e.message, true));
   if (name === 'actions') loadActions().catch(e => toast(e.message, true));
   if (name === 'sink') loadSink().catch(e => toast(e.message, true));
+  if (name === 'mcp') loadMcp().catch(e => toast(e.message, true));
 }
 
 // ── AI Reporting ─────────────────────────────────────────────────────────────
@@ -2272,6 +2327,58 @@ async function toggleSinkEnabled() {
     toast(enabled ? 'API Server - Event Receiver enabled' : 'API Server - Event Receiver disabled');
     await loadSink();
   } catch (e) { toast(e.message, true); $('sink_enabled').checked = !enabled; }
+}
+
+// ── MCP server ──────────────────────────────────────────────────────────────
+async function loadMcp() {
+  const s = await api('/api/mcp');
+  $('mcp_enabled').checked = !!s.enabled;
+  const running = s.running
+    ? '<span class="pill neutral">launcher running</span>'
+    : '<span class="pill off">launcher not detected</span>';
+  $('mcp_status').innerHTML =
+    '<div class="row" style="gap:8px; align-items:center">' + running + '</div>' +
+    '<div class="subtle">Endpoint on HTTP ' + s.httpPort + ' / HTTPS ' + s.httpsPort +
+    ' at path <code>/mcp</code> (host ports are +10000 under Docker).</div>';
+  const cfg = s.settings || {};
+  $('mcp_issuer').value = cfg.issuer || '';
+  $('mcp_jwksUri').value = cfg.jwksUri || '';
+  $('mcp_audience').value = cfg.audience || '';
+  $('mcp_requiredGroup').value = cfg.requiredGroup || '';
+  $('mcp_usernameClaim').value = cfg.usernameClaim || 'preferred_username';
+}
+async function toggleMcpEnabled() {
+  const enabled = $('mcp_enabled').checked;
+  try {
+    await api('/api/mcp/enabled', { method: 'POST', body: JSON.stringify({ enabled }) });
+    toast(enabled ? 'MCP server enabled' : 'MCP server disabled');
+    await loadMcp();
+  } catch (e) { toast(e.message, true); $('mcp_enabled').checked = !enabled; }
+}
+function _mcpBody() {
+  return {
+    issuer: $('mcp_issuer').value.trim(),
+    jwksUri: $('mcp_jwksUri').value.trim(),
+    audience: $('mcp_audience').value.trim(),
+    requiredGroup: $('mcp_requiredGroup').value.trim(),
+    usernameClaim: $('mcp_usernameClaim').value.trim() || 'preferred_username',
+  };
+}
+async function saveMcpSettings() {
+  try {
+    await api('/api/mcp/settings', { method: 'POST', body: JSON.stringify(_mcpBody()) });
+    toast('MCP settings saved');
+    await loadMcp();
+  } catch (e) { toast(e.message, true); }
+}
+async function testMcp() {
+  $('mcp_testResult').textContent = 'Testing…';
+  try {
+    const r = await api('/api/mcp/test', { method: 'POST', body: JSON.stringify(_mcpBody()) });
+    $('mcp_testResult').innerHTML = r.ok
+      ? '<span style="color:var(--green)">✓ Reached Authentik — ' + r.keyCount + ' signing key(s), issuer ' + (r.issuer || '') + '</span>'
+      : '<span style="color:var(--red)">✗ ' + (r.error || 'Failed') + '</span>';
+  } catch (e) { $('mcp_testResult').innerHTML = '<span style="color:var(--red)">✗ ' + e.message + '</span>'; }
 }
 
 // ── Customize (login page background) ───────────────────────────────────────

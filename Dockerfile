@@ -67,7 +67,7 @@ COPY --from=web /web/dist ./frontend/web/dist
 # 8453 = admin (HTTPS), 8100 = integration console (HTTP), 8463 = integration
 # console (HTTPS), 8110 = Actions (HTTP), 8473 = Actions (HTTPS) — HTTPS ports
 # activate once TLS is enabled in admin. 8000 (backend) is kept internal.
-EXPOSE 8080 8443 8090 8453 8100 8463 8110 8473 8120-8129 8483-8492
+EXPOSE 8080 8443 8090 8453 8100 8463 8110 8473 8120-8129 8483-8492 8130 8493
 
 # The backend serves TLS (internal self-signed cert); liveness on loopback does
 # not need cert verification.
