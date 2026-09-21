@@ -106,7 +106,7 @@ async def _authenticate(request: Request):
             signing_key.key,
             algorithms=["RS256"],
             audience=audience or None,
-            issuer=issuer or None,
+            issuer=[issuer, issuer + "/"] if issuer else None,
             options={"verify_aud": bool(audience)},
         )
     except AuthError:

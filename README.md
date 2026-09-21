@@ -900,6 +900,80 @@ validation + escaped literals — no injection), and the sink reuses one DB conn
 idle-reconnect + reconnect-and-retry-once so a socket dropped after idle doesn't surface as
 a failed post.
 
+## MCP Server
+
+The **MCP Server** is the mirror image of the Event Receiver: where a sink lets an agent
+*write* journey events, the MCP server lets an AI client *read* the analysis. It is a
+[Model Context Protocol](https://modelcontextprotocol.io) endpoint — **strictly read-only**,
+with no ingest, edit or sampling tools — that answers metrics, path and metadata queries
+over HTTP(S). It is the seventh surface, on the admin port **+40** (`8130` / `8493`;
+host `18130` / `18493` under the default compose mapping), runs from `mcp/`, and is **off
+until an admin enables it** (Admin → *MCP Server*), returning `503` while off.
+
+```
+AI client ──OAuth──────────────────────▶ Authentik            client obtains an access token
+AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp)
+                                          └─ verifies the JWT offline against Authentik's JWKS (RS256)
+                                          └─ maps the username claim to a Process Mining user
+                                          └─ answers only on that user's assigned connections
+```
+
+- **Authorisation is the app's own boundary, reused.** A caller presents an OAuth access
+  token issued by **your Authentik**. The server verifies its signature against Authentik's
+  JWKS, checks issuer (and `aud`, if you configure one), optionally requires a **group**,
+  then matches the **username claim** (default `preferred_username`, case-insensitively) to
+  an *enabled* Process Mining user. That user's **assigned database connections** decide
+  what is visible — exactly the boundary the app enforces. An unknown user gets `403`, an
+  unassigned connection `403`, a bad or missing token `401` with a `WWW-Authenticate`
+  challenge so the client knows to start the OAuth flow.
+- **Seven tools.**
+
+  | Tool | Returns |
+  |---|---|
+  | `list_connections` | The database connections you may query (id, name, schema) |
+  | `list_projects` | The process-mining projects on a connection |
+  | `get_metadata` | Meta-attribute titles, step names, event date range |
+  | `get_process_map` | The directly-follows map: steps (nodes) + transitions (edges) with counts and timing |
+  | `get_transition_metrics` | Per step pair: count and avg/min/max/stddev transition time |
+  | `get_variants` | Distinct journey paths and how often each occurs, most frequent first |
+  | `get_statistics` | Journey count, journey-duration stats, process-goodness score |
+
+- **One filter vocabulary.** The four analytical tools take `connectionId` (string) +
+  `projectId` (integer) plus the same optional filter as the app: `sampleSet`
+  (`ORIGINAL`/`SAMPLE_1..3`), `fromDate`, `toDate` (ISO **dates** — day granularity),
+  `includedSteps` (keep journeys visiting **all** of them), `excludedSteps` (drop journeys
+  visiting **any** of them) and `meta1..3`; `get_variants` also takes `limit` (≤1000).
+  Because `includedSteps` is an AND, an either/or question needs one call per alternative.
+- **Configuring it** (Admin → *MCP Server*): **Issuer URL**
+  (`https://<authentik>/application/o/<slug>/`), **JWKS URL** (blank auto-discovers from the
+  issuer), **Audience / Client ID** (blank unless you mapped an `aud` claim), **Required
+  group** (matched against the token's `groups`), **Username claim**. **Test Authentik**
+  fetches the discovery document and JWKS and reports the signing-key count — use it before
+  enabling. Both spellings of the issuer are accepted, with and without the trailing slash
+  Authentik emits.
+- **On the Authentik side**, create an OAuth2/OpenID provider (public client + PKCE for
+  interactive clients), give it an **RSA signing key** so the access token is a verifiable
+  RS256 JWT, add your client's **redirect URIs** — for Claude
+  `https://claude.ai/api/mcp/auth_callback`, plus a port-agnostic loopback pattern for
+  Claude Code — and bind an application with a slug. Enable **Dynamic Client Registration**
+  if your client registers itself rather than being given a client id. Full walkthrough in
+  [MCP-SERVER.md](MCP-SERVER.md).
+- **Behind a reverse proxy**, forward `/mcp` **without stripping the prefix**, and route
+  `/.well-known/oauth-protected-resource` (and its `…/mcp` suffix) to the same backend —
+  the `401` challenge points discovery at the **host root**, not under `/mcp`, so a proxy
+  that only routes `/mcp` breaks client registration. Send `X-Forwarded-Proto` and
+  `X-Forwarded-Host` so the advertised metadata carries the public URL. The issuer your
+  metadata advertises must be reachable **from the client**, over the public internet for a
+  hosted client — an internal hostname there is the most common cause of a connector that
+  never finishes signing in.
+- **Verifying by hand.** `GET /health` is unauthenticated (`{ok, enabled}`);
+  `GET /.well-known/oauth-protected-resource` returns the resource metadata; a `POST /mcp`
+  with no token returns `401` and with a token exercises the whole chain.
+- **Limits.** `PMW_MCP_MAX_ROWS` (default 1000) caps rows per call and
+  `PMW_MCP_JWKS_CACHE_SECS` (default 3600) how long signing keys are cached. Only the JWKS
+  **transport** skips certificate verification (Authentik is a trusted internal host); token
+  integrity is unaffected.
+
 ## Database schema
 
 Reads from `PROJECTS`, `JOURNEYS`, `STEPS`, `METAS` (all required). A `NOTES`

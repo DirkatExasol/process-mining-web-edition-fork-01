@@ -158,16 +158,22 @@ def test_load_node_meta_values_scopes_to_the_step():
         async def execute(self, sql: str):
             captured["sql"] = sql
             return types.SimpleNamespace(rows=[
-                ("META_1", "Visa"), ("META_1", "SEPA"), ("META_2", "Retail"),
+                ("META_1", "Visa", "2026-09-17 13:54:02", 3),
+                ("META_1", "SEPA", "2026-09-16 09:10:00", 1),
+                ("META_2", "Retail", "2026-09-17 13:54:02", 4),
             ])
 
     r = repo()
     r.db = _Cap()  # type: ignore[assignment]
     out = asyncio.run(r.load_node_meta_values(7, "Check'out"))
-    # Scoped to the node's step (escaped), and grouped by column.
+    # Scoped to the node's step (escaped), grouped by column, with the last-seen time+count.
     assert "STEP = 'Check''out'" in captured["sql"]
-    assert out["META_1"] == ["Visa", "SEPA"]
-    assert out["META_2"] == ["Retail"]
+    assert "MAX(EVENT_TIME)" in captured["sql"]
+    assert out["META_1"] == [
+        {"value": "Visa", "time": "2026-09-17 13:54:02", "count": 3},
+        {"value": "SEPA", "time": "2026-09-16 09:10:00", "count": 1},
+    ]
+    assert out["META_2"] == [{"value": "Retail", "time": "2026-09-17 13:54:02", "count": 4}]
     assert out["META_3"] == []
 
 

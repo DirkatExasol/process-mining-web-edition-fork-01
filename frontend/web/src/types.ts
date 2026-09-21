@@ -125,6 +125,14 @@ export interface JourneyEvent {
   eventTime: string
 }
 
+/** One META value on a node's events (Meta Infos panel): the value, the date/time it was
+ *  last seen (``YYYY-MM-DD HH:MM:SS``, empty when unknown), and its occurrence count. */
+export interface MetaEntry {
+  value: string
+  time: string
+  count: number
+}
+
 export interface DurationBucket {
   label: string
   count: number

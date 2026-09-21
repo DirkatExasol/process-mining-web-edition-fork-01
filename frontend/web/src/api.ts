@@ -12,6 +12,7 @@ import type {
   HappyPath,
   JourneyEvent,
   JourneyPath,
+  MetaEntry,
   ProcessGraph,
   ProcessNote,
   Project,
@@ -281,8 +282,9 @@ export const api = {
       `/api/projects/${projectId}/bootstrap?sampleSet=${sampleSet}`,
     ),
   // The META values that occur on ONE node's (step's) events, for its Meta Infos panel.
+  // Each entry carries the value, the date/time it was last seen, and its occurrence count.
   nodeMetaValues: (projectId: number, step: string, sampleSet: SampleSet) =>
-    post<{ meta1: string[]; meta2: string[]; meta3: string[] }>(
+    post<{ meta1: MetaEntry[]; meta2: MetaEntry[]; meta3: MetaEntry[] }>(
       `/api/projects/${projectId}/node-metas`,
       { step, sampleSet },
     ),

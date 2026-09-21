@@ -26,7 +26,8 @@ PARTS = [
     (4, "Part IV", "The Integration Console", range(16, 21)),
     (5, "Part V", "Reference", range(21, 25)),
     (6, "Part VI", "Actions", range(25, 26)),
-    (7, "Part VII", "The API Server - Event Receiver", range(26, 99)),
+    (7, "Part VII", "The API Server - Event Receiver", range(26, 27)),
+    (8, "Part VIII", "The MCP Server", range(27, 99)),
 ]
 
 DATE = datetime.date.today().strftime("%d %B %Y")

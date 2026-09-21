@@ -1,11 +1,14 @@
 /** The "Meta Infos" panel, opened from a flowchart node's context menu. Lists the META
  *  values that actually occur on THAT node's events, in three tabs (Meta_1/2/3), each
  *  searchable, and gives every value an Include / Exclude toggle — the list-based journey
- *  filter that mirrors the node Include/Exclude for steps. */
+ *  filter that mirrors the node Include/Exclude for steps. Each row shows a second field
+ *  with the date/time the value was last seen (and its occurrence count); the search box
+ *  matches the value and that date/time. */
 
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import { useStore } from '../store'
+import type { MetaEntry } from '../types'
 import { Sheet } from './ui'
 
 export function MetaInfoModal({ onClose }: { onClose: () => void }) {
@@ -19,7 +22,7 @@ export function MetaInfoModal({ onClose }: { onClose: () => void }) {
   const clearMetaFilters = useStore((s) => s.clearMetaFilters)
 
   // The values valid for this node, fetched when the panel opens.
-  const [values, setValues] = useState<{ meta1: string[]; meta2: string[]; meta3: string[] } | null>(null)
+  const [values, setValues] = useState<{ meta1: MetaEntry[]; meta2: MetaEntry[]; meta3: MetaEntry[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     if (!node || projectId == null) return
@@ -50,7 +53,8 @@ export function MetaInfoModal({ onClose }: { onClose: () => void }) {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     const vals = active.values ?? []
-    return q ? vals.filter((v) => v.toLowerCase().includes(q)) : vals
+    // Search matches the value AND its date/time, so a user can find by either.
+    return q ? vals.filter((e) => `${e.value} ${e.time}`.toLowerCase().includes(q)) : vals
   }, [active.values, query])
 
   const activeCount = metaFilters.included.reduce((n, l) => n + l.length, 0) +
@@ -98,7 +102,7 @@ export function MetaInfoModal({ onClose }: { onClose: () => void }) {
 
         <input
           className="text-input"
-          placeholder={`Search ${active.title || `Meta ${tab + 1}`} values…`}
+          placeholder={`Search ${active.title || `Meta ${tab + 1}`} value or date…`}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           spellCheck={false}
@@ -119,12 +123,12 @@ export function MetaInfoModal({ onClose }: { onClose: () => void }) {
               No values match “{query}”.
             </span>
           ) : (
-            filtered.map((v) => {
-              const isInc = included.includes(v)
-              const isExc = excluded.includes(v)
+            filtered.map((e) => {
+              const isInc = included.includes(e.value)
+              const isExc = excluded.includes(e.value)
               return (
                 <div
-                  key={v}
+                  key={e.value}
                   className="row"
                   style={{
                     gap: 8, alignItems: 'center', padding: '5px 8px', borderRadius: 6,
@@ -132,18 +136,27 @@ export function MetaInfoModal({ onClose }: { onClose: () => void }) {
                       : isExc ? 'color-mix(in srgb, transparent, var(--red) 14%)' : 'var(--bg-fill)',
                   }}
                 >
-                  <span
-                    title={v}
-                    style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 13 }}
-                  >
-                    {v}
-                  </span>
+                  <div className="col" style={{ flex: 1, minWidth: 0, gap: 1 }}>
+                    <span
+                      title={e.value}
+                      style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 13 }}
+                    >
+                      {e.value || <span className="fg-tertiary">(empty)</span>}
+                    </span>
+                    <span
+                      className="t-caption2 fg-tertiary"
+                      title={e.count > 1 ? `Last seen ${e.time} · ${e.count} events` : e.time}
+                      style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                    >
+                      {e.time || '—'}{e.count > 1 && ` · ×${e.count}`}
+                    </span>
+                  </div>
                   <button
                     className="icon-btn"
                     title={isInc ? 'Included — click to clear' : 'Include journeys with this value'}
-                    aria-label={`Include ${v}`}
+                    aria-label={`Include ${e.value}`}
                     aria-pressed={isInc}
-                    onClick={() => handleMetaAction(tab, v, 'include')}
+                    onClick={() => handleMetaAction(tab, e.value, 'include')}
                     style={{ color: isInc ? 'var(--green)' : 'var(--secondary)', fontWeight: 700 }}
                   >
                     ⊕
@@ -151,9 +164,9 @@ export function MetaInfoModal({ onClose }: { onClose: () => void }) {
                   <button
                     className="icon-btn"
                     title={isExc ? 'Excluded — click to clear' : 'Exclude journeys with this value'}
-                    aria-label={`Exclude ${v}`}
+                    aria-label={`Exclude ${e.value}`}
                     aria-pressed={isExc}
-                    onClick={() => handleMetaAction(tab, v, 'exclude')}
+                    onClick={() => handleMetaAction(tab, e.value, 'exclude')}
                     style={{ color: isExc ? 'var(--red)' : 'var(--secondary)', fontWeight: 700 }}
                   >
                     ⊖

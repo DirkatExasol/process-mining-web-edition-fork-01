@@ -314,8 +314,10 @@ class NodeMetasRequest(BaseModel):
 
 @router.post("/projects/{project_id}/node-metas")
 async def node_metas(project_id: int, request: NodeMetasRequest) -> dict:
-    """The distinct META_1/2/3 values that occur on one node's (step's) events — the values
-    the node "Meta Infos" panel offers, scoped to that node."""
+    """The META_1/2/3 values that occur on one node's (step's) events — the values the node
+    "Meta Infos" panel offers, scoped to that node. Each entry is
+    ``{value, time, count}``: the value, the date/time it was last seen, and how many of
+    the node's events carry it."""
     require_connection()
     vals = await repo(request.sampleSet).load_node_meta_values(project_id, request.step)
     return {"meta1": vals["META_1"], "meta2": vals["META_2"], "meta3": vals["META_3"]}

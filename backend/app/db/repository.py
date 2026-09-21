@@ -595,27 +595,38 @@ class ProcessRepository:
 
     async def load_node_meta_values(
         self, project_id: str, step: str
-    ) -> dict[str, list[str]]:
-        """DISTINCT META_1/2/3 values that actually occur on the events of ONE step
-        (node) — what the node's "Meta Infos" panel offers, so it lists only the metas
-        valid for that node. One round trip (UNION ALL tagged by column), sorted."""
+    ) -> dict[str, list[dict[str, Any]]]:
+        """The META_1/2/3 values that occur on the events of ONE step (node) — what the
+        node's "Meta Infos" panel lists, scoped to that node. Each distinct value carries
+        the date/time it was last seen (``time``) and how many of the node's events carry
+        it (``count``), so the panel can show and search a second date/time field. One
+        round trip (UNION ALL tagged by column), newest first."""
         cols = ["META_1", "META_2", "META_3"]
-        out: dict[str, list[str]] = {c: [] for c in cols}
+        out: dict[str, list[dict[str, Any]]] = {c: [] for c in cols}
         safe = _pid(project_id)
         frag = self.active_sample_set.sql_fragment()
         step_sql = f"STEP = '{esc(step)}'"
         parts = [
-            f"SELECT '{c}' AS col, {c} AS val FROM JOURNEYS "
+            f"SELECT '{c}' AS col, {c} AS val, MAX(EVENT_TIME) AS ts, COUNT(*) AS cnt "
+            f"FROM JOURNEYS "
             f"WHERE PROJECT_ID = {safe} AND {frag} AND {step_sql} AND {c} IS NOT NULL "
             f"GROUP BY {c}"
             for c in cols
         ]
-        sql = " UNION ALL ".join(parts) + " ORDER BY col, val"
+        # Order by output position (unambiguous across UNION ALL): column, then most
+        # recent occurrence first, then value.
+        sql = " UNION ALL ".join(parts) + " ORDER BY 1, 3 DESC, 2"
         result = await self.db.execute(sql)
         for row in result.rows:
             col, val = row[0], row[1]
-            if isinstance(col, str) and col in out and isinstance(val, str):
-                out[col].append(val)
+            if not (isinstance(col, str) and col in out and isinstance(val, str)):
+                continue
+            when = parse_date(row[2]) if len(row) > 2 else None
+            out[col].append({
+                "value": val,
+                "time": when.strftime("%Y-%m-%d %H:%M:%S") if when else "",
+                "count": as_int(row[3]) if len(row) > 3 else 1,
+            })
         return out
 
     async def find_nearest_day_with_data(
