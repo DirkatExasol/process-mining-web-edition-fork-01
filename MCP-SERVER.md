@@ -26,16 +26,44 @@ AI client ──MCP/JSON-RPC + Bearer token──▶ MCP server (:18493/mcp)
 | Tool | Returns |
 |------|---------|
 | `list_connections` | The database connections you may query (id, name, schema). |
-| `list_projects` | The process-mining projects on a connection. |
+| `list_projects` | The process-mining projects on a connection — or, with `connectionId` omitted, on every connection you may query. |
 | `get_process_map` | The directly-follows map: steps (nodes) + transitions (edges) with counts/timing. |
 | `get_transition_metrics` | Per step-pair: count and avg/min/max/stddev transition time. |
 | `get_variants` | Distinct journey paths and how often each occurs (most frequent first). |
 | `get_statistics` | Journey count, journey-duration stats, process-goodness score. |
 | `get_metadata` | Meta-attribute titles, step names, and the event date range. |
+| `get_journey` | One case's ordered events, by business case id or stored hash. |
+| `find_journeys` | The individual journeys behind an aggregate: slowest cases, cases that visited a step, longest traces. |
 
 All query tools accept `connectionId` + `projectId` and an optional filter (`sampleSet`,
 `fromDate`, `toDate`, `includedSteps`, `excludedSteps`, `meta1..3`); `get_variants` also
-takes `limit`.
+takes `limit`. `get_journey` takes `connectionId` + `projectId` + `eventId` (and
+`sampleSet`) instead of the filter — it resolves a business id like `FLT-000123` by
+MD5-hashing it, the same way ingest does.
+
+**`list_projects` across connections.** `connectionId` is optional: omit it and the tool
+returns every project on every connection assigned to you, each entry tagged with its
+`connectionId` and `connectionName`. Add `includeCounts: true` for a `journeyCount` per
+project (one count query each), which answers "which process has the most journeys?" in a
+single call. A connection that cannot be opened yields one entry carrying `error` instead
+of a project, so one unreachable database does not fail the whole listing.
+
+**`find_journeys` — from the aggregate to the cases.** Every other tool summarises many
+journeys; `get_journey` needs a case id you already have. `find_journeys` closes the gap:
+it returns one row per case (stored id, start/end, duration, step count, meta attributes)
+for any filter, ordered by `orderBy` — `DURATION_DESC` (the default, slowest first),
+`DURATION_ASC`, `START_DESC`, `START_ASC`, `STEPS_DESC`, `STEPS_ASC`. It also takes
+`limit` (default 20), `minDurationSecs` / `maxDurationSecs`, `minSteps` / `maxSteps`, and
+`includePath` to add each journey's full step path. The returned `eventId` is the stored
+MD5 — `JOURNEYS` never holds the plaintext business id — and `get_journey` accepts it
+as-is, so the drill-down is: `get_statistics` → `find_journeys` → `get_journey`.
+
+```jsonc
+// The five slowest bookings that reached "Payment Failed", with their paths
+{"name": "find_journeys", "arguments": {
+  "connectionId": "…", "projectId": 1, "limit": 5,
+  "includedSteps": ["Payment Failed"], "includePath": true}}
+```
 
 ---
 

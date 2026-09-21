@@ -47,6 +47,18 @@ _DATE_FORMATS = ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d")
 _MAX_PATH_ROWS = 10_000  # variant / route path listings
 _MAX_SUGGESTIONS = 100  # event-ID autocomplete
 _MAX_LOG_ENTRIES = 1_000  # Actions "SHOW LAST N LOG ENTRIES"
+_MAX_JOURNEY_ROWS = 1_000  # find/list journeys (per-case aggregate rows)
+
+# ORDER BY clauses load_journeys accepts, keyed by the caller-facing name. A closed
+# map (never interpolated caller text) keeps the sort out of reach of SQL injection.
+JOURNEY_ORDERS: dict[str, str] = {
+    "DURATION_DESC": "DURATION_SECS DESC",
+    "DURATION_ASC": "DURATION_SECS ASC",
+    "START_DESC": "START_TIME DESC",
+    "START_ASC": "START_TIME ASC",
+    "STEPS_DESC": "STEP_COUNT DESC",
+    "STEPS_ASC": "STEP_COUNT ASC",
+}
 
 # Column headers returned by load_log_entries (the raw JOURNEYS row shape).
 LOG_ENTRY_COLUMNS = ["EVENT_ID", "STEP", "EVENT_TIME", "META_1", "META_2", "META_3"]
@@ -1125,6 +1137,104 @@ class ProcessRepository:
             """
         )
         return [r[0] for r in result.rows if isinstance(r[0], str)]
+
+    async def load_journeys(
+        self,
+        project_id: str,
+        f: FilterSpec,
+        *,
+        order_by: str = "DURATION_DESC",
+        limit: int = 20,
+        min_duration_secs: float | None = None,
+        max_duration_secs: float | None = None,
+        min_steps: int | None = None,
+        max_steps: int | None = None,
+        include_path: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Individual journeys matching ``f``, one aggregate row per EVENT_ID.
+
+        The counterpart to the aggregate loaders: where load_journey_paths collapses
+        cases into variants and load_journey_duration_stats into four numbers, this
+        keeps the cases themselves, so a caller can get from "the average is 63 min"
+        to the actual slowest journeys and open one with load_journey_sequence.
+
+        Duration and step-count bounds are HAVING clauses on the same grouping, so a
+        journey qualifies on its whole trace, not on individual rows. ``order_by`` is
+        a key of JOURNEY_ORDERS; EVENT_ID breaks ties so the order is total.
+        """
+        clause = JOURNEY_ORDERS.get(order_by.upper())
+        if clause is None:
+            raise ValueError(
+                f"Unknown order_by {order_by!r}; expected one of {', '.join(JOURNEY_ORDERS)}."
+            )
+        limit = _clamp(limit, 1, _MAX_JOURNEY_ROWS)
+        filters = self._all_filters(project_id, f, date_only=True)
+
+        # HAVING repeats the aggregate expressions rather than the SELECT aliases:
+        # alias visibility in HAVING is not portable, the ORDER BY alias is.
+        secs = "SECONDS_BETWEEN(MAX(EVENT_TIME), MIN(EVENT_TIME))"
+        having: list[str] = []
+        if min_duration_secs is not None:
+            having.append(f"{secs} >= {float(min_duration_secs)}")
+        if max_duration_secs is not None:
+            having.append(f"{secs} <= {float(max_duration_secs)}")
+        if min_steps is not None:
+            having.append(f"COUNT(*) >= {int(min_steps)}")
+        if max_steps is not None:
+            having.append(f"COUNT(*) <= {int(max_steps)}")
+        having_sql = ("\n            HAVING " + "\n              AND ".join(having)) if having else ""
+
+        # PATH is reserved in Exasol, so the column is JOURNEY_PATH — load_journey_paths
+        # sidesteps this by aliasing in lower case inside a CTE; here it is a plain alias.
+        path_select = (
+            ",\n                LISTAGG(STEP, ' -> ') WITHIN GROUP (ORDER BY EVENT_TIME ASC)"
+            " AS JOURNEY_PATH"
+            if include_path
+            else ""
+        )
+
+        sql = f"""
+            SELECT
+                EVENT_ID,
+                MIN(EVENT_TIME) AS START_TIME,
+                MAX(EVENT_TIME) AS END_TIME,
+                SECONDS_BETWEEN(MAX(EVENT_TIME), MIN(EVENT_TIME)) AS DURATION_SECS,
+                COUNT(*) AS STEP_COUNT,
+                MAX(META_1) AS META_1,
+                MAX(META_2) AS META_2,
+                MAX(META_3) AS META_3{path_select}
+            FROM JOURNEYS
+            WHERE PROJECT_ID = {_pid(project_id)}{filters}
+            GROUP BY EVENT_ID{having_sql}
+            ORDER BY {clause}, EVENT_ID
+            LIMIT {limit}
+            """
+        try:
+            result = await self.db.execute(sql, timeout=QUERY_TIMEOUT_SECS)
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(
+                f"Journey query timed out ({QUERY_TIMEOUT_SECS:.0f} s). "
+                "Narrow your date range or filters and try again."
+            ) from exc
+
+        journeys: list[dict[str, Any]] = []
+        for row in result.rows:
+            if not isinstance(row[0], str):
+                continue
+            journeys.append(
+                {
+                    "eventId": row[0],
+                    "startDate": parse_date(row[1]),
+                    "endDate": parse_date(row[2]),
+                    "durationSecs": as_float(row[3]),
+                    "stepCount": as_int(row[4]),
+                    "meta1": clean_str(row[5]),
+                    "meta2": clean_str(row[6]),
+                    "meta3": clean_str(row[7]),
+                    "path": clean_str(row[8]) if include_path and len(row) > 8 else None,
+                }
+            )
+        return journeys
 
     async def load_journey_info(self, project_id: str, event_id: str) -> dict[str, Any]:
         result = await self.db.execute(

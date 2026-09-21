@@ -845,3 +845,73 @@ def test_materialized_transitions_sql_groups_on_step_id_then_maps_to_names():
     assert "GROUP BY FROM_STEP_ID, TO_STEP_ID" in sql
     assert "S.STEP_ID = H.FROM_STEP_ID" in sql and "T.STEP_ID = H.TO_STEP_ID" in sql
     assert "S.STEP AS FROM_STEP" in sql and "T.STEP AS TO_STEP" in sql
+
+
+# ── load_journeys (per-case aggregate rows behind an aggregate) ───────────────
+
+
+def _journeys_sql(**kwargs) -> str:
+    repo_, mgr = _cap_repo()
+    asyncio.run(repo_.load_journeys("4", FilterSpec(), **kwargs))
+    return mgr.executed[-1]
+
+
+def test_load_journeys_groups_per_case_and_orders_by_duration_desc_by_default():
+    sql = _journeys_sql()
+    assert "GROUP BY EVENT_ID" in sql
+    assert "SECONDS_BETWEEN(MAX(EVENT_TIME), MIN(EVENT_TIME)) AS DURATION_SECS" in sql
+    # Slowest first, with EVENT_ID breaking ties so the order is total.
+    assert "ORDER BY DURATION_SECS DESC, EVENT_ID" in sql
+    assert "LIMIT 20" in sql
+    assert "LISTAGG" not in sql  # the path costs extra; it is opt-in
+
+
+def test_load_journeys_rejects_an_unknown_order_and_never_interpolates_it():
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown order_by"):
+        _journeys_sql(order_by="EVENT_ID; DROP TABLE JOURNEYS--")
+
+
+def test_load_journeys_accepts_every_advertised_order():
+    from app.db.repository import JOURNEY_ORDERS
+
+    for name, clause in JOURNEY_ORDERS.items():
+        assert f"ORDER BY {clause}, EVENT_ID" in _journeys_sql(order_by=name)
+
+
+def test_load_journeys_bounds_are_having_clauses_on_the_aggregates():
+    sql = _journeys_sql(min_duration_secs=600, max_steps=8)
+    assert "HAVING SECONDS_BETWEEN(MAX(EVENT_TIME), MIN(EVENT_TIME)) >= 600.0" in sql
+    assert "COUNT(*) <= 8" in sql
+    # Aliases are not portable in HAVING — the expressions are repeated instead.
+    assert "HAVING DURATION_SECS" not in sql
+
+
+def test_load_journeys_clamps_the_limit_and_can_add_the_path():
+    from app.db.repository import _MAX_JOURNEY_ROWS
+
+    assert f"LIMIT {_MAX_JOURNEY_ROWS}" in _journeys_sql(limit=10_000)
+    assert "LIMIT 1" in _journeys_sql(limit=0)
+    assert "LISTAGG(STEP, ' -> ') WITHIN GROUP (ORDER BY EVENT_TIME ASC)" in _journeys_sql(
+        include_path=True
+    )
+
+
+def test_load_journeys_does_not_alias_the_path_to_a_reserved_word():
+    # Exasol rejects `AS PATH` outright ("unexpected PATH_"), and a string assertion on
+    # the generated SQL cannot see that — so name the trap in a test of its own.
+    sql = _journeys_sql(include_path=True)
+    assert "AS JOURNEY_PATH" in sql
+    assert "AS PATH" not in sql
+
+
+def test_load_journeys_shapes_rows_and_skips_the_path_when_not_requested():
+    rows = [["abc123", "2024-04-21 04:36:09", "2024-04-21 04:55:03", 1134, 5, "Manage", "ANA", None]]
+    repo_, _ = _cap_repo(rows)
+    out = asyncio.run(repo_.load_journeys("1", FilterSpec()))
+    assert out[0]["eventId"] == "abc123"
+    assert out[0]["durationSecs"] == 1134.0 and out[0]["stepCount"] == 5
+    assert out[0]["startDate"] == datetime(2024, 4, 21, 4, 36, 9)
+    assert out[0]["meta1"] == "Manage" and out[0]["meta3"] is None
+    assert out[0]["path"] is None

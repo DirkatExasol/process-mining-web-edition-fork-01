@@ -926,7 +926,7 @@ AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp
   what is visible — exactly the boundary the app enforces. An unknown user gets `403`, an
   unassigned connection `403`, a bad or missing token `401` with a `WWW-Authenticate`
   challenge so the client knows to start the OAuth flow.
-- **Seven tools.**
+- **Eight tools.**
 
   | Tool | Returns |
   |---|---|
@@ -937,6 +937,7 @@ AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp
   | `get_transition_metrics` | Per step pair: count and avg/min/max/stddev transition time |
   | `get_variants` | Distinct journey paths and how often each occurs, most frequent first |
   | `get_statistics` | Journey count, journey-duration stats, process-goodness score |
+  | `get_journey` | One case's ordered trace by case id — the only tool that returns individual events |
 
 - **One filter vocabulary.** The four analytical tools take `connectionId` (string) +
   `projectId` (integer) plus the same optional filter as the app: `sampleSet`
@@ -944,6 +945,12 @@ AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp
   `includedSteps` (keep journeys visiting **all** of them), `excludedSteps` (drop journeys
   visiting **any** of them) and `meta1..3`; `get_variants` also takes `limit` (≤1000).
   Because `includedSteps` is an AND, an either/or question needs one call per alternative.
+- **Looking up one case.** `get_journey` takes a `connectionId`, `projectId` and an
+  `eventId` and returns that journey's events in time order, with its three meta values,
+  start and end timestamps and total duration. `JOURNEYS` stores the **MD5 of the case
+  id**, never the plaintext, so the tool reuses the application's own normalisation: a
+  business id such as `FLT-000123` is hashed, a 32-char hex id is taken as already
+  hashed. Both resolve to the same journey the individual-journey view shows.
 - **Configuring it** (Admin → *MCP Server*): **Issuer URL**
   (`https://<authentik>/application/o/<slug>/`), **JWKS URL** (blank auto-discovers from the
   issuer), **Audience / Client ID** (blank unless you mapped an `aud` claim), **Required
