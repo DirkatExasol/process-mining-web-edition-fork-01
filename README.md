@@ -931,13 +931,14 @@ AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp
   | Tool | Returns |
   |---|---|
   | `list_connections` | The database connections you may query (id, name, schema) |
-  | `list_projects` | The process-mining projects on a connection |
+  | `list_projects` | The projects on a connection — or, with `connectionId` omitted, on **every** connection you may query; `includeCounts` adds a journey count per project |
   | `get_metadata` | Meta-attribute titles, step names, event date range |
   | `get_process_map` | The directly-follows map: steps (nodes) + transitions (edges) with counts and timing |
   | `get_transition_metrics` | Per step pair: count and avg/min/max/stddev transition time |
   | `get_variants` | Distinct journey paths and how often each occurs, most frequent first |
   | `get_statistics` | Journey count, journey-duration stats, process-goodness score |
   | `get_journey` | One case's ordered trace by case id — the only tool that returns individual events |
+  | `find_journeys` | The individual cases behind an aggregate — slowest / longest / by-step, ordered, with optional full path (the drill-down `get_statistics → find_journeys → get_journey`) |
 
 - **One filter vocabulary.** The four analytical tools take `connectionId` (string) +
   `projectId` (integer) plus the same optional filter as the app: `sampleSet`
