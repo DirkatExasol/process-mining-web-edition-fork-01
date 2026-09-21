@@ -910,6 +910,12 @@ over HTTP(S). It is the seventh surface, on the admin port **+40** (`8130` / `84
 host `18130` / `18493` under the default compose mapping), runs from `mcp/`, and is **off
 until an admin enables it** (Admin → *MCP Server*), returning `503` while off.
 
+> **OAuth-only, directory-backed.** The MCP server authenticates callers **exclusively via
+> OAuth** — it has no login of its own. You must deploy an OAuth provider such as **Authentik**
+> or **Keycloak** and configure it in the admin **MCP Server** page, with user federation from
+> **OpenLDAP** or **Active Directory**. Only Process Mining users defined in a configured
+> directory service can use the MCP server.
+
 ```
 AI client ──OAuth──────────────────────▶ Authentik            client obtains an access token
 AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp)

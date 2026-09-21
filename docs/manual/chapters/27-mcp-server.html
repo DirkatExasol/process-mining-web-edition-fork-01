@@ -5,6 +5,8 @@
 
 <div class="role">Requires: <b>Administrator</b> to configure the OAuth settings and enable the module, in the admin interface (HTTP :8090, HTTPS :8453). Callers need no human role at the endpoint &mdash; they present an OAuth access token issued by your Authentik server, which is mapped to an existing Process Mining user. The module is <b>off</b> until an administrator enables it.</div>
 
+<div class="warn"><strong>OAuth only, directory-backed</strong> The MCP server authenticates callers <b>exclusively via OAuth</b> &mdash; it has no login of its own. You must deploy an OAuth provider such as <b>Authentik</b> or <b>Keycloak</b> and configure it in the Administration page (<b>MCP Server</b>), with user federation from <b>OpenLDAP</b> or <b>Active Directory</b>. Only Process Mining users defined in a configured directory service can use the MCP server.</div>
+
 <h2 id="mcp-what">27.1 What the MCP server is, and when to use one</h2>
 
 <p>The Model Context Protocol is a convention by which an AI client discovers and calls tools on a remote server. The demonstrator implements it as a seventh surface so that a question asked in a chat &mdash; <em>&ldquo;which variants dominate the credit application process?&rdquo;</em>, <em>&ldquo;how much slower are international passengers?&rdquo;</em> &mdash; can be answered from live data rather than from a screenshot pasted into the conversation.</p>
