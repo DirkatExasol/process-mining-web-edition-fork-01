@@ -28,7 +28,7 @@ AI client ──MCP/JSON-RPC + Bearer token──▶ MCP server (:18493/mcp)
 | `list_connections` | The database connections you may query (id, name, schema). |
 | `list_projects` | The process-mining projects on a connection — or, with `connectionId` omitted, on every connection you may query. |
 | `get_process_map` | The directly-follows map: steps (nodes) + transitions (edges) with counts/timing. |
-| `get_transition_metrics` | Per step-pair: count and avg/min/max/stddev transition time. |
+| `get_transition_metrics` | Per step-pair: count and avg/median/min/max/stddev transition time. |
 | `get_variants` | Distinct journey paths and how often each occurs (most frequent first). |
 | `get_statistics` | Journey count, journey-duration stats, process-goodness score. |
 | `get_metadata` | Meta-attribute titles, step names, and the event date range. |
