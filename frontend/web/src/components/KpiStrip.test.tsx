@@ -12,7 +12,7 @@ import { EMPTY_GRAPH, KPI_META } from '../types'
 const inputs = {
   graph: EMPTY_GRAPH,
   journeyCount: null,
-  durations: { minSecs: null, avgSecs: null, stdDevSecs: null, maxSecs: null },
+  durations: { minSecs: null, avgSecs: null, medianSecs: null, stdDevSecs: null, maxSecs: null },
   goodness: null,
   side: 'a' as const,
   loading: false,

@@ -23,6 +23,7 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   'graph.edge.colorizeByWeight': true,
   'graph.edge.colorSchema.Count': defaultSchemaFor('Count'),
   'graph.edge.colorSchema.Avg Time': defaultSchemaFor('Avg Time'),
+  'graph.edge.colorSchema.Median Time': defaultSchemaFor('Median Time'),
   'graph.edge.colorSchema.Min Time': defaultSchemaFor('Min Time'),
   'graph.edge.colorSchema.Max Time': defaultSchemaFor('Max Time'),
   'graph.edge.colorSchema.Std Dev': defaultSchemaFor('Std Dev'),

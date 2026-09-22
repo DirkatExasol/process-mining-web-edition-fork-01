@@ -127,6 +127,7 @@ export interface ChartFilterState {
 const EMPTY_DURATIONS: DurationStats = {
   minSecs: null,
   avgSecs: null,
+  medianSecs: null,
   stdDevSecs: null,
   maxSecs: null,
 }
@@ -842,6 +843,7 @@ export const useStore = create<Store>((set, get) => {
     const durations: DurationStats = {
       minSecs: result.minCycleTimeSecs,
       avgSecs: result.avgCycleTimeSecs,
+      medianSecs: null, // a synthetic simulation has no median cycle time
       stdDevSecs: result.stdDevCycleTimeSecs,
       maxSecs: result.maxCycleTimeSecs,
     }

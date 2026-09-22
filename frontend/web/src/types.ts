@@ -99,6 +99,7 @@ export interface ProcessTransition {
   toStep: string
   occurrences: number
   avgSecs: number | null
+  medianSecs: number | null
   minSecs: number | null
   maxSecs: number | null
   stdDevSecs: number | null
@@ -146,6 +147,7 @@ export interface JourneyTimePoint {
 export interface DurationStats {
   minSecs: number | null
   avgSecs: number | null
+  medianSecs: number | null
   stdDevSecs: number | null
   maxSecs: number | null
 }
@@ -155,6 +157,7 @@ export const TRANSITION_METRICS = [
   'Percentage',
   'Journey %',
   'Avg Time',
+  'Median Time',
   'Min Time',
   'Max Time',
   'Std Dev',
@@ -189,6 +192,8 @@ export function metricValue(
       return null
     case 'Avg Time':
       return t.avgSecs
+    case 'Median Time':
+      return t.medianSecs
     case 'Min Time':
       return t.minSecs
     case 'Max Time':
@@ -590,13 +595,14 @@ export interface DocumentationResponse {
 }
 
 export const KPI_DEFAULT_ORDER =
-  'totalJourneys,filteredJourneys,shortestJourney,avgJourney,stdDev,longestJourney,graphValue,processGoodness,processSimilarity,activeSample'
+  'totalJourneys,filteredJourneys,shortestJourney,avgJourney,medianJourney,stdDev,longestJourney,graphValue,processGoodness,processSimilarity,activeSample'
 
 export const KPI_META: Record<string, { label: string; icon: string }> = {
   totalJourneys: { label: 'Total Journeys', icon: '👥' },
   filteredJourneys: { label: 'Filtered Journeys', icon: '⛃' },
   shortestJourney: { label: 'Shortest Journey', icon: '🐇' },
   avgJourney: { label: 'Avg Journey', icon: '⏱️' },
+  medianJourney: { label: 'Median Journey', icon: '◑' },
   stdDev: { label: 'Std Dev', icon: '〰️' },
   longestJourney: { label: 'Longest Journey', icon: '🐢' },
   graphValue: { label: 'Graph Value', icon: 'ƒ' },

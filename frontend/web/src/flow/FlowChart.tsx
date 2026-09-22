@@ -376,6 +376,7 @@ function FlowChartInner(props: FlowChartProps) {
       toStep: e.to,
       occurrences: e.occ,
       avgSecs: e.wCount > 0 ? e.wTime / e.wCount : null,
+      medianSecs: null, // not recoverable from merged per-edge sums
       minSecs: null,
       maxSecs: null,
       stdDevSecs: null,

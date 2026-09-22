@@ -807,13 +807,14 @@ class ProcessRepository:
         safe = _pid(project_id)
         return f"""
             SELECT S.STEP AS FROM_STEP, T.STEP AS TO_STEP,
-                   H.CNT, H.AVG_SECS, H.MIN_SECS, H.MAX_SECS, H.STDDEV_SECS
+                   H.CNT, H.AVG_SECS, H.MEDIAN_SECS, H.MIN_SECS, H.MAX_SECS, H.STDDEV_SECS
             FROM (
                 SELECT FROM_STEP_ID, TO_STEP_ID, COUNT(*) AS CNT,
                        AVG(DUR_SECS)    AS AVG_SECS,
                        MIN(DUR_SECS)    AS MIN_SECS,
                        MAX(DUR_SECS)    AS MAX_SECS,
-                       STDDEV(DUR_SECS) AS STDDEV_SECS
+                       STDDEV(DUR_SECS) AS STDDEV_SECS,
+                       MEDIAN(DUR_SECS) AS MEDIAN_SECS
                 FROM TRANSITIONS_RAW
                 WHERE PROJECT_ID = {safe}{filters}
                 GROUP BY FROM_STEP_ID, TO_STEP_ID
@@ -833,13 +834,14 @@ class ProcessRepository:
         safe = _pid(project_id)
         return f"""
             SELECT S.STEP AS FROM_STEP, T.STEP AS TO_STEP,
-                   H.CNT, H.AVG_SECS, H.MIN_SECS, H.MAX_SECS, H.STDDEV_SECS
+                   H.CNT, H.AVG_SECS, H.MEDIAN_SECS, H.MIN_SECS, H.MAX_SECS, H.STDDEV_SECS
             FROM (
                 SELECT FROM_STEP_ID, TO_STEP_ID, COUNT(*) AS CNT,
                        AVG(DUR_SECS)    AS AVG_SECS,
                        MIN(DUR_SECS)    AS MIN_SECS,
                        MAX(DUR_SECS)    AS MAX_SECS,
-                       STDDEV(DUR_SECS) AS STDDEV_SECS
+                       STDDEV(DUR_SECS) AS STDDEV_SECS,
+                       MEDIAN(DUR_SECS) AS MEDIAN_SECS
                 FROM (
                     SELECT FROM_STEP_ID, TO_STEP_ID,
                            SECONDS_BETWEEN(TO_TIME, FROM_TIME) AS DUR_SECS
@@ -874,9 +876,10 @@ class ProcessRepository:
                     toStep=row[1],
                     occurrences=as_int(row[2]),
                     avgSecs=as_float(row[3]),
-                    minSecs=as_float(row[4]),
-                    maxSecs=as_float(row[5]),
-                    stdDevSecs=as_float(row[6]),
+                    medianSecs=as_float(row[4]),
+                    minSecs=as_float(row[5]),
+                    maxSecs=as_float(row[6]),
+                    stdDevSecs=as_float(row[7]),
                 )
             )
         return transitions
@@ -912,6 +915,7 @@ class ProcessRepository:
             SELECT
                 MIN(SECONDS_BETWEEN(MAX_TIME, MIN_TIME)) AS MIN_SECS,
                 AVG(SECONDS_BETWEEN(MAX_TIME, MIN_TIME)) AS AVG_SECS,
+                MEDIAN(SECONDS_BETWEEN(MAX_TIME, MIN_TIME)) AS MEDIAN_SECS,
                 MAX(SECONDS_BETWEEN(MAX_TIME, MIN_TIME)) AS MAX_SECS,
                 STDDEV(SECONDS_BETWEEN(MAX_TIME, MIN_TIME)) AS STDDEV_SECS
             FROM (
@@ -930,8 +934,9 @@ class ProcessRepository:
         return DurationStats(
             minSecs=as_float(row[0]),
             avgSecs=as_float(row[1]),
-            maxSecs=as_float(row[2]),
-            stdDevSecs=as_float(row[3]),
+            medianSecs=as_float(row[2]),
+            maxSecs=as_float(row[3]),
+            stdDevSecs=as_float(row[4]),
         )
 
     async def load_duration_buckets(
@@ -1293,13 +1298,14 @@ class ProcessRepository:
         trans_result = await self.db.execute(
             f"""
             SELECT S.STEP AS FROM_STEP, T.STEP AS TO_STEP,
-                   H.CNT, H.AVG_SECS, H.MIN_SECS, H.MAX_SECS, H.STDDEV_SECS
+                   H.CNT, H.AVG_SECS, H.MEDIAN_SECS, H.MIN_SECS, H.MAX_SECS, H.STDDEV_SECS
             FROM (
                 SELECT FROM_STEP_ID, TO_STEP_ID, COUNT(*) AS CNT,
                        AVG(DUR_SECS)    AS AVG_SECS,
                        MIN(DUR_SECS)    AS MIN_SECS,
                        MAX(DUR_SECS)    AS MAX_SECS,
-                       STDDEV(DUR_SECS) AS STDDEV_SECS
+                       STDDEV(DUR_SECS) AS STDDEV_SECS,
+                       MEDIAN(DUR_SECS) AS MEDIAN_SECS
                 FROM (
                     SELECT FROM_STEP_ID, TO_STEP_ID,
                            SECONDS_BETWEEN(TO_TIME, FROM_TIME) AS DUR_SECS

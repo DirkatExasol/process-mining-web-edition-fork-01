@@ -293,7 +293,7 @@ describe('transitions mode indicator', () => {
     processGraph: {
       steps: {},
       transitions: [
-        { fromStep: 'A', toStep: 'B', occurrences: 1, avgSecs: 1, minSecs: null, maxSecs: null, stdDevSecs: null },
+        { fromStep: 'A', toStep: 'B', occurrences: 1, avgSecs: 1, medianSecs: 1, minSecs: null, maxSecs: null, stdDevSecs: null },
       ],
     },
     journeyCount: 5,

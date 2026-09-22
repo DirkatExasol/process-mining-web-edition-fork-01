@@ -34,6 +34,7 @@ function graphFrom(edges: [string, string, number][], groups: Record<string, str
       toStep,
       occurrences,
       avgSecs: 60,
+      medianSecs: 60,
       minSecs: null,
       maxSecs: null,
       stdDevSecs: null,

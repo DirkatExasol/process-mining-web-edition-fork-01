@@ -31,7 +31,8 @@ class _FakeTransDB:
         return type("R", (), {"rows": self._rows})()
 
 
-_ONE_EDGE = [["A", "B", 5, 1.0, 1.0, 1.0, 0.0]]
+# Columns match the SELECT: FROM, TO, CNT, AVG, MEDIAN, MIN, MAX, STDDEV.
+_ONE_EDGE = [["A", "B", 5, 1.0, 1.0, 1.0, 1.0, 0.0]]
 
 
 def test_reads_materialized_table_when_enabled():
