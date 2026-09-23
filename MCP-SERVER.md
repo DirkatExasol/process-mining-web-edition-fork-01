@@ -34,6 +34,7 @@ AI client ──MCP/JSON-RPC + Bearer token──▶ MCP server (:18493/mcp)
 | `get_metadata` | Meta-attribute titles, step names, and the event date range. |
 | `get_journey` | One case's ordered events, by business case id or stored hash. |
 | `find_journeys` | The individual journeys behind an aggregate: slowest cases, cases that visited a step, longest traces. |
+| `get_notes` | The notes/annotations on a project's steps and transitions — filter by severity, status (open/resolved) and scope (personal/shared), optionally grouped. |
 
 All query tools accept `connectionId` + `projectId` and an optional filter (`sampleSet`,
 `fromDate`, `toDate`, `includedSteps`, `excludedSteps`, `meta1..3`); `get_variants` also
@@ -63,6 +64,22 @@ as-is, so the drill-down is: `get_statistics` → `find_journeys` → `get_journ
 {"name": "find_journeys", "arguments": {
   "connectionId": "…", "projectId": 1, "limit": 5,
   "includedSteps": ["Payment Failed"], "includePath": true}}
+```
+
+**`get_notes` — the annotations on a process.** Steps and transitions can carry notes
+(issues, observations, review comments) with a **severity** (`NORMAL`, `INFO`, `IMPORTANT`,
+`URGENT`), a **status** (open / resolved) and a **scope** (a private *personal* note, or a
+*shared* one visible to everyone). `get_notes` returns them for a project, filterable by any
+of those, and optionally **grouped** (`groupBy`: `severity` | `status` | `scope` | `target`).
+Visibility matches the app exactly — you see shared notes plus your own, never another
+user's private notes — and every response carries a `summary` with per-severity, per-status
+and per-scope counts.
+
+```jsonc
+// Open, high-severity notes, grouped by the step/transition they annotate
+{"name": "get_notes", "arguments": {
+  "connectionId": "…", "projectId": 1,
+  "status": "open", "severity": ["URGENT", "IMPORTANT"], "groupBy": "target"}}
 ```
 
 ---

@@ -945,6 +945,7 @@ AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp
   | `get_statistics` | Journey count, journey-duration stats, process-goodness score |
   | `get_journey` | One case's ordered trace by case id — the only tool that returns individual events |
   | `find_journeys` | The individual cases behind an aggregate — slowest / longest / by-step, ordered, with optional full path (the drill-down `get_statistics → find_journeys → get_journey`) |
+  | `get_notes` | The notes/annotations on a project's steps and transitions — filter by severity, status (open/resolved) and scope (personal/shared), optionally `groupBy` any of them |
 
 - **One filter vocabulary.** The four analytical tools take `connectionId` (string) +
   `projectId` (integer) plus the same optional filter as the app: `sampleSet`
@@ -958,6 +959,12 @@ AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp
   id**, never the plaintext, so the tool reuses the application's own normalisation: a
   business id such as `FLT-000123` is hashed, a 32-char hex id is taken as already
   hashed. Both resolve to the same journey the individual-journey view shows.
+- **Reading the notes.** `get_notes` returns the annotations placed on a project's steps and
+  transitions, with each note's **severity** (`NORMAL`/`INFO`/`IMPORTANT`/`URGENT`),
+  **status** (open/resolved), **scope** (personal/shared), author and target. Filter by any
+  of `severity`, `status`, `scope`, or `groupBy` one of them (or `target`); every response
+  also carries a `summary` of counts. Visibility is the app's own — you see shared notes plus
+  your own, never another user's private notes.
 - **Configuring it** (Admin → *MCP Server*): **Issuer URL**
   (`https://<authentik>/application/o/<slug>/`), **JWKS URL** (blank auto-discovers from the
   issuer), **Audience / Client ID** (recommended — set it to the client id once you've mapped

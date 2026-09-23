@@ -106,6 +106,9 @@ STEPS = [
       <p class="cap"><b>Drill down to real cases</b></p>
       <pre class="calc">"List the five slowest cases that visited 'Payment Failed', with their paths."
 "Show me the full trace of the first one."</pre>
+      <p class="cap"><b>Notes &amp; review</b></p>
+      <pre class="calc">"What open notes are on this process, grouped by severity?"
+"Show me the shared URGENT and IMPORTANT notes, but not my personal ones."</pre>
     </div>""",
         None,
         '<span class="k">Name the connection and project.</span> When you have more than one '

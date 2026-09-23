@@ -34,7 +34,7 @@ from jwt import PyJWKClient  # noqa: E402
 from app.config import MCP_JWKS_CACHE_SECS, MCP_MAX_ROWS  # noqa: E402
 from app.db.manager import DatabaseManager  # noqa: E402
 from app.db.repository import JOURNEY_ORDERS, ProcessRepository  # noqa: E402
-from app.models import FilterSpec, SampleSet  # noqa: E402
+from app.models import NOTE_IMPORTANCE, FilterSpec, SampleSet  # noqa: E402
 from app.store.security import store  # noqa: E402
 
 logging.basicConfig(
@@ -408,6 +408,125 @@ async def _tool_find_journeys(user, args) -> Any:
     return out
 
 
+# Rank rises with severity (NORMAL < INFO < IMPORTANT < URGENT), so a reverse sort
+# puts the most severe first — matching the app's ordering.
+_SEVERITY_RANK = {lvl: i for i, lvl in enumerate(NOTE_IMPORTANCE)}
+
+
+def _note_scope(note) -> str:
+    """A note is either 'shared' (visible to everyone) or 'personal' (this caller's own,
+    or a legacy unowned note) — the two buckets the app itself distinguishes."""
+    return "shared" if note.isShared else "personal"
+
+
+def _note_dump(note) -> dict:
+    return {
+        "id": note.id,
+        "title": note.title,
+        "text": note.text,
+        "severity": note.importance,                     # NORMAL | INFO | IMPORTANT | URGENT
+        "status": "resolved" if note.resolved else "open",
+        "scope": _note_scope(note),                      # personal | shared
+        "author": note.username or None,
+        "target": note.target.display_name,
+        "targetType": "edge" if note.target.type == "edge" else "node",
+        "createdAt": note.createdAt.isoformat() if note.createdAt else None,
+        "editedAt": note.editedAt.isoformat() if note.editedAt else None,
+        "lastEditedBy": note.lastEditedBy or None,
+    }
+
+
+async def _tool_get_notes(user, args) -> Any:
+    """The notes/annotations on a project's steps and transitions, filterable by severity
+    and status and by personal vs shared, and optionally grouped. Visibility is the same as
+    the app's: the caller sees shared notes plus their own — never another user's private
+    ones (`load_notes` enforces this)."""
+    pid = _project_id(args)
+
+    sev_arg = args.get("severity")
+    if isinstance(sev_arg, str):
+        sev_arg = [sev_arg]
+    sev_filter = {str(s).upper() for s in (sev_arg or [])} & set(NOTE_IMPORTANCE)
+    status = str(args.get("status") or "all").lower()
+    if status not in ("all", "open", "resolved"):
+        raise ToolError("status must be one of open, resolved, all.")
+    scope = str(args.get("scope") or "all").lower()
+    if scope not in ("all", "personal", "shared"):
+        raise ToolError("scope must be one of personal, shared, all.")
+    group_by = str(args.get("groupBy") or "none").lower()
+    if group_by not in ("none", "severity", "status", "scope", "target"):
+        raise ToolError("groupBy must be one of severity, status, scope, target, none.")
+
+    async with _Repo(user.username, _conn_id(args), SampleSet.original) as repo:
+        try:
+            notes = await repo.load_notes(pid, user.username)
+        except Exception as exc:  # noqa: BLE001 — NOTES is created lazily; absent ⇒ no notes
+            log.warning("get_notes: notes unavailable for project %s: %s", pid, exc)
+            notes = []
+
+    def keep(n) -> bool:
+        if sev_filter and n.importance.upper() not in sev_filter:
+            return False
+        if status == "open" and n.resolved:
+            return False
+        if status == "resolved" and not n.resolved:
+            return False
+        if scope != "all" and _note_scope(n) != scope:
+            return False
+        return True
+
+    notes = [n for n in notes if keep(n)]
+    # Most severe first, then newest first — the order a reviewer wants.
+    notes.sort(key=lambda n: (
+        _SEVERITY_RANK.get(n.importance.upper(), 0),
+        n.createdAt.timestamp() if n.createdAt else 0.0,
+    ), reverse=True)
+
+    summary = {
+        "bySeverity": {lvl: sum(1 for n in notes if n.importance.upper() == lvl)
+                       for lvl in NOTE_IMPORTANCE},
+        "byStatus": {"open": sum(1 for n in notes if not n.resolved),
+                     "resolved": sum(1 for n in notes if n.resolved)},
+        "byScope": {"personal": sum(1 for n in notes if _note_scope(n) == "personal"),
+                    "shared": sum(1 for n in notes if _note_scope(n) == "shared")},
+    }
+
+    capped = notes[:MCP_MAX_ROWS]
+    dumped = [_note_dump(n) for n in capped]
+    out: dict = {
+        "projectId": int(pid),
+        "total": len(notes),
+        "returned": len(dumped),
+        "truncated": len(notes) > len(dumped),
+        "summary": summary,
+    }
+
+    if group_by == "none":
+        out["notes"] = dumped
+        return out
+
+    keyfn = {
+        "severity": lambda d: d["severity"],
+        "status": lambda d: d["status"],
+        "scope": lambda d: d["scope"],
+        "target": lambda d: d["target"],
+    }[group_by]
+    buckets: dict[str, list] = {}
+    for d in dumped:
+        buckets.setdefault(keyfn(d), []).append(d)
+    if group_by == "severity":
+        order = [lvl for lvl in reversed(NOTE_IMPORTANCE) if lvl in buckets]
+    elif group_by == "status":
+        order = [k for k in ("open", "resolved") if k in buckets]
+    elif group_by == "scope":
+        order = [k for k in ("shared", "personal") if k in buckets]
+    else:
+        order = sorted(buckets)
+    out["groupBy"] = group_by
+    out["groups"] = [{"key": k, "count": len(buckets[k]), "notes": buckets[k]} for k in order]
+    return out
+
+
 _TOOLS: list[dict] = [
     {"name": "list_connections", "handler": _tool_list_connections,
      "description": "List the database connections you may query (id, name, schema).",
@@ -487,6 +606,29 @@ _TOOLS: list[dict] = [
          "includePath": {"type": "boolean",
                          "description": "Also return each journey's full step path "
                                         "(default false; costlier on large projects)."}},
+         "required": ["connectionId", "projectId"]}},
+    {"name": "get_notes", "handler": _tool_get_notes,
+     "description": "The notes/annotations placed on a project's steps and transitions — "
+                    "issues, observations and review comments. Filter by severity "
+                    "(NORMAL/INFO/IMPORTANT/URGENT), by status (open / resolved) and by "
+                    "scope (personal — your own — or shared), and optionally group the "
+                    "result by any of those. Returns each note's title, text, severity, "
+                    "status, scope, author, target (the step or transition it annotates) "
+                    "and timestamps, plus a summary count breakdown. You see shared notes "
+                    "and your own, never another user's private notes.",
+     "inputSchema": {"type": "object", "properties": {
+         **_CONN, **_PROJ,
+         "severity": {"type": "array", "items": {"type": "string", "enum": list(NOTE_IMPORTANCE)},
+                      "description": "Keep only notes at these severities (default all)."},
+         "status": {"type": "string", "enum": ["open", "resolved", "all"],
+                    "description": "Keep only open or only resolved notes (default all)."},
+         "scope": {"type": "string", "enum": ["personal", "shared", "all"],
+                   "description": "Keep only your personal notes or only shared notes "
+                                  "(default all)."},
+         "groupBy": {"type": "string", "enum": ["severity", "status", "scope", "target", "none"],
+                     "description": "Group the returned notes by this dimension (default "
+                                    "none — a flat list). 'target' groups by the annotated "
+                                    "step/transition."}},
          "required": ["connectionId", "projectId"]}},
 ]
 _TOOLS_BY_NAME = {t["name"]: t for t in _TOOLS}

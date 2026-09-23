@@ -74,6 +74,8 @@ AI agent ──MCP + OAuth token──▶ MCP server (the 7th surface)
             "Failed</i>&rdquo;, then &ldquo;show me the full trace of that first one&rdquo;.",
             "<b>Metadata</b> — &ldquo;What do the meta attributes mean, and what's the date "
             "range of the data?&rdquo;",
+            "<b>Notes &amp; review</b> — &ldquo;What open URGENT notes are on this process, "
+            "grouped by step? Show me the shared notes but not my personal ones.&rdquo;",
         ],
         '<span class="k">Follow-ups are the point.</span> Answers become the next question — '
         '&ldquo;now filter to March&rdquo;, &ldquo;only the department = Finance cases&rdquo;, '

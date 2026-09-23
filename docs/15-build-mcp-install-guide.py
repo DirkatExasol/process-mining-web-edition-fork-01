@@ -74,6 +74,7 @@ AI client ──MCP/JSON-RPC + Bearer token──▶ MCP server (:8493/mcp)
         <tr><td><code>get_metadata</code></td><td>Meta-attribute titles, step names, and the event date range.</td></tr>
         <tr><td><code>get_journey</code></td><td>One case's ordered events, by business case id or stored hash.</td></tr>
         <tr><td><code>find_journeys</code></td><td>The individual journeys behind an aggregate: slowest cases, cases that visited a step, longest traces.</td></tr>
+        <tr><td><code>get_notes</code></td><td>The notes on a project's steps and transitions — filter by severity, status (open/resolved) and scope (personal/shared), optionally grouped.</td></tr>
       </table>
     </div>""",
         None,

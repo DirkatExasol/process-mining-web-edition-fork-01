@@ -263,3 +263,88 @@ def test_find_journeys_rejects_an_unknown_order(monkeypatch):
     result, message = _call("find_journeys", {"connectionId": "c1", "projectId": 1,
                                               "orderBy": "COST_DESC"})
     assert result["isError"] is True and "Unknown orderBy" in message
+
+
+# ── get_notes: severity / status / scope filtering + grouping ─────────────────
+
+from app.models import FilterSnapshot, NoteTarget, ProcessNote  # noqa: E402
+
+
+def _note(nid, *, importance="NORMAL", resolved=False, shared=False, user="alice",
+          target="Book", when=datetime(2024, 1, 1)):
+    now = datetime(2024, 1, 1)
+    return ProcessNote(
+        id=nid, title=f"note {nid}", text="…", createdAt=when,
+        target=NoteTarget(type="node", value=target),
+        filterSnapshot=FilterSnapshot(fromDate=now, toDate=now),
+        username=user, isShared=shared, importance=importance, resolved=resolved,
+    )
+
+
+class _NotesRepo:
+    def __init__(self, notes):
+        self._notes = notes
+        self.seen_user = None
+
+    async def load_notes(self, project_id, username):
+        # Mirror the app's visibility rule so the test also proves the tool relies on it.
+        self.seen_user = username
+        u = username.upper()
+        return [n for n in self._notes
+                if n.isShared or not n.username or n.username.upper() == u]
+
+
+_ALL_NOTES = [
+    _note("a", importance="URGENT", shared=False, user="alice"),
+    _note("b", importance="INFO", resolved=True, shared=True, user="bob"),
+    _note("c", importance="IMPORTANT", shared=True, user="carol"),
+    _note("d", importance="NORMAL", shared=False, user="bob"),  # not alice's, not shared
+]
+
+
+def test_get_notes_scopes_to_shared_and_own_and_summarises(monkeypatch):
+    repo = _NotesRepo(_ALL_NOTES)
+    _patch_repo(monkeypatch, {"c1": repo})
+    _, payload = _call("get_notes", {"connectionId": "c1", "projectId": 1})
+    ids = {n["id"] for n in payload["notes"]}
+    assert ids == {"a", "b", "c"}  # bob's private "d" is never visible to alice
+    assert repo.seen_user == "alice"
+    assert payload["total"] == 3
+    assert payload["summary"]["byScope"] == {"personal": 1, "shared": 2}
+    assert payload["summary"]["byStatus"] == {"open": 2, "resolved": 1}
+    assert payload["summary"]["bySeverity"]["URGENT"] == 1
+    # Most severe first.
+    assert payload["notes"][0]["id"] == "a" and payload["notes"][0]["severity"] == "URGENT"
+
+
+def test_get_notes_filters_by_severity_status_and_scope(monkeypatch):
+    _patch_repo(monkeypatch, {"c1": _NotesRepo(_ALL_NOTES)})
+    _, only_shared = _call("get_notes", {"connectionId": "c1", "projectId": 1, "scope": "shared"})
+    assert {n["id"] for n in only_shared["notes"]} == {"b", "c"}
+    _, open_only = _call("get_notes", {"connectionId": "c1", "projectId": 1, "status": "open"})
+    assert {n["id"] for n in open_only["notes"]} == {"a", "c"}
+    _, urgent = _call("get_notes", {"connectionId": "c1", "projectId": 1, "severity": ["URGENT", "IMPORTANT"]})
+    assert {n["id"] for n in urgent["notes"]} == {"a", "c"}
+
+
+def test_get_notes_groups_by_scope(monkeypatch):
+    _patch_repo(monkeypatch, {"c1": _NotesRepo(_ALL_NOTES)})
+    _, payload = _call("get_notes", {"connectionId": "c1", "projectId": 1, "groupBy": "scope"})
+    assert payload["groupBy"] == "scope"
+    groups = {g["key"]: g for g in payload["groups"]}
+    assert groups["shared"]["count"] == 2 and groups["personal"]["count"] == 1
+    assert "notes" not in payload  # grouped output replaces the flat list
+
+
+def test_get_notes_rejects_a_bad_group_and_survives_a_missing_table(monkeypatch):
+    _patch_repo(monkeypatch, {"c1": _NotesRepo(_ALL_NOTES)})
+    result, message = _call("get_notes", {"connectionId": "c1", "projectId": 1, "groupBy": "author"})
+    assert result["isError"] is True and "groupBy" in message
+
+    class _Broken:
+        async def load_notes(self, project_id, username):
+            raise RuntimeError("object NOTES not found")
+
+    _patch_repo(monkeypatch, {"c1": _Broken()})
+    _, payload = _call("get_notes", {"connectionId": "c1", "projectId": 1})
+    assert payload["total"] == 0 and payload["notes"] == []
