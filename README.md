@@ -960,8 +960,10 @@ AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp
   hashed. Both resolve to the same journey the individual-journey view shows.
 - **Configuring it** (Admin → *MCP Server*): **Issuer URL**
   (`https://<authentik>/application/o/<slug>/`), **JWKS URL** (blank auto-discovers from the
-  issuer), **Audience / Client ID** (blank unless you mapped an `aud` claim), **Required
-  group** (matched against the token's `groups`), **Username claim**. **Test Authentik**
+  issuer), **Audience / Client ID** (recommended — set it to the client id once you've mapped
+  an `aud` claim, so tokens minted for other apps on the same Authentik can't be replayed;
+  blank skips the check), **Required group** (matched against the token's `groups`),
+  **Username claim**. **Test Authentik**
   fetches the discovery document and JWKS and reports the signing-key count — use it before
   enabling. Both spellings of the issuer are accepted, with and without the trailing slash
   Authentik emits.

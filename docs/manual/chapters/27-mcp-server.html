@@ -39,7 +39,7 @@
 <ol class="steps">
 <li><b>Signature.</b> The token must be an RS256 JWT signed by a key published in your Authentik's JWKS document. Verification is offline &mdash; the keys are fetched once and cached &mdash; so no call is made to Authentik per request.</li>
 <li><b>Issuer.</b> The token's <code>iss</code> must match the configured issuer. Authentik emits it with a trailing slash; both spellings are accepted, so you may configure either.</li>
-<li><b>Audience.</b> Checked only if you have filled in the <b>Audience</b> field. Authentik does not set <code>aud</code> to the client id unless you add a property mapping, so leaving the field blank is normal and the other checks still apply.</li>
+<li><b>Audience.</b> Checked only if you have filled in the <b>Audience</b> field, and <b>recommended</b>: Authentik does not set <code>aud</code> to the client id unless you add a property mapping, but once you do, filling in the field ties each token to <i>this</i> application so a token minted for a different app on the same Authentik cannot be replayed here. Left blank, the check is skipped and any validly-signed token from the issuer is accepted (still gated by the issuer, signature, user-mapping and group checks) &mdash; prefer setting it when the same Authentik serves more than one application.</li>
 <li><b>Group.</b> If a <b>Required group</b> is configured, the token's <code>groups</code> claim must contain it. This is a second gate in addition to whatever binding you placed on the Authentik application.</li>
 <li><b>User.</b> The <b>username claim</b> (default <code>preferred_username</code>) is matched, case-insensitively, against the Process Mining user list. The user must already exist and be enabled.</li>
 </ol>
@@ -70,7 +70,7 @@
 <dl>
 <dt>Issuer URL</dt><dd>The application's issuer, <code>https://&lt;authentik&gt;/application/o/&lt;slug&gt;/</code>. It must be the URL the <em>client</em> can reach, not an internal one &mdash; discovery is performed by the client, from wherever it runs.</dd>
 <dt>JWKS URL</dt><dd>Leave blank to auto-discover from the issuer, or paste the <code>&hellip;/jwks/</code> endpoint explicitly.</dd>
-<dt>Audience / Client ID</dt><dd>Only if you mapped an <code>aud</code> claim onto the access token. Blank disables the check.</dd>
+<dt>Audience / Client ID</dt><dd>Recommended. Set it to the client id once you have mapped an <code>aud</code> claim onto the access token, so tokens issued for other apps on the same Authentik cannot be replayed here. Blank disables the check.</dd>
 <dt>Required group</dt><dd>Optional. Matched against the token's <code>groups</code> claim.</dd>
 <dt>Username claim</dt><dd>Which claim carries the username. Default <code>preferred_username</code>; use <code>email</code> if your Process Mining usernames are email addresses.</dd>
 </dl>

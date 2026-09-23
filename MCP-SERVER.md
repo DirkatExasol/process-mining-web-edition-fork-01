@@ -111,10 +111,14 @@ as-is, so the drill-down is: `get_statistics` → `find_journeys` → `get_journ
    - **Discovery**: `…/.well-known/openid-configuration`
    - **JWKS**: `…/jwks/`
 
-   > **Access-token audience.** Authentik's access token may not set `aud` to your client id
-   > unless you add an audience via a scope/property mapping. If you want the MCP server to
-   > check `aud`, add that mapping and set the client id as the audience; otherwise leave the
-   > MCP **Audience** field blank — the issuer, signature and group checks still apply.
+   > **Access-token audience (strongly recommended).** Authentik's access token may not set
+   > `aud` to your client id unless you add an audience via a scope/property mapping. Adding
+   > that mapping and setting the client id as the MCP **Audience** is the recommended setup:
+   > it ties each token to *this* application, so a token minted for a different app on the
+   > same Authentik can't be replayed against the MCP server. If you leave **Audience** blank
+   > the `aud` check is skipped — any validly-signed token from the issuer is accepted (still
+   > gated by the issuer, signature, user-mapping and optional group checks), so prefer setting
+   > it whenever the same Authentik serves more than one application.
 
    > **Dynamic Client Registration (DCR).** Some clients register themselves automatically.
    > If yours does and you prefer that, enable DCR in Authentik; otherwise the manual
@@ -128,7 +132,8 @@ as-is, so the drill-down is: `get_statistics` → `find_journeys` → `get_journ
 2. Fill in **Authentik (OAuth) settings**:
    - **Issuer URL** — `https://authentik.example.com:19443/application/o/process-mining-mcp/`
    - **JWKS URL** — leave blank to auto-discover from the issuer, or paste `…/jwks/`.
-   - **Audience / Client ID** — the client id if you configured the token's `aud`; else blank.
+   - **Audience / Client ID** — the client id, once you've configured the token's `aud`
+     (recommended). Blank skips the `aud` check and accepts any token from the issuer.
    - **Required group** — optional; only members of this Authentik group may connect
      (matched against the token's `groups` claim).
    - **Username claim** — the JWT claim matched (case-insensitively) to a Process Mining

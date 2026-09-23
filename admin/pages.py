@@ -1439,7 +1439,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       <input type="text" id="mcp_jwksUri" placeholder="https://…/application/o/process-mining/jwks/">
     </div>
     <div class="field">
-      <label>Audience / Client ID <span class="subtle">(the token&rsquo;s <code>aud</code>; blank = skip the check)</span></label>
+      <label>Audience / Client ID <span class="subtle">(the token&rsquo;s <code>aud</code>; strongly recommended &mdash; blank accepts any token from the issuer)</span></label>
       <input type="text" id="mcp_audience" placeholder="the OAuth application's Client ID">
     </div>
     <div class="field">
