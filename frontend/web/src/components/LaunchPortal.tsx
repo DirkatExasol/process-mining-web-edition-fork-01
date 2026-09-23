@@ -127,6 +127,7 @@ const DECADE_LABEL: Record<number, string> = {
   3: 'Integration & Import',
   4: 'Actions',
   5: 'Work-Bench & Analysis',
+  6: 'Conversational Process Mining',
   8: 'Concepts Explained',
 }
 
