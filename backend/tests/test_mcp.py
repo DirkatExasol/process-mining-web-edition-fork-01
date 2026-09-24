@@ -2,7 +2,7 @@
 
 The module lives outside the `app` package (mcp/server.py, a sibling surface), so it is
 loaded by path. Auth and DB access are exercised with monkeypatched store methods — no
-Authentik and no Exasol needed.
+OAuth provider and no Exasol needed.
 """
 
 from __future__ import annotations

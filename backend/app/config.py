@@ -142,7 +142,7 @@ def sink_https_port_for(http_port: int) -> int:
 # process data over the Model Context Protocol (HTTP). By convention on the admin port + 40
 # (HTTP 8130 / HTTPS 8493 with the defaults). Follows the same shared TLS plan as the other
 # surfaces. It authenticates callers with an OAuth access token issued by an external
-# Authentik server (validated offline against its JWKS), then maps the token to a Process
+# OAuth provider (validated offline against its JWKS), then maps the token to a Process
 # Mining user and answers read-only queries against that user's assigned connections. Off
 # until enabled in the admin panel's MCP Server tab.
 MCP_HOST = os.environ.get("PMW_MCP_HOST", ADMIN_HOST)
@@ -153,7 +153,7 @@ MCP_PID_PATH = DATA_DIR / "mcp.pid"
 # Cap on rows returned by the MCP query tools, so one call can't stream an unbounded result
 # to the client (variants/paths especially). Clients can page under this with their own limit.
 MCP_MAX_ROWS = int(os.environ.get("PMW_MCP_MAX_ROWS", "1000"))
-# How long a fetched JWKS (Authentik's signing keys) is cached before re-fetch, in seconds.
+# How long a fetched JWKS (the OAuth provider's signing keys) is cached before re-fetch, in seconds.
 MCP_JWKS_CACHE_SECS = int(os.environ.get("PMW_MCP_JWKS_CACHE_SECS", "3600"))
 # The MCP note tools (create_note / update_note) are the only writes on that surface.
 # Each user may make at most this many note writes per rolling minute, so a looping or

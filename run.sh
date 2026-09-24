@@ -104,7 +104,7 @@ else
   pids+=($!)
 
   # The MCP server — a seventh surface on the admin port + 40, letting AI clients query
-  # the process data over the Model Context Protocol (OAuth via Authentik). Follows the
+  # the process data over the Model Context Protocol (OAuth via an OAuth provider). Follows the
   # same TLS plan; enable it in the admin panel's MCP Server tab (it 503s until then).
   echo "→ MCP server (HTTP ${PMW_MCP_PORT:-8130} / HTTPS ${PMW_MCP_HTTPS_PORT:-8493}, per TLS mode)"
   "$VENV/python" mcp/launch.py &

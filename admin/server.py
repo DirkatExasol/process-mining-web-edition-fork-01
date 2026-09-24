@@ -1830,7 +1830,7 @@ class McpSettingsBody(BaseModel):
 @app.get("/api/mcp")
 def api_mcp_status(user: User = Depends(require_admin)):
     """State of the MCP query server: whether it's enabled, its ports, whether its
-    launcher is running (best-effort from the PID file), and its OAuth/Authentik
+    launcher is running (best-effort from the PID file), and its OAuth provider
     settings (no secrets are stored — offline JWKS validation needs only public values)."""
     return {
         "enabled": store.mcp_enabled,
@@ -1863,14 +1863,14 @@ def api_set_mcp_settings(body: McpSettingsBody, user: User = Depends(require_adm
 
 @app.post("/api/mcp/test")
 async def api_test_mcp(body: McpSettingsBody, user: User = Depends(require_admin)):
-    """Validate the Authentik settings without saving: fetch the issuer's OpenID
+    """Validate the OAuth provider settings without saving: fetch the issuer's OpenID
     discovery document and confirm a JWKS endpoint is reachable. Never leaks the raw
     upstream error to non-admins (this route is admin-only, so full detail is fine)."""
     import httpx
 
     issuer = (body.issuer or "").rstrip("/")
     if not issuer:
-        return {"ok": False, "error": "Enter the Authentik issuer URL first."}
+        return {"ok": False, "error": "Enter the OAuth provider's issuer URL first."}
     disco = f"{issuer}/.well-known/openid-configuration"
     try:
         async with httpx.AsyncClient(timeout=8.0, verify=False) as client:
@@ -1889,7 +1889,7 @@ async def api_test_mcp(body: McpSettingsBody, user: User = Depends(require_admin
             "authorizationEndpoint": meta.get("authorization_endpoint", ""),
         }
     except Exception as exc:  # noqa: BLE001 — admin-only route, detail is helpful
-        return {"ok": False, "error": f"Could not reach Authentik at {disco}: {exc}"}
+        return {"ok": False, "error": f"Could not reach the OAuth provider at {disco}: {exc}"}
 
 
 # ── API: connections (admin-defined, assigned to users) ───────────────────────

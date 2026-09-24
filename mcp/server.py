@@ -1,9 +1,10 @@
 """MCP server — a machine-facing surface that lets AI clients (Claude, ChatGPT, …) query
 the Process Mining tool over the Model Context Protocol (Streamable-HTTP transport).
 
-Auth: every request carries an OAuth access token issued by an external Authentik server.
-The token is a signed JWT, verified OFFLINE against Authentik's JWKS (RS256; issuer +
-audience checked). The verified user claim is matched to an enabled Process Mining user;
+Auth: every request carries an OAuth access token issued by an external OAuth provider
+(Authentik, Keycloak, …). The token is a signed JWT, verified OFFLINE against the provider's
+JWKS (RS256; issuer + audience checked). The verified user claim is matched to an enabled
+Process Mining user;
 that user's assigned database connections gate what may be queried — so the MCP surface
 never exposes more than the same person could see in the app.
 
@@ -18,7 +19,7 @@ Timestamps the server creates or reports for notes are local wall-clock time in 
 display zone set in the Admin Console, and are returned with that zone's UTC offset.
 
 The whole surface is off until an administrator enables it (admin panel → MCP Server tab),
-and 503s while disabled. OAuth/Authentik settings are configured there too.
+and 503s while disabled. OAuth provider settings are configured there too.
 
 This is the 7th surface (admin port + 40). Unlike the browser surfaces it does not use
 `build_surface_app` (no cookie sign-in) — MCP clients authenticate with a bearer token.
@@ -85,9 +86,9 @@ SERVER_INFO = {"name": "process-mining", "title": "Process Mining", "version": "
 app = FastAPI(title="Process Mining - MCP Server", docs_url=None, redoc_url=None)
 
 
-# ── OAuth token validation (offline, against Authentik's JWKS) ─────────────────
+# ── OAuth token validation (offline, against the provider's JWKS) ──────────────
 
-# Authentik is an admin-configured, trusted internal host that commonly serves a
+# The OAuth provider is an admin-configured, trusted internal host that commonly serves a
 # self-signed certificate — mirror the rest of the app (sink / internal TLS), which does
 # not verify these internal certs. The JWT signature itself is still verified against the
 # fetched key, so token integrity does not depend on the transport.
@@ -127,7 +128,7 @@ async def _authenticate(request: Request):
     s = store.mcp_settings()
     issuer, audience, jwks_uri = s["issuer"].rstrip("/"), s["audience"], s["jwksUri"]
     if not issuer or not jwks_uri:
-        raise AuthError(503, "The MCP server's OAuth (Authentik) settings are not configured.")
+        raise AuthError(503, "The MCP server's OAuth provider settings are not configured.")
 
     header = request.headers.get("authorization", "")
     if not header.lower().startswith("bearer "):
@@ -1546,8 +1547,8 @@ app.add_api_route("/", mcp_get, methods=["GET"])
 @app.get("/.well-known/oauth-protected-resource")
 @app.get("/.well-known/oauth-protected-resource/mcp")
 async def protected_resource_metadata(request: Request) -> JSONResponse:
-    """RFC 9728 metadata: tells the MCP client which authorization server (Authentik)
-    guards this resource, so it can run the OAuth flow on its own. Served at both the bare
+    """RFC 9728 metadata: tells the MCP client which authorization server (the OAuth
+    provider) guards this resource, so it can run the OAuth flow on its own. Served at both the bare
     well-known path and the resource-suffixed one (`…/mcp`), since clients differ."""
     s = store.mcp_settings()
     return JSONResponse({

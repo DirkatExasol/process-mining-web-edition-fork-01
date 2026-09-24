@@ -1420,10 +1420,10 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     <p class="muted" style="margin-top:0">
       A read-only <strong>Model Context Protocol</strong> endpoint that lets AI clients
       (Claude, ChatGPT, …) query your process data — <em>metrics, paths and metadata</em> — over
-      HTTP(S). Callers authenticate with an <strong>OAuth access token from your Authentik
-      server</strong>; the token is verified against Authentik&rsquo;s signing keys and mapped to a
-      Process Mining user, whose assigned database connections gate what they can see. See
-      <code>MCP-SERVER.md</code> for the full Authentik + client setup.
+      HTTP(S). Callers authenticate with an <strong>OAuth access token from your OAuth
+      provider</strong>; the token is verified against the provider&rsquo;s signing keys and mapped
+      to a Process Mining user, whose assigned database connections gate what they can see. See
+      <code>MCP-SERVER.md</code> for the full provider + client setup.
     </p>
     <label class="row" style="font-size:14px; cursor:pointer; gap:8px; align-items:center">
       <input type="checkbox" id="mcp_enabled" style="width:auto" onchange="toggleMcpEnabled()">
@@ -1431,10 +1431,10 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     </label>
     <div id="mcp_status" class="col" style="margin-top:12px; gap:6px"></div>
 
-    <h3 style="font-size:13px; margin:18px 0 6px">Authentik (OAuth) settings</h3>
+    <h3 style="font-size:13px; margin:18px 0 6px">OAuth Provider settings</h3>
     <div class="field">
       <label>Issuer URL</label>
-      <input type="text" id="mcp_issuer" placeholder="https://authentik.example.com:19443/application/o/process-mining/">
+      <input type="text" id="mcp_issuer" placeholder="https://oauth-provider.example.com/application/o/process-mining/">
     </div>
     <div class="field">
       <label>JWKS URL <span class="subtle">(leave blank to auto-discover from the issuer)</span></label>
@@ -1454,7 +1454,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
     </div>
     <div class="row" style="align-items:center; gap:10px; margin-top:8px">
       <button class="btn primary" onclick="saveMcpSettings()">Save settings</button>
-      <button class="btn" onclick="testMcp()">Test Authentik</button>
+      <button class="btn" onclick="testMcp()">Test provider</button>
       <span id="mcp_testResult" class="muted"></span>
     </div>
     <p class="subtle" style="margin-top:12px">
@@ -2378,7 +2378,7 @@ async function testMcp() {
   try {
     const r = await api('/api/mcp/test', { method: 'POST', body: JSON.stringify(_mcpBody()) });
     $('mcp_testResult').innerHTML = r.ok
-      ? '<span style="color:var(--green)">✓ Reached Authentik — ' + r.keyCount + ' signing key(s), issuer ' + (r.issuer || '') + '</span>'
+      ? '<span style="color:var(--green)">✓ Reached the OAuth provider — ' + r.keyCount + ' signing key(s), issuer ' + (r.issuer || '') + '</span>'
       : '<span style="color:var(--red)">✗ ' + (r.error || 'Failed') + '</span>';
   } catch (e) { $('mcp_testResult').innerHTML = '<span style="color:var(--red)">✗ ' + e.message + '</span>'; }
 }

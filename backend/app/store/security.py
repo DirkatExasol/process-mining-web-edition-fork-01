@@ -631,7 +631,7 @@ class SecurityStore:
             self._conn.commit()
 
     def mcp_settings(self) -> dict:
-        """The MCP OAuth/Authentik settings (no secrets). Missing values default to ''
+        """The MCP OAuth provider settings (no secrets). Missing values default to ''
         except usernameClaim, which defaults to 'preferred_username'."""
         with self._lock:
             out = {k: (self._get_config(f"mcp_{k}") or "") for k in self._MCP_KEYS}
