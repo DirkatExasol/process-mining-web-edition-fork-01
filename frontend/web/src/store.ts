@@ -42,6 +42,7 @@ import {
   type SampleSet,
   type SamplingMethod,
   type SimSlot,
+  type SimulationConfig,
   type SimulationResult,
   type StatisticsResponse,
   type StepInfo,
@@ -510,17 +511,7 @@ export interface AppActions {
   setABDataSource: (side: ABSide, source: ABDataSource) => Promise<void>
 
   // simulation
-  runSimulation: (
-    slot: SimSlot,
-    config: {
-      journeyCount: number
-      startDate: string
-      avgInterArrivalHours: number
-      excludedSteps: string[]
-      requiredSteps: string[]
-      maxStepsPerJourney: number
-    },
-  ) => Promise<void>
+  runSimulation: (slot: SimSlot, config: SimulationConfig) => Promise<void>
 
   // AI documentation
   setLLMPromptTemplate: (template: string) => void
@@ -2635,14 +2626,7 @@ export const useStore = create<Store>((set, get) => {
       }
       set({ isSimulating: true, simulationError: null })
       try {
-        const result = await api.simulate(baseGraph, s.allStepInfos, {
-          journeyCount: config.journeyCount,
-          startDate: config.startDate,
-          avgInterArrivalHours: config.avgInterArrivalHours,
-          excludedSteps: config.excludedSteps,
-          requiredSteps: config.requiredSteps,
-          maxStepsPerJourney: config.maxStepsPerJourney,
-        })
+        const result = await api.simulate(baseGraph, s.allStepInfos, config)
         set(slot === 'Sim-A' ? { simResultA: result } : { simResultB: result })
 
         // Refresh any A/B side already displaying this slot.

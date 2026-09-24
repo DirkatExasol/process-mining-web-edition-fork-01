@@ -12,7 +12,13 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.models import ProcessGraph, SimulatedEvent, SimulationConfig, StepInfo
+from app.models import (
+    EdgeDurationOverride,
+    ProcessGraph,
+    SimulatedEvent,
+    SimulationConfig,
+    StepInfo,
+)
 from app.services import simulation
 
 from .conftest import config, edge, step
@@ -175,6 +181,66 @@ def test_mutually_exclusive_required_steps_yield_no_journeys(fork_graph):
         graph, infos, config(journey_count=100, required=["B", "D"])
     )
     assert result.totalJourneys == 0
+
+
+# ── Resource levers: per-step factor & per-edge overrides ─────────────────────
+# The linear_graph edges carry avg=3600 and no stdDev, so each duration is
+# deterministic (sigma=0 → exactly 3600 s), making baseline cycle time exactly
+# 7200 s (A→B→C). That lets these assert the scaled time precisely.
+
+
+def test_baseline_cycle_time_is_deterministic(linear_graph):
+    graph, infos = linear_graph
+    result = simulation.simulate(graph, infos, config(journey_count=20))
+    assert abs(result.avgCycleTimeSecs - 7200.0) < 1e-6
+
+
+def test_step_resource_factor_scales_all_outgoing_durations(linear_graph):
+    graph, infos = linear_graph
+    # Twice the resources on A → its outgoing A→B halves (1800), B→C unchanged.
+    result = simulation.simulate(
+        graph, infos, config(journey_count=20, step_factors={"A": 0.5})
+    )
+    assert abs(result.avgCycleTimeSecs - 5400.0) < 1e-6  # 1800 + 3600
+
+
+def test_edge_multiplier_override_scales_one_transition(linear_graph):
+    graph, infos = linear_graph
+    result = simulation.simulate(graph, infos, config(
+        journey_count=20,
+        edge_overrides=[EdgeDurationOverride(fromStep="B", toStep="C", multiplier=2.0)],
+    ))
+    assert abs(result.avgCycleTimeSecs - 10800.0) < 1e-6  # 3600 + 7200
+
+
+def test_edge_absolute_mean_override_sets_the_transition_time(linear_graph):
+    graph, infos = linear_graph
+    result = simulation.simulate(graph, infos, config(
+        journey_count=20,
+        edge_overrides=[EdgeDurationOverride(fromStep="A", toStep="B", meanSecs=1800.0)],
+    ))
+    assert abs(result.avgCycleTimeSecs - 5400.0) < 1e-6  # 1800 + 3600
+
+
+def test_step_factor_and_edge_override_compose(linear_graph):
+    graph, infos = linear_graph
+    # A resource factor of 0.5 AND an edge multiplier of 0.5 on A→B → ×0.25 (900 s).
+    result = simulation.simulate(graph, infos, config(
+        journey_count=20,
+        step_factors={"A": 0.5},
+        edge_overrides=[EdgeDurationOverride(fromStep="A", toStep="B", multiplier=0.5)],
+    ))
+    assert abs(result.avgCycleTimeSecs - 4500.0) < 1e-6  # 900 + 3600
+
+
+def test_invalid_or_zero_levers_are_ignored(linear_graph):
+    graph, infos = linear_graph
+    result = simulation.simulate(graph, infos, config(
+        journey_count=20,
+        step_factors={"A": 0.0, "B": float("inf")},  # non-positive / non-finite → ignored
+        edge_overrides=[EdgeDurationOverride(fromStep="A", toStep="B", multiplier=-3.0)],
+    ))
+    assert abs(result.avgCycleTimeSecs - 7200.0) < 1e-6  # unchanged baseline
 
 
 # ── Cyclic graph / max steps ─────────────────────────────────────────────────

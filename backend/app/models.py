@@ -366,6 +366,19 @@ class ProcessNote(Base):
 # ── Simulation ────────────────────────────────────────────────────────────────
 
 
+class EdgeDurationOverride(Base):
+    """A what-if override of one transition's (from→to) duration, for resource
+    analysis. ``meanSecs`` sets the transition's mean time outright; ``multiplier``
+    scales the observed mean (0.5 = twice the resources → half the time). If both are
+    given, ``meanSecs`` sets the level and ``multiplier`` then scales it. Either may be
+    omitted; an override that sets neither is a no-op."""
+
+    fromStep: str
+    toStep: str
+    multiplier: float | None = None
+    meanSecs: float | None = None
+
+
 class SimulationConfig(Base):
     journeyCount: int = 200
     startDate: datetime = Field(default_factory=datetime.now)
@@ -373,6 +386,12 @@ class SimulationConfig(Base):
     excludedSteps: list[str] = Field(default_factory=list)
     requiredSteps: list[str] = Field(default_factory=list)
     maxStepsPerJourney: int = 60
+    # What-if resource levers (direct time override). A per-step factor scales ALL of
+    # that step's outgoing transition durations (models resources dedicated to a step:
+    # 0.5 = twice the resources → half the time); per-edge overrides fine-tune single
+    # transitions. Empty = simulate the observed process unchanged.
+    stepResourceFactors: dict[str, float] = Field(default_factory=dict)
+    edgeOverrides: list[EdgeDurationOverride] = Field(default_factory=list)
 
 
 class SimulatedEvent(Base):

@@ -18,7 +18,7 @@ import { Chevron, Divider, Segmented, Unavailable } from '../components/ui'
 import { FlowChart } from '../flow/FlowChart'
 import { formatDateTime, formatDurationLong, toISODate } from '../graph/format'
 import { useStore } from '../store'
-import type { SimSlot, SimulationResult } from '../types'
+import type { EdgeDurationOverride, ProcessGraph, SimSlot, SimulationResult } from '../types'
 
 type ResultsTab = 'flow' | 'variants' | 'charts' | 'events'
 
@@ -33,6 +33,10 @@ export function SimulationView() {
   const [requiredSteps, setRequiredSteps] = useState<string[]>([])
   const [excludedOpen, setExcludedOpen] = useState(false)
   const [requiredOpen, setRequiredOpen] = useState(false)
+  const [stepFactors, setStepFactors] = useState<Record<string, number>>({})
+  const [edgeOverrides, setEdgeOverrides] = useState<EdgeDurationOverride[]>([])
+  const [resourcesOpen, setResourcesOpen] = useState(false)
+  const [overridesOpen, setOverridesOpen] = useState(false)
   const [tab, setTab] = useState<ResultsTab>('flow')
 
   const result = slot === 'Sim-A' ? store.simResultA : store.simResultB
@@ -40,7 +44,21 @@ export function SimulationView() {
     store.savedChartStates['A-Chart']?.processGraph ?? store.processGraph
   const canSimulate = baseGraph.transitions.length > 0
 
-  const run = () =>
+  const run = () => {
+    // Only send levers that actually change something: factors ≠ 1 (and > 0), and
+    // overrides that set a usable value. The engine ignores the rest, but trimming
+    // keeps the request and any A/B "what changed" reasoning clean.
+    const factors: Record<string, number> = {}
+    for (const [name, f] of Object.entries(stepFactors)) {
+      if (Number.isFinite(f) && f > 0 && f !== 1) factors[name] = f
+    }
+    const overrides = edgeOverrides.filter(
+      (o) =>
+        o.fromStep &&
+        o.toStep &&
+        ((o.multiplier != null && Number.isFinite(o.multiplier) && o.multiplier > 0) ||
+          (o.meanSecs != null && Number.isFinite(o.meanSecs) && o.meanSecs > 0)),
+    )
     void store.runSimulation(slot, {
       journeyCount,
       startDate: `${startDate}T00:00:00`,
@@ -48,7 +66,14 @@ export function SimulationView() {
       excludedSteps,
       requiredSteps,
       maxStepsPerJourney,
+      stepResourceFactors: factors,
+      edgeOverrides: overrides,
     })
+  }
+
+  const leverCount =
+    Object.values(stepFactors).filter((f) => Number.isFinite(f) && f > 0 && f !== 1).length +
+    edgeOverrides.length
 
   if (!store.selectedProject) {
     return (
@@ -158,8 +183,31 @@ export function SimulationView() {
           onChange={setRequiredSteps}
         />
         <Divider />
+        <ResourceFactors
+          open={resourcesOpen}
+          onToggle={() => setResourcesOpen(!resourcesOpen)}
+          steps={store.allSteps}
+          factors={stepFactors}
+          onChange={setStepFactors}
+        />
+        <Divider />
+        <EdgeOverrides
+          open={overridesOpen}
+          onToggle={() => setOverridesOpen(!overridesOpen)}
+          graph={baseGraph}
+          factors={stepFactors}
+          overrides={edgeOverrides}
+          onChange={setEdgeOverrides}
+        />
+        <Divider />
 
         <div className="col" style={{ padding: 14, gap: 8 }}>
+          {leverCount > 0 && (
+            <span className="t-caption2 fg-tertiary">
+              {leverCount} what-if resource lever{leverCount === 1 ? '' : 's'} active — run into{' '}
+              <b>Sim-B</b> and compare against a clean <b>Sim-A</b> in the Sampling A/B section.
+            </span>
+          )}
           {!canSimulate && (
             <span className="t-caption2 fg-orange">
               Load the A-Chart first — simulation needs an observed process graph.
@@ -260,6 +308,282 @@ function StepPicker({
               )
             })}
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Per-step resource factor: a multiplier applied to every transition leaving the step.
+ *  <1 = more resources (faster), >1 = fewer (slower), 1 = unchanged. */
+function ResourceFactors({
+  open,
+  onToggle,
+  steps,
+  factors,
+  onChange,
+}: {
+  open: boolean
+  onToggle: () => void
+  steps: string[]
+  factors: Record<string, number>
+  onChange: (value: Record<string, number>) => void
+}) {
+  const active = Object.values(factors).filter((f) => Number.isFinite(f) && f > 0 && f !== 1)
+  const set = (step: string, raw: string) => {
+    const next = { ...factors }
+    const n = Number(raw)
+    if (raw === '' || n === 1 || !Number.isFinite(n) || n <= 0) delete next[step]
+    else next[step] = n
+    onChange(next)
+  }
+  return (
+    <div className="col" style={{ gap: 0 }}>
+      <div className="sub-header">
+        <button onClick={onToggle}>
+          <Chevron open={open} />
+          <span className="sub-title">Resources per step</span>
+        </button>
+        {active.length > 0 && <span className="badge-pill">{active.length}</span>}
+        {active.length > 0 && (
+          <button
+            className="icon-btn"
+            style={{ width: 20, height: 20, color: 'var(--secondary)' }}
+            onClick={() => onChange({})}
+            title="Clear resource factors"
+          >
+            ⊗
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="col" style={{ padding: '0 14px 12px', gap: 6 }}>
+          <span className="t-caption2 fg-tertiary">
+            A factor on the time of every transition <b>leaving</b> a step. &lt;1 = more
+            resources (faster), &gt;1 = fewer (slower).
+          </span>
+          <div className="step-list" style={{ maxHeight: 220 }}>
+            {steps.map((step) => {
+              const value = factors[step]
+              return (
+                <div
+                  key={step}
+                  className="row"
+                  style={{ gap: 8, alignItems: 'center', padding: '3px 6px' }}
+                >
+                  <span className="truncate" style={{ flex: 1, fontSize: 13 }}>
+                    {step}
+                  </span>
+                  <span className="fg-tertiary" style={{ fontSize: 12 }}>
+                    ×
+                  </span>
+                  <input
+                    className="text-input"
+                    type="number"
+                    min={0.1}
+                    step={0.1}
+                    placeholder="1.0"
+                    value={value ?? ''}
+                    onChange={(e) => set(step, e.target.value)}
+                    style={{ width: 68 }}
+                  />
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Per-transition duration what-ifs: pick a from→to edge, then scale it (×) or set an
+ *  absolute mean (=). Shows the observed time and the resulting target time. */
+function EdgeOverrides({
+  open,
+  onToggle,
+  graph,
+  factors,
+  overrides,
+  onChange,
+}: {
+  open: boolean
+  onToggle: () => void
+  graph: ProcessGraph
+  factors: Record<string, number>
+  overrides: EdgeDurationOverride[]
+  onChange: (value: EdgeDurationOverride[]) => void
+}) {
+  const adjacency = useMemo(() => {
+    const map = new Map<string, { to: string; avgSecs: number | null }[]>()
+    for (const t of graph.transitions) {
+      const list = map.get(t.fromStep) ?? []
+      list.push({ to: t.toStep, avgSecs: t.avgSecs })
+      map.set(t.fromStep, list)
+    }
+    for (const list of map.values()) list.sort((a, b) => a.to.localeCompare(b.to))
+    return map
+  }, [graph])
+  const fromSteps = useMemo(() => [...adjacency.keys()].sort((a, b) => a.localeCompare(b)), [adjacency])
+
+  const observedAvg = (from: string, to: string): number | null =>
+    adjacency.get(from)?.find((e) => e.to === to)?.avgSecs ?? null
+
+  const update = (index: number, patch: Partial<EdgeDurationOverride>) =>
+    onChange(overrides.map((o, i) => (i === index ? { ...o, ...patch } : o)))
+  const remove = (index: number) => onChange(overrides.filter((_, i) => i !== index))
+  const add = () => {
+    const from = fromSteps[0] ?? ''
+    const to = adjacency.get(from)?.[0]?.to ?? ''
+    onChange([...overrides, { fromStep: from, toStep: to, multiplier: 0.5, meanSecs: null }])
+  }
+
+  return (
+    <div className="col" style={{ gap: 0 }}>
+      <div className="sub-header">
+        <button onClick={onToggle}>
+          <Chevron open={open} />
+          <span className="sub-title">Transition time overrides</span>
+        </button>
+        {overrides.length > 0 && <span className="badge-pill">{overrides.length}</span>}
+        {overrides.length > 0 && (
+          <button
+            className="icon-btn"
+            style={{ width: 20, height: 20, color: 'var(--secondary)' }}
+            onClick={() => onChange([])}
+            title="Clear transition overrides"
+          >
+            ⊗
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="col" style={{ padding: '0 14px 12px', gap: 10 }}>
+          <span className="t-caption2 fg-tertiary">
+            Change one transition's time. <b>×</b> scales the observed mean; <b>=</b> sets an
+            absolute mean (minutes). A step's resource factor still applies on top.
+          </span>
+          {overrides.map((o, i) => {
+            const neighbors = adjacency.get(o.fromStep) ?? []
+            const base = observedAvg(o.fromStep, o.toStep)
+            const isAbs = o.meanSecs != null
+            const stepFactor =
+              Number.isFinite(factors[o.fromStep]) && factors[o.fromStep] > 0
+                ? factors[o.fromStep]
+                : 1
+            let target: number | null = null
+            if (isAbs && o.meanSecs != null) target = o.meanSecs * stepFactor
+            else if (o.multiplier != null && base != null) target = base * o.multiplier * stepFactor
+            return (
+              <div
+                key={i}
+                className="col"
+                style={{
+                  gap: 6,
+                  padding: 8,
+                  border: '1px solid var(--separator-soft)',
+                  borderRadius: 8,
+                }}
+              >
+                <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                  <select
+                    className="text-input"
+                    value={o.fromStep}
+                    onChange={(e) => {
+                      const from = e.target.value
+                      const to = adjacency.get(from)?.[0]?.to ?? ''
+                      update(i, { fromStep: from, toStep: to })
+                    }}
+                    style={{ flex: 1, minWidth: 0 }}
+                  >
+                    {fromSteps.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="fg-tertiary">→</span>
+                  <select
+                    className="text-input"
+                    value={o.toStep}
+                    onChange={(e) => update(i, { toStep: e.target.value })}
+                    style={{ flex: 1, minWidth: 0 }}
+                  >
+                    {neighbors.map((n) => (
+                      <option key={n.to} value={n.to}>
+                        {n.to}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="icon-btn"
+                    style={{ width: 22, height: 22, color: 'var(--secondary)' }}
+                    onClick={() => remove(i)}
+                    title="Remove override"
+                  >
+                    ⊗
+                  </button>
+                </div>
+                <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                  <Segmented
+                    options={[
+                      { value: 'mult', label: '×' },
+                      { value: 'abs', label: '=' },
+                    ]}
+                    value={isAbs ? 'abs' : 'mult'}
+                    onChange={(mode) =>
+                      mode === 'abs'
+                        ? update(i, {
+                            multiplier: null,
+                            meanSecs: base != null ? Math.round(base * (o.multiplier ?? 1)) : 3600,
+                          })
+                        : update(i, { meanSecs: null, multiplier: 1 })
+                    }
+                  />
+                  {isAbs ? (
+                    <input
+                      className="text-input"
+                      type="number"
+                      min={0.1}
+                      step={0.5}
+                      value={o.meanSecs != null ? o.meanSecs / 60 : ''}
+                      onChange={(e) =>
+                        update(i, { meanSecs: e.target.value === '' ? null : Number(e.target.value) * 60 })
+                      }
+                      style={{ width: 84 }}
+                    />
+                  ) : (
+                    <input
+                      className="text-input"
+                      type="number"
+                      min={0.01}
+                      step={0.1}
+                      value={o.multiplier ?? ''}
+                      onChange={(e) =>
+                        update(i, { multiplier: e.target.value === '' ? null : Number(e.target.value) })
+                      }
+                      style={{ width: 84 }}
+                    />
+                  )}
+                  <span className="fg-tertiary" style={{ fontSize: 12 }}>
+                    {isAbs ? 'min' : '× time'}
+                  </span>
+                </div>
+                <span className="t-caption2 fg-tertiary">
+                  observed {base != null ? formatDurationLong(base) : '—'}
+                  {target != null && (
+                    <>
+                      {' → '}
+                      <b>{formatDurationLong(target)}</b>
+                    </>
+                  )}
+                </span>
+              </div>
+            )
+          })}
+          <button className="btn small" onClick={add} disabled={fromSteps.length === 0}>
+            ＋ Add transition override
+          </button>
         </div>
       )}
     </div>

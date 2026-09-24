@@ -524,6 +524,15 @@ export interface StatisticsResponse {
   isTruncated: boolean
 }
 
+export interface EdgeDurationOverride {
+  fromStep: string
+  toStep: string
+  /** Scales the observed mean (0.5 = twice the resources → half the time). */
+  multiplier?: number | null
+  /** Absolute mean transition time in seconds; sets the level, multiplier then scales it. */
+  meanSecs?: number | null
+}
+
 export interface SimulationConfig {
   journeyCount: number
   startDate: string
@@ -531,6 +540,10 @@ export interface SimulationConfig {
   excludedSteps: string[]
   requiredSteps: string[]
   maxStepsPerJourney: number
+  /** Per-step resource factor scaling ALL of that step's outgoing transition times. */
+  stepResourceFactors: Record<string, number>
+  /** Per-transition duration what-ifs. */
+  edgeOverrides: EdgeDurationOverride[]
 }
 
 export interface SimulatedEvent {
