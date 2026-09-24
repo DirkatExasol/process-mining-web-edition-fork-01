@@ -11,21 +11,48 @@ import { aChartFilterSummary, useStore } from '../store'
 export function AIDocumentationView() {
   const store = useStore()
   const [showPrompt, setShowPrompt] = useState(false)
-  // The report is a fully self-contained styled HTML document assembled server-side. It
-  // renders in its own iframe (its CSS is isolated from the app), and "Save as PDF" prints
-  // that frame — the same Chrome-print path that produced the reference report.
-  const frameRef = useRef<HTMLIFrameElement>(null)
-  // The report is shown in its own iframe (isolated CSS). The frame is same-origin so the
-  // host can print it and wire its links, but it is deliberately NOT script-enabled
+  // The report is a fully self-contained styled HTML document assembled server-side. It is
+  // shown on screen in its own iframe (isolated CSS). The frame is same-origin so the host can
+  // wire its table-of-contents links, but it is deliberately NOT script-enabled
   // (`sandbox="allow-same-origin allow-modals"`) — the report is static HTML, so even a
-  // sanitiser bypass in the embedded content can't run script with our origin. We print THIS
-  // frame directly (not a blob: URL) because a strict Content-Security-Policy can forbid
-  // blob: documents.
+  // sanitiser bypass in the embedded content can't run script with our origin.
+  const frameRef = useRef<HTMLIFrameElement>(null)
+
+  // "Save as PDF" prints from a THROWAWAY iframe appended to <body>, not the on-screen one.
+  // Two reasons the on-screen frame prints blank in Chromium: (1) it is a `srcDoc` frame, and
+  // Chromium prints `about:srcdoc` documents empty; (2) it lives inside #root, which the global
+  // print stylesheet hides (`@media print { #root { display:none } }`, needed so the Help panel
+  // can print a copy portalled to <body>) — a frame under a display:none ancestor has no box to
+  // print. The throwaway frame sidesteps both: it is a <body> child (outside the hidden #root)
+  // and is filled with document.write, giving a real same-origin about:blank document. No blob:
+  // URL (a strict CSP can forbid those) and no `allow-scripts`, so the report stays inert.
   const printReport = () => {
-    const win = frameRef.current?.contentWindow
-    if (!win) return
-    win.focus()
-    win.print()
+    const html = store.llmAnalysis?.reportHtml
+    if (!html) return
+    const frame = document.createElement('iframe')
+    frame.setAttribute('sandbox', 'allow-same-origin allow-modals')
+    frame.setAttribute('aria-hidden', 'true')
+    frame.style.cssText = 'position:fixed;left:-9999px;width:0;height:0;border:0;'
+    document.body.appendChild(frame)
+    const doc = frame.contentWindow?.document
+    if (!doc) {
+      frame.remove()
+      return
+    }
+    doc.open()
+    doc.write(html)
+    doc.close()
+    let printed = false
+    const run = () => {
+      if (printed) return
+      printed = true
+      frame.contentWindow?.focus()
+      frame.contentWindow?.print()
+      window.setTimeout(() => frame.remove(), 1000)
+    }
+    // A document.write'd about:blank frame may or may not fire load — cover both, once.
+    frame.onload = run
+    window.setTimeout(run, 250)
   }
 
   // Fragment links don't scroll inside a srcDoc frame (base URL is about:srcdoc). The frame
