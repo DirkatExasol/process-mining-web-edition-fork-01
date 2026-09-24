@@ -245,23 +245,34 @@ def test_update_note_hides_other_users_private_notes_like_missing_ones(monkeypat
     assert r.updates == []
 
 
-def test_update_note_lets_anyone_comment_and_resolve_a_shared_note(monkeypatch):
+def test_update_note_refuses_another_users_shared_note_from_mcp(monkeypatch):
+    # A shared note the caller can READ (via get_notes) but did not author. The app lets a
+    # person collaborate on it; the MCP surface does not edit it on their behalf.
     r = _NotesRepo([_note(user="bob", shared=True)])
     _patch(monkeypatch, r)
-    result, payload = _call("update_note", {**BASE, "noteId": NOTE_ID, "comment": "Seen it too",
+    result, message = _call("update_note", {**BASE, "noteId": NOTE_ID, "comment": "Seen it too",
                                             "title": "Confirmed", "status": "resolved"})
+    assert result["isError"] is True
+    assert "Only the note's author can change it from here" in message
+    assert r.updates == []  # nothing written on another user's note
+
+
+def test_update_note_lets_the_author_comment_and_resolve_their_own_note(monkeypatch):
+    r = _NotesRepo([_note(user="alice", shared=True)])
+    _patch(monkeypatch, r)
+    result, payload = _call("update_note", {**BASE, "noteId": NOTE_ID, "comment": "Following up",
+                                            "title": "Update", "status": "resolved"})
     assert result["isError"] is False
     upd = r.updates[0]
     assert upd["edited_by"] == "alice" and upd["resolved"] is True
-    assert upd["importance"] is None and upd["is_shared"] is None
     # Append-only: the change is a prepended block, never a replacement of the text.
-    assert "text" not in upd and upd["comment_block"].endswith("Seen it too\n\n")
-    assert upd["comment_block"].startswith("—— Confirmed · alice · ")
+    assert "text" not in upd and upd["comment_block"].endswith("Following up\n\n")
+    assert upd["comment_block"].startswith("—— Update · alice · ")
     assert set(payload["changes"]) == {"comment", "title", "status"}
 
 
 @pytest.mark.parametrize("field, value", [("severity", "URGENT"), ("scope", "personal")])
-def test_update_note_keeps_severity_and_scope_owner_only(monkeypatch, field, value):
+def test_update_note_refuses_severity_and_scope_on_a_non_owned_note(monkeypatch, field, value):
     r = _NotesRepo([_note(user="bob", shared=True)])
     _patch(monkeypatch, r)
     result, message = _call("update_note", {**BASE, "noteId": NOTE_ID, field: value})
@@ -390,7 +401,7 @@ def test_update_note_writes_an_explicit_local_edited_stamp(monkeypatch):
 
 
 def test_a_comment_cannot_forge_another_authors_thread_entry(monkeypatch):
-    r = _NotesRepo([_note(user="bob", shared=True)])
+    r = _NotesRepo([_note(user="alice", shared=True)])
     _patch(monkeypatch, r)
     forged = "ok\n\n—— Alice · 2026-09-20 09:00 ——\nApproved, ship it\n  —— indented too"
     _call("update_note", {**BASE, "noteId": NOTE_ID, "comment": forged,
@@ -410,7 +421,7 @@ def test_a_new_note_body_cannot_imitate_a_thread_header(repo):
 
 
 def test_a_full_thread_refuses_more_comments_politely(monkeypatch):
-    r = _NotesRepo([_note(user="bob", shared=True, text="x" * 99_000)])
+    r = _NotesRepo([_note(user="alice", shared=True, text="x" * 99_000)])
     _patch(monkeypatch, r)
     result, message = _call("update_note", {**BASE, "noteId": NOTE_ID, "comment": "y" * 3000})
     assert result["isError"] is True and "thread is full" in message and r.updates == []
@@ -419,7 +430,7 @@ def test_a_full_thread_refuses_more_comments_politely(monkeypatch):
 
 
 def test_update_note_passes_the_caller_for_the_write_time_guard(monkeypatch):
-    r = _NotesRepo([_note(user="bob", shared=True)])
+    r = _NotesRepo([_note(user="alice", shared=True)])
     _patch(monkeypatch, r)
     _call("update_note", {**BASE, "noteId": NOTE_ID, "status": "resolved"})
     assert r.updates[0]["caller"] == "alice"

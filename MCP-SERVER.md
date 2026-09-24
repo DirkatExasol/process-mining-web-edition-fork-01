@@ -28,10 +28,13 @@ AI client ──MCP/JSON-RPC + Bearer token──▶ MCP server (:18493/mcp)
 Nineteen tools in five groups. Who may call them:
 
 - **Everyone** with an MCP login: the discovery, analysis, case and note-reading tools.
-- **Writes — notes only.** `create_note` and `update_note` follow the app's own note rules:
-  the author is always the signed-in user; ids and times are set by the server; a thread is
-  append-only (comments are prepended, nothing is rewritten); only a note's author may change
-  its severity or scope; another user's private note is indistinguishable from a missing one.
+- **Writes — notes only, and only your own.** `create_note` and `update_note` follow the
+  app's own note rules: the author is always the signed-in user; ids and times are set by the
+  server; a thread is append-only (comments are prepended, nothing is rewritten). Unlike the
+  app — where a person may collaborate on a shared note — **`update_note` edits only notes the
+  caller authored**: a shared note others wrote is readable (via `get_notes`) but this surface
+  will not change it on the caller's behalf. Another user's private note stays indistinguishable
+  from a missing one, so ids cannot be probed.
   Every field is validated (step names must exist in the project, text ≤ 4000 and title ≤ 200
   characters, control and bidi-override characters stripped, and no text can imitate a
   thread entry's header to pose as another author), a full thread (100,000 characters) takes
@@ -67,7 +70,7 @@ Console** (App Control → *Timezone*) and are returned with that zone's UTC off
 | `find_journeys` | Everyone | The individual cases behind an aggregate — slowest, longest or by step — with optional full path. Returned eventIds feed get_journey. |
 | `get_notes` | Everyone | The notes on a project's steps and transitions — filter by severity, status and scope, optionally grouped; with a summary of counts. Times are local (Admin Console display zone) with the UTC offset. |
 | `create_note` | Everyone — write | Create a note on a step (step) or a transition (fromStep + toStep). You become the author; id and time are set by the server. text required (≤ 4000), title ≤ 200, severity default NORMAL, scope default personal. Rate-limited per user, and capped at a maximum number of notes you may own per project. |
-| `update_note` | Everyone — write | On a note you can see: add a comment (prepended to the thread, with an optional title), set status open/resolved; the author alone may change severity or scope. Existing text is never rewritten; a full thread (100,000 characters) takes no more comments. Rate-limited per user. |
+| `update_note` | Everyone — write | On a note YOU authored: add a comment (prepended to the thread, with an optional title), set status open/resolved, or change severity/scope. This tool edits only your own notes — you can read others' shared notes with get_notes and reply in the app, but it won't edit another user's note on your behalf. Existing text is never rewritten; a full thread (100,000 characters) takes no more comments. Rate-limited per user. |
 | `compare_segments` | Power users & admins | Two slices of one project side by side: each segment's count, durations, goodness and end steps, then the biggest differences (B minus A) in end-step shares, transition times, transition frequency, and transitions found in only one segment. |
 | `get_bottlenecks` | Power users & admins | Where time is lost: transitions by total waiting time (occurrences × average), the slowest typical transitions (median), rework (steps repeated in a journey) and self-loops. |
 | `get_trend` | Power users & admins | The process over time: per day, week or month (by journey start) the journey count, average and median duration, and — with outcomeSteps — the reach rate of those steps. |
@@ -729,6 +732,7 @@ curl -k -X POST https://<your-host>:18493/mcp \
 | `Sorry — … reserved for power users` | The user lacks the power-user role. Grant it in the admin console (Users tab → **Make power**) if they should run the deeper-analysis tools. |
 | `You have reached the limit of N note changes per minute` | A client is writing notes in a loop. Wait a minute; raise `PMW_MCP_NOTE_WRITES_PER_MIN` only if the volume is intended. |
 | `You already own N notes in project … (the limit is …)` | The per-project note cap was hit. Delete some in the app, or raise `PMW_MCP_MAX_NOTES_PER_PROJECT` (0 disables it) if the volume is intended. |
+| `Only the note's author can change it from here` | The note is shared and authored by someone else. MCP edits only your own notes — collaborate on the shared note (comment, resolve, retitle) in the Process Mining app instead. |
 | `Step '…' does not exist in project …` (create_note) | Step names must match exactly — list them with `get_metadata`. |
 | `This note's thread is full` | The note's thread reached 100,000 characters. Start a new note for the follow-up. |
 | `A batch may hold at most 20 messages` | The client sent a JSON-RPC batch of more than 20 calls; split it. |

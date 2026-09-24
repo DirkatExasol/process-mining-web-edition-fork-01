@@ -936,8 +936,10 @@ AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp
 - **Nineteen tools, three access levels.** Everyone with an MCP login gets the discovery,
   analysis, case and note-reading tools. **Notes are the only writes**: `create_note` and
   `update_note` apply the app's own note rules — the author is always the signed-in user, ids
-  and times are server-set, threads are append-only, only the author may change severity or
-  scope, and another user's private note looks exactly like a missing one — with every field
+  and times are server-set, threads are append-only, and (unlike the app, where a person may
+  collaborate on a shared note) `update_note` edits only notes the caller authored — a shared
+  note someone else wrote is readable but not editable here — while another user's private note
+  looks exactly like a missing one — with every field
   validated (step names must exist; text ≤ 4000, title ≤ 200 characters; control and
   bidi-override characters stripped; no text may imitate a thread header), full threads
   (100,000 characters) refusing further comments, the permission rule re-checked inside the
@@ -979,7 +981,7 @@ AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp
 | `find_journeys` | Everyone | The individual cases behind an aggregate — slowest, longest or by step — with optional full path. Returned eventIds feed get_journey. |
 | `get_notes` | Everyone | The notes on a project's steps and transitions — filter by severity, status and scope, optionally grouped; with a summary of counts. Times are local (Admin Console display zone) with the UTC offset. |
 | `create_note` | Everyone — write | Create a note on a step (step) or a transition (fromStep + toStep). You become the author; id and time are set by the server. text required (≤ 4000), title ≤ 200, severity default NORMAL, scope default personal. Rate-limited per user, and capped at a maximum number of notes you may own per project. |
-| `update_note` | Everyone — write | On a note you can see: add a comment (prepended to the thread, with an optional title), set status open/resolved; the author alone may change severity or scope. Existing text is never rewritten; a full thread (100,000 characters) takes no more comments. Rate-limited per user. |
+| `update_note` | Everyone — write | On a note YOU authored: add a comment (prepended to the thread, with an optional title), set status open/resolved, or change severity/scope. This tool edits only your own notes — you can read others' shared notes with get_notes and reply in the app, but it won't edit another user's note on your behalf. Existing text is never rewritten; a full thread (100,000 characters) takes no more comments. Rate-limited per user. |
 | `compare_segments` | Power users & admins | Two slices of one project side by side: each segment's count, durations, goodness and end steps, then the biggest differences (B minus A) in end-step shares, transition times, transition frequency, and transitions found in only one segment. |
 | `get_bottlenecks` | Power users & admins | Where time is lost: transitions by total waiting time (occurrences × average), the slowest typical transitions (median), rework (steps repeated in a journey) and self-loops. |
 | `get_trend` | Power users & admins | The process over time: per day, week or month (by journey start) the journey count, average and median duration, and — with outcomeSteps — the reach rate of those steps. |

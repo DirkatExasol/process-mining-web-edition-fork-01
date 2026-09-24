@@ -160,10 +160,12 @@ TOOLS: list[dict] = [
                 '          "target": "ENTER Security Check → LEAVE Security Check", "targetType": "edge",\n'
                 '          "createdAt": "2026-09-24T08:15:02+02:00", "editedAt": null}}'),
     dict(name="update_note", group="Notes", access=WRITE,
-         purpose="On a note you can see: add a comment (prepended to the thread, with an optional "
-                 "title), set status open/resolved; the author alone may change severity or scope. "
-                 "Existing text is never rewritten; a full thread (100,000 characters) takes no "
-                 "more comments. Rate-limited per user.",
+         purpose="On a note YOU authored: add a comment (prepended to the thread, with an optional "
+                 "title), set status open/resolved, or change severity/scope. This tool edits only "
+                 "your own notes — you can read others' shared notes with get_notes and reply in "
+                 "the app, but it won't edit another user's note on your behalf. Existing text is "
+                 "never rewritten; a full thread (100,000 characters) takes no more comments. "
+                 "Rate-limited per user.",
          params="connectionId, projectId, noteId, comment?, title?, status?, severity?, scope?",
          question="Resolve the test note and say why.",
          args={"connectionId": "7e31de50-…", "projectId": 2,

@@ -858,8 +858,12 @@ async def _tool_create_note(user, args) -> Any:
 
 
 async def _tool_update_note(user, args) -> Any:
-    """Comment on a note, resolve/reopen it, or (author only) change severity/scope.
-    The thread is append-only: existing text is never rewritten."""
+    """Change one of the caller's OWN notes — comment, resolve/reopen, or change
+    severity/scope. The thread is append-only: existing text is never rewritten.
+
+    Unlike the app, this tool will not edit another user's note. A person may collaborate
+    on a shared note (comment, resolve, retitle) in the Process Mining app, but an AI client
+    acting on that person's behalf may only touch notes that person authored."""
     pid, cid = _project_id(args), _conn_id(args)
     raw_id = args.get("noteId")
     note_id = raw_id.strip() if isinstance(raw_id, str) else ""
@@ -881,14 +885,21 @@ async def _tool_update_note(user, args) -> Any:
         note = await repo.get_note(note_id, pid)
         owner = (note.username or "") if note else ""
         is_owner = bool(note) and owner.upper() == user.username.upper()
-        # Same visibility as the app (own, shared or unowned). A note that is missing, in
-        # another project, or another user's private note all get the SAME answer, so the
-        # tool can't be used to discover which ids exist.
-        if note is None or not (is_owner or note.isShared or owner == ""):
+        # Visibility first, so id enumeration stays impossible: a missing note, one in
+        # another project, and another user's PRIVATE note all get the SAME answer.
+        visible = bool(note) and (is_owner or note.isShared or owner == "")
+        if not visible:
             raise ToolError(f"No note {note_id!r} that you can see in project {pid}.")
-        if (severity is not None or scope is not None) and not is_owner:
-            raise ToolError("Only the note's author can change its severity or scope. You "
-                            "can still add a comment or change its status.")
+        # Then ownership: writes through MCP touch only the caller's own notes. A shared or
+        # unowned note the caller can read but did not author is left for the app — an AI
+        # client does not edit someone else's note on their behalf. (The app itself still
+        # lets a person collaborate on shared notes; only this surface is restricted.)
+        if not is_owner:
+            raise ToolError(
+                "Only the note's author can change it from here. This note is shared, so you "
+                "can read it with get_notes and reply to it in the Process Mining app, but the "
+                "MCP server won't edit another user's note on your behalf."
+            )
         block = comment_block(_author_name(user.username), comment, title or None) if comment else None
         if block and not thread_has_room(note.text, block):
             raise ToolError("This note's thread is full — create a new note to continue the "
@@ -1325,12 +1336,14 @@ _TOOLS: list[dict] = [
          "scope": {"type": "string", "enum": ["personal", "shared"]}},
          "required": ["connectionId", "projectId", "text"]}},
     {"name": "update_note", "handler": _tool_update_note,
-     "description": "WRITE: change a note you can see (your own, a shared one, or an "
-                    "unowned one): add a comment to its thread (with an optional title), "
-                    "set its status to open or resolved, and — author only — change its "
-                    "severity or scope. Existing text is never rewritten; comments are "
-                    "prepended, newest first. noteId comes from get_notes or create_note. "
-                    "Rate-limited per user.",
+     "description": "WRITE: change a note YOU AUTHORED — add a comment to its thread (with "
+                    "an optional title), set its status to open or resolved, or change its "
+                    "severity or scope. This tool only edits your own notes: you can read "
+                    "other people's shared notes with get_notes and reply to them in the "
+                    "Process Mining app, but the MCP server won't edit another user's note on "
+                    "your behalf. Existing text is never rewritten; comments are prepended, "
+                    "newest first. noteId comes from get_notes or create_note. Rate-limited "
+                    "per user.",
      "inputSchema": {"type": "object", "properties": {
          **_CONN, **_PROJ,
          "noteId": {"type": "string", "description": "The note's id."},
@@ -1338,10 +1351,8 @@ _TOOLS: list[dict] = [
          "title": {"type": "string",
                    "description": f"A title for this comment; also becomes the note's title (max {TITLE_MAX})."},
          "status": {"type": "string", "enum": ["open", "resolved"]},
-         "severity": {"type": "string", "enum": list(NOTE_IMPORTANCE),
-                      "description": "Author only."},
-         "scope": {"type": "string", "enum": ["personal", "shared"],
-                   "description": "Author only."}},
+         "severity": {"type": "string", "enum": list(NOTE_IMPORTANCE)},
+         "scope": {"type": "string", "enum": ["personal", "shared"]}},
          "required": ["connectionId", "projectId", "noteId"]}},
     {"name": "compare_segments", "handler": _tool_compare_segments,
      "description": "POWER USERS ONLY. Compare two slices of one project side by side — "
