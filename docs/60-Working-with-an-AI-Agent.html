@@ -90,7 +90,7 @@ footer{color:var(--soft);font-size:13px;text-align:center;margin-top:34px}
 
   <div class="lead">
     <b>Conversational Process Mining</b> turns process analysis into a dialogue: you ask, an
-    AI agent queries the Process Mining tool through its read-only <b>MCP server</b>, and you
+    AI agent queries the Process Mining tool through its <b>MCP server</b>, and you
     get answers you can immediately drill into — all within the same data boundary as the app.
     It sits beside the chart-driven Workbench, not on top of it.
   </div>
@@ -104,21 +104,21 @@ footer{color:var(--soft);font-size:13px;text-align:center;margin-top:34px}
   <p class="body">Three pieces connect your words to your data. You set them up once (guides 15 and 61); after that it is just conversation.</p>
   <div class="mock">
       <pre class="calc">You ──ask in plain language──▶ AI agent (Claude, …)
-                                   └─ picks and calls read-only MCP tools
+                                   └─ picks and calls MCP tools (writes: notes only)
 AI agent ──MCP + OAuth token──▶ MCP server (the 7th surface)
                                    └─ verifies you via Authentik
                                    └─ answers from your assigned connections</pre>
       <table class="tbl">
         <tr><th>Piece</th><th>Role</th></tr>
-        <tr><td><b>MCP server</b></td><td>The read-only query endpoint on the Process Mining side (metrics, paths, metadata). Off until an admin enables it.</td></tr>
+        <tr><td><b>MCP server</b></td><td>The query endpoint on the Process Mining side (metrics, paths, cases, metadata, notes); its only writes are notes. Off until an admin enables it.</td></tr>
         <tr><td><b>OAuth provider</b> (Authentik)</td><td>Proves who you are; the token maps to your Process Mining user and its connection assignments.</td></tr>
         <tr><td><b>AI client</b> (Claude Desktop)</td><td>Where you have the conversation. It discovers the tools and calls them for you.</td></tr>
       </table>
     </div>
 </section><section class="step">
   <div class="step-head"><div class="num">3</div><h2>What you can ask</h2></div>
-  <p class="body">The agent has a small set of <b>read-only</b> tools covering the same ground as the Workbench. In practice you never name the tools — you ask in words and the agent maps your question to them. Typical things to ask:</p>
-  <ul><li><b>Discover</b> — &ldquo;What connections and projects can I see? Which project has the most journeys?&rdquo;</li><li><b>Shape of the process</b> — &ldquo;Show me the process map for project 1&rdquo;, &ldquo;What are the most common paths (variants)?&rdquo;</li><li><b>Performance</b> — &ldquo;What's the average and median time between <i>Approve</i> and <i>Ship</i>? Where are the slowest transitions?&rdquo;</li><li><b>KPIs</b> — &ldquo;How many journeys in the last 30 days, and what's the process-goodness score?&rdquo;</li><li><b>Drill down</b> — &ldquo;List the five slowest cases that hit <i>Payment Failed</i>&rdquo;, then &ldquo;show me the full trace of that first one&rdquo;.</li><li><b>Metadata</b> — &ldquo;What do the meta attributes mean, and what's the date range of the data?&rdquo;</li><li><b>Notes &amp; review</b> — &ldquo;What open URGENT notes are on this process, grouped by step? Show me the shared notes but not my personal ones.&rdquo;</li></ul>
+  <p class="body">The agent has a set of tools covering the same ground as the Workbench. In practice you never name the tools — you ask in words and the agent maps your question to them. Typical things to ask:</p>
+  <ul><li><b>Discover</b> — &ldquo;What connections and projects can I see? Which project has the most journeys?&rdquo;</li><li><b>Shape of the process</b> — &ldquo;Show me the process map for project 1&rdquo;, &ldquo;What are the most common paths (variants)?&rdquo;</li><li><b>Performance</b> — &ldquo;What's the average and median time between <i>Approve</i> and <i>Ship</i>? Where are the slowest transitions?&rdquo;</li><li><b>KPIs</b> — &ldquo;How many journeys in the last 30 days, and what's the process-goodness score?&rdquo;</li><li><b>Drill down</b> — &ldquo;List the five slowest cases that hit <i>Payment Failed</i>&rdquo;, then &ldquo;show me the full trace of that first one&rdquo;.</li><li><b>Metadata</b> — &ldquo;What do the meta attributes mean, and what's the date range of the data?&rdquo;</li><li><b>Notes &amp; review</b> — &ldquo;What open URGENT notes are on this process, grouped by step? Show me the shared notes but not my personal ones.&rdquo;</li><li><b>Write notes</b> — &ldquo;Add a shared, important note on the security transition: median 17 minutes&rdquo;, &ldquo;resolve the test note and say why&rdquo;. The note is yours, exactly as if you had written it in the app.</li><li><b>Find a case</b> — &ldquo;Where is <i>CRA-000123</i>?&rdquo; (the agent searches every project you can see), and &ldquo;which payment methods exist?&rdquo;</li><li><b>Deeper analysis</b> <i>(power users)</i> — &ldquo;Compare Bank Transfer with PayPal orders&rdquo;, &ldquo;where is the most time lost?&rdquo;, &ldquo;is the rejection rate trending up?&rdquo;, &ldquo;what drives rejections?&rdquo;, &ldquo;is payment always processed before confirmation?&rdquo;</li></ul>
   <div class="tip"><span class="k">Follow-ups are the point.</span> Answers become the next question — &ldquo;now filter to March&rdquo;, &ldquo;only the department = Finance cases&rdquo;, &ldquo;compare that with the sample set&rdquo;. The agent chains tools across the conversation.</div>
 </section><section class="step">
   <div class="step-head"><div class="num">4</div><h2>The drill-down mental model</h2></div>
@@ -133,7 +133,7 @@ AI agent ──MCP + OAuth token──▶ MCP server (the 7th surface)
 </section><section class="step">
   <div class="step-head"><div class="num">5</div><h2>Good to keep in mind</h2></div>
   <p class="body">A few habits make the conversation accurate and safe:</p>
-  <ul><li><b>Name the connection and project</b> when you have several — &ldquo;on connection <i>Prod</i>, project 1&rdquo; — so the agent doesn't guess.</li><li><b>Read-only, always.</b> There is no tool to write, delete, sample or edit — the agent cannot change your data or configuration.</li><li><b>Your boundary travels with the token.</b> If a connection isn't assigned to you, the agent can't query it, and it will say so.</li><li><b>Numbers come from the database</b>, not the model — the agent reports what the tools return. If it can't get data, it tells you rather than inventing it.</li></ul>
+  <ul><li><b>Name the connection and project</b> when you have several — &ldquo;on connection <i>Prod</i>, project 1&rdquo; — so the agent doesn't guess.</li><li><b>Only notes can change.</b> The agent can add a note or comment on a step or transition and resolve a note — as you, under the app's own note rules. There is no tool to delete, sample, import or edit event data or configuration.</li><li><b>Deeper analysis is for power users.</b> Segment comparison, bottlenecks, trends, outcome drivers and conformance rules answer only users with the power-user role; for others the agent explains that the role is needed.</li><li><b>Your boundary travels with the token.</b> If a connection isn't assigned to you, the agent can't query it, and it will say so.</li><li><b>Numbers come from the database</b>, not the model — the agent reports what the tools return. If it can't get data, it tells you rather than inventing it.</li></ul>
 </section><section class="step">
   <div class="step-head"><div class="num">6</div><h2>Getting started</h2></div>
   <p class="body">Two short guides take you from nothing to a working conversation:</p>

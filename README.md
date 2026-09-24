@@ -42,7 +42,7 @@ Four independent Python processes:
 | **Integration Console** (`integration/`) | 8100 / 8463 | Data-source configuration; developers and admins only |
 | **Actions** (`actions/`) | 8110 / 8473 | Author business-readable node-menu actions; developers and admins only (off until an admin enables it) |
 | **API Server - Event Receiver** (`sink/`) | 8120–8129 / 8483–8492 | One HTTP/HTTPS ingest API per configured sink (a pre-exposed port pool); external agents POST journey events; off until an admin enables it |
-| **MCP Server** (`mcp/`) | 8130 / 8493 | Read-only Model Context Protocol endpoint so AI clients query metrics/paths/metadata; OAuth via Authentik; off until an admin enables it (see [MCP-SERVER.md](MCP-SERVER.md)) |
+| **MCP Server** (`mcp/`) | 8130 / 8493 | Model Context Protocol endpoint so AI clients query metrics/paths/cases/metadata and read/write notes (its only writes); deeper-analysis tools for power users; OAuth via Authentik; off until an admin enables it (see [MCP-SERVER.md](MCP-SERVER.md)) |
 
 ```
 Browser ──► GUI Server (:8080 / :8443) ──proxy /api──► Compute Backend (:8000) ──► Exasol
@@ -904,8 +904,9 @@ a failed post.
 
 The **MCP Server** is the mirror image of the Event Receiver: where a sink lets an agent
 *write* journey events, the MCP server lets an AI client *read* the analysis. It is a
-[Model Context Protocol](https://modelcontextprotocol.io) endpoint — **strictly read-only**,
-with no ingest, edit or sampling tools — that answers metrics, path and metadata queries
+[Model Context Protocol](https://modelcontextprotocol.io) endpoint — **read-only except
+for notes** (`create_note` / `update_note` are its only writes; there are no ingest,
+event-edit or sampling tools) — that answers metrics, path, case, metadata and note queries
 over HTTP(S). It is the seventh surface, on the admin port **+40** (`8130` / `8493`;
 host `18130` / `18493` under the default compose mapping), runs from `mcp/`, and is **off
 until an admin enables it** (Admin → *MCP Server*), returning `503` while off.
@@ -932,39 +933,513 @@ AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp
   what is visible — exactly the boundary the app enforces. An unknown user gets `403`, an
   unassigned connection `403`, a bad or missing token `401` with a `WWW-Authenticate`
   challenge so the client knows to start the OAuth flow.
-- **Eight tools.**
-
-  | Tool | Returns |
-  |---|---|
-  | `list_connections` | The database connections you may query (id, name, schema) |
-  | `list_projects` | The projects on a connection — or, with `connectionId` omitted, on **every** connection you may query; `includeCounts` adds a journey count per project |
-  | `get_metadata` | Meta-attribute titles, step names, event date range |
-  | `get_process_map` | The directly-follows map: steps (nodes) + transitions (edges) with counts and timing |
-  | `get_transition_metrics` | Per step pair: count and avg/median/min/max/stddev transition time |
-  | `get_variants` | Distinct journey paths and how often each occurs, most frequent first |
-  | `get_statistics` | Journey count, journey-duration stats, process-goodness score |
-  | `get_journey` | One case's ordered trace by case id — the only tool that returns individual events |
-  | `find_journeys` | The individual cases behind an aggregate — slowest / longest / by-step, ordered, with optional full path (the drill-down `get_statistics → find_journeys → get_journey`) |
-  | `get_notes` | The notes/annotations on a project's steps and transitions — filter by severity, status (open/resolved) and scope (personal/shared), optionally `groupBy` any of them |
-
-- **One filter vocabulary.** The four analytical tools take `connectionId` (string) +
-  `projectId` (integer) plus the same optional filter as the app: `sampleSet`
+- **Nineteen tools, three access levels.** Everyone with an MCP login gets the discovery,
+  analysis, case and note-reading tools. **Notes are the only writes**: `create_note` and
+  `update_note` apply the app's own note rules — the author is always the signed-in user, ids
+  and times are server-set, threads are append-only, only the author may change severity or
+  scope, and another user's private note looks exactly like a missing one — with every field
+  validated (step names must exist; text ≤ 4000, title ≤ 200 characters; control and
+  bidi-override characters stripped; no text may imitate a thread header), full threads
+  (100,000 characters) refusing further comments, the permission rule re-checked inside the
+  database write, a per-user limit of `PMW_MCP_NOTE_WRITES_PER_MIN`
+  (default 20) writes a minute, and an admin-log entry per write (never the text). The five
+  **deeper-analysis tools** — `compare_segments`, `get_bottlenecks`, `get_trend`,
+  `get_outcome_drivers`, `check_conformance` — are for **power users** (and admins); anyone
+  else gets a polite refusal naming the role, and nothing is queried.
+- **One filter vocabulary.** Most tools take `connectionId` (string) + `projectId`
+  (integer) plus the same optional filter as the app: `sampleSet`
   (`ORIGINAL`/`SAMPLE_1..3`), `fromDate`, `toDate` (ISO **dates** — day granularity),
   `includedSteps` (keep journeys visiting **all** of them), `excludedSteps` (drop journeys
-  visiting **any** of them) and `meta1..3`; `get_variants` also takes `limit` (≤1000).
-  Because `includedSteps` is an AND, an either/or question needs one call per alternative.
-- **Looking up one case.** `get_journey` takes a `connectionId`, `projectId` and an
-  `eventId` and returns that journey's events in time order, with its three meta values,
-  start and end timestamps and total duration. `JOURNEYS` stores the **MD5 of the case
-  id**, never the plaintext, so the tool reuses the application's own normalisation: a
-  business id such as `FLT-000123` is hashed, a 32-char hex id is taken as already
-  hashed. Both resolve to the same journey the individual-journey view shows.
-- **Reading the notes.** `get_notes` returns the annotations placed on a project's steps and
-  transitions, with each note's **severity** (`NORMAL`/`INFO`/`IMPORTANT`/`URGENT`),
-  **status** (open/resolved), **scope** (personal/shared), author and target. Filter by any
-  of `severity`, `status`, `scope`, or `groupBy` one of them (or `target`); every response
-  also carries a `summary` of counts. Visibility is the app's own — you see shared notes plus
-  your own, never another user's private notes.
+  visiting **any** of them) and `meta1..3` (case-insensitive substring match; list the
+  values with `get_attribute_values`). Because `includedSteps` is an AND, an either/or
+  question needs one call per alternative.
+- **Case ids.** `JOURNEYS` stores the **MD5 of the case id**, never the plaintext, so
+  `get_journey` and `find_journey` reuse the application's own normalisation: a business id
+  such as `FLT-000123` is hashed, a 32-char hex id is taken as already hashed.
+- **Local times.** Note timestamps (created, edited, comment stamps) are local time in the
+  Admin Console's display timezone and come back with that zone's offset
+  (`2026-09-23T12:34:45+02:00`); journey event times are the log's own recorded times.
+
+<!-- MCP-TOOL-REFERENCE:BEGIN -->
+#### Tool reference — 19 tools, one example each
+
+| Tool | Who | Returns |
+|---|---|---|
+| `list_connections` | Everyone | The database connections you may query. |
+| `list_projects` | Everyone | Projects on one connection — or, with connectionId omitted, on every connection you may query; includeCounts adds a journey count per project. |
+| `get_metadata` | Everyone | Meta-attribute titles, step names, each step's definition (stepDetails: description, score, belongsTo group, endOfProcess, shape) and the event date range. |
+| `get_attribute_values` | Everyone | The values each meta attribute takes, with journey counts, most frequent first — so you know what to pass as meta1/meta2/meta3. |
+| `get_process_map` | Everyone | The directly-follows map: steps (nodes) and transitions (edges) with counts and timing. |
+| `get_transition_metrics` | Everyone | Per step pair: count and average/median/min/max/stddev transition time (seconds). |
+| `get_variants` | Everyone | Distinct journey paths and how often each occurs, most frequent first. |
+| `get_statistics` | Everyone | Journey count, journey-duration statistics and the process-goodness score. |
+| `get_journey` | Everyone | One case's ordered events, by business case id or stored hash, with its meta values, start/end and total duration. |
+| `find_journey` | Everyone | Which project(s) hold a case id — searches every project on every connection you may query (or one connectionId), ready for get_journey. |
+| `find_journeys` | Everyone | The individual cases behind an aggregate — slowest, longest or by step — with optional full path. Returned eventIds feed get_journey. |
+| `get_notes` | Everyone | The notes on a project's steps and transitions — filter by severity, status and scope, optionally grouped; with a summary of counts. Times are local (Admin Console display zone) with the UTC offset. |
+| `create_note` | Everyone — write | Create a note on a step (step) or a transition (fromStep + toStep). You become the author; id and time are set by the server. text required (≤ 4000), title ≤ 200, severity default NORMAL, scope default personal. Rate-limited per user. |
+| `update_note` | Everyone — write | On a note you can see: add a comment (prepended to the thread, with an optional title), set status open/resolved; the author alone may change severity or scope. Existing text is never rewritten; a full thread (100,000 characters) takes no more comments. Rate-limited per user. |
+| `compare_segments` | Power users & admins | Two slices of one project side by side: each segment's count, durations, goodness and end steps, then the biggest differences (B minus A) in end-step shares, transition times, transition frequency, and transitions found in only one segment. |
+| `get_bottlenecks` | Power users & admins | Where time is lost: transitions by total waiting time (occurrences × average), the slowest typical transitions (median), rework (steps repeated in a journey) and self-loops. |
+| `get_trend` | Power users & admins | The process over time: per day, week or month (by journey start) the journey count, average and median duration, and — with outcomeSteps — the reach rate of those steps. |
+| `get_outcome_drivers` | Power users & admins | Why an outcome happens: the overall rate of reaching outcomeSteps, and the meta values and visited steps that raise or lower it (rate with / without, delta in percentage points, lift). Association, not cause. |
+| `check_conformance` | Power users & admins | Test journeys against up to 10 rules — requires {step, ifStep?}, forbidden {step}, precedes {before, after}, max_duration {maxSecs}, max_gap {fromStep, toStep, maxSecs} — and count violations with example case ids. |
+
+> The common filter: sampleSet (ORIGINAL | SAMPLE_1..3), fromDate / toDate (ISO dates), includedSteps (journeys visiting all of them), excludedSteps (journeys visiting none of them) — up to 200 step names each — and meta1 / meta2 / meta3 (up to 256 characters; case-insensitive substring match — see get_attribute_values). The per-journey power tools (bottleneck rework, trend, outcome drivers, conformance, end steps) keep whole journeys that are active in the date window rather than cutting them at its edges.
+
+##### Discover
+
+What exists: connections, projects, steps and attribute values.
+
+**`list_connections`** — *Everyone.* Parameters: none.
+
+*“Which Process Mining connections can I use?”*
+
+```jsonc
+// call
+{
+  "name": "list_connections",
+  "arguments": {}
+}
+// result (excerpt; illustrative values)
+[{"id": "7e31de50-…", "name": "02 - Air Travel", "schema": "PM_AIR", "comment": ""},
+ {"id": "38891b38-…", "name": "03 - Finance", "schema": "PM_FIN", "comment": ""}]
+```
+
+**`list_projects`** — *Everyone.* Parameters: connectionId?, includeCounts?, sampleSet?.
+
+*“Which process has the most journeys?”*
+
+```jsonc
+// call
+{
+  "name": "list_projects",
+  "arguments": {
+    "includeCounts": true
+  }
+}
+// result (excerpt; illustrative values)
+[{"connectionName": "02 - Air Travel", "projectId": 2,
+  "title": "Airport Passenger Flow", "journeyCount": 148187},
+ {"connectionName": "03 - Finance", "projectId": 1,
+  "title": "Online Credit Application", "journeyCount": 20000}, …]
+```
+
+**`get_metadata`** — *Everyone.* Parameters: connectionId, projectId.
+
+*“Show me all steps of the flight booking process.”*
+
+```jsonc
+// call
+{
+  "name": "get_metadata",
+  "arguments": {
+    "connectionId": "7e31de50-…",
+    "projectId": 5
+  }
+}
+// result (excerpt; illustrative values)
+{"metaTitles": {"meta1": "Journey Type", "meta2": "Airline", "meta3": "Payment Method"},
+ "steps": ["Add Services", "Confirm Booking", …],
+ "stepDetails": [{"step": "Confirm Booking", "description": "Booking confirmed and ticket issued",
+                  "score": 15, "belongsTo": "Payment", "endOfProcess": true, "shape": "stadium"}, …],
+ "dateRange": {"from": "2024-01-01T00:02:11", "to": "2024-12-31T23:51:40"}}
+```
+
+**`get_attribute_values`** — *Everyone.* Parameters: connectionId, projectId, meta? (meta1|meta2|meta3|all), limit? (50), filter.
+
+*“Which payment methods occur in the bookstore?”*
+
+```jsonc
+// call
+{
+  "name": "get_attribute_values",
+  "arguments": {
+    "connectionId": "64254f7e-…",
+    "projectId": 1,
+    "meta": "meta1"
+  }
+}
+// result (excerpt; illustrative values)
+{"attributes": [{"meta": "meta1", "title": "Payment Method", "distinctValues": 3,
+   "values": [{"value": "Credit Card", "journeys": 9120},
+              {"value": "PayPal", "journeys": 6874},
+              {"value": "Bank Transfer", "journeys": 4006}], "truncated": false}],
+ "filterHint": "… case-insensitive and also matches substrings."}
+```
+
+##### Analyse
+
+Aggregates over many journeys; every one takes the common filter.
+
+**`get_process_map`** — *Everyone.* Parameters: connectionId, projectId, filter.
+
+*“Draw the process map of the airport passenger flow.”*
+
+```jsonc
+// call
+{
+  "name": "get_process_map",
+  "arguments": {
+    "connectionId": "7e31de50-…",
+    "projectId": 2
+  }
+}
+// result (excerpt; illustrative values)
+{"steps": {"ENTER Check-In": {"description": "Passenger checks in at the desk", "score": 0, …}, …},
+ "transitions": [{"fromStep": "ENTER Check-In", "toStep": "LEAVE Check-In",
+                  "occurrences": 44295, "avgSecs": 507.8, "medianSecs": 480.0, …}, …]}
+```
+
+**`get_transition_metrics`** — *Everyone.* Parameters: connectionId, projectId, filter.
+
+*“How long does security take for passengers in 2024?”*
+
+```jsonc
+// call
+{
+  "name": "get_transition_metrics",
+  "arguments": {
+    "connectionId": "7e31de50-…",
+    "projectId": 2,
+    "fromDate": "2024-01-01",
+    "toDate": "2024-12-31",
+    "includedSteps": [
+      "ENTER Security Check"
+    ]
+  }
+}
+// result (excerpt; illustrative values)
+[{"fromStep": "ENTER Security Check", "toStep": "LEAVE Security Check",
+  "occurrences": 145198, "avgSecs": 1020.0, "medianSecs": 1020.0,
+  "minSecs": 240.0, "maxSecs": 1800.0, "stdDevSecs": 466.7}, …]
+```
+
+**`get_variants`** — *Everyone.* Parameters: connectionId, projectId, filter, limit?.
+
+*“What are the three most common credit-application paths?”*
+
+```jsonc
+// call
+{
+  "name": "get_variants",
+  "arguments": {
+    "connectionId": "38891b38-…",
+    "projectId": 1,
+    "limit": 3
+  }
+}
+// result (excerpt; illustrative values)
+[{"path": "Bank -> Application Received -> Application Checked -> Credit Check -> Accepted -> …",
+  "journeyCount": 4210, "stepCount": 7, "totalScore": 25}, …]
+```
+
+**`get_statistics`** — *Everyone.* Parameters: connectionId, projectId, filter.
+
+*“How long do affiliate credit applications take?”*
+
+```jsonc
+// call
+{
+  "name": "get_statistics",
+  "arguments": {
+    "connectionId": "38891b38-…",
+    "projectId": 1,
+    "meta3": "Affiliate"
+  }
+}
+// result (excerpt; illustrative values)
+{"journeyCount": 9870,
+ "durations": {"minSecs": 1804.0, "avgSecs": 201544.0, "medianSecs": 172800.0, …},
+ "processGoodness": 3.41}
+```
+
+##### Cases
+
+Individual journeys — find them, then open one.
+
+**`get_journey`** — *Everyone.* Parameters: connectionId, projectId, eventId, sampleSet?.
+
+*“Show me credit application CRA-000123.”*
+
+```jsonc
+// call
+{
+  "name": "get_journey",
+  "arguments": {
+    "connectionId": "38891b38-…",
+    "projectId": 1,
+    "eventId": "CRA-000123"
+  }
+}
+// result (excerpt; illustrative values)
+{"eventId": "CRA-000123", "storedEventId": "5e05bf5d94a6fb2c78e7722c3ec4b07b",
+ "startDate": "2024-06-12T09:59:28", "endDate": "2024-06-12T11:01:11", "durationSecs": 3703.0,
+ "meta": {"Applied Credit Sum": "> 25.000 EUR", "Income Class": "Low", "Channel": "Affiliate"},
+ "events": [{"step": "Affiliate", "eventTime": "2024-06-12T09:59:28"}, …,
+            {"step": "Rejected", "eventTime": "2024-06-12T11:01:11"}]}
+```
+
+**`find_journey`** — *Everyone.* Parameters: eventId, connectionId?, sampleSet?.
+
+*“Where is case FLT-000124?”*
+
+```jsonc
+// call
+{
+  "name": "find_journey",
+  "arguments": {
+    "eventId": "FLT-000124"
+  }
+}
+// result (excerpt; illustrative values)
+{"eventId": "FLT-000124", "storedEventId": "69ab1ef5…",
+ "matches": [{"connectionName": "02 - Air Travel", "projectId": 5,
+              "title": "Flight Booking & Management", "startDate": "2024-10-30T23:22:09",
+              "durationSecs": 1380.0, "stepCount": 14}],
+ "searched": {"connections": 5, "projects": 8}}
+```
+
+**`find_journeys`** — *Everyone.* Parameters: connectionId, projectId, filter, orderBy?, limit? (20), min/maxDurationSecs?, min/maxSteps?, includePath?.
+
+*“The five slowest orders that hit Payment Failed, with their paths.”*
+
+```jsonc
+// call
+{
+  "name": "find_journeys",
+  "arguments": {
+    "connectionId": "64254f7e-…",
+    "projectId": 1,
+    "limit": 5,
+    "includedSteps": [
+      "Payment Failed"
+    ],
+    "includePath": true
+  }
+}
+// result (excerpt; illustrative values)
+[{"eventId": "8c46773b…", "startDate": "2024-04-21T04:36:09", "durationSecs": 1134.0,
+  "stepCount": 17, "meta": {"Payment Method": "Bank Transfer", …},
+  "path": "Login -> Browse Catalog -> … -> Payment Failed -> Payment Retry -> …"}, …]
+```
+
+##### Notes
+
+The human layer on the process. The two note-writing tools are the only writes on the MCP surface.
+
+**`get_notes`** — *Everyone.* Parameters: connectionId, projectId, severity?, status?, scope?, groupBy?.
+
+*“Show all closed notes, then all open notes, as separate groups.”*
+
+```jsonc
+// call
+{
+  "name": "get_notes",
+  "arguments": {
+    "connectionId": "7e31de50-…",
+    "projectId": 2,
+    "groupBy": "status"
+  }
+}
+// result (excerpt; illustrative values)
+{"total": 1, "summary": {"byStatus": {"open": 0, "resolved": 1}, …},
+ "groupBy": "status",
+ "groups": [{"key": "resolved", "count": 1, "notes": [{"id": "E422E185-…",
+   "title": "A Note for testing", "severity": "URGENT", "status": "resolved",
+   "scope": "shared", "author": "dirk.beerbohm", "target": "ENTER Check-In",
+   "createdAt": "2026-09-23T12:34:45+02:00", "editedAt": "2026-09-23T12:36:42+02:00"}]}]}
+```
+
+**`create_note`** — *Everyone — write.* Parameters: connectionId, projectId, step | fromStep + toStep, text, title?, severity?, scope?.
+
+*“Add a shared, important note on the security transition.”*
+
+```jsonc
+// call
+{
+  "name": "create_note",
+  "arguments": {
+    "connectionId": "7e31de50-…",
+    "projectId": 2,
+    "fromStep": "ENTER Security Check",
+    "toStep": "LEAVE Security Check",
+    "title": "Security wait",
+    "text": "Median 17 min; peaks before 07:00.",
+    "severity": "IMPORTANT",
+    "scope": "shared"
+  }
+}
+// result (excerpt; illustrative values)
+{"created": true,
+ "note": {"id": "9B1C…", "title": "Security wait", "severity": "IMPORTANT",
+          "status": "open", "scope": "shared", "author": "dirk.beerbohm",
+          "target": "ENTER Security Check → LEAVE Security Check", "targetType": "edge",
+          "createdAt": "2026-09-24T08:15:02+02:00", "editedAt": null}}
+```
+
+**`update_note`** — *Everyone — write.* Parameters: connectionId, projectId, noteId, comment?, title?, status?, severity?, scope?.
+
+*“Resolve the test note and say why.”*
+
+```jsonc
+// call
+{
+  "name": "update_note",
+  "arguments": {
+    "connectionId": "7e31de50-…",
+    "projectId": 2,
+    "noteId": "E422E185-0557-4E22-8DB2-BC62B30DA426",
+    "comment": "Test complete.",
+    "status": "resolved"
+  }
+}
+// result (excerpt; illustrative values)
+{"updated": true, "changes": ["comment", "status"],
+ "note": {"id": "E422E185-…", "status": "resolved", "lastEditedBy": "dirk.beerbohm",
+          "editedAt": "2026-09-24T08:16:40+02:00", …}}
+```
+
+##### Power analysis
+
+Deeper analysis, reserved for users with the power-user role (and administrators). Anyone else gets a polite refusal naming the role.
+
+**`compare_segments`** — *Power users & admins.* Parameters: connectionId, projectId, segmentA, segmentB (filter objects + label), limit? (10), minOccurrences? (30), sampleSet?.
+
+*“How do Bank Transfer orders differ from PayPal orders?”*
+
+```jsonc
+// call
+{
+  "name": "compare_segments",
+  "arguments": {
+    "connectionId": "64254f7e-…",
+    "projectId": 1,
+    "segmentA": {
+      "meta1": "Bank Transfer",
+      "label": "Bank Transfer"
+    },
+    "segmentB": {
+      "meta1": "PayPal",
+      "label": "PayPal"
+    }
+  }
+}
+// result (excerpt; illustrative values)
+{"segments": [{"label": "Bank Transfer", "journeyCount": 4006, …},
+              {"label": "PayPal", "journeyCount": 6874, …}],
+ "differences": {
+   "endSteps": [{"step": "Payment Failed", "shareA": 0.12, "shareB": 0.03, "deltaPoints": -9.0}, …],
+   "transitionTime": [{"fromStep": "Payment Processing", "toStep": "Payment Confirmed",
+                       "avgSecsA": 5400.0, "avgSecsB": 45.0, "deltaSecs": -5355.0}, …],
+   "transitionFrequency": […], "onlyInA": […], "onlyInB": […]}}
+```
+
+**`get_bottlenecks`** — *Power users & admins.* Parameters: connectionId, projectId, filter, limit? (10), minOccurrences? (30).
+
+*“Where do credit applications lose the most time?”*
+
+```jsonc
+// call
+{
+  "name": "get_bottlenecks",
+  "arguments": {
+    "connectionId": "38891b38-…",
+    "projectId": 1
+  }
+}
+// result (excerpt; illustrative values)
+{"totalWaitSecs": 3.1e9,
+ "byTotalWaitTime": [{"fromStep": "Credit Check", "toStep": "Senior Agent Approval",
+   "occurrences": 6120, "avgSecs": 87942.0, "totalWaitSecs": 538205040.0,
+   "shareOfWaitTime": 0.17}, …],
+ "slowestTypicalTransitions": […],
+ "rework": [{"step": "Application Checked", "journeys": 5230, "extraVisits": 5890}, …],
+ "selfLoops": […]}
+```
+
+**`get_trend`** — *Power users & admins.* Parameters: connectionId, projectId, filter, granularity? (day|week|month), outcomeSteps?, limit?.
+
+*“Is the denied-boarding rate changing month by month?”*
+
+```jsonc
+// call
+{
+  "name": "get_trend",
+  "arguments": {
+    "connectionId": "7e31de50-…",
+    "projectId": 2,
+    "granularity": "month",
+    "outcomeSteps": [
+      "DENIED Boarding Dom",
+      "DENIED Boarding Int"
+    ]
+  }
+}
+// result (excerpt; illustrative values)
+{"granularity": "month",
+ "periods": [{"period": "2024-01-01", "journeys": 12530, "avgDurationSecs": 4210.0,
+              "medianDurationSecs": 4080.0, "outcomeJourneys": 598, "outcomeRate": 0.0477}, …]}
+```
+
+**`get_outcome_drivers`** — *Power users & admins.* Parameters: connectionId, projectId, filter, outcomeSteps, minSupport? (30), limit? (10).
+
+*“What makes a credit application end in Rejected?”*
+
+```jsonc
+// call
+{
+  "name": "get_outcome_drivers",
+  "arguments": {
+    "connectionId": "38891b38-…",
+    "projectId": 1,
+    "outcomeSteps": [
+      "Rejected"
+    ]
+  }
+}
+// result (excerpt; illustrative values)
+{"journeys": 20000, "outcomeJourneys": 5400, "outcomeRate": 0.27,
+ "raisesOutcome": {"attributes": [{"title": "Income Class", "value": "Low",
+     "outcomeRate": 0.61, "rateWithout": 0.16, "deltaPoints": 34.0, "lift": 2.26}, …],
+   "steps": […]},
+ "lowersOutcome": {"attributes": […], "steps": […]}}
+```
+
+**`check_conformance`** — *Power users & admins.* Parameters: connectionId, projectId, filter, rules, examples? (5).
+
+*“Is payment always processed before a booking is confirmed, within 5 minutes?”*
+
+```jsonc
+// call
+{
+  "name": "check_conformance",
+  "arguments": {
+    "connectionId": "7e31de50-…",
+    "projectId": 5,
+    "rules": [
+      {
+        "type": "precedes",
+        "before": "Process Payment",
+        "after": "Confirm Booking"
+      },
+      {
+        "type": "max_gap",
+        "fromStep": "Process Payment",
+        "toStep": "Confirm Booking",
+        "maxSecs": 300
+      }
+    ]
+  }
+}
+// result (excerpt; illustrative values)
+{"journeysChecked": 20000,
+ "rules": [{"type": "precedes", "rule": "'Process Payment' must happen before 'Confirm Booking'",
+            "violations": 0, "violationRate": 0.0, "conformanceRate": 1.0, "exampleEventIds": []},
+           {"type": "max_gap", "violations": 0, …}]}
+```
+<!-- MCP-TOOL-REFERENCE:END -->
+
 - **Configuring it** (Admin → *MCP Server*): **Issuer URL**
   (`https://<authentik>/application/o/<slug>/`), **JWKS URL** (blank auto-discovers from the
   issuer), **Audience / Client ID** (recommended — set it to the client id once you've mapped
@@ -992,8 +1467,9 @@ AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp
 - **Verifying by hand.** `GET /health` is unauthenticated (`{ok, enabled}`);
   `GET /.well-known/oauth-protected-resource` returns the resource metadata; a `POST /mcp`
   with no token returns `401` and with a token exercises the whole chain.
-- **Limits.** `PMW_MCP_MAX_ROWS` (default 1000) caps rows per call and
-  `PMW_MCP_JWKS_CACHE_SECS` (default 3600) how long signing keys are cached. Only the JWKS
+- **Limits.** `PMW_MCP_MAX_ROWS` (default 1000) caps rows per call,
+  `PMW_MCP_JWKS_CACHE_SECS` (default 3600) how long signing keys are cached and
+  `PMW_MCP_NOTE_WRITES_PER_MIN` (default 20) the note writes per user per minute. Only the JWKS
   **transport** skips certificate verification (Authentik is a trusted internal host); token
   integrity is unaffected.
 
@@ -1065,7 +1541,7 @@ a UI/launch smoke check. It is split across the two tech stacks.
 
 | Target | Framework | What it covers |
 |---|---|---|
-| **Backend** (`backend/tests/`) | pytest | Pure model, simulation, analytics, backup, SQL-builder and security (users/certs/TLS) logic — no Exasol connection |
+| **Backend** (`backend/tests/`) | pytest | Pure model, simulation, analytics, backup, SQL-builder and security (users/certs/TLS) logic — no Exasol connection. MCP: `test_mcp.py` (dispatch, auth, read tools), `test_mcp_notes_write.py` (security of the note-writing tools: validation, authorship, visibility, owner-only fields, append-only threads, SQL-injection escaping, rate limit, audit), `test_mcp_analysis_tools.py` (power-user gating, lookups, analysis SQL safety), `test_display_time.py` (display-timezone stamps) |
 | **Frontend** (`frontend/web/src/**/*.test.ts`) | Vitest + Testing Library | Ported pure TypeScript (layout, colours, formatting, model helpers) and a component render smoke test |
 
 Run everything (installs test deps on first run):

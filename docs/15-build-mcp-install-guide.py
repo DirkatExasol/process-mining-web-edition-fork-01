@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the self-contained HTML guide "15 - Installation of MCP Server".
 
-Covers every aspect of installing and configuring the seventh surface — the read-only
+Covers every aspect of installing and configuring the seventh surface — the (notes-only-write)
 MCP query server — with the **Authentik** OAuth provider (Keycloak to follow) and
 **Claude Desktop** as the example client (other clients to follow).
 
@@ -13,6 +13,10 @@ Run:  python3 docs/15-build-mcp-install-guide.py
 import base64
 import html
 import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from mcp_tool_reference import TOOLS as _REF_TOOLS, render_html as _render_reference  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "15-Installation-MCP-Server.html"
@@ -27,21 +31,23 @@ FAVICON = "data:image/svg+xml;base64," + base64.b64encode(_LOGO_SVG.encode("utf-
 STEPS = [
     (
         "What the MCP server is",
-        "The <b>MCP server</b> is a read-only <a href=\"https://modelcontextprotocol.io\">Model "
+        "The <b>MCP server</b> is a <a href=\"https://modelcontextprotocol.io\">Model "
         "Context Protocol</a> endpoint that lets AI clients (Claude, ChatGPT, …) query your "
-        "Process Mining data — <b>metrics, paths and metadata</b> — over HTTP(S). It is the "
+        "Process Mining data — <b>metrics, paths, cases, metadata and notes</b> — over HTTP(S). It is the "
         "<b>seventh surface</b>, on the admin port <b>+40</b>, and it is <b>off until an "
         "administrator enables it</b> (it returns <code>503</code> while off). Callers "
         "authenticate with an <b>OAuth access token from your Authentik server</b>; the token "
         "is verified against Authentik's signing keys and mapped to a Process Mining user, "
-        "whose assigned database connections decide what they may see. <b>Nothing here can "
-        "write</b> — there are no ingest, edit or sampling tools.",
+        "whose assigned database connections decide what they may see. <b>Its only writes are "
+        "notes</b> (<code>create_note</code>, <code>update_note</code>) — there are no ingest, "
+        "event-edit or sampling tools — and five deeper-analysis tools are reserved for "
+        "<b>power users</b>.",
         """<div class="mock">
       <pre class="calc">AI client ──OAuth──▶ Authentik (:19443)            the client gets an access token
 AI client ──MCP/JSON-RPC + Bearer token──▶ MCP server (:8493/mcp)
                        └─ verifies the token against Authentik's JWKS (RS256, offline)
                        └─ maps it to a Process Mining user
-                       └─ answers read-only queries on that user's connections</pre>
+                       └─ answers queries on that user's connections (writes: notes only)</pre>
       <table class="tbl">
         <tr><th>&nbsp;</th><th>HTTP</th><th>HTTPS</th></tr>
         <tr><td>Container port</td><td><code>8130</code></td><td><code>8493</code></td></tr>
@@ -51,34 +57,25 @@ AI client ──MCP/JSON-RPC + Bearer token──▶ MCP server (:8493/mcp)
         follows the same TLS mode and certificate as the app and admin console.</p>
     </div>""",
         None,
-        '<span class="k">Read-only, same boundary as the app.</span> A caller never sees more '
+        '<span class="k">Same boundary as the app.</span> A caller never sees more '
         "than the mapped user's assigned connections — exactly what that person could open in "
-        "the main app.",
+        "the main app — and can change nothing but notes, under the app's own note rules.",
     ),
     (
         "What it exposes (the tools)",
-        "Every query tool takes <code>connectionId</code> + <code>projectId</code> and an "
-        "optional filter (<code>sampleSet</code>, <code>fromDate</code>, <code>toDate</code>, "
-        "<code>includedSteps</code>, <code>excludedSteps</code>, <code>meta1..3</code>). The "
-        "drill-down chain is <code>get_statistics</code> → <code>find_journeys</code> → "
-        "<code>get_journey</code>.",
-        """<div class="mock">
-      <table class="tbl">
-        <tr><th>Tool</th><th>Returns</th></tr>
-        <tr><td><code>list_connections</code></td><td>The database connections you may query (id, name, schema).</td></tr>
-        <tr><td><code>list_projects</code></td><td>Projects on a connection — or, with <code>connectionId</code> omitted, on every connection you may query.</td></tr>
-        <tr><td><code>get_process_map</code></td><td>The directly-follows map: steps (nodes) + transitions (edges) with counts/timing.</td></tr>
-        <tr><td><code>get_transition_metrics</code></td><td>Per step-pair: count and avg/median/min/max/stddev transition time.</td></tr>
-        <tr><td><code>get_variants</code></td><td>Distinct journey paths and how often each occurs (most frequent first).</td></tr>
-        <tr><td><code>get_statistics</code></td><td>Journey count, journey-duration stats, process-goodness score.</td></tr>
-        <tr><td><code>get_metadata</code></td><td>Meta-attribute titles, step names, and the event date range.</td></tr>
-        <tr><td><code>get_journey</code></td><td>One case's ordered events, by business case id or stored hash.</td></tr>
-        <tr><td><code>find_journeys</code></td><td>The individual journeys behind an aggregate: slowest cases, cases that visited a step, longest traces.</td></tr>
-        <tr><td><code>get_notes</code></td><td>The notes on a project's steps and transitions — filter by severity, status (open/resolved) and scope (personal/shared), optionally grouped.</td></tr>
-      </table>
-    </div>""",
+        "Nineteen tools in five groups. <b>Everyone</b> may use the discovery, analysis, case "
+        "and note-reading tools. <b>Notes are the only writes</b>: <code>create_note</code> and "
+        "<code>update_note</code> follow the app's note rules (you are the author, threads are "
+        "append-only, only the author changes severity or scope), validate every field, and are "
+        "rate-limited and logged. The five <b>power-analysis</b> tools answer only users with "
+        "the power-user role (and admins); others get a polite refusal. Most tools take "
+        "<code>connectionId</code> + <code>projectId</code> and the common filter. Note times "
+        "are local (Admin Console display timezone) with the UTC offset.",
+        '<div class="mock ref">' + _render_reference(table_class="tbl", code_class="calc") + "</div>",
         None,
-        None,
+        '<span class="k">Drill-down.</span> <code>get_statistics</code> → '
+        "<code>find_journeys</code> → <code>get_journey</code>; when you only have a case id, "
+        "start with <code>find_journey</code>.",
     ),
     (
         "Prerequisites",
@@ -316,6 +313,11 @@ footer{color:var(--soft);font-size:13px;text-align:center;margin-top:34px}
 .mock{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;
   margin:0 0 16px;box-shadow:0 6px 18px rgba(20,30,50,.08)}
 .cap{color:var(--soft);font-size:13px;margin:8px 2px 0}
+.ref h3{margin:22px 0 4px;font-size:16px}
+.ref h4{margin:16px 0 4px;font-size:14px}
+.ref h4 small{color:var(--soft);font-weight:500}
+.ref p{margin:4px 0 8px;font-size:14px}
+.ref pre{margin:6px 0 10px}
 .tbl{border-collapse:collapse;font-size:13px;width:100%}
 .tbl th{color:var(--soft);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;
   text-align:left;padding:4px 12px 6px 0;border-bottom:2px solid var(--line)}
@@ -370,8 +372,8 @@ def render() -> str:
 <header class="hero"><div class="hero-inner">
   <span class="chip">Suite · MCP Server</span>
   <h1>Installing the MCP Server</h1>
-  <p>The seventh surface: a <b>read-only</b> Model Context Protocol endpoint that lets AI
-     clients query your process-mining metrics, paths and metadata — authenticated with
+  <p>The seventh surface: a Model Context Protocol endpoint that lets AI clients query your
+     process-mining metrics, paths, cases and metadata, and read and write notes — authenticated with
      <b>OAuth via Authentik</b>. This guide takes you from an Authentik provider to a
      connected <b>Claude Desktop</b>.</p>
 </div></header>

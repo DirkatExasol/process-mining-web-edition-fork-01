@@ -27,6 +27,7 @@ from ..models import (
 )
 from ..services import docgen, llm as llm_service, report as report_service, simulation
 from ..services.llm_config import resolve_llm
+from ..services.notes import comment_block as note_comment_block, thread_has_room
 from ..services.analytics import (
     happy_path_conformance,
     path_diverse_sample,
@@ -35,6 +36,7 @@ from ..services.analytics import (
 )
 from ..store.security import store as security_store
 from ..store.settings import store
+from ..timeutil import local_now
 from .projects import repo, require_connection
 
 router = APIRouter(prefix="/api", tags=["features"])
@@ -159,6 +161,11 @@ async def save_note(project_id: int, note: ProcessNote) -> ProcessNote:
 
     note.username = author
     note.lastEditedBy = ""
+    # Server-stamped, in the Admin Console display zone: the browser sends its own
+    # clock as UTC ISO, which used to be stored verbatim — so a note's "created" was
+    # UTC while its "edited" (the DB clock) was local. Never trust the client clock.
+    note.createdAt = local_now()
+    note.editedAt = None
     await r.upsert_note(note, project_id, author)
     return _annotate_note(note)
 
@@ -199,12 +206,16 @@ async def update_note(project_id: int, note_id: str, body: NoteUpdateBody) -> Pr
     new_title = body.title.strip() or None
     if body.comment.strip():
         name = _note_display_name(caller) or caller or "unknown"
-        stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
         # The header carries the (optional) title, so each comment's title is visible
         # in the thread; the trailing blank line separates it from the older content
-        # it is prepended in front of (newest on top).
-        header = f"—— {new_title} · {name} · {stamp} ——" if new_title else f"—— {name} · {stamp} ——"
-        comment_block = f"{header}\n{body.comment.strip()}\n\n"
+        # it is prepended in front of (newest on top). Stamped in the display zone.
+        comment_block = note_comment_block(name, body.comment.strip(), new_title)
+        current = await r.get_note(note_id, project_id)
+        if not thread_has_room(current.text if current else "", comment_block):
+            raise HTTPException(
+                status_code=409,
+                detail="This note's thread is full — start a new note to continue the discussion.",
+            )
 
     await r.update_note(
         note_id,
@@ -218,6 +229,7 @@ async def update_note(project_id: int, note_id: str, body: NoteUpdateBody) -> Pr
         # Note-level classification stays owner-only; a non-owner's values are ignored.
         importance=body.importance if is_owner else None,
         is_shared=body.isShared if is_owner else None,
+        caller=caller,
     )
 
     note = await r.get_note(note_id, project_id)

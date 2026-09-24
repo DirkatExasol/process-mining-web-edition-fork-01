@@ -522,6 +522,24 @@ def test_save_note_creates_a_new_note(monkeypatch):
     assert result.username == "alice"
 
 
+def test_save_note_stamps_created_at_on_the_server_in_the_display_zone(monkeypatch):
+    # The browser sends its own clock (UTC ISO); the server must not store that verbatim,
+    # or "created" and "edited" (server-stamped) disagree by the UTC offset.
+    from app.api import features
+
+    monkeypatch.setattr(features, "local_now", lambda: datetime(2026, 9, 23, 12, 34, 45))
+    _, result = _run_save(monkeypatch, caller="alice", existing_owner=None)
+    assert result.createdAt == datetime(2026, 9, 23, 12, 34, 45)
+    assert result.editedAt is None
+
+
+def test_update_note_stamps_edited_date_explicitly_not_with_the_db_clock():
+    r, mgr = _cap_repo()
+    asyncio.run(r.update_note("n-9", 7, edited_by="Bob", resolved=True))
+    sql = mgr.executed[-1]
+    assert "CURRENT_TIMESTAMP" not in sql and "EDITED_DATE = TIMESTAMP '" in sql
+
+
 def test_save_note_rejects_existing_note_id(monkeypatch):
     from fastapi import HTTPException
 
@@ -915,3 +933,34 @@ def test_load_journeys_shapes_rows_and_skips_the_path_when_not_requested():
     assert out[0]["startDate"] == datetime(2024, 4, 21, 4, 36, 9)
     assert out[0]["meta1"] == "Manage" and out[0]["meta3"] is None
     assert out[0]["path"] is None
+
+
+def test_endpoint_refuses_a_comment_when_the_thread_is_full(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api.features import NoteUpdateBody
+
+    class _Full(_EndpointRepo):
+        async def get_note(self, note_id, project_id):
+            note = await super().get_note(note_id, project_id)
+            note.text = "x" * 99_000
+            return note
+
+    from app.api import features
+
+    repo = _Full(("alice", True))
+    monkeypatch.setattr(features, "require_connection", lambda: None)
+    monkeypatch.setattr(features, "repo", lambda: repo)
+    monkeypatch.setattr(features, "current_user", lambda: "bob")
+    monkeypatch.setattr(features, "_note_display_name", lambda u: u)
+    with __import__("pytest").raises(HTTPException) as ei:
+        asyncio.run(features.update_note(7, "n1", NoteUpdateBody(comment="y" * 3000)))
+    assert ei.value.status_code == 409 and repo.update_kwargs is None
+
+
+def test_endpoint_passes_the_caller_for_the_write_time_guard(monkeypatch):
+    from app.api.features import NoteUpdateBody
+
+    repo, _ = _run_update(monkeypatch, caller="bob", meta=("alice", True),
+                          body=NoteUpdateBody(resolved=True))
+    assert repo.update_kwargs["caller"] == "bob"

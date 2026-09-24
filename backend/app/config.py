@@ -155,6 +155,10 @@ MCP_PID_PATH = DATA_DIR / "mcp.pid"
 MCP_MAX_ROWS = int(os.environ.get("PMW_MCP_MAX_ROWS", "1000"))
 # How long a fetched JWKS (Authentik's signing keys) is cached before re-fetch, in seconds.
 MCP_JWKS_CACHE_SECS = int(os.environ.get("PMW_MCP_JWKS_CACHE_SECS", "3600"))
+# The MCP note tools (create_note / update_note) are the only writes on that surface.
+# Each user may make at most this many note writes per rolling minute, so a looping or
+# misbehaving agent cannot flood a project's notes.
+MCP_NOTE_WRITES_PER_MIN = int(os.environ.get("PMW_MCP_NOTE_WRITES_PER_MIN", "20"))
 
 # File sources for the integration console read from this sandbox directory by default —
 # nothing outside it can be opened (path traversal / symlink escapes are rejected). Set

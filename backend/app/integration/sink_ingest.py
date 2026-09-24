@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Callable, Iterable
 
 from ..db.schema_ddl import PROCESS_MINING_TABLES, _quote_ident
+from ..timeutil import local_now, to_local
 from .backends import IngestBackend, valid_identifier
 from .contract import IngestError
 from .extractors import (
@@ -67,20 +68,21 @@ def ensure_schema(run_sql: RunSql, schema: str) -> None:
 
 
 def _parse_time(value: Any) -> datetime:
-    """A posted eventTime → naive datetime (seconds). Missing/blank → server 'now';
-    an ISO-8601 string (with optional trailing 'Z') is accepted."""
+    """A posted eventTime → naive wall-clock datetime (seconds) in the Admin Console
+    display zone. Missing/blank → 'now' in that zone. An ISO-8601 string is accepted:
+    without an offset it is taken as local wall-clock time as-is; with an offset (or a
+    trailing 'Z') it is converted into the display zone, so every event of a project
+    shares one local clock."""
     if value in (None, ""):
-        return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+        return local_now().replace(microsecond=0)
     if isinstance(value, datetime):
-        return value.replace(tzinfo=None, microsecond=0)
+        return to_local(value).replace(microsecond=0)
     text = str(value).strip().replace("Z", "+00:00")
     try:
         dt = datetime.fromisoformat(text)
     except ValueError as exc:
         raise IngestError(f"Invalid eventTime {value!r} (want ISO-8601).") from exc
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-    return dt.replace(microsecond=0)
+    return to_local(dt).replace(microsecond=0)
 
 
 def _clean(value: Any) -> str:

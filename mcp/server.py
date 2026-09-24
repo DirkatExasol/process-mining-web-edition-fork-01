@@ -5,8 +5,17 @@ Auth: every request carries an OAuth access token issued by an external Authenti
 The token is a signed JWT, verified OFFLINE against Authentik's JWKS (RS256; issuer +
 audience checked). The verified user claim is matched to an enabled Process Mining user;
 that user's assigned database connections gate what may be queried — so the MCP surface
-never exposes more than the same person could see in the app. Everything here is
-READ-ONLY (metrics, paths, metadata); there are no write tools.
+never exposes more than the same person could see in the app.
+
+Everything here is READ-ONLY except the two note tools (create_note / update_note), the
+only writes on this surface. They follow the app's own note rules (author = the token's
+user, append-only threads, owner-only severity/scope), validate every field server-side,
+and are rate-limited per user. The deeper-analysis tools (compare_segments,
+get_bottlenecks, get_trend, get_outcome_drivers, check_conformance) are reserved for
+power users (and administrators); anyone else gets a polite refusal.
+
+Timestamps the server creates or reports for notes are local wall-clock time in the
+display zone set in the Admin Console, and are returned with that zone's UTC offset.
 
 The whole surface is off until an administrator enables it (admin panel → MCP Server tab),
 and 503s while disabled. OAuth/Authentik settings are configured there too.
@@ -19,8 +28,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import ssl
 import sys
+import time
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -31,11 +43,31 @@ from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from jwt import PyJWKClient  # noqa: E402
 
-from app.config import MCP_JWKS_CACHE_SECS, MCP_MAX_ROWS  # noqa: E402
+from app import log_events as logx  # noqa: E402
+from app.config import MCP_JWKS_CACHE_SECS, MCP_MAX_ROWS, MCP_NOTE_WRITES_PER_MIN  # noqa: E402
+from app.db.analysis import MAX_RULES, META_COLUMNS, TREND_UNITS, Analysis, Rule  # noqa: E402
 from app.db.manager import DatabaseManager  # noqa: E402
 from app.db.repository import JOURNEY_ORDERS, ProcessRepository  # noqa: E402
-from app.models import NOTE_IMPORTANCE, FilterSpec, SampleSet  # noqa: E402
+from app.models import (  # noqa: E402
+    NOTE_IMPORTANCE,
+    FilterSnapshot,
+    FilterSpec,
+    NoteTarget,
+    ProcessNote,
+    SampleSet,
+    new_id,
+)
+from app.services.notes import (  # noqa: E402
+    STEP_MAX,
+    TEXT_MAX,
+    TITLE_MAX,
+    clean_text,
+    comment_block,
+    defang_headers,
+    thread_has_room,
+)
 from app.store.security import store  # noqa: E402
+from app.timeutil import local_iso, local_now  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -174,22 +206,56 @@ def _dump(obj: Any) -> Any:
     return obj
 
 
+_MAX_FILTER_STEPS = 200    # steps per includedSteps / excludedSteps list
+_MAX_FILTER_STEP_LEN = 2000
+_MAX_META_LEN = 256
+_MAX_BATCH = 20            # JSON-RPC messages per HTTP request
+
+
+def _filter_steps(args: dict, key: str) -> list[str]:
+    raw = args.get(key)
+    if raw in (None, "", []):
+        return []
+    if isinstance(raw, str):  # one step given as a bare string — not a list of characters
+        raw = [raw]
+    if not isinstance(raw, list) or len(raw) > _MAX_FILTER_STEPS:
+        raise ToolError(f"{key} must be a list of at most {_MAX_FILTER_STEPS} step names.")
+    if not all(isinstance(x, str) and 0 < len(x) <= _MAX_FILTER_STEP_LEN for x in raw):
+        raise ToolError(f"{key} must contain step names (non-empty strings).")
+    return list(raw)
+
+
+def _filter_meta(args: dict, key: str) -> str:
+    raw = args.get(key)
+    if raw in (None, ""):
+        return ""
+    if not isinstance(raw, str) or len(raw) > _MAX_META_LEN:
+        raise ToolError(f"{key} must be a string of at most {_MAX_META_LEN} characters.")
+    return raw
+
+
 def _filter_spec(args: dict) -> FilterSpec:
-    """Build the read filter every query tool accepts (a subset of the app's FilterSpec)."""
+    """Build the read filter every query tool accepts (a subset of the app's FilterSpec).
+    Sizes are bounded so one call cannot build an unbounded SQL statement."""
     try:
         sample = SampleSet(args.get("sampleSet") or "ORIGINAL")
     except ValueError:
         raise ToolError(f"Unknown sampleSet {args.get('sampleSet')!r}.")
-    return FilterSpec(
-        fromDate=args.get("fromDate") or None,
-        toDate=args.get("toDate") or None,
-        includedSteps=list(args.get("includedSteps") or []),
-        excludedSteps=list(args.get("excludedSteps") or []),
-        meta1=args.get("meta1") or "",
-        meta2=args.get("meta2") or "",
-        meta3=args.get("meta3") or "",
-        sampleSet=sample,
-    )
+    try:
+        return FilterSpec(
+            fromDate=args.get("fromDate") or None,
+            toDate=args.get("toDate") or None,
+            includedSteps=_filter_steps(args, "includedSteps"),
+            excludedSteps=_filter_steps(args, "excludedSteps"),
+            meta1=_filter_meta(args, "meta1"),
+            meta2=_filter_meta(args, "meta2"),
+            meta3=_filter_meta(args, "meta3"),
+            sampleSet=sample,
+        )
+    except ToolError:
+        raise
+    except Exception:  # noqa: BLE001 — pydantic validation (e.g. a malformed date)
+        raise ToolError("fromDate / toDate must be ISO dates (YYYY-MM-DD).") from None
 
 
 def _sample_of(args: dict) -> SampleSet:
@@ -314,9 +380,28 @@ async def _tool_get_metadata(user, args) -> Any:
         m1, m2, m3 = await repo.load_meta_titles(pid)
         steps = await repo.load_all_step_names(pid)
         frm, to = await repo.load_date_bounds(pid)
+        # STEPS holds each step's definition (description, score, group, end flag). It is
+        # a tiny, cached table — far cheaper than asking for the whole process map.
+        try:
+            defs = await repo.load_steps(pid)
+        except Exception as exc:  # noqa: BLE001 — a missing STEPS row set degrades to names
+            log.warning("get_metadata: step definitions unavailable for %s: %s", pid, exc)
+            defs = {}
+        details = []
+        for name in steps:
+            d = defs.get(name)
+            details.append({
+                "step": name,
+                "description": d.description if d else None,
+                "score": d.score if d else None,
+                "belongsTo": d.belongsTo if d else None,
+                "endOfProcess": d.endOfProcess if d else False,
+                "shape": d.shape if d else None,
+            })
         return {
             "metaTitles": {"meta1": m1, "meta2": m2, "meta3": m3},
             "steps": steps,
+            "stepDetails": details,
             "dateRange": {
                 "from": frm.isoformat() if frm else None,
                 "to": to.isoformat() if to else None,
@@ -430,8 +515,9 @@ def _note_dump(note) -> dict:
         "author": note.username or None,
         "target": note.target.display_name,
         "targetType": "edge" if note.target.type == "edge" else "node",
-        "createdAt": note.createdAt.isoformat() if note.createdAt else None,
-        "editedAt": note.editedAt.isoformat() if note.editedAt else None,
+        # Stored as display-zone wall clock; reported with that zone's offset.
+        "createdAt": local_iso(note.createdAt),
+        "editedAt": local_iso(note.editedAt),
         "lastEditedBy": note.lastEditedBy or None,
     }
 
@@ -527,6 +613,557 @@ async def _tool_get_notes(user, args) -> Any:
     return out
 
 
+# ── lookup helpers: attribute values, a case anywhere ──────────────────────────
+
+
+async def _tool_get_attribute_values(user, args) -> Any:
+    """The values each meta attribute takes, with journey counts — so a caller knows what
+    to pass as meta1/meta2/meta3 instead of guessing."""
+    pid, spec = _project_id(args), _filter_spec(args)
+    wanted = args.get("meta")
+    if wanted in (None, "", "all"):
+        metas = list(META_COLUMNS)
+    else:
+        wanted = str(wanted).lower()
+        if wanted not in META_COLUMNS:
+            raise ToolError("meta must be one of meta1, meta2, meta3 (or omit it for all three).")
+        metas = [wanted]
+    limit = min(int(args.get("limit") or 50), MCP_MAX_ROWS)
+    async with _Repo(user.username, _conn_id(args), _sample_of(args)) as repo:
+        titles = dict(zip(META_COLUMNS, await repo.load_meta_titles(pid)))
+        an = Analysis(repo)
+        out = []
+        for meta in metas:
+            distinct, values = await an.attribute_values(pid, meta, spec, limit)
+            out.append({
+                "meta": meta,
+                "title": titles.get(meta),
+                "distinctValues": distinct,
+                "values": [{"value": v, "journeys": n} for v, n in values],
+                "truncated": distinct > len(values),
+            })
+    return {
+        "projectId": int(pid),
+        "attributes": out,
+        "filterHint": "Pass a value as meta1/meta2/meta3 in any filtered tool; the match "
+                      "is case-insensitive and also matches substrings.",
+    }
+
+
+async def _tool_find_journey(user, args) -> Any:
+    """Locate one case id across every project the caller may query (or one connection),
+    so get_journey can be called without guessing the project from the id's prefix."""
+    raw = str(args.get("eventId") or "").strip()
+    if not raw:
+        raise ToolError("eventId is required — a business case id (e.g. 'FLT-000123') or "
+                        "the 32-char stored hash.")
+    if len(raw) > 512:
+        raise ToolError("eventId is too long.")
+    stored = ProcessRepository._normalize_event_id(raw)
+    connections = store.connections_for_user(user.username)
+    requested = args.get("connectionId")
+    if requested:
+        connections = [c for c in connections if c.id == str(requested)]
+        if not connections:
+            raise ToolError(f"Connection {requested!r} is not assigned to you.")
+
+    sample = _sample_of(args)
+    matches: list[dict] = []
+    unreachable: list[dict] = []
+    projects_searched = 0
+    for connection in connections:
+        try:
+            async with _Repo(user.username, connection.id, sample) as repo:
+                an = Analysis(repo)
+                for project in _dump(await repo.load_projects()):
+                    projects_searched += 1
+                    hit = await an.journey_lookup(str(project["projectId"]), stored)
+                    if hit:
+                        matches.append({
+                            "connectionId": connection.id,
+                            "connectionName": connection.name,
+                            "projectId": project["projectId"],
+                            "title": project.get("title"),
+                            "startDate": hit["startDate"].isoformat() if hit["startDate"] else None,
+                            "endDate": hit["endDate"].isoformat() if hit["endDate"] else None,
+                            "durationSecs": hit["durationSecs"],
+                            "stepCount": hit["stepCount"],
+                        })
+        except Exception as exc:  # noqa: BLE001 — report the connection, keep searching
+            log.warning("find_journey: connection %s unavailable: %s", connection.id, exc)
+            unreachable.append({"connectionId": connection.id,
+                                "connectionName": connection.name, "error": str(exc)})
+    out: dict = {
+        "eventId": raw,
+        "storedEventId": stored,
+        "matches": matches,
+        "searched": {"connections": len(connections), "projects": projects_searched},
+    }
+    if unreachable:
+        out["unreachable"] = unreachable
+    if not matches:
+        out["message"] = f"No journey {raw!r} in any project you can query."
+    return out
+
+
+# ── the note-writing tools (the only writes on this surface) ───────────────────
+
+# A note id is the app's uppercase UUID; accept that shape (case-insensitive) and nothing
+# else, so a crafted id never even reaches the SQL layer.
+_NOTE_ID_RE = re.compile(r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")
+
+# Rolling one-minute window of note writes per user (process-local; the MCP server is a
+# single process). Every *attempt* that passes argument validation counts, successful or
+# not, so the limit also slows probing (e.g. guessing note ids).
+_NOTE_WRITES: dict[str, deque] = {}
+
+
+def _check_write_rate(username: str) -> None:
+    now = time.monotonic()
+    window = _NOTE_WRITES.setdefault(username.lower(), deque())
+    while window and now - window[0] > 60:
+        window.popleft()
+    if len(window) >= MCP_NOTE_WRITES_PER_MIN:
+        raise ToolError(
+            f"You have reached the limit of {MCP_NOTE_WRITES_PER_MIN} note changes per "
+            "minute. Please wait a moment and try again."
+        )
+    window.append(now)
+
+
+def _clean(value: Any, field: str, *, max_len: int, single_line: bool = False) -> str:
+    try:
+        return clean_text(value, max_len=max_len, single_line=single_line)
+    except ValueError as exc:
+        raise ToolError(f"{field} {exc}.") from None
+
+
+def _author_name(username: str) -> str:
+    u = store.get_user(username)
+    return (u.display_name if u and getattr(u, "display_name", "") else "") or username
+
+
+def _audit(user, tool: str, connection_id: str, project_id: str, note_id: str) -> None:
+    """Every note write lands in the admin log (who, what, where — never the text)."""
+    msg = f"MCP {tool}: note {note_id} on connection {connection_id}, project {project_id}"
+    log.info("%s by %s", msg, user.username)
+    logx.usage(msg, username=user.username, operation=f"mcp_{tool}")
+
+
+async def _require_project(repo, pid: str) -> dict:
+    for project in _dump(await repo.load_projects()):
+        if str(project.get("projectId")) == str(pid):
+            return project
+    raise ToolError(f"No project {pid} on this connection.")
+
+
+async def _known_steps(repo, pid: str) -> set[str]:
+    try:
+        defs = await repo.load_steps(pid)
+    except Exception:  # noqa: BLE001
+        defs = {}
+    return set(defs) or set(await repo.load_all_step_names(pid))
+
+
+def _step_arg(args: dict, key: str) -> str:
+    val = args.get(key)
+    if val is None or val == "":
+        return ""
+    if not isinstance(val, str) or len(val) > STEP_MAX:
+        raise ToolError(f"{key} must be a step name.")
+    return val
+
+
+async def _note_target(repo, pid: str, args: dict) -> NoteTarget:
+    """The step or transition a new note annotates — it must exist in the project."""
+    step = _step_arg(args, "step")
+    frm, to = _step_arg(args, "fromStep"), _step_arg(args, "toStep")
+    if step and (frm or to):
+        raise ToolError("Give either step (a note on a step) or fromStep + toStep "
+                        "(a note on a transition), not both.")
+    if not step and not (frm and to):
+        raise ToolError("A note needs a target: step, or fromStep + toStep.")
+    known = await _known_steps(repo, pid)
+    for name in ([step] if step else [frm, to]):
+        if name not in known:
+            raise ToolError(f"Step {name!r} does not exist in project {pid}. Use "
+                            "get_metadata to list the exact step names.")
+    if step:
+        return NoteTarget(type="node", value=step)
+    return NoteTarget.model_validate({"type": "edge", "from": frm, "to": to})
+
+
+def _severity_arg(args: dict, *, default: str | None) -> str | None:
+    raw = args.get("severity")
+    if raw in (None, ""):
+        return default
+    sev = str(raw).upper()
+    if sev not in NOTE_IMPORTANCE:
+        raise ToolError(f"severity must be one of {', '.join(NOTE_IMPORTANCE)}.")
+    return sev
+
+
+def _choice_arg(args: dict, key: str, choices: tuple[str, ...], *, default: str | None) -> str | None:
+    raw = args.get(key)
+    if raw in (None, ""):
+        return default
+    val = str(raw).lower()
+    if val not in choices:
+        raise ToolError(f"{key} must be one of {', '.join(choices)}.")
+    return val
+
+
+async def _tool_create_note(user, args) -> Any:
+    """Create a note on a step or transition, authored by the caller."""
+    pid, cid = _project_id(args), _conn_id(args)
+    title = _clean(args.get("title"), "title", max_len=TITLE_MAX, single_line=True)
+    # The note body opens its thread, so it must not imitate a comment header either.
+    text = defang_headers(_clean(args.get("text"), "text", max_len=TEXT_MAX))
+    if not text:
+        raise ToolError("text is required — the body of the note.")
+    severity = _severity_arg(args, default="NORMAL")
+    scope = _choice_arg(args, "scope", ("personal", "shared"), default="personal")
+    _check_write_rate(user.username)
+
+    async with _Repo(user.username, cid, SampleSet.original) as repo:
+        await _require_project(repo, pid)
+        target = await _note_target(repo, pid, args)
+        await repo.ensure_notes_table()
+        frm, to = await repo.load_date_bounds(pid)
+        now = local_now()
+        note = ProcessNote(
+            id=new_id(), title=title, text=text, createdAt=now, editedAt=None,
+            target=target, filterSnapshot=FilterSnapshot(fromDate=frm or now, toDate=to or now),
+            username=user.username, lastEditedBy="", isShared=(scope == "shared"),
+            importance=severity, resolved=False,
+        )
+        await repo.upsert_note(note, pid, user.username)
+        saved = await repo.get_note(note.id, pid)
+    _audit(user, "create_note", cid, pid, note.id)
+    return {"created": True, "note": _note_dump(saved or note)}
+
+
+async def _tool_update_note(user, args) -> Any:
+    """Comment on a note, resolve/reopen it, or (author only) change severity/scope.
+    The thread is append-only: existing text is never rewritten."""
+    pid, cid = _project_id(args), _conn_id(args)
+    raw_id = args.get("noteId")
+    note_id = raw_id.strip() if isinstance(raw_id, str) else ""
+    if not _NOTE_ID_RE.match(note_id):
+        raise ToolError("noteId must be a note id as returned by get_notes or create_note.")
+    note_id = note_id.upper()  # ids are stored as the app's uppercase UUIDs
+    comment = _clean(args.get("comment"), "comment", max_len=TEXT_MAX)
+    title = _clean(args.get("title"), "title", max_len=TITLE_MAX, single_line=True)
+    status = _choice_arg(args, "status", ("open", "resolved"), default=None)
+    severity = _severity_arg(args, default=None)
+    scope = _choice_arg(args, "scope", ("personal", "shared"), default=None)
+    if not (comment or title or status or severity or scope):
+        raise ToolError("Nothing to change — pass a comment, title, status, severity or scope.")
+    _check_write_rate(user.username)
+
+    async with _Repo(user.username, cid, SampleSet.original) as repo:
+        await _require_project(repo, pid)
+        await repo.ensure_notes_table()
+        note = await repo.get_note(note_id, pid)
+        owner = (note.username or "") if note else ""
+        is_owner = bool(note) and owner.upper() == user.username.upper()
+        # Same visibility as the app (own, shared or unowned). A note that is missing, in
+        # another project, or another user's private note all get the SAME answer, so the
+        # tool can't be used to discover which ids exist.
+        if note is None or not (is_owner or note.isShared or owner == ""):
+            raise ToolError(f"No note {note_id!r} that you can see in project {pid}.")
+        if (severity is not None or scope is not None) and not is_owner:
+            raise ToolError("Only the note's author can change its severity or scope. You "
+                            "can still add a comment or change its status.")
+        block = comment_block(_author_name(user.username), comment, title or None) if comment else None
+        if block and not thread_has_room(note.text, block):
+            raise ToolError("This note's thread is full — create a new note to continue the "
+                            "discussion.")
+        await repo.update_note(
+            note_id, pid,
+            edited_by=user.username,
+            comment_block=block,
+            title=title or None,
+            resolved=None if status is None else (status == "resolved"),
+            importance=severity,
+            is_shared=None if scope is None else (scope == "shared"),
+            caller=user.username,  # the permission rule is repeated in the UPDATE itself
+        )
+        saved = await repo.get_note(note_id, pid)
+    _audit(user, "update_note", cid, pid, note_id)
+    changes = [k for k, v in (("comment", comment), ("title", title), ("status", status),
+                              ("severity", severity), ("scope", scope)) if v]
+    return {"updated": True, "changes": changes, "note": _note_dump(saved or note)}
+
+
+# ── deeper analysis — power users (and administrators) only ────────────────────
+
+
+def _require_power(user, tool: str) -> None:
+    if getattr(user, "is_power", False) or getattr(user, "is_admin", False):
+        return
+    raise ToolError(
+        f"Sorry — {tool} is one of the deeper-analysis tools, which are reserved for power "
+        f"users. Your account ({user.username}) doesn't have the power-user role, so I "
+        "can't run it for you. If you need it, please ask your Process Mining administrator "
+        "to grant the role in the Admin Console (Users). In the meantime get_statistics, "
+        "get_transition_metrics, get_variants and find_journeys are available to you."
+    )
+
+
+def _steps_list(args: dict, key: str, *, required: bool, max_items: int = 20) -> list[str]:
+    raw = args.get(key)
+    if raw in (None, "", []):
+        if required:
+            raise ToolError(f"{key} is required — one or more step names.")
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list) or len(raw) > max_items:
+        raise ToolError(f"{key} must be a list of at most {max_items} step names.")
+    out = []
+    for item in raw:
+        if not isinstance(item, str) or not item or len(item) > STEP_MAX:
+            raise ToolError(f"{key} must contain step names (non-empty strings).")
+        out.append(item)
+    return out
+
+
+def _int_arg(args: dict, key: str, default: int, low: int, high: int) -> int:
+    raw = args.get(key)
+    if raw in (None, ""):
+        return default
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        raise ToolError(f"{key} must be a whole number.") from None
+    return max(low, min(val, high))
+
+
+def _segment(args: dict, key: str) -> tuple[str, FilterSpec]:
+    seg = args.get(key)
+    if not isinstance(seg, dict):
+        raise ToolError(f"{key} must be an object of filter fields (fromDate, toDate, "
+                        "includedSteps, excludedSteps, meta1, meta2, meta3) plus an optional label.")
+    label = str(seg.get("label") or key)[:100]
+    return label, _filter_spec({**seg, "sampleSet": args.get("sampleSet")})
+
+
+def _share(n: int, total: int) -> float | None:
+    return round(n / total, 4) if total else None
+
+
+async def _segment_profile(repo, an: Analysis, pid: str, spec: FilterSpec) -> dict:
+    count = await repo.load_journey_count(pid, spec)
+    durations = await repo.load_journey_duration_stats(pid, spec)
+    goodness = await repo.load_process_goodness(pid, spec)
+    ends = await an.end_steps(pid, spec, limit=50)
+    transitions = await repo.load_transitions(pid, spec)
+    return {
+        "count": count, "durations": _dump(durations),
+        "goodness": None if goodness is None else goodness[0],
+        "ends": ends, "transitions": {(t.fromStep, t.toStep): t for t in transitions},
+    }
+
+
+async def _tool_compare_segments(user, args) -> Any:
+    _require_power(user, "compare_segments")
+    pid = _project_id(args)
+    (label_a, spec_a), (label_b, spec_b) = _segment(args, "segmentA"), _segment(args, "segmentB")
+    limit = _int_arg(args, "limit", 10, 1, 100)
+    min_occ = _int_arg(args, "minOccurrences", 30, 1, 10_000_000)
+    async with _Repo(user.username, _conn_id(args), _sample_of(args)) as repo:
+        an = Analysis(repo)
+        a = await _segment_profile(repo, an, pid, spec_a)
+        b = await _segment_profile(repo, an, pid, spec_b)
+
+    def seg_out(label, p):
+        return {
+            "label": label, "journeyCount": p["count"], "durations": p["durations"],
+            "processGoodness": p["goodness"],
+            "endSteps": [{"step": s, "journeys": n, "share": _share(n, p["count"])}
+                         for s, n in p["ends"][:limit]],
+        }
+
+    ends_a, ends_b = dict(a["ends"]), dict(b["ends"])
+    end_diff = []
+    for step in set(ends_a) | set(ends_b):
+        sa, sb = _share(ends_a.get(step, 0), a["count"]), _share(ends_b.get(step, 0), b["count"])
+        if sa is None or sb is None:
+            continue
+        end_diff.append({"step": step, "shareA": sa, "shareB": sb, "deltaPoints": round((sb - sa) * 100, 2)})
+    end_diff.sort(key=lambda d: abs(d["deltaPoints"]), reverse=True)
+
+    time_diff, freq_diff = [], []
+    for key in set(a["transitions"]) & set(b["transitions"]):
+        ta, tb = a["transitions"][key], b["transitions"][key]
+        if ta.occurrences < min_occ or tb.occurrences < min_occ:
+            continue
+        row = {"fromStep": key[0], "toStep": key[1],
+               "occurrencesA": ta.occurrences, "occurrencesB": tb.occurrences}
+        if ta.avgSecs is not None and tb.avgSecs is not None:
+            time_diff.append({**row, "avgSecsA": round(ta.avgSecs, 1), "avgSecsB": round(tb.avgSecs, 1),
+                              "deltaSecs": round(tb.avgSecs - ta.avgSecs, 1)})
+        pa = ta.occurrences / a["count"] if a["count"] else 0.0
+        pb = tb.occurrences / b["count"] if b["count"] else 0.0
+        freq_diff.append({**row, "perJourneyA": round(pa, 4), "perJourneyB": round(pb, 4),
+                          "delta": round(pb - pa, 4)})
+    time_diff.sort(key=lambda d: abs(d["deltaSecs"]), reverse=True)
+    freq_diff.sort(key=lambda d: abs(d["delta"]), reverse=True)
+
+    def only(p, other):
+        rows = [p["transitions"][k] for k in set(p["transitions"]) - set(other["transitions"])]
+        rows.sort(key=lambda t: t.occurrences, reverse=True)
+        return [{"fromStep": t.fromStep, "toStep": t.toStep, "occurrences": t.occurrences}
+                for t in rows[:limit]]
+
+    return {
+        "segments": [seg_out(label_a, a), seg_out(label_b, b)],
+        "differences": {
+            "endSteps": end_diff[:limit],
+            "transitionTime": time_diff[:limit],
+            "transitionFrequency": freq_diff[:limit],
+            "onlyInA": only(a, b),
+            "onlyInB": only(b, a),
+        },
+        "notes": "Deltas are B minus A. Transition rows need at least minOccurrences in "
+                 "both segments.",
+    }
+
+
+async def _tool_get_bottlenecks(user, args) -> Any:
+    _require_power(user, "get_bottlenecks")
+    pid, spec = _project_id(args), _filter_spec(args)
+    limit = _int_arg(args, "limit", 10, 1, 100)
+    min_occ = _int_arg(args, "minOccurrences", 30, 1, 10_000_000)
+    async with _Repo(user.username, _conn_id(args), _sample_of(args)) as repo:
+        transitions = await repo.load_transitions(pid, spec)
+        rework = await Analysis(repo).rework(pid, spec, limit)
+    waits = [(t, t.occurrences * (t.avgSecs or 0.0)) for t in transitions]
+    total_wait = sum(w for _, w in waits) or 0.0
+
+    def row(t, wait=None):
+        out = {"fromStep": t.fromStep, "toStep": t.toStep, "occurrences": t.occurrences,
+               "avgSecs": None if t.avgSecs is None else round(t.avgSecs, 1),
+               "medianSecs": None if t.medianSecs is None else round(t.medianSecs, 1)}
+        if wait is not None:
+            out["totalWaitSecs"] = round(wait, 1)
+            out["shareOfWaitTime"] = round(wait / total_wait, 4) if total_wait else None
+        return out
+
+    by_wait = sorted(waits, key=lambda x: x[1], reverse=True)[:limit]
+    slowest = sorted((t for t in transitions if t.occurrences >= min_occ and t.medianSecs is not None),
+                     key=lambda t: t.medianSecs, reverse=True)[:limit]
+    loops = sorted((t for t in transitions if t.fromStep == t.toStep),
+                   key=lambda t: t.occurrences, reverse=True)[:limit]
+    return {
+        "totalWaitSecs": round(total_wait, 1),
+        "byTotalWaitTime": [row(t, w) for t, w in by_wait],
+        "slowestTypicalTransitions": [row(t) for t in slowest],
+        "rework": rework,
+        "selfLoops": [row(t) for t in loops],
+        "notes": "totalWaitSecs = occurrences × average transition time. The slowest list "
+                 "ranks by median and ignores transitions below minOccurrences.",
+    }
+
+
+async def _tool_get_trend(user, args) -> Any:
+    _require_power(user, "get_trend")
+    pid, spec = _project_id(args), _filter_spec(args)
+    unit = str(args.get("granularity") or "month").lower()
+    if unit not in TREND_UNITS:
+        raise ToolError(f"granularity must be one of {', '.join(TREND_UNITS)}.")
+    outcome = _steps_list(args, "outcomeSteps", required=False)
+    limit = _int_arg(args, "limit", 366, 1, MCP_MAX_ROWS)
+    async with _Repo(user.username, _conn_id(args), _sample_of(args)) as repo:
+        points = await Analysis(repo).trend(pid, spec, unit, outcome, limit)
+    return {"granularity": unit, "outcomeSteps": outcome, "periods": points,
+            "truncated": len(points) >= limit,
+            "notes": "Journeys are assigned to the period in which they started. When "
+                     "truncated, the most recent periods are the ones returned."}
+
+
+async def _tool_get_outcome_drivers(user, args) -> Any:
+    _require_power(user, "get_outcome_drivers")
+    pid, spec = _project_id(args), _filter_spec(args)
+    outcome = _steps_list(args, "outcomeSteps", required=True)
+    min_support = _int_arg(args, "minSupport", 30, 1, 10_000_000)
+    limit = _int_arg(args, "limit", 10, 1, 100)
+    async with _Repo(user.username, _conn_id(args), _sample_of(args)) as repo:
+        titles = dict(zip(META_COLUMNS, await repo.load_meta_titles(pid)))
+        res = await Analysis(repo).outcome_drivers(pid, spec, outcome, min_support)
+    total, hits = res["total"], res["hits"]
+    if not total:
+        return {"outcomeSteps": outcome, "journeys": 0, "message": "No journeys match this filter."}
+    base = hits / total
+
+    def factor(n, h):
+        rate = h / n if n else 0.0
+        rest_n = total - n
+        rest = (hits - h) / rest_n if rest_n else None
+        return {"journeys": n, "outcomeJourneys": h, "outcomeRate": round(rate, 4),
+                "rateWithout": None if rest is None else round(rest, 4),
+                "deltaPoints": round((rate - base) * 100, 2),
+                "lift": round(rate / base, 3) if base else None}
+
+    meta = [{"attribute": m, "title": titles.get(m), "value": v, **factor(n, h)}
+            for m, v, n, h in res["meta"]]
+    steps = [{"step": s, **factor(n, h)} for s, n, h in res["steps"]]
+
+    def split(rows):
+        up = sorted((r for r in rows if r["deltaPoints"] > 0), key=lambda r: r["deltaPoints"], reverse=True)
+        down = sorted((r for r in rows if r["deltaPoints"] < 0), key=lambda r: r["deltaPoints"])
+        return up[:limit], down[:limit]
+
+    meta_up, meta_down = split(meta)
+    step_up, step_down = split(steps)
+    return {
+        "outcomeSteps": outcome,
+        "journeys": total,
+        "outcomeJourneys": hits,
+        "outcomeRate": round(base, 4),
+        "raisesOutcome": {"attributes": meta_up, "steps": step_up},
+        "lowersOutcome": {"attributes": meta_down, "steps": step_down},
+        "notes": "Rates compare journeys with a factor against the overall rate; they show "
+                 "association, not cause. Factors below minSupport journeys are left out.",
+    }
+
+
+async def _tool_check_conformance(user, args) -> Any:
+    _require_power(user, "check_conformance")
+    pid, spec = _project_id(args), _filter_spec(args)
+    raw_rules = args.get("rules")
+    if not isinstance(raw_rules, list) or not raw_rules:
+        raise ToolError("rules is required — a list of rule objects (see the tool description).")
+    if len(raw_rules) > MAX_RULES:
+        raise ToolError(f"At most {MAX_RULES} rules per call.")
+    try:
+        rules = [Rule.parse(r, step_max=STEP_MAX) for r in raw_rules]
+    except ValueError as exc:
+        raise ToolError(f"Invalid rule: {exc}.") from None
+    examples = _int_arg(args, "examples", 5, 0, 50)
+    async with _Repo(user.username, _conn_id(args), _sample_of(args)) as repo:
+        known = await _known_steps(repo, pid)
+        checked, results = await Analysis(repo).conformance(pid, spec, rules, examples)
+    unknown = sorted({s for r in rules for s in r.steps()} - known)
+    out = {
+        "journeysChecked": checked,
+        "rules": [
+            {"type": r.kind, "rule": r.describe(), "violations": n,
+             "violationRate": _share(n, checked),
+             "conformanceRate": None if not checked else round(1 - n / checked, 4),
+             "exampleEventIds": ids}
+            for r, (n, ids) in zip(rules, results)
+        ],
+        "notes": "exampleEventIds are stored ids — pass one to get_journey for the full trace.",
+    }
+    if unknown:
+        out["unknownSteps"] = unknown
+        out["warning"] = ("Some rule steps do not exist in this project (check spelling with "
+                          "get_metadata); rules on them can never match.")
+    return out
+
+
 _TOOLS: list[dict] = [
     {"name": "list_connections", "handler": _tool_list_connections,
      "description": "List the database connections you may query (id, name, schema).",
@@ -570,7 +1207,8 @@ _TOOLS: list[dict] = [
                      "required": ["connectionId", "projectId"]}},
     {"name": "get_metadata", "handler": _tool_get_metadata,
      "description": "Project metadata: the three meta-attribute titles, the step names, "
-                    "and the event date range.",
+                    "each step's definition (stepDetails: description, score, belongsTo "
+                    "group, endOfProcess, shape) and the event date range.",
      "inputSchema": {"type": "object", "properties": {**_CONN, **_PROJ},
                      "required": ["connectionId", "projectId"]}},
     {"name": "get_journey", "handler": _tool_get_journey,
@@ -630,6 +1268,135 @@ _TOOLS: list[dict] = [
                                     "none — a flat list). 'target' groups by the annotated "
                                     "step/transition."}},
          "required": ["connectionId", "projectId"]}},
+    {"name": "get_attribute_values", "handler": _tool_get_attribute_values,
+     "description": "The values a project's meta attributes (meta1/meta2/meta3) take, each "
+                    "with its journey count, most frequent first, plus the attribute's title "
+                    "and the number of distinct values. Use it to find valid values before "
+                    "filtering with meta1/meta2/meta3 in any other tool.",
+     "inputSchema": {"type": "object", "properties": {
+         **_CONN, **_PROJ, **_FILTER_PROPS,
+         "meta": {"type": "string", "enum": ["meta1", "meta2", "meta3", "all"],
+                  "description": "Which attribute (default all three)."},
+         "limit": {"type": "integer",
+                   "description": f"Max values per attribute (default 50, <= {MCP_MAX_ROWS})."}},
+         "required": ["connectionId", "projectId"]}},
+    {"name": "find_journey", "handler": _tool_find_journey,
+     "description": "Find which project(s) hold a case id — searches every project on every "
+                    "connection you may query (or only connectionId). Returns each match's "
+                    "connection, project, start/end, duration and step count, ready for "
+                    "get_journey. Accepts a business id (e.g. 'CRA-000123') or the 32-char "
+                    "stored hash.",
+     "inputSchema": {"type": "object", "properties": {
+         "eventId": {"type": "string", "description": "The case id to look for."},
+         "connectionId": {"type": "string",
+                          "description": "Limit the search to one connection (default all)."},
+         "sampleSet": _FILTER_PROPS["sampleSet"]},
+         "required": ["eventId"]}},
+    {"name": "create_note", "handler": _tool_create_note,
+     "description": "WRITE: create a note on a step (step) or a transition (fromStep + "
+                    "toStep) of a project. You become its author. text is required (max "
+                    f"{TEXT_MAX} characters), title optional (max {TITLE_MAX}); severity "
+                    "NORMAL/INFO/IMPORTANT/URGENT (default NORMAL); scope personal (only "
+                    "you see it, default) or shared (the whole team). Step names must match "
+                    "the project exactly (see get_metadata). Rate-limited per user.",
+     "inputSchema": {"type": "object", "properties": {
+         **_CONN, **_PROJ,
+         "step": {"type": "string", "description": "The step to annotate."},
+         "fromStep": {"type": "string", "description": "Transition source step (with toStep)."},
+         "toStep": {"type": "string", "description": "Transition target step (with fromStep)."},
+         "title": {"type": "string", "description": f"Short subject (max {TITLE_MAX})."},
+         "text": {"type": "string", "description": f"The note body (required, max {TEXT_MAX})."},
+         "severity": {"type": "string", "enum": list(NOTE_IMPORTANCE)},
+         "scope": {"type": "string", "enum": ["personal", "shared"]}},
+         "required": ["connectionId", "projectId", "text"]}},
+    {"name": "update_note", "handler": _tool_update_note,
+     "description": "WRITE: change a note you can see (your own, a shared one, or an "
+                    "unowned one): add a comment to its thread (with an optional title), "
+                    "set its status to open or resolved, and — author only — change its "
+                    "severity or scope. Existing text is never rewritten; comments are "
+                    "prepended, newest first. noteId comes from get_notes or create_note. "
+                    "Rate-limited per user.",
+     "inputSchema": {"type": "object", "properties": {
+         **_CONN, **_PROJ,
+         "noteId": {"type": "string", "description": "The note's id."},
+         "comment": {"type": "string", "description": f"A comment to add (max {TEXT_MAX})."},
+         "title": {"type": "string",
+                   "description": f"A title for this comment; also becomes the note's title (max {TITLE_MAX})."},
+         "status": {"type": "string", "enum": ["open", "resolved"]},
+         "severity": {"type": "string", "enum": list(NOTE_IMPORTANCE),
+                      "description": "Author only."},
+         "scope": {"type": "string", "enum": ["personal", "shared"],
+                   "description": "Author only."}},
+         "required": ["connectionId", "projectId", "noteId"]}},
+    {"name": "compare_segments", "handler": _tool_compare_segments,
+     "description": "POWER USERS ONLY. Compare two slices of one project side by side — "
+                    "e.g. segmentA {meta1: 'Bank Transfer'} vs segmentB {meta1: 'PayPal'}. "
+                    "Returns each segment's journey count, duration stats, goodness and end "
+                    "steps, then the biggest differences (B minus A): end-step shares, "
+                    "transition times, transition frequency per journey, and transitions "
+                    "found in only one segment.",
+     "inputSchema": {"type": "object", "properties": {
+         **_CONN, **_PROJ,
+         "segmentA": {"type": "object", "description": "Filter for segment A: fromDate, "
+                      "toDate, includedSteps, excludedSteps, meta1, meta2, meta3, label."},
+         "segmentB": {"type": "object", "description": "Filter for segment B (same fields)."},
+         "limit": {"type": "integer", "description": "Rows per difference list (default 10)."},
+         "minOccurrences": {"type": "integer",
+                            "description": "Ignore transitions rarer than this in either segment (default 30)."},
+         "sampleSet": _FILTER_PROPS["sampleSet"]},
+         "required": ["connectionId", "projectId", "segmentA", "segmentB"]}},
+    {"name": "get_bottlenecks", "handler": _tool_get_bottlenecks,
+     "description": "POWER USERS ONLY. Where time is lost: transitions ranked by total "
+                    "waiting time (occurrences × average), the slowest typical transitions "
+                    "(by median), steps repeated inside journeys (rework) and self-loops.",
+     "inputSchema": {"type": "object", "properties": {
+         **_CONN, **_PROJ, **_FILTER_PROPS,
+         "limit": {"type": "integer", "description": "Rows per list (default 10)."},
+         "minOccurrences": {"type": "integer",
+                            "description": "Minimum occurrences for the slowest list (default 30)."}},
+         "required": ["connectionId", "projectId"]}},
+    {"name": "get_trend", "handler": _tool_get_trend,
+     "description": "POWER USERS ONLY. The process over time: per day, week or month (by "
+                    "journey start) the journey count, average and median duration, and — "
+                    "with outcomeSteps — how many and what share of journeys reached one of "
+                    "those steps. Shows drift, seasonality and whether a change helped.",
+     "inputSchema": {"type": "object", "properties": {
+         **_CONN, **_PROJ, **_FILTER_PROPS,
+         "granularity": {"type": "string", "enum": list(TREND_UNITS),
+                         "description": "Period size (default month)."},
+         "outcomeSteps": {"type": "array", "items": {"type": "string"},
+                          "description": "Optional steps whose reach rate to track."},
+         "limit": {"type": "integer", "description": "Max periods (default 366)."}},
+         "required": ["connectionId", "projectId"]}},
+    {"name": "get_outcome_drivers", "handler": _tool_get_outcome_drivers,
+     "description": "POWER USERS ONLY. Why an outcome happens: for journeys reaching any of "
+                    "outcomeSteps (e.g. 'Rejected', 'Payment Failed'), the overall rate and "
+                    "the meta values and visited steps that raise or lower it (rate with the "
+                    "factor, rate without it, delta in percentage points, lift). Shows "
+                    "association, not cause.",
+     "inputSchema": {"type": "object", "properties": {
+         **_CONN, **_PROJ, **_FILTER_PROPS,
+         "outcomeSteps": {"type": "array", "items": {"type": "string"},
+                          "description": "The outcome step(s) (required)."},
+         "minSupport": {"type": "integer",
+                        "description": "Ignore factors seen in fewer journeys (default 30)."},
+         "limit": {"type": "integer", "description": "Rows per list (default 10)."}},
+         "required": ["connectionId", "projectId", "outcomeSteps"]}},
+    {"name": "check_conformance", "handler": _tool_check_conformance,
+     "description": "POWER USERS ONLY. Test journeys against up to 10 rules and count the "
+                    "violations, with example case ids. Rule types: "
+                    "{type:'requires', step, ifStep?} — must visit step (only when ifStep "
+                    "was visited, if given); {type:'forbidden', step}; "
+                    "{type:'precedes', before, after} — before must happen before after; "
+                    "{type:'max_duration', maxSecs}; "
+                    "{type:'max_gap', fromStep, toStep, maxSecs} — toStep within maxSecs of fromStep.",
+     "inputSchema": {"type": "object", "properties": {
+         **_CONN, **_PROJ, **_FILTER_PROPS,
+         "rules": {"type": "array", "items": {"type": "object"},
+                   "description": "The rules to check (1–10)."},
+         "examples": {"type": "integer",
+                      "description": "Example case ids per violated rule (default 5, max 50)."}},
+         "required": ["connectionId", "projectId", "rules"]}},
 ]
 _TOOLS_BY_NAME = {t["name"]: t for t in _TOOLS}
 
@@ -720,7 +1487,12 @@ async def mcp_endpoint(request: Request):
 
     # A batch (list) or a single message.
     if isinstance(body, list):
-        responses = [r for m in body if (r := await _dispatch(m, user)) is not None]
+        if len(body) > _MAX_BATCH:
+            return JSONResponse(
+                _rpc_error(None, -32600, f"A batch may hold at most {_MAX_BATCH} messages."),
+                status_code=400)
+        responses = [r for m in body if isinstance(m, dict)
+                     and (r := await _dispatch(m, user)) is not None]
         return JSONResponse(responses) if responses else JSONResponse(None, status_code=202)
     response = await _dispatch(body, user)
     if response is None:

@@ -75,7 +75,7 @@
 <tr><td><code>description</code></td><td>The step's detail (the query run, URL fetched, recipient &hellip;), up to <b>256 characters</b>; longer text is truncated. Stored as the event's <b>Action</b> attribute (<code>META_1</code>). Also accepted as <code>meta1</code>.</td></tr>
 <tr><td><code>client</code></td><td>The calling client &mdash; <code>Claude</code>, <code>ChatGPT</code>, &hellip;. Stored as the <b>Client</b> attribute (<code>META_2</code>). Also accepted as <code>meta2</code>.</td></tr>
 <tr><td><code>user</code></td><td>The end user, if known. Stored as the <b>User</b> attribute (<code>META_3</code>). Also accepted as <code>meta3</code>.</td></tr>
-<tr><td><code>eventTime</code></td><td>ISO-8601 timestamp (a trailing <code>Z</code> is accepted). Missing or blank means &ldquo;now&rdquo; on the server. Also accepted as <code>event_time</code>.</td></tr>
+<tr><td><code>eventTime</code></td><td>ISO-8601 timestamp. Without an offset it is stored as given (local wall-clock time); with an offset or a trailing <code>Z</code> it is converted to the display timezone set in the admin interface. Missing or blank means &ldquo;now&rdquo; in that timezone. Also accepted as <code>event_time</code>.</td></tr>
 </tbody>
 </table>
 

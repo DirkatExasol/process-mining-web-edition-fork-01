@@ -3,7 +3,7 @@
 
 A generic overview of Conversational Process Mining: talking to your process data through
 an AI agent (via the MCP server) instead of only clicking charts. Concept, building blocks,
-what you can ask, the read-only boundary, and where to go next (guides 15 and 61).
+what you can ask, the notes-only write boundary, and where to go next (guides 15 and 61).
 
 Run:  python3 docs/60-build-ai-agent-overview-guide.py
 """
@@ -41,13 +41,13 @@ STEPS = [
         "after that it is just conversation.",
         """<div class="mock">
       <pre class="calc">You ──ask in plain language──▶ AI agent (Claude, …)
-                                   └─ picks and calls read-only MCP tools
+                                   └─ picks and calls MCP tools (writes: notes only)
 AI agent ──MCP + OAuth token──▶ MCP server (the 7th surface)
                                    └─ verifies you via Authentik
                                    └─ answers from your assigned connections</pre>
       <table class="tbl">
         <tr><th>Piece</th><th>Role</th></tr>
-        <tr><td><b>MCP server</b></td><td>The read-only query endpoint on the Process Mining side (metrics, paths, metadata). Off until an admin enables it.</td></tr>
+        <tr><td><b>MCP server</b></td><td>The query endpoint on the Process Mining side (metrics, paths, cases, metadata, notes); its only writes are notes. Off until an admin enables it.</td></tr>
         <tr><td><b>OAuth provider</b> (Authentik)</td><td>Proves who you are; the token maps to your Process Mining user and its connection assignments.</td></tr>
         <tr><td><b>AI client</b> (Claude Desktop)</td><td>Where you have the conversation. It discovers the tools and calls them for you.</td></tr>
       </table>
@@ -57,7 +57,7 @@ AI agent ──MCP + OAuth token──▶ MCP server (the 7th surface)
     ),
     (
         "What you can ask",
-        "The agent has a small set of <b>read-only</b> tools covering the same ground as the "
+        "The agent has a set of tools covering the same ground as the "
         "Workbench. In practice you never name the tools — you ask in words and the agent maps "
         "your question to them. Typical things to ask:",
         None,
@@ -76,6 +76,15 @@ AI agent ──MCP + OAuth token──▶ MCP server (the 7th surface)
             "range of the data?&rdquo;",
             "<b>Notes &amp; review</b> — &ldquo;What open URGENT notes are on this process, "
             "grouped by step? Show me the shared notes but not my personal ones.&rdquo;",
+            "<b>Write notes</b> — &ldquo;Add a shared, important note on the security "
+            "transition: median 17 minutes&rdquo;, &ldquo;resolve the test note and say "
+            "why&rdquo;. The note is yours, exactly as if you had written it in the app.",
+            "<b>Find a case</b> — &ldquo;Where is <i>CRA-000123</i>?&rdquo; (the agent searches "
+            "every project you can see), and &ldquo;which payment methods exist?&rdquo;",
+            "<b>Deeper analysis</b> <i>(power users)</i> — &ldquo;Compare Bank Transfer with "
+            "PayPal orders&rdquo;, &ldquo;where is the most time lost?&rdquo;, &ldquo;is the "
+            "rejection rate trending up?&rdquo;, &ldquo;what drives rejections?&rdquo;, "
+            "&ldquo;is payment always processed before confirmation?&rdquo;",
         ],
         '<span class="k">Follow-ups are the point.</span> Answers become the next question — '
         '&ldquo;now filter to March&rdquo;, &ldquo;only the department = Finance cases&rdquo;, '
@@ -104,8 +113,12 @@ AI agent ──MCP + OAuth token──▶ MCP server (the 7th surface)
         [
             "<b>Name the connection and project</b> when you have several — &ldquo;on connection "
             "<i>Prod</i>, project 1&rdquo; — so the agent doesn't guess.",
-            "<b>Read-only, always.</b> There is no tool to write, delete, sample or edit — the "
-            "agent cannot change your data or configuration.",
+            "<b>Only notes can change.</b> The agent can add a note or comment on a step or "
+            "transition and resolve a note — as you, under the app's own note rules. There is "
+            "no tool to delete, sample, import or edit event data or configuration.",
+            "<b>Deeper analysis is for power users.</b> Segment comparison, bottlenecks, trends, "
+            "outcome drivers and conformance rules answer only users with the power-user role; "
+            "for others the agent explains that the role is needed.",
             "<b>Your boundary travels with the token.</b> If a connection isn't assigned to you, "
             "the agent can't query it, and it will say so.",
             "<b>Numbers come from the database</b>, not the model — the agent reports what the "
@@ -255,7 +268,7 @@ def render() -> str:
 
   <div class="lead">
     <b>Conversational Process Mining</b> turns process analysis into a dialogue: you ask, an
-    AI agent queries the Process Mining tool through its read-only <b>MCP server</b>, and you
+    AI agent queries the Process Mining tool through its <b>MCP server</b>, and you
     get answers you can immediately drill into — all within the same data boundary as the app.
     It sits beside the chart-driven Workbench, not on top of it.
   </div>

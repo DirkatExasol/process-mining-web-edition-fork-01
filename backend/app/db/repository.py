@@ -36,6 +36,7 @@ from ..models import (
     TimeGranularity,
     new_id,
 )
+from ..timeutil import local_now
 from .manager import DatabaseManager
 
 log = logging.getLogger(__name__)
@@ -1473,12 +1474,22 @@ class ProcessRepository:
         resolved: bool | None = None,
         importance: str | None = None,
         is_shared: bool | None = None,
+        caller: str | None = None,
     ) -> None:
         """Apply a partial update: optionally add a thread comment (prepended so the
         newest is on top), set the note's title to the latest entry's, the resolved
         flag, importance and/or shared. Callers decide which fields a given user may
-        pass (owner-only for importance/isShared)."""
-        sets = ["EDITED_DATE = CURRENT_TIMESTAMP", f"EDITED_BY = '{esc(edited_by)}'"]
+        pass (owner-only for importance/isShared).
+
+        With ``caller`` the permission rule is repeated in the UPDATE itself (defence in
+        depth against a check-then-write race): the note must still be visible to the
+        caller (own, shared or unowned), and an importance/shared change additionally
+        requires the caller to be its author."""
+        # An explicit display-zone wall-clock stamp, not the database's CURRENT_TIMESTAMP:
+        # the DB session clock is not necessarily the zone the admin chose, and the
+        # created date (NOTES_DATE) is written in that zone — the two must agree.
+        edited_sql = f"TIMESTAMP '{_ts(local_now())}'"
+        sets = [f"EDITED_DATE = {edited_sql}", f"EDITED_BY = '{esc(edited_by)}'"]
         if comment_block:
             # Prepend so the most recent comment appears at the top of the thread.
             sets.append(f"NOTE = '{esc(comment_block)}' || NOTE")
@@ -1490,9 +1501,16 @@ class ProcessRepository:
             sets.append(f"IMPORTANCE = '{normalize_importance(importance)}'")
         if is_shared is not None:
             sets.append(f"IS_SHARED = {'TRUE' if is_shared else 'FALSE'}")
+        guard = ""
+        if caller is not None:
+            who = esc(caller.upper())
+            if importance is not None or is_shared is not None:
+                guard = f" AND UPPER(NOTE_USER) = '{who}'"
+            else:
+                guard = f" AND (UPPER(NOTE_USER) = '{who}' OR NOTE_USER = '' OR IS_SHARED = TRUE)"
         await self.db.execute(
             f"UPDATE NOTES SET {', '.join(sets)} "
-            f"WHERE ID = '{esc(note_id)}' AND PROJECT_ID = {_pid(project_id)}"
+            f"WHERE ID = '{esc(note_id)}' AND PROJECT_ID = {_pid(project_id)}{guard}"
         )
 
     async def note_owner(self, note_id: str) -> str | None:

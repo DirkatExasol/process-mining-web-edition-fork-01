@@ -128,7 +128,7 @@ footer{color:var(--soft);font-size:13px;text-align:center;margin-top:34px}
 </section><section class="step">
   <div class="step-head"><div class="num">4</div><h2>Enable it in a chat</h2></div>
   <p class="body">Connectors are enabled per conversation. Start a new chat, switch the <b>Process Mining</b> connector on (the connector/tools control in the message box), and you're ready to ask. The first time the agent calls a tool, Claude may ask you to allow it — approve it to continue.</p>
-  <div class="tip"><span class="k">All read-only.</span> Every Process Mining tool only reads — there is nothing to write, delete or change — so it is safe to let the agent call them freely.</div>
+  <div class="tip"><span class="k">Reads freely, writes only notes.</span> Every Process Mining tool only reads, except <code>create_note</code> and <code>update_note</code>, which add or change notes as you (rate-limited and logged). If your client lets you set permissions per tool, keep approval on for those two and let the read tools run without asking.</div>
 </section><section class="step">
   <div class="step-head"><div class="num">5</div><h2>Start asking — example queries</h2></div>
   <p class="body">You never name the tools; ask in plain language and the agent picks them. Good openers, roughly in the order you'd explore a new process:</p>

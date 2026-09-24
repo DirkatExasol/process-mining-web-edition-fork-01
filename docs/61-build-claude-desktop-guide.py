@@ -84,8 +84,10 @@ STEPS = [
         "approve it to continue.",
         None,
         None,
-        '<span class="k">All read-only.</span> Every Process Mining tool only reads — there is '
-        "nothing to write, delete or change — so it is safe to let the agent call them freely.",
+        '<span class="k">Reads freely, writes only notes.</span> Every Process Mining tool only '
+        "reads, except <code>create_note</code> and <code>update_note</code>, which add or change "
+        "notes as you (rate-limited and logged). If your client lets you set permissions per "
+        "tool, keep approval on for those two and let the read tools run without asking.",
     ),
     (
         "Start asking — example queries",
