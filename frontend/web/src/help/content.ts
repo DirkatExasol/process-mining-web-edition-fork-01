@@ -1067,6 +1067,16 @@ const simulation: HelpTopic = {
       ],
     },
     {
+      heading: 'Resource levers — transition-time what-ifs',
+      body: [
+        p('Excluding a step models removing work. The resource levers model the other kind of change: keeping the process shape but altering how long parts of it take — to see the effect of throwing more (or fewer) resources at a step, without touching the database. The routing probabilities are untouched; only the durations change, and the whole graph — cycle time, bottlenecks, variant timing — responds.'),
+        def('Resources per step', 'A factor on the time of every transition leaving a step. Below 1 means more resources (faster); above 1 means fewer (slower). A factor of 0.5 on “Manual Review” says “double its capacity”, halving the time cases spend leaving that step; 2.0 says “halve its capacity”.'),
+        def('Transition time overrides', 'Change one from→to transition directly, for finer control than a whole step. Either × the observed mean (×0.5 = twice the resources on that specific hand-off) or set an absolute mean time in minutes when you know the target. A step’s resource factor still applies on top of an edge override, so the two compose.'),
+        p('Mechanically, each transition’s duration is drawn from its fitted lognormal distribution; a lever multiplies that draw. Because scaling a lognormal by a constant scales its mean by the same constant while preserving its shape, the spread and right-skew stay realistic — you are not collapsing every case to a single number, just shifting the whole distribution faster or slower. An absolute override re-centres the mean on your target and keeps the same relative spread.'),
+        tip('Run the unchanged process into one slot (Sim-A) and the what-if — with your levers — into the other (Sim-B), then select them as the A and B data sources in the Sampling section. A/B Comparison then quantifies the effect side by side, including a Process Similarity score. Levers that resolve to no change (a factor of 1, or an invalid value) are ignored.'),
+      ],
+    },
+    {
       heading: 'Worked example — a fork process',
       body: [
         p('Suppose the observed A-Chart graph is a simple fork: after Start, 70 % of cases go through the Fast branch and 30 % through the Slow branch, then both rejoin at End.'),
@@ -1137,7 +1147,7 @@ avg ≈ 7 min, and a single-peaked (unimodal) cycle-time histogram.`,
         p('The simulator is a first-order Markov model: each routing decision depends only on the current step, not on what came before. If your real process has strong history-dependent routing — for example, cases rejected once behaving very differently on retry — the model will not capture this.'),
         ul(
           'Long-range dependencies and case attributes (META_1–3) are not modelled — there is no concept of a customer segment or region that influences routing.',
-          'Resource constraints and queues are not modelled. Cycle times are sampled independently per event; doubling volume does not increase waiting time.',
+          'Resource contention emerges only if you model it. The resource levers let you scale transition times directly (a per-step factor or per-edge override), but this is a direct what-if, not an emergent queue: cycle times are still sampled independently per event, so raising the Journey Count or inter-arrival rate alone does not increase waiting time. To study “more volume → longer waits”, set the levers yourself.',
           'The model calibrates from the visible graph only. If the active filter excludes date ranges or step types, the model reflects only that subset.',
           'Very rare transitions may have unreliable duration estimates — a standard deviation estimated from two or three observations is noisy.',
         ),

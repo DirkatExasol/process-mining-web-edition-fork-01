@@ -227,12 +227,27 @@
       <tr><td><b>Max steps per journey</b></td><td>60</td><td>Minimum 2. Hard stop for a random walk that never reaches an end-of-process step. The backend limit is 10 000.</td></tr>
       <tr><td><b>Excluded steps</b></td><td>none</td><td>Multi-select picker (◉ selected / ○ not) with a count pill and an ⊗ clear button. Hint: "Removed before the Markov model is built." — the step and all its transitions are cut out before probabilities are computed.</td></tr>
       <tr><td><b>Required steps</b></td><td>none</td><td>Same picker. Hint: "Journeys not visiting all of these are discarded." — generated journeys missing any required step are thrown away and regenerated.</td></tr>
+      <tr><td><b>Resources per step</b></td><td>none</td><td>Collapsible list of every step with a numeric factor (default 1). The factor multiplies the time of every transition <em>leaving</em> that step: &lt;1 = more resources (faster), &gt;1 = fewer (slower). Only factors that differ from 1 are sent.</td></tr>
+      <tr><td><b>Transition time overrides</b></td><td>none</td><td>Collapsible editor of per-transition what-ifs. Each row picks a <code>from → to</code> edge and either scales its observed mean (<code>×</code>) or sets an absolute mean in minutes (<code>=</code>); the row shows the observed time and the resulting target. A step's resource factor still applies on top.</td></tr>
     </tbody>
   </table>
 
   <p>A walk ends when it reaches a step flagged as end-of-process, when the model has no outgoing transition left, or when <b>Max steps per journey</b> is reached — whichever comes first.</p>
 
   <div class="note"><strong>Note</strong> With <b>Required steps</b> set, a run can finish with fewer journeys than you asked for. The generator makes a bounded number of attempts (twenty times the journey count, and never fewer than a thousand); if the required combination is rare in the observed graph, the attempts run out first. Compare the <b>Journeys</b> tile in the results header with the journey count you configured.</div>
+
+  <h3 id="sim-resources">Resource levers: transition-time what-ifs</h3>
+
+  <p>Excluding a step models removing work; the <b>resource levers</b> model the other kind of change — keeping the process shape but altering how long parts of it take, to see what dedicating more (or fewer) resources to a step does to the whole graph. Routing probabilities are untouched; only the durations move, and cycle time, bottlenecks and variant timing all respond. Two levers combine:</p>
+
+  <ul>
+    <li><b>Resources per step</b> — a single factor scaling the time of every transition leaving a step. A factor of <code>0.5</code> on a step says "double its capacity", halving the time cases spend leaving it; <code>2.0</code> halves the capacity. It is the quick "throw staff at this step" knob.</li>
+    <li><b>Transition time overrides</b> — finer control over one <code>from → to</code> hand-off: either scale its observed mean by a multiplier (<code>×0.5</code> = twice the resources on that specific transition) or set an absolute mean time in minutes. A step's resource factor still applies on top of an edge override, so the two compose multiplicatively.</li>
+  </ul>
+
+  <p>Internally, each transition's duration is drawn from the lognormal fitted to its observed average and standard deviation; a lever multiplies that draw. Because scaling a lognormal by a constant scales its mean by the same constant while leaving its shape unchanged, the spread and right-skew stay realistic — the whole distribution shifts faster or slower rather than collapsing to a single value. An absolute override re-centres the mean on the target you type and keeps the same relative spread. Levers that resolve to no change (a factor of 1, or a non-positive or non-finite value) are ignored.</p>
+
+  <div class="note"><strong>Note</strong> The resource levers are a <em>direct</em> time what-if, not an emergent queue. Cycle times are still sampled independently per event, so raising the journey count or the arrival rate alone will not create waiting time — to study contention, set the levers to the slower times you expect under load. The natural workflow is to run the unchanged process into <b>Sim-A</b> and the lever-adjusted version into <b>Sim-B</b>, then compare them in A/B Comparison (including a Process Similarity score).</div>
 
   <h3 id="sim-run">Running a simulation</h3>
 
