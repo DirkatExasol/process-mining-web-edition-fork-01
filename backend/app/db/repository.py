@@ -1444,6 +1444,18 @@ class ProcessRepository:
         )
         return [n for row in result.rows if (n := self._row_to_note(row)) is not None]
 
+    async def count_user_notes(self, project_id: str, username: str) -> int:
+        """How many notes ``username`` owns in ``project_id`` — the accumulation the MCP
+        write cap bounds. Author match is case-insensitive, mirroring the visibility rule."""
+        safe_user = esc(username.upper())
+        result = await self.db.execute(
+            f"SELECT COUNT(*) FROM NOTES "
+            f"WHERE PROJECT_ID = {_pid(project_id)} AND UPPER(NOTE_USER) = '{safe_user}'"
+        )
+        for row in result.rows:
+            return as_int(row[0])
+        return 0
+
     async def get_note(self, note_id: str, project_id: str) -> ProcessNote | None:
         result = await self.db.execute(
             f"SELECT {self._NOTE_COLUMNS} FROM NOTES "

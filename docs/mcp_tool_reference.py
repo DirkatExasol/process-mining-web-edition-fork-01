@@ -146,7 +146,8 @@ TOOLS: list[dict] = [
     dict(name="create_note", group="Notes", access=WRITE,
          purpose="Create a note on a step (step) or a transition (fromStep + toStep). You become "
                  "the author; id and time are set by the server. text required (≤ 4000), title "
-                 "≤ 200, severity default NORMAL, scope default personal. Rate-limited per user.",
+                 "≤ 200, severity default NORMAL, scope default personal. Rate-limited per user, "
+                 "and capped at a maximum number of notes you may own per project.",
          params="connectionId, projectId, step | fromStep + toStep, text, title?, severity?, scope?",
          question="Add a shared, important note on the security transition.",
          args={"connectionId": "7e31de50-…", "projectId": 2, "fromStep": "ENTER Security Check",

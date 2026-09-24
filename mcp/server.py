@@ -44,7 +44,12 @@ from fastapi.responses import JSONResponse  # noqa: E402
 from jwt import PyJWKClient  # noqa: E402
 
 from app import log_events as logx  # noqa: E402
-from app.config import MCP_JWKS_CACHE_SECS, MCP_MAX_ROWS, MCP_NOTE_WRITES_PER_MIN  # noqa: E402
+from app.config import (  # noqa: E402
+    MCP_JWKS_CACHE_SECS,
+    MCP_MAX_NOTES_PER_PROJECT,
+    MCP_MAX_ROWS,
+    MCP_NOTE_WRITES_PER_MIN,
+)
 from app.db.analysis import MAX_RULES, META_COLUMNS, TREND_UNITS, Analysis, Rule  # noqa: E402
 from app.db.manager import DatabaseManager  # noqa: E402
 from app.db.repository import JOURNEY_ORDERS, ProcessRepository  # noqa: E402
@@ -829,6 +834,15 @@ async def _tool_create_note(user, args) -> Any:
         await _require_project(repo, pid)
         target = await _note_target(repo, pid, args)
         await repo.ensure_notes_table()
+        if MCP_MAX_NOTES_PER_PROJECT > 0:
+            # Bound total accumulation, not just the rate: an agent cannot build up an
+            # unbounded pile of notes that only its owner can later delete.
+            owned = await repo.count_user_notes(pid, user.username)
+            if owned >= MCP_MAX_NOTES_PER_PROJECT:
+                raise ToolError(
+                    f"You already own {owned} notes in project {pid} (the limit is "
+                    f"{MCP_MAX_NOTES_PER_PROJECT}). Delete some in the app before adding more."
+                )
         frm, to = await repo.load_date_bounds(pid)
         now = local_now()
         note = ProcessNote(
@@ -1298,7 +1312,8 @@ _TOOLS: list[dict] = [
                     f"{TEXT_MAX} characters), title optional (max {TITLE_MAX}); severity "
                     "NORMAL/INFO/IMPORTANT/URGENT (default NORMAL); scope personal (only "
                     "you see it, default) or shared (the whole team). Step names must match "
-                    "the project exactly (see get_metadata). Rate-limited per user.",
+                    "the project exactly (see get_metadata). Rate-limited per user, and "
+                    "capped at a maximum number of notes you may own per project.",
      "inputSchema": {"type": "object", "properties": {
          **_CONN, **_PROJ,
          "step": {"type": "string", "description": "The step to annotate."},

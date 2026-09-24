@@ -37,7 +37,8 @@ Nineteen tools in five groups. Who may call them:
   thread entry's header to pose as another author), a full thread (100,000 characters) takes
   no more comments, the permission rule is re-checked inside the database write itself, each
   user may make at most
-  `PMW_MCP_NOTE_WRITES_PER_MIN` (default 20) note changes per minute, and every write is
+  `PMW_MCP_NOTE_WRITES_PER_MIN` (default 20) note changes per minute and own at most
+  `PMW_MCP_MAX_NOTES_PER_PROJECT` (default 500) notes per project, and every write is
   recorded in the admin log (who, which note — never the text).
 - **Power users & administrators** — `compare_segments`, `get_bottlenecks`, `get_trend`,
   `get_outcome_drivers`, `check_conformance`. Grant the role in the admin console (**Users** tab →
@@ -65,7 +66,7 @@ Console** (App Control → *Timezone*) and are returned with that zone's UTC off
 | `find_journey` | Everyone | Which project(s) hold a case id — searches every project on every connection you may query (or one connectionId), ready for get_journey. |
 | `find_journeys` | Everyone | The individual cases behind an aggregate — slowest, longest or by step — with optional full path. Returned eventIds feed get_journey. |
 | `get_notes` | Everyone | The notes on a project's steps and transitions — filter by severity, status and scope, optionally grouped; with a summary of counts. Times are local (Admin Console display zone) with the UTC offset. |
-| `create_note` | Everyone — write | Create a note on a step (step) or a transition (fromStep + toStep). You become the author; id and time are set by the server. text required (≤ 4000), title ≤ 200, severity default NORMAL, scope default personal. Rate-limited per user. |
+| `create_note` | Everyone — write | Create a note on a step (step) or a transition (fromStep + toStep). You become the author; id and time are set by the server. text required (≤ 4000), title ≤ 200, severity default NORMAL, scope default personal. Rate-limited per user, and capped at a maximum number of notes you may own per project. |
 | `update_note` | Everyone — write | On a note you can see: add a comment (prepended to the thread, with an optional title), set status open/resolved; the author alone may change severity or scope. Existing text is never rewritten; a full thread (100,000 characters) takes no more comments. Rate-limited per user. |
 | `compare_segments` | Power users & admins | Two slices of one project side by side: each segment's count, durations, goodness and end steps, then the biggest differences (B minus A) in end-step shares, transition times, transition frequency, and transitions found in only one segment. |
 | `get_bottlenecks` | Power users & admins | Where time is lost: transitions by total waiting time (occurrences × average), the slowest typical transitions (median), rework (steps repeated in a journey) and self-loops. |
@@ -727,6 +728,7 @@ curl -k -X POST https://<your-host>:18493/mcp \
 | `Connection … is not assigned to you` | Assign the connection to the user (Database Connections tab). |
 | `Sorry — … reserved for power users` | The user lacks the power-user role. Grant it in the admin console (Users tab → **Make power**) if they should run the deeper-analysis tools. |
 | `You have reached the limit of N note changes per minute` | A client is writing notes in a loop. Wait a minute; raise `PMW_MCP_NOTE_WRITES_PER_MIN` only if the volume is intended. |
+| `You already own N notes in project … (the limit is …)` | The per-project note cap was hit. Delete some in the app, or raise `PMW_MCP_MAX_NOTES_PER_PROJECT` (0 disables it) if the volume is intended. |
 | `Step '…' does not exist in project …` (create_note) | Step names must match exactly — list them with `get_metadata`. |
 | `This note's thread is full` | The note's thread reached 100,000 characters. Start a new note for the follow-up. |
 | `A batch may hold at most 20 messages` | The client sent a JSON-RPC batch of more than 20 calls; split it. |
@@ -745,7 +747,9 @@ curl -k -X POST https://<your-host>:18493/mcp \
 - The deeper-analysis tools are gated on the **power-user** role (administrators included);
   the role is re-read from the user store on every request, so revoking it takes effect at once.
 - Configure `PMW_MCP_MAX_ROWS` (default 1000) to cap rows returned per call,
-  `PMW_MCP_JWKS_CACHE_SECS` (default 3600) for how long signing keys are cached, and
-  `PMW_MCP_NOTE_WRITES_PER_MIN` (default 20) for the per-user note-write limit. Filters are
+  `PMW_MCP_JWKS_CACHE_SECS` (default 3600) for how long signing keys are cached,
+  `PMW_MCP_NOTE_WRITES_PER_MIN` (default 20) for the per-user note-write rate, and
+  `PMW_MCP_MAX_NOTES_PER_PROJECT` (default 500, 0 disables) for how many notes one user may
+  own per project. Filters are
   bounded (200 step names per list, meta values 256 characters) and a JSON-RPC batch may hold
   at most 20 messages, so one request cannot build an unbounded query.

@@ -72,6 +72,13 @@ class _NotesRepo:
     async def ensure_notes_table(self):
         return None
 
+    async def count_user_notes(self, pid, username):
+        return sum(
+            1
+            for n in self.notes.values()
+            if int(pid) == self.project_id and (n.username or "").upper() == username.upper()
+        )
+
     async def load_date_bounds(self, pid):
         return (datetime(2024, 1, 1), datetime(2024, 12, 31))
 
@@ -290,6 +297,24 @@ def test_note_writes_are_rate_limited_per_user(repo, monkeypatch):
     # Another user has their own budget.
     assert _call("create_note", {**BASE, "step": "ENTER Check-In", "text": "x"}, user=BOB)[0]["isError"] is False
     assert len(repo.upserts) == 4
+
+
+def test_create_note_is_capped_at_the_per_project_total(monkeypatch):
+    # Two notes already owned by alice; cap is 2 → the next create is refused, none written.
+    r = _NotesRepo(notes=[_note("A" * 8 + "-0000-4000-8000-000000000001", user="alice"),
+                          _note("A" * 8 + "-0000-4000-8000-000000000002", user="alice")])
+    _patch(monkeypatch, r)
+    monkeypatch.setattr(mcp, "MCP_MAX_NOTES_PER_PROJECT", 2)
+    result, message = _call("create_note", {**BASE, "step": "ENTER Check-In", "text": "x"})
+    assert result["isError"] is True and "the limit is 2" in message
+    assert r.upserts == []  # nothing was written
+    # Another user has their own allowance (the cap counts the caller's own notes).
+    assert _call("create_note", {**BASE, "step": "ENTER Check-In", "text": "x"}, user=BOB)[0]["isError"] is False
+
+
+def test_create_note_cap_can_be_disabled(repo, monkeypatch):
+    monkeypatch.setattr(mcp, "MCP_MAX_NOTES_PER_PROJECT", 0)  # 0 = no cap
+    assert _call("create_note", {**BASE, "step": "ENTER Check-In", "text": "x"})[0]["isError"] is False
 
 
 def test_note_writes_are_audited_without_their_content(repo, monkeypatch):

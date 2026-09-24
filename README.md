@@ -942,7 +942,8 @@ AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp
   bidi-override characters stripped; no text may imitate a thread header), full threads
   (100,000 characters) refusing further comments, the permission rule re-checked inside the
   database write, a per-user limit of `PMW_MCP_NOTE_WRITES_PER_MIN`
-  (default 20) writes a minute, and an admin-log entry per write (never the text). The five
+  (default 20) writes a minute plus a per-project cap of `PMW_MCP_MAX_NOTES_PER_PROJECT`
+  (default 500) notes one user may own, and an admin-log entry per write (never the text). The five
   **deeper-analysis tools** — `compare_segments`, `get_bottlenecks`, `get_trend`,
   `get_outcome_drivers`, `check_conformance` — are for **power users** (and admins); anyone
   else gets a polite refusal naming the role, and nothing is queried.
@@ -977,7 +978,7 @@ AI client ──MCP/JSON-RPC + Bearer──────▶ MCP Server (:8493/mcp
 | `find_journey` | Everyone | Which project(s) hold a case id — searches every project on every connection you may query (or one connectionId), ready for get_journey. |
 | `find_journeys` | Everyone | The individual cases behind an aggregate — slowest, longest or by step — with optional full path. Returned eventIds feed get_journey. |
 | `get_notes` | Everyone | The notes on a project's steps and transitions — filter by severity, status and scope, optionally grouped; with a summary of counts. Times are local (Admin Console display zone) with the UTC offset. |
-| `create_note` | Everyone — write | Create a note on a step (step) or a transition (fromStep + toStep). You become the author; id and time are set by the server. text required (≤ 4000), title ≤ 200, severity default NORMAL, scope default personal. Rate-limited per user. |
+| `create_note` | Everyone — write | Create a note on a step (step) or a transition (fromStep + toStep). You become the author; id and time are set by the server. text required (≤ 4000), title ≤ 200, severity default NORMAL, scope default personal. Rate-limited per user, and capped at a maximum number of notes you may own per project. |
 | `update_note` | Everyone — write | On a note you can see: add a comment (prepended to the thread, with an optional title), set status open/resolved; the author alone may change severity or scope. Existing text is never rewritten; a full thread (100,000 characters) takes no more comments. Rate-limited per user. |
 | `compare_segments` | Power users & admins | Two slices of one project side by side: each segment's count, durations, goodness and end steps, then the biggest differences (B minus A) in end-step shares, transition times, transition frequency, and transitions found in only one segment. |
 | `get_bottlenecks` | Power users & admins | Where time is lost: transitions by total waiting time (occurrences × average), the slowest typical transitions (median), rework (steps repeated in a journey) and self-loops. |
@@ -1468,8 +1469,10 @@ Deeper analysis, reserved for users with the power-user role (and administrators
   `GET /.well-known/oauth-protected-resource` returns the resource metadata; a `POST /mcp`
   with no token returns `401` and with a token exercises the whole chain.
 - **Limits.** `PMW_MCP_MAX_ROWS` (default 1000) caps rows per call,
-  `PMW_MCP_JWKS_CACHE_SECS` (default 3600) how long signing keys are cached and
-  `PMW_MCP_NOTE_WRITES_PER_MIN` (default 20) the note writes per user per minute. Only the JWKS
+  `PMW_MCP_JWKS_CACHE_SECS` (default 3600) how long signing keys are cached,
+  `PMW_MCP_NOTE_WRITES_PER_MIN` (default 20) the note writes per user per minute and
+  `PMW_MCP_MAX_NOTES_PER_PROJECT` (default 500, 0 disables) the notes one user may own per
+  project. Only the JWKS
   **transport** skips certificate verification (Authentik is a trusted internal host); token
   integrity is unaffected.
 

@@ -159,6 +159,11 @@ MCP_JWKS_CACHE_SECS = int(os.environ.get("PMW_MCP_JWKS_CACHE_SECS", "3600"))
 # Each user may make at most this many note writes per rolling minute, so a looping or
 # misbehaving agent cannot flood a project's notes.
 MCP_NOTE_WRITES_PER_MIN = int(os.environ.get("PMW_MCP_NOTE_WRITES_PER_MIN", "20"))
+# The rate limit bounds how FAST notes are written; this bounds the TOTAL a single user may
+# accumulate in one project through the MCP write tools — so an agent cannot slowly build up
+# an unbounded pile of (possibly shared) notes that only its owner can later delete. Counts
+# the caller's own notes in the project; 0 disables the cap.
+MCP_MAX_NOTES_PER_PROJECT = int(os.environ.get("PMW_MCP_MAX_NOTES_PER_PROJECT", "500"))
 
 # File sources for the integration console read from this sandbox directory by default —
 # nothing outside it can be opened (path traversal / symlink escapes are rejected). Set
