@@ -489,6 +489,25 @@ describe('A/B simulation source survives view switches (regression)', () => {
   })
 })
 
+describe('simForm persists across view switches (regression)', () => {
+  it('setSimForm merges patches and keeps prior fields', () => {
+    // A user configures levers, then leaves and returns to Simulation.
+    useStore.getState().setSimForm({
+      journeyCount: 500,
+      stepResourceFactors: { 'Manual Review': '1.5' },
+      resourcesOpen: true,
+    })
+    useStore.getState().setSimForm({ slot: 'Sim-B' })
+
+    const form = useStore.getState().simForm
+    // The earlier settings survive the second patch — nothing reset to defaults.
+    expect(form.journeyCount).toBe(500)
+    expect(form.stepResourceFactors['Manual Review']).toBe('1.5') // ">1" value kept verbatim
+    expect(form.resourcesOpen).toBe(true)
+    expect(form.slot).toBe('Sim-B')
+  })
+})
+
 describe('reloadGraph supersession (connection-switch race)', () => {
   const project = { projectId: 1, title: 'P', description: '', titleShort: 'P' }
   const result = {

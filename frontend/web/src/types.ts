@@ -574,6 +574,38 @@ export interface SimulationResult {
 
 export type SimSlot = 'Sim-A' | 'Sim-B'
 
+/** A single transition-override row while editing. Values are kept as raw text so
+ *  typing is unrestricted (e.g. "1.5"); they are parsed into an EdgeDurationOverride
+ *  only when the simulation runs. */
+export interface EdgeOverrideDraft {
+  fromStep: string
+  toStep: string
+  mode: 'mult' | 'abs'
+  /** Raw text: a multiplier when mode='mult', minutes when mode='abs'. */
+  value: string
+}
+
+/** The Simulation view's configuration, held in the store so it persists while the
+ *  user navigates away and back (rather than resetting on every mount). Numeric lever
+ *  inputs are kept as raw text (see EdgeOverrideDraft, stepResourceFactors) so partial
+ *  input like "1." or values > 1 can be typed freely; they are parsed on run. */
+export interface SimForm {
+  slot: SimSlot
+  journeyCount: number
+  startDate: string
+  avgInterArrivalHours: number
+  maxStepsPerJourney: number
+  excludedSteps: string[]
+  requiredSteps: string[]
+  /** step name → raw factor text (parsed to a number on run; blank/1/invalid ignored). */
+  stepResourceFactors: Record<string, string>
+  edgeOverrides: EdgeOverrideDraft[]
+  excludedOpen: boolean
+  requiredOpen: boolean
+  resourcesOpen: boolean
+  overridesOpen: boolean
+}
+
 export type ABDataSource =
   | { kind: 'sampleSet'; sampleSet: SampleSet }
   | { kind: 'simulation'; slot: SimSlot }

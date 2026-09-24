@@ -42,6 +42,7 @@ import {
   type SampleSet,
   type SamplingMethod,
   type SimSlot,
+  type SimForm,
   type SimulationConfig,
   type SimulationResult,
   type StatisticsResponse,
@@ -340,6 +341,8 @@ export interface AppState {
   simResultB: SimulationResult | null
   isSimulating: boolean
   simulationError: string | null
+  // The Simulation view's configuration, kept here so it survives navigating away.
+  simForm: SimForm
 
   // ── AI documentation ────────────────────────────────────────────────────
   isLLMAnalyzing: boolean
@@ -512,6 +515,7 @@ export interface AppActions {
 
   // simulation
   runSimulation: (slot: SimSlot, config: SimulationConfig) => Promise<void>
+  setSimForm: (patch: Partial<SimForm>) => void
 
   // AI documentation
   setLLMPromptTemplate: (template: string) => void
@@ -521,6 +525,22 @@ export interface AppActions {
 export type Store = AppState & AppActions
 
 const today = toISODate(new Date())
+
+const DEFAULT_SIM_FORM: SimForm = {
+  slot: 'Sim-A',
+  journeyCount: 200,
+  startDate: today,
+  avgInterArrivalHours: 2,
+  maxStepsPerJourney: 60,
+  excludedSteps: [],
+  requiredSteps: [],
+  stepResourceFactors: {},
+  edgeOverrides: [],
+  excludedOpen: false,
+  requiredOpen: false,
+  resourcesOpen: false,
+  overridesOpen: false,
+}
 
 /** Map a signed-in user payload (password / passkey / MFA) to the store's auth
  *  fields — the one place that shape is unpacked. */
@@ -680,6 +700,7 @@ const INITIAL_STATE: AppState = {
   simResultB: null,
   isSimulating: false,
   simulationError: null,
+  simForm: { ...DEFAULT_SIM_FORM },
 
   isLLMAnalyzing: false,
   llmAnalysis: null,
@@ -2651,6 +2672,8 @@ export const useStore = create<Store>((set, get) => {
         set({ isSimulating: false })
       }
     },
+
+    setSimForm: (patch) => set({ simForm: { ...get().simForm, ...patch } }),
 
     // ── AI documentation ──────────────────────────────────────────────────
 

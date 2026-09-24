@@ -16,64 +16,69 @@ import {
 import { KpiTile } from '../components/KpiStrip'
 import { Chevron, Divider, Segmented, Unavailable } from '../components/ui'
 import { FlowChart } from '../flow/FlowChart'
-import { formatDateTime, formatDurationLong, toISODate } from '../graph/format'
+import { formatDateTime, formatDurationLong } from '../graph/format'
 import { useStore } from '../store'
-import type { EdgeDurationOverride, ProcessGraph, SimSlot, SimulationResult } from '../types'
+import type {
+  EdgeDurationOverride,
+  EdgeOverrideDraft,
+  ProcessGraph,
+  SimSlot,
+  SimulationResult,
+} from '../types'
 
 type ResultsTab = 'flow' | 'variants' | 'charts' | 'events'
 
 export function SimulationView() {
   const store = useStore()
-  const [slot, setSlot] = useState<SimSlot>('Sim-A')
-  const [journeyCount, setJourneyCount] = useState(200)
-  const [startDate, setStartDate] = useState(toISODate(new Date()))
-  const [avgInterArrivalHours, setAvgInterArrivalHours] = useState(2)
-  const [maxStepsPerJourney, setMaxStepsPerJourney] = useState(60)
-  const [excludedSteps, setExcludedSteps] = useState<string[]>([])
-  const [requiredSteps, setRequiredSteps] = useState<string[]>([])
-  const [excludedOpen, setExcludedOpen] = useState(false)
-  const [requiredOpen, setRequiredOpen] = useState(false)
-  const [stepFactors, setStepFactors] = useState<Record<string, number>>({})
-  const [edgeOverrides, setEdgeOverrides] = useState<EdgeDurationOverride[]>([])
-  const [resourcesOpen, setResourcesOpen] = useState(false)
-  const [overridesOpen, setOverridesOpen] = useState(false)
+  // The form lives in the store so it survives navigating away from this view and back.
+  const form = store.simForm
+  const setForm = store.setSimForm
   const [tab, setTab] = useState<ResultsTab>('flow')
 
-  const result = slot === 'Sim-A' ? store.simResultA : store.simResultB
+  const result = form.slot === 'Sim-A' ? store.simResultA : store.simResultB
   const baseGraph =
     store.savedChartStates['A-Chart']?.processGraph ?? store.processGraph
   const canSimulate = baseGraph.transitions.length > 0
 
-  const run = () => {
-    // Only send levers that actually change something: factors ≠ 1 (and > 0), and
-    // overrides that set a usable value. The engine ignores the rest, but trimming
-    // keeps the request and any A/B "what changed" reasoning clean.
-    const factors: Record<string, number> = {}
-    for (const [name, f] of Object.entries(stepFactors)) {
-      if (Number.isFinite(f) && f > 0 && f !== 1) factors[name] = f
+  // Raw-text lever inputs are parsed here, at run time: a blank / 1 / non-positive /
+  // non-finite value is a no-op and dropped, so only real changes reach the engine.
+  const parsedFactors = useMemo(() => {
+    const out: Record<string, number> = {}
+    for (const [name, raw] of Object.entries(form.stepResourceFactors)) {
+      const n = Number(raw)
+      if (raw.trim() !== '' && Number.isFinite(n) && n > 0 && n !== 1) out[name] = n
     }
-    const overrides = edgeOverrides.filter(
-      (o) =>
-        o.fromStep &&
-        o.toStep &&
-        ((o.multiplier != null && Number.isFinite(o.multiplier) && o.multiplier > 0) ||
-          (o.meanSecs != null && Number.isFinite(o.meanSecs) && o.meanSecs > 0)),
-    )
-    void store.runSimulation(slot, {
-      journeyCount,
-      startDate: `${startDate}T00:00:00`,
-      avgInterArrivalHours,
-      excludedSteps,
-      requiredSteps,
-      maxStepsPerJourney,
-      stepResourceFactors: factors,
-      edgeOverrides: overrides,
-    })
-  }
+    return out
+  }, [form.stepResourceFactors])
 
-  const leverCount =
-    Object.values(stepFactors).filter((f) => Number.isFinite(f) && f > 0 && f !== 1).length +
-    edgeOverrides.length
+  const parsedOverrides = useMemo(() => {
+    const out: EdgeDurationOverride[] = []
+    for (const o of form.edgeOverrides) {
+      const n = Number(o.value)
+      if (!o.fromStep || !o.toStep || o.value.trim() === '' || !Number.isFinite(n) || n <= 0)
+        continue
+      out.push(
+        o.mode === 'abs'
+          ? { fromStep: o.fromStep, toStep: o.toStep, meanSecs: n * 60 }
+          : { fromStep: o.fromStep, toStep: o.toStep, multiplier: n },
+      )
+    }
+    return out
+  }, [form.edgeOverrides])
+
+  const leverCount = Object.keys(parsedFactors).length + parsedOverrides.length
+
+  const run = () =>
+    void store.runSimulation(form.slot, {
+      journeyCount: form.journeyCount,
+      startDate: `${form.startDate}T00:00:00`,
+      avgInterArrivalHours: form.avgInterArrivalHours,
+      excludedSteps: form.excludedSteps,
+      requiredSteps: form.requiredSteps,
+      maxStepsPerJourney: form.maxStepsPerJourney,
+      stepResourceFactors: parsedFactors,
+      edgeOverrides: parsedOverrides,
+    })
 
   if (!store.selectedProject) {
     return (
@@ -112,8 +117,8 @@ export function SimulationView() {
                 { value: 'Sim-A', label: 'Sim-A' },
                 { value: 'Sim-B', label: 'Sim-B' },
               ]}
-              value={slot}
-              onChange={setSlot}
+              value={form.slot}
+              onChange={(slot) => setForm({ slot })}
             />
           </div>
 
@@ -123,8 +128,8 @@ export function SimulationView() {
               className="text-input"
               type="number"
               min={1}
-              value={journeyCount}
-              onChange={(e) => setJourneyCount(Number(e.target.value))}
+              value={form.journeyCount}
+              onChange={(e) => setForm({ journeyCount: Number(e.target.value) })}
             />
           </div>
 
@@ -133,8 +138,8 @@ export function SimulationView() {
             <input
               className="text-input"
               type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              value={form.startDate}
+              onChange={(e) => setForm({ startDate: e.target.value })}
             />
           </div>
 
@@ -145,8 +150,8 @@ export function SimulationView() {
               type="number"
               min={0.1}
               step={0.1}
-              value={avgInterArrivalHours}
-              onChange={(e) => setAvgInterArrivalHours(Number(e.target.value))}
+              value={form.avgInterArrivalHours}
+              onChange={(e) => setForm({ avgInterArrivalHours: Number(e.target.value) })}
             />
           </div>
 
@@ -156,8 +161,8 @@ export function SimulationView() {
               className="text-input"
               type="number"
               min={2}
-              value={maxStepsPerJourney}
-              onChange={(e) => setMaxStepsPerJourney(Number(e.target.value))}
+              value={form.maxStepsPerJourney}
+              onChange={(e) => setForm({ maxStepsPerJourney: Number(e.target.value) })}
             />
           </div>
         </div>
@@ -166,38 +171,38 @@ export function SimulationView() {
         <StepPicker
           title="Excluded steps"
           hint="Removed before the Markov model is built."
-          open={excludedOpen}
-          onToggle={() => setExcludedOpen(!excludedOpen)}
+          open={form.excludedOpen}
+          onToggle={() => setForm({ excludedOpen: !form.excludedOpen })}
           steps={store.allSteps}
-          selected={excludedSteps}
-          onChange={setExcludedSteps}
+          selected={form.excludedSteps}
+          onChange={(excludedSteps) => setForm({ excludedSteps })}
         />
         <Divider />
         <StepPicker
           title="Required steps"
           hint="Journeys not visiting all of these are discarded."
-          open={requiredOpen}
-          onToggle={() => setRequiredOpen(!requiredOpen)}
+          open={form.requiredOpen}
+          onToggle={() => setForm({ requiredOpen: !form.requiredOpen })}
           steps={store.allSteps}
-          selected={requiredSteps}
-          onChange={setRequiredSteps}
+          selected={form.requiredSteps}
+          onChange={(requiredSteps) => setForm({ requiredSteps })}
         />
         <Divider />
         <ResourceFactors
-          open={resourcesOpen}
-          onToggle={() => setResourcesOpen(!resourcesOpen)}
+          open={form.resourcesOpen}
+          onToggle={() => setForm({ resourcesOpen: !form.resourcesOpen })}
           steps={store.allSteps}
-          factors={stepFactors}
-          onChange={setStepFactors}
+          factors={form.stepResourceFactors}
+          onChange={(stepResourceFactors) => setForm({ stepResourceFactors })}
         />
         <Divider />
         <EdgeOverrides
-          open={overridesOpen}
-          onToggle={() => setOverridesOpen(!overridesOpen)}
+          open={form.overridesOpen}
+          onToggle={() => setForm({ overridesOpen: !form.overridesOpen })}
           graph={baseGraph}
-          factors={stepFactors}
-          overrides={edgeOverrides}
-          onChange={setEdgeOverrides}
+          factors={parsedFactors}
+          overrides={form.edgeOverrides}
+          onChange={(edgeOverrides) => setForm({ edgeOverrides })}
         />
         <Divider />
 
@@ -231,13 +236,13 @@ export function SimulationView() {
         {!result ? (
           <Unavailable
             glyph="🎲"
-            title={`${slot} — no results yet`}
+            title={`${form.slot} — no results yet`}
             description="Configure the parameters and run the simulation. Results can then be selected as an A/B data source in the Sampling section."
           />
         ) : (
           <SimulationResults
             result={result}
-            slot={slot}
+            slot={form.slot}
             tab={tab}
             onTabChange={setTab}
             projectId={store.selectedProject.projectId}
@@ -315,7 +320,8 @@ function StepPicker({
 }
 
 /** Per-step resource factor: a multiplier applied to every transition leaving the step.
- *  <1 = more resources (faster), >1 = fewer (slower), 1 = unchanged. */
+ *  <1 = more resources (faster), >1 = fewer (slower), 1 = unchanged. The value is kept as
+ *  raw text so any number can be typed freely (e.g. "1.5", "12"); it is parsed on run. */
 function ResourceFactors({
   open,
   onToggle,
@@ -326,15 +332,17 @@ function ResourceFactors({
   open: boolean
   onToggle: () => void
   steps: string[]
-  factors: Record<string, number>
-  onChange: (value: Record<string, number>) => void
+  factors: Record<string, string>
+  onChange: (value: Record<string, string>) => void
 }) {
-  const active = Object.values(factors).filter((f) => Number.isFinite(f) && f > 0 && f !== 1)
+  const active = Object.values(factors).filter((raw) => {
+    const n = Number(raw)
+    return raw.trim() !== '' && Number.isFinite(n) && n > 0 && n !== 1
+  })
   const set = (step: string, raw: string) => {
     const next = { ...factors }
-    const n = Number(raw)
-    if (raw === '' || n === 1 || !Number.isFinite(n) || n <= 0) delete next[step]
-    else next[step] = n
+    if (raw === '') delete next[step]
+    else next[step] = raw
     onChange(next)
   }
   return (
@@ -363,33 +371,29 @@ function ResourceFactors({
             resources (faster), &gt;1 = fewer (slower).
           </span>
           <div className="step-list" style={{ maxHeight: 220 }}>
-            {steps.map((step) => {
-              const value = factors[step]
-              return (
-                <div
-                  key={step}
-                  className="row"
-                  style={{ gap: 8, alignItems: 'center', padding: '3px 6px' }}
-                >
-                  <span className="truncate" style={{ flex: 1, fontSize: 13 }}>
-                    {step}
-                  </span>
-                  <span className="fg-tertiary" style={{ fontSize: 12 }}>
-                    ×
-                  </span>
-                  <input
-                    className="text-input"
-                    type="number"
-                    min={0.1}
-                    step={0.1}
-                    placeholder="1.0"
-                    value={value ?? ''}
-                    onChange={(e) => set(step, e.target.value)}
-                    style={{ width: 68 }}
-                  />
-                </div>
-              )
-            })}
+            {steps.map((step) => (
+              <div
+                key={step}
+                className="row"
+                style={{ gap: 8, alignItems: 'center', padding: '3px 6px' }}
+              >
+                <span className="truncate" style={{ flex: 1, fontSize: 13 }}>
+                  {step}
+                </span>
+                <span className="fg-tertiary" style={{ fontSize: 12 }}>
+                  ×
+                </span>
+                <input
+                  className="text-input"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="1.0"
+                  value={factors[step] ?? ''}
+                  onChange={(e) => set(step, e.target.value)}
+                  style={{ width: 68 }}
+                />
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -398,7 +402,8 @@ function ResourceFactors({
 }
 
 /** Per-transition duration what-ifs: pick a from→to edge, then scale it (×) or set an
- *  absolute mean (=). Shows the observed time and the resulting target time. */
+ *  absolute mean (=). Values are raw text (parsed on run) so any number types freely.
+ *  Shows the observed time and the resulting target time. */
 function EdgeOverrides({
   open,
   onToggle,
@@ -411,8 +416,8 @@ function EdgeOverrides({
   onToggle: () => void
   graph: ProcessGraph
   factors: Record<string, number>
-  overrides: EdgeDurationOverride[]
-  onChange: (value: EdgeDurationOverride[]) => void
+  overrides: EdgeOverrideDraft[]
+  onChange: (value: EdgeOverrideDraft[]) => void
 }) {
   const adjacency = useMemo(() => {
     const map = new Map<string, { to: string; avgSecs: number | null }[]>()
@@ -429,13 +434,13 @@ function EdgeOverrides({
   const observedAvg = (from: string, to: string): number | null =>
     adjacency.get(from)?.find((e) => e.to === to)?.avgSecs ?? null
 
-  const update = (index: number, patch: Partial<EdgeDurationOverride>) =>
+  const update = (index: number, patch: Partial<EdgeOverrideDraft>) =>
     onChange(overrides.map((o, i) => (i === index ? { ...o, ...patch } : o)))
   const remove = (index: number) => onChange(overrides.filter((_, i) => i !== index))
   const add = () => {
     const from = fromSteps[0] ?? ''
     const to = adjacency.get(from)?.[0]?.to ?? ''
-    onChange([...overrides, { fromStep: from, toStep: to, multiplier: 0.5, meanSecs: null }])
+    onChange([...overrides, { fromStep: from, toStep: to, mode: 'mult', value: '0.5' }])
   }
 
   return (
@@ -466,14 +471,16 @@ function EdgeOverrides({
           {overrides.map((o, i) => {
             const neighbors = adjacency.get(o.fromStep) ?? []
             const base = observedAvg(o.fromStep, o.toStep)
-            const isAbs = o.meanSecs != null
+            const isAbs = o.mode === 'abs'
             const stepFactor =
               Number.isFinite(factors[o.fromStep]) && factors[o.fromStep] > 0
                 ? factors[o.fromStep]
                 : 1
+            const n = Number(o.value)
+            const valid = o.value.trim() !== '' && Number.isFinite(n) && n > 0
             let target: number | null = null
-            if (isAbs && o.meanSecs != null) target = o.meanSecs * stepFactor
-            else if (o.multiplier != null && base != null) target = base * o.multiplier * stepFactor
+            if (valid && isAbs) target = n * 60 * stepFactor
+            else if (valid && base != null) target = base * n * stepFactor
             return (
               <div
                 key={i}
@@ -509,9 +516,9 @@ function EdgeOverrides({
                     onChange={(e) => update(i, { toStep: e.target.value })}
                     style={{ flex: 1, minWidth: 0 }}
                   >
-                    {neighbors.map((n) => (
-                      <option key={n.to} value={n.to}>
-                        {n.to}
+                    {neighbors.map((nb) => (
+                      <option key={nb.to} value={nb.to}>
+                        {nb.to}
                       </option>
                     ))}
                   </select>
@@ -530,41 +537,26 @@ function EdgeOverrides({
                       { value: 'mult', label: '×' },
                       { value: 'abs', label: '=' },
                     ]}
-                    value={isAbs ? 'abs' : 'mult'}
-                    onChange={(mode) =>
-                      mode === 'abs'
-                        ? update(i, {
-                            multiplier: null,
-                            meanSecs: base != null ? Math.round(base * (o.multiplier ?? 1)) : 3600,
-                          })
-                        : update(i, { meanSecs: null, multiplier: 1 })
-                    }
+                    value={o.mode}
+                    onChange={(mode) => {
+                      if (mode === o.mode) return
+                      if (mode === 'abs') {
+                        const mult = valid ? n : 1
+                        const minutes = base != null ? Math.round((base * mult) / 60) : 60
+                        update(i, { mode: 'abs', value: String(minutes) })
+                      } else {
+                        update(i, { mode: 'mult', value: '0.5' })
+                      }
+                    }}
                   />
-                  {isAbs ? (
-                    <input
-                      className="text-input"
-                      type="number"
-                      min={0.1}
-                      step={0.5}
-                      value={o.meanSecs != null ? o.meanSecs / 60 : ''}
-                      onChange={(e) =>
-                        update(i, { meanSecs: e.target.value === '' ? null : Number(e.target.value) * 60 })
-                      }
-                      style={{ width: 84 }}
-                    />
-                  ) : (
-                    <input
-                      className="text-input"
-                      type="number"
-                      min={0.01}
-                      step={0.1}
-                      value={o.multiplier ?? ''}
-                      onChange={(e) =>
-                        update(i, { multiplier: e.target.value === '' ? null : Number(e.target.value) })
-                      }
-                      style={{ width: 84 }}
-                    />
-                  )}
+                  <input
+                    className="text-input"
+                    type="text"
+                    inputMode="decimal"
+                    value={o.value}
+                    onChange={(e) => update(i, { value: e.target.value })}
+                    style={{ width: 84 }}
+                  />
                   <span className="fg-tertiary" style={{ fontSize: 12 }}>
                     {isAbs ? 'min' : '× time'}
                   </span>
