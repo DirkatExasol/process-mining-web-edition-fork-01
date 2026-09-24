@@ -19,18 +19,22 @@ export function AIDocumentationView() {
   const frameRef = useRef<HTMLIFrameElement>(null)
 
   // "Save as PDF" prints from a THROWAWAY iframe appended to <body>, not the on-screen one.
-  // Two reasons the on-screen frame prints blank in Chromium: (1) it is a `srcDoc` frame, and
-  // Chromium prints `about:srcdoc` documents empty; (2) it lives inside #root, which the global
-  // print stylesheet hides (`@media print { #root { display:none } }`, needed so the Help panel
-  // can print a copy portalled to <body>) — a frame under a display:none ancestor has no box to
-  // print. The throwaway frame sidesteps both: it is a <body> child (outside the hidden #root)
-  // and is filled with document.write, giving a real same-origin about:blank document. No blob:
-  // URL (a strict CSP can forbid those) and no `allow-scripts`, so the report stays inert.
+  // Three things make a report print blank in Chromium, and the throwaway frame avoids all
+  // three: (1) a `srcDoc` frame prints `about:srcdoc` empty → we fill it with document.write,
+  // a real same-origin about:blank document (no blob: URL, which a strict CSP can forbid);
+  // (2) a frame inside #root is hidden by the global print stylesheet
+  // (`@media print { #root { display:none } }`, needed so the Help panel can print its own
+  // <body> portal) → we append to <body>, a sibling of #root; (3) a `sandbox`ed frame's
+  // print() renders blank (it prints the host instead — a single empty page) → the print
+  // frame is NOT sandboxed. The report is kept inert another way: a `script-src 'none'` CSP
+  // is injected into its <head>, so no embedded script can run even without the sandbox.
   const printReport = () => {
     const html = store.llmAnalysis?.reportHtml
     if (!html) return
+    const csp =
+      '<meta http-equiv="Content-Security-Policy" content="script-src \'none\'; object-src \'none\'">'
+    const inert = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + csp) : csp + html
     const frame = document.createElement('iframe')
-    frame.setAttribute('sandbox', 'allow-same-origin allow-modals')
     frame.setAttribute('aria-hidden', 'true')
     frame.style.cssText = 'position:fixed;left:-9999px;width:0;height:0;border:0;'
     document.body.appendChild(frame)
@@ -40,7 +44,7 @@ export function AIDocumentationView() {
       return
     }
     doc.open()
-    doc.write(html)
+    doc.write(inert)
     doc.close()
     let printed = false
     const run = () => {

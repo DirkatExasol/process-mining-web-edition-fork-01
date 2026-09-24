@@ -68,11 +68,16 @@ describe('AIDocumentationView', () => {
     vi.advanceTimersByTime(300) // fires the print fallback (250ms), not the removal (1000ms)
 
     expect(printFrame).not.toBeNull()
-    // Appended to <body> (outside the print-hidden #root) and script-disabled.
+    // Appended to <body> (outside the print-hidden #root).
     expect(printFrame!.parentElement).toBe(document.body)
-    expect(printFrame!.getAttribute('sandbox')).toBe('allow-same-origin allow-modals')
-    // Written via document.write (a real about:blank doc, not srcDoc), then printed.
-    expect(writeSpy).toHaveBeenCalledWith(REPORT_HTML)
+    // NOT sandboxed — a sandboxed frame's print() renders blank; the report is kept inert by
+    // an injected script-src 'none' CSP instead.
+    expect(printFrame!.getAttribute('sandbox')).toBeNull()
+    // Written via document.write (a real about:blank doc, not srcDoc), with the CSP prepended.
+    expect(writeSpy).toHaveBeenCalledTimes(1)
+    const written = writeSpy.mock.calls[0][0] as string
+    expect(written).toContain("script-src 'none'")
+    expect(written).toContain('healthy and efficient')
     expect(printSpy).toHaveBeenCalled()
 
     printFrame!.remove()
