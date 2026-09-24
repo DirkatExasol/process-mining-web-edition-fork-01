@@ -1056,6 +1056,7 @@ const simulation: HelpTopic = {
         def('Start Date', 'The date assigned to the first simulated journey’s opening event. Subsequent events are timestamped relative to this anchor using the inter-arrival times and step durations.'),
         def('Max Steps per Journey', 'Hard cap on the number of steps per journey — prevents rework loops from running forever. If a journey hits the cap it is included as-is, with a potentially incomplete path. The default (60) suits most real-world processes.'),
         tip('If you see many journeys with exactly 60 steps in the Variants table, the Max Steps cap is being hit. Increase it if your process genuinely contains long rework loops, or add the looping step to the Excluded Steps list.'),
+        tip('The whole configuration is kept when you switch to another view and back — counts, dates, excluded/required steps, the resource levers and which sections are open. Nothing resets between visits, so you can move between Simulation, the charts and A/B Comparison without re-entering anything.'),
       ],
     },
     {

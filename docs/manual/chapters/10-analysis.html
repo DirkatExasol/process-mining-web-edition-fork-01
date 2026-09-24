@@ -227,12 +227,14 @@
       <tr><td><b>Max steps per journey</b></td><td>60</td><td>Minimum 2. Hard stop for a random walk that never reaches an end-of-process step. The backend limit is 10 000.</td></tr>
       <tr><td><b>Excluded steps</b></td><td>none</td><td>Multi-select picker (◉ selected / ○ not) with a count pill and an ⊗ clear button. Hint: "Removed before the Markov model is built." — the step and all its transitions are cut out before probabilities are computed.</td></tr>
       <tr><td><b>Required steps</b></td><td>none</td><td>Same picker. Hint: "Journeys not visiting all of these are discarded." — generated journeys missing any required step are thrown away and regenerated.</td></tr>
-      <tr><td><b>Resources per step</b></td><td>none</td><td>Collapsible list of every step with a numeric factor (default 1). The factor multiplies the time of every transition <em>leaving</em> that step: &lt;1 = more resources (faster), &gt;1 = fewer (slower). Only factors that differ from 1 are sent.</td></tr>
+      <tr><td><b>Resources per step</b></td><td>none</td><td>Collapsible list of every step with a factor field (default 1). The factor multiplies the time of every transition <em>leaving</em> that step: &lt;1 = more resources (faster), &gt;1 = fewer (slower). The field accepts any positive number — whole or fractional, above or below 1 (e.g. <code>0.5</code>, <code>1.5</code>, <code>12</code>) — and only factors that differ from 1 are sent.</td></tr>
       <tr><td><b>Transition time overrides</b></td><td>none</td><td>Collapsible editor of per-transition what-ifs. Each row picks a <code>from → to</code> edge and either scales its observed mean (<code>×</code>) or sets an absolute mean in minutes (<code>=</code>); the row shows the observed time and the resulting target. A step's resource factor still applies on top.</td></tr>
     </tbody>
   </table>
 
   <p>A walk ends when it reaches a step flagged as end-of-process, when the model has no outgoing transition left, or when <b>Max steps per journey</b> is reached — whichever comes first.</p>
+
+  <div class="note"><strong>Note</strong> The whole configuration is <b>retained while you move to another view and back</b> — target slot, counts, dates, excluded/required steps, the resource levers and even which sections are expanded. It is not reset on each visit, so you can flip between Simulation, the charts and A/B Comparison without re-entering anything and only reset a value when you actually want to change it.</div>
 
   <div class="note"><strong>Note</strong> With <b>Required steps</b> set, a run can finish with fewer journeys than you asked for. The generator makes a bounded number of attempts (twenty times the journey count, and never fewer than a thousand); if the required combination is rare in the observed graph, the attempts run out first. Compare the <b>Journeys</b> tile in the results header with the journey count you configured.</div>
 
