@@ -560,3 +560,66 @@ def test_simulation_resource_lever_exact_on_sigma0_edge(repo):
     e = _sim_edges(res)[("S08", "S09")]
     assert abs(e.avgSecs - 1800) < 1e-6
     assert abs(e.minSecs - 1800) < 1e-6 and abs(e.maxSecs - 1800) < 1e-6
+
+
+# ── D1: load via the real event-receiver /ingest write path ─────────────────────
+
+from app.integration.sink_ingest import ingest_entries
+from app.integration.backends import SqlIngestBackend
+from app.db.analysis import Analysis
+
+SINK_SCHEMA = "PM_SBX_SINK"
+
+
+def test_ingest_sink_load_path():
+    """Load the fixture through the sink's real ingest_entries (HTTP body -> MD5 hash ->
+    JOURNEYS/METAS write, auto STEP_IDs) and confirm the score/meta-title-independent
+    metrics still match the calibrated ground truth, and business ids round-trip."""
+    raw = DatabaseManager.__new__(DatabaseManager)._open(_server(), PW)
+    raw.execute(f'DROP SCHEMA IF EXISTS "{SINK_SCHEMA}" CASCADE'); raw.commit()
+    raw.execute(f'CREATE SCHEMA IF NOT EXISTS "{SINK_SCHEMA}"'); raw.commit()
+    def _run_sql(sql):
+        st = raw.execute(sql)
+        return st.fetchall() if st.result_type == "resultSet" else []
+    backend = SqlIngestBackend(_run_sql, commit=raw.commit, rollback=raw.rollback)
+
+    entries = []
+    for case, (start, seq, meta) in CASES.items():
+        t = start
+        for step, gap in seq:
+            t = t + timedelta(seconds=gap)
+            entries.append({"eventId": case, "step": step,
+                            "eventTime": t.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "description": meta[0], "client": meta[1], "user": meta[2]})
+    res = ingest_entries(backend, raw.commit, schema=SINK_SCHEMA, title_short="SBX", entries=entries)
+    assert res["ingested"] == 53
+    pid = str(res["projectId"])
+    raw.close()
+
+    mgr = DatabaseManager(load_legacy_active=False)
+    server = _server(SINK_SCHEMA)
+    mgr._conn = mgr._open(server, PW); mgr.is_connected = True
+    mgr._reopen_server = server; mgr._active_password = PW
+    mgr.use_materialized_transitions = False
+    rp = ProcessRepository(mgr); rp.active_sample_set = SampleSet.original
+    try:
+        assert _run(rp.load_journey_count(pid, F0)) == 6
+        assert sorted(v.journeyCount for v in _run(rp.load_journey_paths(pid, F0, 50))) == [1, 1, 1, 3]
+        ts = {(t.fromStep, t.toStep): t for t in _run(rp.load_transitions(pid, F0))}
+        assert ts[("S08", "S09")].occurrences == 5 and abs(ts[("S08", "S09")].avgSecs - 3600) < 1e-6
+        assert abs(ts[("S01", "S02")].avgSecs - 300) < 1e-6
+        assert abs(ts[("S01", "S02")].medianSecs - 210) < 1e-6
+        assert abs((ts[("S01", "S02")].stdDevSecs or 0) - 305.94) < 0.01
+        d = _run(rp.load_journey_duration_stats(pid, F0))
+        assert abs(d.avgSecs - 5030) < 1e-6 and abs(d.medianSecs - 5640) < 1e-6 and abs(d.minSecs - 960) < 1e-6
+        # MD5 round-trip: the sink stored MD5(eventId); the business id resolves it.
+        eid = rp._normalize_event_id("P5")
+        info = _run(rp.load_journey_info(pid, eid))
+        assert info and info.get("startDate") is not None
+        assert len(_run(rp.load_journey_sequence(pid, eid))) == 11
+        # Meta mapping: description -> META_1 (values EU/US), even though the sink titles it "Action".
+        _distinct, values = _run(Analysis(rp).attribute_values(pid, "meta1", F0, 50))
+        assert dict(values) == {"EU": 3, "US": 3}
+    finally:
+        mgr._conn.execute(f'DROP SCHEMA IF EXISTS "{SINK_SCHEMA}" CASCADE'); mgr._conn.commit()
+        mgr._conn.close()
