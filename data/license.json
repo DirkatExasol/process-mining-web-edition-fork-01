@@ -1,9 +1,9 @@
 {
   "license": {
-    "licensee": "Acme GmbH",
-    "issued": "2026-07-25",
-    "expires": "2027-12-31",
+    "licensee": "Public Audience",
+    "issued": "2026-09-25",
+    "expires": "2027-06-30",
     "version": 1
   },
-  "signature": "ae7e45b9dd965c19facd643897cbb7b4108cbd1887c2d4c5a52bc201d24e4515cdbaca889dc000dbb26f8d3cc43365285505a5b04d5b0e9310118cd36a3a190d"
+  "signature": "9454f2df9be1a5ff63653ed0104b1f52488f65afb4948092acbfb19393c2a6127d9c51eb611ed470f38672afc203a9f08b505524ac1b77b1c17207c9c5aaff03"
 }
