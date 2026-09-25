@@ -52,7 +52,7 @@ from app.config import (  # noqa: E402
     MCP_NOTE_WRITES_PER_MIN,
 )
 from app.db.analysis import MAX_RULES, META_COLUMNS, TREND_UNITS, Analysis, Rule  # noqa: E402
-from app.db.manager import DatabaseManager  # noqa: E402
+from app.db.manager import DatabaseManager, friendly_error  # noqa: E402
 from app.db.repository import JOURNEY_ORDERS, ProcessRepository  # noqa: E402
 from app.models import (  # noqa: E402
     NOTE_IMPORTANCE,
@@ -325,8 +325,11 @@ async def _projects_on(user, connection, *, include_counts: bool, sample: Sample
                     )
     except Exception as exc:  # noqa: BLE001 — report the connection, keep the others
         log.warning("list_projects: connection %s unavailable: %s", connection.id, exc)
+        # ToolError messages are already caller-safe; sanitise anything else so a raw
+        # driver error can't leak internal hostnames / SQL detail to the client.
+        err = str(exc) if isinstance(exc, ToolError) else friendly_error(exc, detail=False)
         return [{"connectionId": connection.id, "connectionName": connection.name,
-                 "error": str(exc)}]
+                 "error": err}]
     return [{"connectionId": connection.id, "connectionName": connection.name, **p}
             for p in projects]
 
@@ -697,8 +700,9 @@ async def _tool_find_journey(user, args) -> Any:
                         })
         except Exception as exc:  # noqa: BLE001 — report the connection, keep searching
             log.warning("find_journey: connection %s unavailable: %s", connection.id, exc)
+            err = str(exc) if isinstance(exc, ToolError) else friendly_error(exc, detail=False)
             unreachable.append({"connectionId": connection.id,
-                                "connectionName": connection.name, "error": str(exc)})
+                                "connectionName": connection.name, "error": err})
     out: dict = {
         "eventId": raw,
         "storedEventId": stored,
@@ -1472,10 +1476,15 @@ async def _dispatch(message: dict, user) -> dict | None:
         except ToolError as exc:
             return _rpc_result(req_id, {
                 "content": [{"type": "text", "text": str(exc)}], "isError": True})
-        except Exception as exc:  # noqa: BLE001 — surface as a tool error, keep serving
+        except Exception:  # noqa: BLE001 — surface as a tool error, keep serving
+            # Never echo the raw exception to the caller: a DB/driver message can carry
+            # internal hostnames, schema or SQL-state detail. The full traceback is logged
+            # for the administrator; the client gets a generic notice.
             log.exception("MCP tool %s failed", name)
             return _rpc_result(req_id, {
-                "content": [{"type": "text", "text": f"Tool failed: {exc}"}], "isError": True})
+                "content": [{"type": "text", "text":
+                    "The tool could not complete due to an internal error; the details were "
+                    "logged for the administrator."}], "isError": True})
         import json as _json
         return _rpc_result(req_id, {
             "content": [{"type": "text", "text": _json.dumps(payload, ensure_ascii=False)}],

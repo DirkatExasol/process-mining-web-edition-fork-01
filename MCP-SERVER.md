@@ -750,6 +750,14 @@ curl -k -X POST https://<your-host>:18493/mcp \
   entry per write (see *What the server exposes*). Every other tool is read-only.
 - The deeper-analysis tools are gated on the **power-user** role (administrators included);
   the role is re-read from the user store on every request, so revoking it takes effect at once.
+- **Errors are sanitised.** A tool never echoes a raw driver/DB message to the caller — an
+  unexpected failure returns a generic notice (the full detail is logged for the administrator),
+  and a connection that can't be opened is reported through the app's categorised
+  guidance — so internal hostnames, schema names and SQL-state fragments don't leak.
+- **Missing audience is flagged.** When the server is enabled with no **Audience** set, the
+  admin **MCP Server** tab shows a warning: without it, any validly-signed token from the
+  issuer is accepted (still gated by issuer, signature, user-mapping and group). Set the
+  Audience to this application's Client ID to tie tokens to this resource.
 - Configure `PMW_MCP_MAX_ROWS` (default 1000) to cap rows returned per call,
   `PMW_MCP_JWKS_CACHE_SECS` (default 3600) for how long signing keys are cached,
   `PMW_MCP_NOTE_WRITES_PER_MIN` (default 20) for the per-user note-write rate, and

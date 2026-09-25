@@ -348,3 +348,36 @@ def test_get_notes_rejects_a_bad_group_and_survives_a_missing_table(monkeypatch)
     _patch_repo(monkeypatch, {"c1": _Broken()})
     _, payload = _call("get_notes", {"connectionId": "c1", "projectId": 1})
     assert payload["total"] == 0 and payload["notes"] == []
+
+
+# ── error hygiene: no raw driver/DB text ever reaches the caller ───────────────
+
+_SECRET = "db99.internal:8563 schema PM_SECRET"
+
+
+def test_unexpected_tool_error_is_not_echoed_to_the_caller(monkeypatch):
+    class _BoomRepo:
+        async def load_graph(self, project_id, spec):
+            raise RuntimeError("ExaQueryError on " + _SECRET)
+
+    _patch_repo(monkeypatch, {"c1": _BoomRepo()})
+    result, message = _call("get_process_map", {"connectionId": "c1", "projectId": 1})
+    assert result["isError"] is True
+    assert "internal error" in message.lower()
+    # The raw driver text / internal host / schema must NOT leak to the client.
+    assert "db99.internal" not in message and "PM_SECRET" not in message
+    assert "ExaQueryError" not in message
+
+
+def test_list_projects_sanitises_a_raw_connection_error(monkeypatch):
+    class _LeakyRepo:
+        async def load_projects(self):
+            raise RuntimeError("could not connect to " + _SECRET)
+
+    monkeypatch.setattr(mcp.store, "connections_for_user", lambda username: [
+        SimpleNamespace(id="c1", name="Prod", schema="PM", comment=""),
+    ])
+    _patch_repo(monkeypatch, {"c1": _LeakyRepo()})
+    _, payload = _call("list_projects", {})
+    err = payload[0]["error"]
+    assert "db99.internal" not in err and "PM_SECRET" not in err  # sanitised by friendly_error

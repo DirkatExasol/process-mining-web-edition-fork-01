@@ -2334,15 +2334,25 @@ async function toggleSinkEnabled() {
 // ── MCP server ──────────────────────────────────────────────────────────────
 async function loadMcp() {
   const s = await api('/api/mcp');
+  const cfg = s.settings || {};
   $('mcp_enabled').checked = !!s.enabled;
   const running = s.running
     ? '<span class="pill neutral">launcher running</span>'
     : '<span class="pill off">launcher not detected</span>';
+  // Active nudge: an enabled server with no Audience accepts ANY validly-signed token
+  // from the issuer, so a token minted for a different app on the same provider works here.
+  const noAudience = s.enabled && !(cfg.audience || '').trim();
+  const audienceWarn = noAudience
+    ? '<div class="banner warn" style="margin:6px 0 0">⚠ No <b>Audience</b> is set, so <b>any</b> ' +
+      'validly-signed token from the issuer is accepted (still gated by issuer, signature, ' +
+      'user-mapping and group). Set <b>Audience</b> to this MCP application\'s Client ID — and ' +
+      'map the token\'s <code>aud</code> in your provider — so tokens issued for other apps ' +
+      'on the same provider can\'t be replayed here.</div>'
+    : '';
   $('mcp_status').innerHTML =
     '<div class="row" style="gap:8px; align-items:center">' + running + '</div>' +
     '<div class="subtle">Endpoint on HTTP ' + s.httpPort + ' / HTTPS ' + s.httpsPort +
-    ' at path <code>/mcp</code> (host ports are +10000 under Docker).</div>';
-  const cfg = s.settings || {};
+    ' at path <code>/mcp</code> (host ports are +10000 under Docker).</div>' + audienceWarn;
   $('mcp_issuer').value = cfg.issuer || '';
   $('mcp_jwksUri').value = cfg.jwksUri || '';
   $('mcp_audience').value = cfg.audience || '';
