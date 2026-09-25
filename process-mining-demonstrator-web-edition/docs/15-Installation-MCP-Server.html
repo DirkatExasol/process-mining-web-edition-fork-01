@@ -1,0 +1,651 @@
+<!doctype html>
+<!-- Generated documentation page — open this file in a WEB BROWSER.
+     It is NOT a script; to rebuild it run:  python3 docs/15-build-mcp-install-guide.py -->
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>15 - Installation of MCP Server</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgNDggNDgiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzNhOWJmZiIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiM2YjVjZjAiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHg9IjIiIHk9IjIiIHdpZHRoPSI0NCIgaGVpZ2h0PSI0NCIgcng9IjEyIiBmaWxsPSJ1cmwoI2JnKSIvPgogIDxwYXRoIGQ9Ik0xNSAxNiBMMzMgMTYgTDI0IDM0IFoiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjYiCiAgICAgICAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBvcGFjaXR5PSIwLjkiLz4KICA8ZyBmaWxsPSIjZmZmIj4KICAgIDxjaXJjbGUgY3g9IjE1IiBjeT0iMTYiIHI9IjQuNiIvPgogICAgPGNpcmNsZSBjeD0iMzMiIGN5PSIxNiIgcj0iNC42Ii8+CiAgICA8Y2lyY2xlIGN4PSIyNCIgY3k9IjM0IiByPSI0LjYiLz4KICA8L2c+CiAgPGNpcmNsZSBjeD0iMjQiIGN5PSIxNiIgcj0iMi40IiBmaWxsPSIjZWFmM2ZmIi8+Cjwvc3ZnPgo=">
+<style>
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --ink:#1c2530; --soft:#5b6672; --line:#e5e8ec;
+  --accent:#3a6df0; --accent2:#6b5cf0; --tipbg:#eef3ff; --tipink:#2b3a63; --tipbar:#3a6df0;
+  --warnbg:#fff7ed; --warnbar:#d98324; --warnink:#5c4415;
+  --good:#1e9e5a; --bad:#d4453b;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:0 20px 72px}
+header.hero{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;
+  border-radius:0 0 26px 26px;padding:44px 20px 40px;margin-bottom:34px;
+  box-shadow:0 12px 30px rgba(58,109,240,.25)}
+.hero-inner{max-width:900px;margin:0 auto;padding:0 20px}
+.chip{display:inline-block;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);
+  padding:4px 12px;border-radius:999px;font-size:13px;font-weight:600;letter-spacing:.3px}
+h1{font-size:30px;line-height:1.2;margin:14px 0 8px;font-weight:800}
+.hero p{margin:0;max-width:640px;color:rgba(255,255,255,.92);font-size:16px}
+.hero a{color:#fff}
+.lead{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 22px;
+  margin:0 0 30px;color:var(--soft)}
+.lead b{color:var(--ink)}
+.lead code, .step ul li code, .cap code, .step p.body code{background:var(--bg);border-radius:4px;
+  padding:0 5px;font-size:13px}
+.step{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px 22px 8px;
+  margin:0 0 22px;box-shadow:0 1px 2px rgba(20,30,50,.04)}
+.step-head{display:flex;align-items:center;gap:14px;margin-bottom:6px}
+.num{flex:0 0 auto;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+  font-weight:800;color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+.step h2{font-size:20px;margin:0;font-weight:750}
+.step p.body{margin:2px 0 16px}
+.step p.body a{color:var(--accent)}
+.step ul{margin:0 0 12px;padding-left:20px;color:var(--soft)}
+.step ul li{margin:3px 0}
+.tip{background:var(--tipbg);border-left:4px solid var(--tipbar);color:var(--tipink);
+  border-radius:8px;padding:10px 14px;margin:0 0 16px;font-size:14.5px}
+.tip b{color:var(--tipink)}
+.tip .k{font-weight:700;margin-right:6px}
+.tip code{background:rgba(58,109,240,.10);border-radius:4px;padding:0 4px;font-size:13px}
+.beyond{background:var(--warnbg);border:1px solid #f0d9b8;border-left:4px solid var(--warnbar);
+  color:var(--warnink);border-radius:14px;padding:20px 22px;margin:34px 0 0}
+.beyond h2{margin:0 0 8px;font-size:19px;color:#7a4d13}
+.beyond ul{margin:8px 0 0;padding-left:20px}
+.beyond li{margin:3px 0}
+.beyond code{background:rgba(0,0,0,.06);border-radius:4px;padding:0 4px;font-size:13px}
+.beyond .note{margin-top:12px;font-size:14.5px}
+footer{color:var(--soft);font-size:13px;text-align:center;margin-top:34px}
+/* Mock illustrations */
+.mock{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;
+  margin:0 0 16px;box-shadow:0 6px 18px rgba(20,30,50,.08)}
+.cap{color:var(--soft);font-size:13px;margin:8px 2px 0}
+.ref h3{margin:22px 0 4px;font-size:16px}
+.ref h4{margin:16px 0 4px;font-size:14px}
+.ref h4 small{color:var(--soft);font-weight:500}
+.ref p{margin:4px 0 8px;font-size:14px}
+.ref pre{margin:6px 0 10px}
+.tbl{border-collapse:collapse;font-size:13px;width:100%}
+.tbl th{color:var(--soft);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;
+  text-align:left;padding:4px 12px 6px 0;border-bottom:2px solid var(--line)}
+.tbl td{padding:5px 12px 5px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl td code{background:var(--bg);border-radius:4px;padding:0 4px;font-size:12px}
+.calc{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;
+  margin:0;font:12.5px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;
+  overflow-x:auto;white-space:pre}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#14171c;--card:#1d2127;--ink:#e7eaee;--soft:#a3adba;--line:#2c333c;
+    --tipbg:#182338;--tipink:#cdd9f5;--warnbg:#2a2213;--warnink:#e9d3ac}
+}
+@media print{
+  body{background:#fff}
+  header.hero{box-shadow:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .step,.lead,.beyond,.mock{break-inside:avoid;box-shadow:none}
+}
+</style>
+</head>
+<body>
+<header class="hero"><div class="hero-inner">
+  <span class="chip">Suite · MCP Server</span>
+  <h1>Installing the MCP Server</h1>
+  <p>The seventh surface: a Model Context Protocol endpoint that lets AI clients query your
+     process-mining metrics, paths, cases and metadata, and read and write notes — authenticated with
+     <b>OAuth via Authentik</b>. This guide takes you from an Authentik provider to a
+     connected <b>Claude Desktop</b>.</p>
+</div></header>
+
+<div class="wrap">
+
+  <div class="lead">
+    The MCP server is <b>off by default</b> and adds <b>no new credentials</b>: it trusts an
+    external OAuth provider, verifies each token against that provider's public signing keys,
+    and maps it to an existing Process Mining user — so a caller sees exactly the connections
+    that user is assigned, and never anything to write. This guide uses <b>Authentik</b>
+    (Keycloak to follow) and <b>Claude Desktop</b> as the example client (other clients to
+    follow).
+  </div>
+
+  <section class="step">
+  <div class="step-head"><div class="num">1</div><h2>What the MCP server is</h2></div>
+  <p class="body">The <b>MCP server</b> is a <a href="https://modelcontextprotocol.io">Model Context Protocol</a> endpoint that lets AI clients (Claude, ChatGPT, …) query your Process Mining data — <b>metrics, paths, cases, metadata and notes</b> — over HTTP(S). It is the <b>seventh surface</b>, on the admin port <b>+40</b>, and it is <b>off until an administrator enables it</b> (it returns <code>503</code> while off). Callers authenticate with an <b>OAuth access token from your Authentik server</b>; the token is verified against Authentik's signing keys and mapped to a Process Mining user, whose assigned database connections decide what they may see. <b>Its only writes are notes</b> (<code>create_note</code>, <code>update_note</code>) — there are no ingest, event-edit or sampling tools — and five deeper-analysis tools are reserved for <b>power users</b>.</p>
+  <div class="mock">
+      <pre class="calc">AI client ──OAuth──▶ Authentik (:19443)            the client gets an access token
+AI client ──MCP/JSON-RPC + Bearer token──▶ MCP server (:8493/mcp)
+                       └─ verifies the token against Authentik's JWKS (RS256, offline)
+                       └─ maps it to a Process Mining user
+                       └─ answers queries on that user's connections (writes: notes only)</pre>
+      <table class="tbl">
+        <tr><th>&nbsp;</th><th>HTTP</th><th>HTTPS</th></tr>
+        <tr><td>Container port</td><td><code>8130</code></td><td><code>8493</code></td></tr>
+        <tr><td>Docker host port (+10000)</td><td><code>18130</code></td><td><code>18493</code></td></tr>
+      </table>
+      <p class="cap">OAuth clients require HTTPS — use the <b>HTTPS</b> endpoint. The server
+        follows the same TLS mode and certificate as the app and admin console.</p>
+    </div>
+  <div class="tip"><span class="k">Same boundary as the app.</span> A caller never sees more than the mapped user's assigned connections — exactly what that person could open in the main app — and can change nothing but notes, under the app's own note rules.</div>
+</section><section class="step">
+  <div class="step-head"><div class="num">2</div><h2>What it exposes (the tools)</h2></div>
+  <p class="body">Nineteen tools in five groups. <b>Everyone</b> may use the discovery, analysis, case and note-reading tools. <b>Notes are the only writes</b>: <code>create_note</code> and <code>update_note</code> follow the app's note rules (you are the author, threads are append-only, only the author changes severity or scope), validate every field, and are rate-limited and logged. The five <b>power-analysis</b> tools answer only users with the power-user role (and admins); others get a polite refusal. Most tools take <code>connectionId</code> + <code>projectId</code> and the common filter. Note times are local (Admin Console display timezone) with the UTC offset.</p>
+  <div class="mock ref"><table class="tbl">
+<tr><th>Tool</th><th>Who</th><th>Returns</th></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">list_connections</code></td><td>Everyone</td><td>The database connections you may query.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">list_projects</code></td><td>Everyone</td><td>Projects on one connection — or, with connectionId omitted, on every connection you may query; includeCounts adds a journey count per project.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">get_metadata</code></td><td>Everyone</td><td>Meta-attribute titles, step names, each step&#x27;s definition (stepDetails: description, score, belongsTo group, endOfProcess, shape) and the event date range.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">get_attribute_values</code></td><td>Everyone</td><td>The values each meta attribute takes, with journey counts, most frequent first — so you know what to pass as meta1/meta2/meta3.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">get_process_map</code></td><td>Everyone</td><td>The directly-follows map: steps (nodes) and transitions (edges) with counts and timing.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">get_transition_metrics</code></td><td>Everyone</td><td>Per step pair: count and average/median/min/max/stddev transition time (seconds).</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">get_variants</code></td><td>Everyone</td><td>Distinct journey paths and how often each occurs, most frequent first.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">get_statistics</code></td><td>Everyone</td><td>Journey count, journey-duration statistics and the process-goodness score.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">get_journey</code></td><td>Everyone</td><td>One case&#x27;s ordered events, by business case id or stored hash, with its meta values, start/end and total duration.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">find_journey</code></td><td>Everyone</td><td>Which project(s) hold a case id — searches every project on every connection you may query (or one connectionId), ready for get_journey.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">find_journeys</code></td><td>Everyone</td><td>The individual cases behind an aggregate — slowest, longest or by step — with optional full path. Returned eventIds feed get_journey.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">get_notes</code></td><td>Everyone</td><td>The notes on a project&#x27;s steps and transitions — filter by severity, status and scope, optionally grouped; with a summary of counts. Times are local (Admin Console display zone) with the UTC offset.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">create_note</code></td><td>Everyone — write</td><td>Create a note on a step (step) or a transition (fromStep + toStep). You become the author; id and time are set by the server. text required (≤ 4000), title ≤ 200, severity default NORMAL, scope default personal. Rate-limited per user.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">update_note</code></td><td>Everyone — write</td><td>On a note you can see: add a comment (prepended to the thread, with an optional title), set status open/resolved; the author alone may change severity or scope. Existing text is never rewritten; a full thread (100,000 characters) takes no more comments. Rate-limited per user.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">compare_segments</code></td><td>Power users &amp; admins</td><td>Two slices of one project side by side: each segment&#x27;s count, durations, goodness and end steps, then the biggest differences (B minus A) in end-step shares, transition times, transition frequency, and transitions found in only one segment.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">get_bottlenecks</code></td><td>Power users &amp; admins</td><td>Where time is lost: transitions by total waiting time (occurrences × average), the slowest typical transitions (median), rework (steps repeated in a journey) and self-loops.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">get_trend</code></td><td>Power users &amp; admins</td><td>The process over time: per day, week or month (by journey start) the journey count, average and median duration, and — with outcomeSteps — the reach rate of those steps.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">get_outcome_drivers</code></td><td>Power users &amp; admins</td><td>Why an outcome happens: the overall rate of reaching outcomeSteps, and the meta values and visited steps that raise or lower it (rate with / without, delta in percentage points, lift). Association, not cause.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">check_conformance</code></td><td>Power users &amp; admins</td><td>Test journeys against up to 10 rules — requires {step, ifStep?}, forbidden {step}, precedes {before, after}, max_duration {maxSecs}, max_gap {fromStep, toStep, maxSecs} — and count violations with example case ids.</td></tr>
+</table>
+<p>The common filter: sampleSet (ORIGINAL | SAMPLE_1..3), fromDate / toDate (ISO dates), includedSteps (journeys visiting all of them), excludedSteps (journeys visiting none of them) — up to 200 step names each — and meta1 / meta2 / meta3 (up to 256 characters; case-insensitive substring match — see get_attribute_values). The per-journey power tools (bottleneck rework, trend, outcome drivers, conformance, end steps) keep whole journeys that are active in the date window rather than cutting them at its edges.</p>
+<h3>Discover</h3>
+<p>What exists: connections, projects, steps and attribute values.</p>
+<h4><code>list_connections</code> <small>&middot; Everyone</small></h4>
+<p>The database connections you may query. <em>Parameters:</em> <code>none</code></p>
+<p><em>&ldquo;Which Process Mining connections can I use?&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;list_connections&quot;,
+  &quot;arguments&quot;: {}
+}
+// result (excerpt; illustrative values)
+[{&quot;id&quot;: &quot;7e31de50-…&quot;, &quot;name&quot;: &quot;02 - Air Travel&quot;, &quot;schema&quot;: &quot;PM_AIR&quot;, &quot;comment&quot;: &quot;&quot;},
+ {&quot;id&quot;: &quot;38891b38-…&quot;, &quot;name&quot;: &quot;03 - Finance&quot;, &quot;schema&quot;: &quot;PM_FIN&quot;, &quot;comment&quot;: &quot;&quot;}]</code></pre>
+<h4><code>list_projects</code> <small>&middot; Everyone</small></h4>
+<p>Projects on one connection — or, with connectionId omitted, on every connection you may query; includeCounts adds a journey count per project. <em>Parameters:</em> <code>connectionId?, includeCounts?, sampleSet?</code></p>
+<p><em>&ldquo;Which process has the most journeys?&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;list_projects&quot;,
+  &quot;arguments&quot;: {
+    &quot;includeCounts&quot;: true
+  }
+}
+// result (excerpt; illustrative values)
+[{&quot;connectionName&quot;: &quot;02 - Air Travel&quot;, &quot;projectId&quot;: 2,
+  &quot;title&quot;: &quot;Airport Passenger Flow&quot;, &quot;journeyCount&quot;: 148187},
+ {&quot;connectionName&quot;: &quot;03 - Finance&quot;, &quot;projectId&quot;: 1,
+  &quot;title&quot;: &quot;Online Credit Application&quot;, &quot;journeyCount&quot;: 20000}, …]</code></pre>
+<h4><code>get_metadata</code> <small>&middot; Everyone</small></h4>
+<p>Meta-attribute titles, step names, each step&#x27;s definition (stepDetails: description, score, belongsTo group, endOfProcess, shape) and the event date range. <em>Parameters:</em> <code>connectionId, projectId</code></p>
+<p><em>&ldquo;Show me all steps of the flight booking process.&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;get_metadata&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;7e31de50-…&quot;,
+    &quot;projectId&quot;: 5
+  }
+}
+// result (excerpt; illustrative values)
+{&quot;metaTitles&quot;: {&quot;meta1&quot;: &quot;Journey Type&quot;, &quot;meta2&quot;: &quot;Airline&quot;, &quot;meta3&quot;: &quot;Payment Method&quot;},
+ &quot;steps&quot;: [&quot;Add Services&quot;, &quot;Confirm Booking&quot;, …],
+ &quot;stepDetails&quot;: [{&quot;step&quot;: &quot;Confirm Booking&quot;, &quot;description&quot;: &quot;Booking confirmed and ticket issued&quot;,
+                  &quot;score&quot;: 15, &quot;belongsTo&quot;: &quot;Payment&quot;, &quot;endOfProcess&quot;: true, &quot;shape&quot;: &quot;stadium&quot;}, …],
+ &quot;dateRange&quot;: {&quot;from&quot;: &quot;2024-01-01T00:02:11&quot;, &quot;to&quot;: &quot;2024-12-31T23:51:40&quot;}}</code></pre>
+<h4><code>get_attribute_values</code> <small>&middot; Everyone</small></h4>
+<p>The values each meta attribute takes, with journey counts, most frequent first — so you know what to pass as meta1/meta2/meta3. <em>Parameters:</em> <code>connectionId, projectId, meta? (meta1|meta2|meta3|all), limit? (50), filter</code></p>
+<p><em>&ldquo;Which payment methods occur in the bookstore?&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;get_attribute_values&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;64254f7e-…&quot;,
+    &quot;projectId&quot;: 1,
+    &quot;meta&quot;: &quot;meta1&quot;
+  }
+}
+// result (excerpt; illustrative values)
+{&quot;attributes&quot;: [{&quot;meta&quot;: &quot;meta1&quot;, &quot;title&quot;: &quot;Payment Method&quot;, &quot;distinctValues&quot;: 3,
+   &quot;values&quot;: [{&quot;value&quot;: &quot;Credit Card&quot;, &quot;journeys&quot;: 9120},
+              {&quot;value&quot;: &quot;PayPal&quot;, &quot;journeys&quot;: 6874},
+              {&quot;value&quot;: &quot;Bank Transfer&quot;, &quot;journeys&quot;: 4006}], &quot;truncated&quot;: false}],
+ &quot;filterHint&quot;: &quot;… case-insensitive and also matches substrings.&quot;}</code></pre>
+<h3>Analyse</h3>
+<p>Aggregates over many journeys; every one takes the common filter.</p>
+<h4><code>get_process_map</code> <small>&middot; Everyone</small></h4>
+<p>The directly-follows map: steps (nodes) and transitions (edges) with counts and timing. <em>Parameters:</em> <code>connectionId, projectId, filter</code></p>
+<p><em>&ldquo;Draw the process map of the airport passenger flow.&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;get_process_map&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;7e31de50-…&quot;,
+    &quot;projectId&quot;: 2
+  }
+}
+// result (excerpt; illustrative values)
+{&quot;steps&quot;: {&quot;ENTER Check-In&quot;: {&quot;description&quot;: &quot;Passenger checks in at the desk&quot;, &quot;score&quot;: 0, …}, …},
+ &quot;transitions&quot;: [{&quot;fromStep&quot;: &quot;ENTER Check-In&quot;, &quot;toStep&quot;: &quot;LEAVE Check-In&quot;,
+                  &quot;occurrences&quot;: 44295, &quot;avgSecs&quot;: 507.8, &quot;medianSecs&quot;: 480.0, …}, …]}</code></pre>
+<h4><code>get_transition_metrics</code> <small>&middot; Everyone</small></h4>
+<p>Per step pair: count and average/median/min/max/stddev transition time (seconds). <em>Parameters:</em> <code>connectionId, projectId, filter</code></p>
+<p><em>&ldquo;How long does security take for passengers in 2024?&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;get_transition_metrics&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;7e31de50-…&quot;,
+    &quot;projectId&quot;: 2,
+    &quot;fromDate&quot;: &quot;2024-01-01&quot;,
+    &quot;toDate&quot;: &quot;2024-12-31&quot;,
+    &quot;includedSteps&quot;: [
+      &quot;ENTER Security Check&quot;
+    ]
+  }
+}
+// result (excerpt; illustrative values)
+[{&quot;fromStep&quot;: &quot;ENTER Security Check&quot;, &quot;toStep&quot;: &quot;LEAVE Security Check&quot;,
+  &quot;occurrences&quot;: 145198, &quot;avgSecs&quot;: 1020.0, &quot;medianSecs&quot;: 1020.0,
+  &quot;minSecs&quot;: 240.0, &quot;maxSecs&quot;: 1800.0, &quot;stdDevSecs&quot;: 466.7}, …]</code></pre>
+<h4><code>get_variants</code> <small>&middot; Everyone</small></h4>
+<p>Distinct journey paths and how often each occurs, most frequent first. <em>Parameters:</em> <code>connectionId, projectId, filter, limit?</code></p>
+<p><em>&ldquo;What are the three most common credit-application paths?&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;get_variants&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;38891b38-…&quot;,
+    &quot;projectId&quot;: 1,
+    &quot;limit&quot;: 3
+  }
+}
+// result (excerpt; illustrative values)
+[{&quot;path&quot;: &quot;Bank -&gt; Application Received -&gt; Application Checked -&gt; Credit Check -&gt; Accepted -&gt; …&quot;,
+  &quot;journeyCount&quot;: 4210, &quot;stepCount&quot;: 7, &quot;totalScore&quot;: 25}, …]</code></pre>
+<h4><code>get_statistics</code> <small>&middot; Everyone</small></h4>
+<p>Journey count, journey-duration statistics and the process-goodness score. <em>Parameters:</em> <code>connectionId, projectId, filter</code></p>
+<p><em>&ldquo;How long do affiliate credit applications take?&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;get_statistics&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;38891b38-…&quot;,
+    &quot;projectId&quot;: 1,
+    &quot;meta3&quot;: &quot;Affiliate&quot;
+  }
+}
+// result (excerpt; illustrative values)
+{&quot;journeyCount&quot;: 9870,
+ &quot;durations&quot;: {&quot;minSecs&quot;: 1804.0, &quot;avgSecs&quot;: 201544.0, &quot;medianSecs&quot;: 172800.0, …},
+ &quot;processGoodness&quot;: 3.41}</code></pre>
+<h3>Cases</h3>
+<p>Individual journeys — find them, then open one.</p>
+<h4><code>get_journey</code> <small>&middot; Everyone</small></h4>
+<p>One case&#x27;s ordered events, by business case id or stored hash, with its meta values, start/end and total duration. <em>Parameters:</em> <code>connectionId, projectId, eventId, sampleSet?</code></p>
+<p><em>&ldquo;Show me credit application CRA-000123.&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;get_journey&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;38891b38-…&quot;,
+    &quot;projectId&quot;: 1,
+    &quot;eventId&quot;: &quot;CRA-000123&quot;
+  }
+}
+// result (excerpt; illustrative values)
+{&quot;eventId&quot;: &quot;CRA-000123&quot;, &quot;storedEventId&quot;: &quot;5e05bf5d94a6fb2c78e7722c3ec4b07b&quot;,
+ &quot;startDate&quot;: &quot;2024-06-12T09:59:28&quot;, &quot;endDate&quot;: &quot;2024-06-12T11:01:11&quot;, &quot;durationSecs&quot;: 3703.0,
+ &quot;meta&quot;: {&quot;Applied Credit Sum&quot;: &quot;&gt; 25.000 EUR&quot;, &quot;Income Class&quot;: &quot;Low&quot;, &quot;Channel&quot;: &quot;Affiliate&quot;},
+ &quot;events&quot;: [{&quot;step&quot;: &quot;Affiliate&quot;, &quot;eventTime&quot;: &quot;2024-06-12T09:59:28&quot;}, …,
+            {&quot;step&quot;: &quot;Rejected&quot;, &quot;eventTime&quot;: &quot;2024-06-12T11:01:11&quot;}]}</code></pre>
+<h4><code>find_journey</code> <small>&middot; Everyone</small></h4>
+<p>Which project(s) hold a case id — searches every project on every connection you may query (or one connectionId), ready for get_journey. <em>Parameters:</em> <code>eventId, connectionId?, sampleSet?</code></p>
+<p><em>&ldquo;Where is case FLT-000124?&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;find_journey&quot;,
+  &quot;arguments&quot;: {
+    &quot;eventId&quot;: &quot;FLT-000124&quot;
+  }
+}
+// result (excerpt; illustrative values)
+{&quot;eventId&quot;: &quot;FLT-000124&quot;, &quot;storedEventId&quot;: &quot;69ab1ef5…&quot;,
+ &quot;matches&quot;: [{&quot;connectionName&quot;: &quot;02 - Air Travel&quot;, &quot;projectId&quot;: 5,
+              &quot;title&quot;: &quot;Flight Booking &amp; Management&quot;, &quot;startDate&quot;: &quot;2024-10-30T23:22:09&quot;,
+              &quot;durationSecs&quot;: 1380.0, &quot;stepCount&quot;: 14}],
+ &quot;searched&quot;: {&quot;connections&quot;: 5, &quot;projects&quot;: 8}}</code></pre>
+<h4><code>find_journeys</code> <small>&middot; Everyone</small></h4>
+<p>The individual cases behind an aggregate — slowest, longest or by step — with optional full path. Returned eventIds feed get_journey. <em>Parameters:</em> <code>connectionId, projectId, filter, orderBy?, limit? (20), min/maxDurationSecs?, min/maxSteps?, includePath?</code></p>
+<p><em>&ldquo;The five slowest orders that hit Payment Failed, with their paths.&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;find_journeys&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;64254f7e-…&quot;,
+    &quot;projectId&quot;: 1,
+    &quot;limit&quot;: 5,
+    &quot;includedSteps&quot;: [
+      &quot;Payment Failed&quot;
+    ],
+    &quot;includePath&quot;: true
+  }
+}
+// result (excerpt; illustrative values)
+[{&quot;eventId&quot;: &quot;8c46773b…&quot;, &quot;startDate&quot;: &quot;2024-04-21T04:36:09&quot;, &quot;durationSecs&quot;: 1134.0,
+  &quot;stepCount&quot;: 17, &quot;meta&quot;: {&quot;Payment Method&quot;: &quot;Bank Transfer&quot;, …},
+  &quot;path&quot;: &quot;Login -&gt; Browse Catalog -&gt; … -&gt; Payment Failed -&gt; Payment Retry -&gt; …&quot;}, …]</code></pre>
+<h3>Notes</h3>
+<p>The human layer on the process. The two note-writing tools are the only writes on the MCP surface.</p>
+<h4><code>get_notes</code> <small>&middot; Everyone</small></h4>
+<p>The notes on a project&#x27;s steps and transitions — filter by severity, status and scope, optionally grouped; with a summary of counts. Times are local (Admin Console display zone) with the UTC offset. <em>Parameters:</em> <code>connectionId, projectId, severity?, status?, scope?, groupBy?</code></p>
+<p><em>&ldquo;Show all closed notes, then all open notes, as separate groups.&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;get_notes&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;7e31de50-…&quot;,
+    &quot;projectId&quot;: 2,
+    &quot;groupBy&quot;: &quot;status&quot;
+  }
+}
+// result (excerpt; illustrative values)
+{&quot;total&quot;: 1, &quot;summary&quot;: {&quot;byStatus&quot;: {&quot;open&quot;: 0, &quot;resolved&quot;: 1}, …},
+ &quot;groupBy&quot;: &quot;status&quot;,
+ &quot;groups&quot;: [{&quot;key&quot;: &quot;resolved&quot;, &quot;count&quot;: 1, &quot;notes&quot;: [{&quot;id&quot;: &quot;E422E185-…&quot;,
+   &quot;title&quot;: &quot;A Note for testing&quot;, &quot;severity&quot;: &quot;URGENT&quot;, &quot;status&quot;: &quot;resolved&quot;,
+   &quot;scope&quot;: &quot;shared&quot;, &quot;author&quot;: &quot;dirk.beerbohm&quot;, &quot;target&quot;: &quot;ENTER Check-In&quot;,
+   &quot;createdAt&quot;: &quot;2026-09-23T12:34:45+02:00&quot;, &quot;editedAt&quot;: &quot;2026-09-23T12:36:42+02:00&quot;}]}]}</code></pre>
+<h4><code>create_note</code> <small>&middot; Everyone — write</small></h4>
+<p>Create a note on a step (step) or a transition (fromStep + toStep). You become the author; id and time are set by the server. text required (≤ 4000), title ≤ 200, severity default NORMAL, scope default personal. Rate-limited per user. <em>Parameters:</em> <code>connectionId, projectId, step | fromStep + toStep, text, title?, severity?, scope?</code></p>
+<p><em>&ldquo;Add a shared, important note on the security transition.&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;create_note&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;7e31de50-…&quot;,
+    &quot;projectId&quot;: 2,
+    &quot;fromStep&quot;: &quot;ENTER Security Check&quot;,
+    &quot;toStep&quot;: &quot;LEAVE Security Check&quot;,
+    &quot;title&quot;: &quot;Security wait&quot;,
+    &quot;text&quot;: &quot;Median 17 min; peaks before 07:00.&quot;,
+    &quot;severity&quot;: &quot;IMPORTANT&quot;,
+    &quot;scope&quot;: &quot;shared&quot;
+  }
+}
+// result (excerpt; illustrative values)
+{&quot;created&quot;: true,
+ &quot;note&quot;: {&quot;id&quot;: &quot;9B1C…&quot;, &quot;title&quot;: &quot;Security wait&quot;, &quot;severity&quot;: &quot;IMPORTANT&quot;,
+          &quot;status&quot;: &quot;open&quot;, &quot;scope&quot;: &quot;shared&quot;, &quot;author&quot;: &quot;dirk.beerbohm&quot;,
+          &quot;target&quot;: &quot;ENTER Security Check → LEAVE Security Check&quot;, &quot;targetType&quot;: &quot;edge&quot;,
+          &quot;createdAt&quot;: &quot;2026-09-24T08:15:02+02:00&quot;, &quot;editedAt&quot;: null}}</code></pre>
+<h4><code>update_note</code> <small>&middot; Everyone — write</small></h4>
+<p>On a note you can see: add a comment (prepended to the thread, with an optional title), set status open/resolved; the author alone may change severity or scope. Existing text is never rewritten; a full thread (100,000 characters) takes no more comments. Rate-limited per user. <em>Parameters:</em> <code>connectionId, projectId, noteId, comment?, title?, status?, severity?, scope?</code></p>
+<p><em>&ldquo;Resolve the test note and say why.&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;update_note&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;7e31de50-…&quot;,
+    &quot;projectId&quot;: 2,
+    &quot;noteId&quot;: &quot;E422E185-0557-4E22-8DB2-BC62B30DA426&quot;,
+    &quot;comment&quot;: &quot;Test complete.&quot;,
+    &quot;status&quot;: &quot;resolved&quot;
+  }
+}
+// result (excerpt; illustrative values)
+{&quot;updated&quot;: true, &quot;changes&quot;: [&quot;comment&quot;, &quot;status&quot;],
+ &quot;note&quot;: {&quot;id&quot;: &quot;E422E185-…&quot;, &quot;status&quot;: &quot;resolved&quot;, &quot;lastEditedBy&quot;: &quot;dirk.beerbohm&quot;,
+          &quot;editedAt&quot;: &quot;2026-09-24T08:16:40+02:00&quot;, …}}</code></pre>
+<h3>Power analysis</h3>
+<p>Deeper analysis, reserved for users with the power-user role (and administrators). Anyone else gets a polite refusal naming the role.</p>
+<h4><code>compare_segments</code> <small>&middot; Power users &amp; admins</small></h4>
+<p>Two slices of one project side by side: each segment&#x27;s count, durations, goodness and end steps, then the biggest differences (B minus A) in end-step shares, transition times, transition frequency, and transitions found in only one segment. <em>Parameters:</em> <code>connectionId, projectId, segmentA, segmentB (filter objects + label), limit? (10), minOccurrences? (30), sampleSet?</code></p>
+<p><em>&ldquo;How do Bank Transfer orders differ from PayPal orders?&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;compare_segments&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;64254f7e-…&quot;,
+    &quot;projectId&quot;: 1,
+    &quot;segmentA&quot;: {
+      &quot;meta1&quot;: &quot;Bank Transfer&quot;,
+      &quot;label&quot;: &quot;Bank Transfer&quot;
+    },
+    &quot;segmentB&quot;: {
+      &quot;meta1&quot;: &quot;PayPal&quot;,
+      &quot;label&quot;: &quot;PayPal&quot;
+    }
+  }
+}
+// result (excerpt; illustrative values)
+{&quot;segments&quot;: [{&quot;label&quot;: &quot;Bank Transfer&quot;, &quot;journeyCount&quot;: 4006, …},
+              {&quot;label&quot;: &quot;PayPal&quot;, &quot;journeyCount&quot;: 6874, …}],
+ &quot;differences&quot;: {
+   &quot;endSteps&quot;: [{&quot;step&quot;: &quot;Payment Failed&quot;, &quot;shareA&quot;: 0.12, &quot;shareB&quot;: 0.03, &quot;deltaPoints&quot;: -9.0}, …],
+   &quot;transitionTime&quot;: [{&quot;fromStep&quot;: &quot;Payment Processing&quot;, &quot;toStep&quot;: &quot;Payment Confirmed&quot;,
+                       &quot;avgSecsA&quot;: 5400.0, &quot;avgSecsB&quot;: 45.0, &quot;deltaSecs&quot;: -5355.0}, …],
+   &quot;transitionFrequency&quot;: […], &quot;onlyInA&quot;: […], &quot;onlyInB&quot;: […]}}</code></pre>
+<h4><code>get_bottlenecks</code> <small>&middot; Power users &amp; admins</small></h4>
+<p>Where time is lost: transitions by total waiting time (occurrences × average), the slowest typical transitions (median), rework (steps repeated in a journey) and self-loops. <em>Parameters:</em> <code>connectionId, projectId, filter, limit? (10), minOccurrences? (30)</code></p>
+<p><em>&ldquo;Where do credit applications lose the most time?&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;get_bottlenecks&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;38891b38-…&quot;,
+    &quot;projectId&quot;: 1
+  }
+}
+// result (excerpt; illustrative values)
+{&quot;totalWaitSecs&quot;: 3.1e9,
+ &quot;byTotalWaitTime&quot;: [{&quot;fromStep&quot;: &quot;Credit Check&quot;, &quot;toStep&quot;: &quot;Senior Agent Approval&quot;,
+   &quot;occurrences&quot;: 6120, &quot;avgSecs&quot;: 87942.0, &quot;totalWaitSecs&quot;: 538205040.0,
+   &quot;shareOfWaitTime&quot;: 0.17}, …],
+ &quot;slowestTypicalTransitions&quot;: […],
+ &quot;rework&quot;: [{&quot;step&quot;: &quot;Application Checked&quot;, &quot;journeys&quot;: 5230, &quot;extraVisits&quot;: 5890}, …],
+ &quot;selfLoops&quot;: […]}</code></pre>
+<h4><code>get_trend</code> <small>&middot; Power users &amp; admins</small></h4>
+<p>The process over time: per day, week or month (by journey start) the journey count, average and median duration, and — with outcomeSteps — the reach rate of those steps. <em>Parameters:</em> <code>connectionId, projectId, filter, granularity? (day|week|month), outcomeSteps?, limit?</code></p>
+<p><em>&ldquo;Is the denied-boarding rate changing month by month?&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;get_trend&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;7e31de50-…&quot;,
+    &quot;projectId&quot;: 2,
+    &quot;granularity&quot;: &quot;month&quot;,
+    &quot;outcomeSteps&quot;: [
+      &quot;DENIED Boarding Dom&quot;,
+      &quot;DENIED Boarding Int&quot;
+    ]
+  }
+}
+// result (excerpt; illustrative values)
+{&quot;granularity&quot;: &quot;month&quot;,
+ &quot;periods&quot;: [{&quot;period&quot;: &quot;2024-01-01&quot;, &quot;journeys&quot;: 12530, &quot;avgDurationSecs&quot;: 4210.0,
+              &quot;medianDurationSecs&quot;: 4080.0, &quot;outcomeJourneys&quot;: 598, &quot;outcomeRate&quot;: 0.0477}, …]}</code></pre>
+<h4><code>get_outcome_drivers</code> <small>&middot; Power users &amp; admins</small></h4>
+<p>Why an outcome happens: the overall rate of reaching outcomeSteps, and the meta values and visited steps that raise or lower it (rate with / without, delta in percentage points, lift). Association, not cause. <em>Parameters:</em> <code>connectionId, projectId, filter, outcomeSteps, minSupport? (30), limit? (10)</code></p>
+<p><em>&ldquo;What makes a credit application end in Rejected?&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;get_outcome_drivers&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;38891b38-…&quot;,
+    &quot;projectId&quot;: 1,
+    &quot;outcomeSteps&quot;: [
+      &quot;Rejected&quot;
+    ]
+  }
+}
+// result (excerpt; illustrative values)
+{&quot;journeys&quot;: 20000, &quot;outcomeJourneys&quot;: 5400, &quot;outcomeRate&quot;: 0.27,
+ &quot;raisesOutcome&quot;: {&quot;attributes&quot;: [{&quot;title&quot;: &quot;Income Class&quot;, &quot;value&quot;: &quot;Low&quot;,
+     &quot;outcomeRate&quot;: 0.61, &quot;rateWithout&quot;: 0.16, &quot;deltaPoints&quot;: 34.0, &quot;lift&quot;: 2.26}, …],
+   &quot;steps&quot;: […]},
+ &quot;lowersOutcome&quot;: {&quot;attributes&quot;: […], &quot;steps&quot;: […]}}</code></pre>
+<h4><code>check_conformance</code> <small>&middot; Power users &amp; admins</small></h4>
+<p>Test journeys against up to 10 rules — requires {step, ifStep?}, forbidden {step}, precedes {before, after}, max_duration {maxSecs}, max_gap {fromStep, toStep, maxSecs} — and count violations with example case ids. <em>Parameters:</em> <code>connectionId, projectId, filter, rules, examples? (5)</code></p>
+<p><em>&ldquo;Is payment always processed before a booking is confirmed, within 5 minutes?&rdquo;</em></p>
+<pre class="calc"><code>// call
+{
+  &quot;name&quot;: &quot;check_conformance&quot;,
+  &quot;arguments&quot;: {
+    &quot;connectionId&quot;: &quot;7e31de50-…&quot;,
+    &quot;projectId&quot;: 5,
+    &quot;rules&quot;: [
+      {
+        &quot;type&quot;: &quot;precedes&quot;,
+        &quot;before&quot;: &quot;Process Payment&quot;,
+        &quot;after&quot;: &quot;Confirm Booking&quot;
+      },
+      {
+        &quot;type&quot;: &quot;max_gap&quot;,
+        &quot;fromStep&quot;: &quot;Process Payment&quot;,
+        &quot;toStep&quot;: &quot;Confirm Booking&quot;,
+        &quot;maxSecs&quot;: 300
+      }
+    ]
+  }
+}
+// result (excerpt; illustrative values)
+{&quot;journeysChecked&quot;: 20000,
+ &quot;rules&quot;: [{&quot;type&quot;: &quot;precedes&quot;, &quot;rule&quot;: &quot;&#x27;Process Payment&#x27; must happen before &#x27;Confirm Booking&#x27;&quot;,
+            &quot;violations&quot;: 0, &quot;violationRate&quot;: 0.0, &quot;conformanceRate&quot;: 1.0, &quot;exampleEventIds&quot;: []},
+           {&quot;type&quot;: &quot;max_gap&quot;, &quot;violations&quot;: 0, …}]}</code></pre>
+</div>
+  <div class="tip"><span class="k">Drill-down.</span> <code>get_statistics</code> → <code>find_journeys</code> → <code>get_journey</code>; when you only have a case id, start with <code>find_journey</code>.</div>
+</section><section class="step">
+  <div class="step-head"><div class="num">3</div><h2>Prerequisites</h2></div>
+  <p class="body">Before you touch the MCP tab, make sure the pieces it relies on are in place:</p>
+  <ul><li>An <b>Authentik</b> server reachable from the Process Mining host (this guide assumes <code>https://authentik.example.com:19443</code>).</li><li>Administrator access to <b>both</b> Authentik and the Process Mining admin console.</li><li>Each MCP user must <b>already exist and be enabled</b> in Process Mining (<i>Users</i> tab) with the <b>same username</b> the token will carry.</li><li>That user must be <b>assigned the connection(s)</b> they should query (<i>Database Connections</i> tab).</li><li><b>TLS enabled</b> in the admin (<i>TLS / SSL</i> tab) so the HTTPS endpoint (<code>:18493</code>) is live — OAuth clients require HTTPS.</li></ul>
+  <div class="tip"><span class="k">No PM user, no access.</span> The token only authenticates <i>who</i> the caller is; the matching Process Mining user (and its connection assignments) is what grants any data at all. A valid token for a username with no PM account gets <code>403</code>.</div>
+</section><section class="step">
+  <div class="step-head"><div class="num">4</div><h2>Part A — Configure Authentik</h2></div>
+  <p class="body">Create a dedicated OAuth2/OpenID provider and an application in front of it, then note the endpoints the MCP server will trust.</p>
+  <div class="mock">
+      <p class="cap"><b>1 · Create an OAuth2/OpenID Provider</b> &nbsp;—&nbsp;
+        <i>Applications → Providers → Create → OAuth2/OpenID Provider</i></p>
+      <table class="tbl">
+        <tr><th>Field</th><th>Value</th></tr>
+        <tr><td>Name</td><td><code>Process Mining MCP</code></td></tr>
+        <tr><td>Authorization flow</td><td>your standard explicit- (or implicit-) consent flow</td></tr>
+        <tr><td>Client type</td><td><code>Public</code> (PKCE, recommended for interactive clients) — or <code>Confidential</code> if the client stores a secret</td></tr>
+        <tr><td>Signing key</td><td>an <b>RSA</b> key → the access token is a signed <b>RS256 JWT</b> the server verifies offline</td></tr>
+        <tr><td>Scopes</td><td><code>openid</code>, <code>profile</code>, <code>email</code> (+ <code>offline_access</code> for refresh tokens)</td></tr>
+        <tr><td>Redirect URIs</td><td>the callback(s) your client uses — for Claude, see Part C</td></tr>
+      </table>
+      <p class="cap"><b>2 · Create an Application</b> bound to that provider &nbsp;—&nbsp;
+        <i>Applications → Applications → Create.</i> Name <code>Process Mining MCP</code>,
+        slug e.g. <code>process-mining-mcp</code>. Under <b>Bindings</b>, restrict who may use
+        it (e.g. bind a group <code>process-mining-users</code>).</p>
+      <p class="cap"><b>3 · Note the endpoints</b> (all under
+        <code>…/application/o/process-mining-mcp/</code>):</p>
+      <pre class="calc">Issuer     https://authentik.example.com:19443/application/o/process-mining-mcp/
+Discovery  &lt;issuer&gt;/.well-known/openid-configuration
+JWKS       &lt;issuer&gt;/jwks/</pre>
+    </div>
+  <div class="tip"><span class="k">Set an Audience (recommended).</span> Authentik only sets the token's <code>aud</code> if you add an audience via a scope/property mapping. Do it and put the client id in the MCP <b>Audience</b> field: it ties each token to <i>this</i> application, so a token minted for another app on the same Authentik can't be replayed here. Leave it blank and the <code>aud</code> check is skipped (still gated by issuer, signature, user-mapping and group).</div>
+</section><section class="step">
+  <div class="step-head"><div class="num">5</div><h2>Part B — Configure the MCP server (admin console)</h2></div>
+  <p class="body">Open the admin console → <b>MCP Server</b> tab and fill in the Authentik (OAuth) settings. <b>No secrets are stored here</b> — only these public coordinates, because tokens are validated offline against the JWKS.</p>
+  <div class="mock">
+      <table class="tbl">
+        <tr><th>Field</th><th>What to enter</th></tr>
+        <tr><td>Issuer URL</td><td><code>https://authentik.example.com:19443/application/o/process-mining-mcp/</code></td></tr>
+        <tr><td>JWKS URL</td><td>blank to auto-discover from the issuer, or paste <code>…/jwks/</code></td></tr>
+        <tr><td>Audience / Client ID</td><td>the client id (recommended, once you mapped <code>aud</code>); blank skips the check</td></tr>
+        <tr><td>Required group</td><td>optional — only members of this Authentik group may connect (matched against the token's <code>groups</code>)</td></tr>
+        <tr><td>Username claim</td><td>the JWT claim matched to a PM username — default <code>preferred_username</code>; use <code>email</code> if usernames are email addresses</td></tr>
+      </table>
+      <p class="cap">Then: <b>Save settings</b> → <b>Test Authentik</b> (fetches the discovery
+        document and JWKS and reports the signing-key count — fix any error first) →
+        tick <b>Enable the MCP server</b>. Enabling/disabling is immediate; no restart.</p>
+    </div>
+  <div class="tip"><span class="k">A TLS change needs a restart.</span> Turn TLS on in the <b>TLS / SSL</b> tab; the change takes effect after <b>↻ Restart app server</b> (App Control). Enabling or disabling the MCP server itself does not.</div>
+</section><section class="step">
+  <div class="step-head"><div class="num">6</div><h2>Behind a reverse proxy (optional)</h2></div>
+  <p class="body">The MCP server listens on its own port. To publish it under a public domain path — e.g. <code>https://pm.example.com/mcp</code> — a proxy must <b>preserve the <code>/mcp</code> path</b> and <b>send forwarding headers</b> so the OAuth discovery document advertises the public URL, not the internal host:port.</p>
+  <div class="mock">
+      <pre class="calc">location /mcp {
+    proxy_pass https://127.0.0.1:18493;   # NO trailing slash — keep the /mcp path
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host  $host;
+}
+location = /.well-known/oauth-protected-resource     { proxy_pass https://127.0.0.1:18493; proxy_set_header X-Forwarded-Host $host; proxy_set_header X-Forwarded-Proto $scheme; }
+location = /.well-known/oauth-protected-resource/mcp { proxy_pass https://127.0.0.1:18493; proxy_set_header X-Forwarded-Host $host; proxy_set_header X-Forwarded-Proto $scheme; }</pre>
+      <p class="cap">A <b>trailing slash</b> on <code>proxy_pass</code> strips the prefix and the
+        backend answers <code>404 {"detail":"Not Found"}</code>. The server also answers at the
+        root as a fallback, so a stripping proxy still works — but preserving the path is
+        cleaner. Route <code>/mcp</code>, the two well-known paths and <code>/health</code>.</p>
+    </div>
+  <ul><li>Point the client at the public URL (<code>https://pm.example.com/mcp</code>).</li><li>Or skip the proxy and expose the port directly (<code>https://&lt;host&gt;:18493/mcp</code>) if your firewall allows it and TLS is on.</li></ul>
+</section><section class="step">
+  <div class="step-head"><div class="num">7</div><h2>Part C — Add the server to Claude Desktop</h2></div>
+  <p class="body">Claude is the example client here; any MCP client that supports <b>remote (HTTP) servers with OAuth</b> follows the same shape (more client walkthroughs to follow).</p>
+  <div class="mock">
+      <table class="tbl">
+        <tr><th>#</th><th>In Claude Desktop</th></tr>
+        <tr><td>1</td><td><b>Settings → Connectors → Add custom connector</b>.</td></tr>
+        <tr><td>2</td><td><b>Name</b> <code>Process Mining</code> · <b>URL</b> <code>https://&lt;your-host&gt;:18493/mcp</code> (or your proxy URL).</td></tr>
+        <tr><td>3</td><td>Save and click <b>Connect</b>. Claude reads the server's <code>/.well-known/oauth-protected-resource</code>, opens Authentik's sign-in, and stores the token after you approve.</td></tr>
+        <tr><td>4</td><td>Enable the connector in a chat and ask e.g. <i>&ldquo;list my process-mining connections&rdquo;</i>, then <i>&ldquo;show the process map for project 1 on connection c1&rdquo;</i>.</td></tr>
+      </table>
+      <p class="cap">Add Claude's OAuth <b>redirect URIs</b> to the Authentik provider (Part A):
+        <code>https://claude.ai/api/mcp/auth_callback</code>,
+        <code>https://claude.com/api/mcp/auth_callback</code>, and for the desktop app a local
+        loopback such as <code>http://localhost:*</code> — use the exact value Claude shows you
+        if it differs.</p>
+    </div>
+  <div class="tip"><span class="k">The token is the user.</span> Whoever signs in at Authentik must match an enabled Process Mining user (by the configured username claim). Claude then sees exactly that user's connections — nothing more.</div>
+</section><section class="step">
+  <div class="step-head"><div class="num">8</div><h2>Verifying by hand</h2></div>
+  <p class="body">Two quick checks from a shell confirm the endpoint is live and discoverable before you involve a client (<code>-k</code> accepts the self-signed internal certificate):</p>
+  <div class="mock">
+      <pre class="calc"># liveness (unauthenticated) → {"ok":true,"enabled":true}
+curl -k https://&lt;your-host&gt;:18493/health
+
+# OAuth discovery (unauthenticated) → the Authentik authorization server
+curl -k https://&lt;your-host&gt;:18493/.well-known/oauth-protected-resource
+
+# a real call, with a token you already obtained from Authentik
+curl -k -X POST https://&lt;your-host&gt;:18493/mcp \
+  -H "Authorization: Bearer &lt;ACCESS_TOKEN&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+       "params":{"name":"list_connections","arguments":{}}}'</pre>
+    </div>
+</section><section class="step">
+  <div class="step-head"><div class="num">9</div><h2>Troubleshooting</h2></div>
+  <p class="body">The common failures and where to fix them:</p>
+  <div class="mock">
+      <table class="tbl">
+        <tr><th>Symptom</th><th>Cause / fix</th></tr>
+        <tr><td><code>503 The MCP server is disabled</code></td><td>Enable it in the admin <b>MCP Server</b> tab.</td></tr>
+        <tr><td><code>401</code> + a <code>WWW-Authenticate</code> header</td><td>No/invalid token — the client should run the OAuth flow. Check issuer/JWKS and press <b>Test Authentik</b>.</td></tr>
+        <tr><td><code>403 No enabled Process Mining user matches '…'</code></td><td>The token's username claim doesn't match an enabled PM user. Create it (Users tab) with that exact name, or change the <b>Username claim</b> (e.g. to <code>email</code>).</td></tr>
+        <tr><td><code>403 …not in the group required</code></td><td>The user isn't in the configured <b>Required group</b> in Authentik.</td></tr>
+        <tr><td><code>Connection … is not assigned to you</code></td><td>Assign the connection to the user (Database Connections tab).</td></tr>
+        <tr><td>Test can't reach Authentik</td><td>Wrong issuer URL, or the host can't reach <code>:19443</code>. The URL and network path must be right.</td></tr>
+      </table>
+    </div>
+</section>
+
+  <div class="beyond">
+    <h2>Good to know</h2>
+    <ul>
+      <li><b>Keycloak (and other OIDC providers) to follow.</b> This guide uses Authentik, but the MCP server trusts any provider that issues <b>RS256 JWTs with a JWKS endpoint</b> — so Keycloak already works today with the equivalent settings; a dedicated Keycloak walkthrough is coming.</li>
+      <li><b>More clients to follow.</b> Claude Desktop is the worked example; the same custom-connector pattern applies to any client that supports remote HTTP MCP servers with OAuth.</li>
+      <li><b>Tuning env vars</b>: <code>PMW_MCP_MAX_ROWS</code> (default 1000) caps rows returned per call; <code>PMW_MCP_JWKS_CACHE_SECS</code> (default 3600) sets how long signing keys are cached.</li>
+      <li><b>Token integrity does not depend on TLS.</b> Tokens are verified cryptographically against Authentik's JWKS (RS256); only the JWKS <i>transport</i> skips certificate verification (Authentik is a trusted internal host).</li>
+    </ul>
+    <p class="note">Rule of thumb: get <code>curl -k https://&lt;host&gt;:18493/health</code>
+      returning <code>{"ok":true,"enabled":true}</code> first — then add the connector in
+      Claude.</p>
+  </div>
+
+  <footer>Process Mining Demonstrator · Suite — Installation of the MCP Server (Authentik OAuth · Claude Desktop)</footer>
+</div>
+</body></html>

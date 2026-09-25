@@ -1,0 +1,188 @@
+<!doctype html>
+<!-- Generated documentation page — open this file in a WEB BROWSER.
+     It is NOT a script; to rebuild it run:  python3 docs/61-build-claude-desktop-guide.py -->
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>61 - Conversational Process Mining with Claude Desktop</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgNDggNDgiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzNhOWJmZiIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiM2YjVjZjAiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHg9IjIiIHk9IjIiIHdpZHRoPSI0NCIgaGVpZ2h0PSI0NCIgcng9IjEyIiBmaWxsPSJ1cmwoI2JnKSIvPgogIDxwYXRoIGQ9Ik0xNSAxNiBMMzMgMTYgTDI0IDM0IFoiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjYiCiAgICAgICAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBvcGFjaXR5PSIwLjkiLz4KICA8ZyBmaWxsPSIjZmZmIj4KICAgIDxjaXJjbGUgY3g9IjE1IiBjeT0iMTYiIHI9IjQuNiIvPgogICAgPGNpcmNsZSBjeD0iMzMiIGN5PSIxNiIgcj0iNC42Ii8+CiAgICA8Y2lyY2xlIGN4PSIyNCIgY3k9IjM0IiByPSI0LjYiLz4KICA8L2c+CiAgPGNpcmNsZSBjeD0iMjQiIGN5PSIxNiIgcj0iMi40IiBmaWxsPSIjZWFmM2ZmIi8+Cjwvc3ZnPgo=">
+<style>
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --ink:#1c2530; --soft:#5b6672; --line:#e5e8ec;
+  --accent:#3a6df0; --accent2:#6b5cf0; --tipbg:#eef3ff; --tipink:#2b3a63; --tipbar:#3a6df0;
+  --warnbg:#fff7ed; --warnbar:#d98324; --warnink:#5c4415;
+  --good:#1e9e5a; --bad:#d4453b;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:0 20px 72px}
+header.hero{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;
+  border-radius:0 0 26px 26px;padding:44px 20px 40px;margin-bottom:34px;
+  box-shadow:0 12px 30px rgba(58,109,240,.25)}
+.hero-inner{max-width:900px;margin:0 auto;padding:0 20px}
+.chip{display:inline-block;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);
+  padding:4px 12px;border-radius:999px;font-size:13px;font-weight:600;letter-spacing:.3px}
+h1{font-size:30px;line-height:1.2;margin:14px 0 8px;font-weight:800}
+.hero p{margin:0;max-width:640px;color:rgba(255,255,255,.92);font-size:16px}
+.hero a{color:#fff}
+.lead{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 22px;
+  margin:0 0 30px;color:var(--soft)}
+.lead b{color:var(--ink)}
+.lead code, .step ul li code, .cap code, .step p.body code{background:var(--bg);border-radius:4px;
+  padding:0 5px;font-size:13px}
+.step{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px 22px 8px;
+  margin:0 0 22px;box-shadow:0 1px 2px rgba(20,30,50,.04)}
+.step-head{display:flex;align-items:center;gap:14px;margin-bottom:6px}
+.num{flex:0 0 auto;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+  font-weight:800;color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+.step h2{font-size:20px;margin:0;font-weight:750}
+.step p.body{margin:2px 0 16px}
+.step p.body a{color:var(--accent)}
+.step ul{margin:0 0 12px;padding-left:20px;color:var(--soft)}
+.step ul li{margin:3px 0}
+.tip{background:var(--tipbg);border-left:4px solid var(--tipbar);color:var(--tipink);
+  border-radius:8px;padding:10px 14px;margin:0 0 16px;font-size:14.5px}
+.tip b{color:var(--tipink)}
+.tip .k{font-weight:700;margin-right:6px}
+.tip code{background:rgba(58,109,240,.10);border-radius:4px;padding:0 4px;font-size:13px}
+.beyond{background:var(--warnbg);border:1px solid #f0d9b8;border-left:4px solid var(--warnbar);
+  color:var(--warnink);border-radius:14px;padding:20px 22px;margin:34px 0 0}
+.beyond h2{margin:0 0 8px;font-size:19px;color:#7a4d13}
+.beyond ul{margin:8px 0 0;padding-left:20px}
+.beyond li{margin:3px 0}
+.beyond code{background:rgba(0,0,0,.06);border-radius:4px;padding:0 4px;font-size:13px}
+.beyond .note{margin-top:12px;font-size:14.5px}
+footer{color:var(--soft);font-size:13px;text-align:center;margin-top:34px}
+.mock{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;
+  margin:0 0 16px;box-shadow:0 6px 18px rgba(20,30,50,.08)}
+.cap{color:var(--soft);font-size:13px;margin:8px 2px 0}
+.tbl{border-collapse:collapse;font-size:13px;width:100%}
+.tbl th{color:var(--soft);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;
+  text-align:left;padding:4px 12px 6px 0;border-bottom:2px solid var(--line)}
+.tbl td{padding:5px 12px 5px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl td code{background:var(--bg);border-radius:4px;padding:0 4px;font-size:12px}
+.calc{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;
+  margin:0;font:12.5px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;
+  overflow-x:auto;white-space:pre}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#14171c;--card:#1d2127;--ink:#e7eaee;--soft:#a3adba;--line:#2c333c;
+    --tipbg:#182338;--tipink:#cdd9f5;--warnbg:#2a2213;--warnink:#e9d3ac}
+}
+@media print{
+  body{background:#fff}
+  header.hero{box-shadow:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .step,.lead,.beyond,.mock{break-inside:avoid;box-shadow:none}
+}
+</style>
+</head>
+<body>
+<header class="hero"><div class="hero-inner">
+  <span class="chip">Conversational Process Mining</span>
+  <h1>Claude Desktop: connect &amp; ask</h1>
+  <p>Add the Process Mining <b>MCP server</b> as a Connector in Claude Desktop, sign in with
+     OAuth, and start asking about your processes in plain language — with example queries to
+     get you going.</p>
+</div></header>
+
+<div class="wrap">
+
+  <div class="lead">
+    This is everything you need to <b>start working with Conversational Process Mining</b> from
+    Claude Desktop: add the connector, sign in through your OAuth provider, and ask. It assumes
+    an administrator has already enabled the MCP server (<b>guide 15</b>); for the concept and
+    what you can ask, see <b>guide 60</b>.
+  </div>
+
+  <section class="step">
+  <div class="step-head"><div class="num">1</div><h2>Before you start</h2></div>
+  <p class="body">This guide is the <b>user side</b> of Conversational Process Mining — connecting Claude Desktop to the Process Mining <b>MCP server</b>. A few things must already be true (an administrator handles the first three; see guide 15):</p>
+  <ul><li>The <b>MCP server is enabled</b> and reachable over <b>HTTPS</b> (e.g. <code>https://&lt;host&gt;:18493/mcp</code> or a proxied <code>https://pm.example.com/mcp</code>).</li><li>It is wired to your organisation's <b>OAuth provider</b> — the same sign-in you already use.</li><li>You have a <b>Process Mining account</b> that is enabled and <b>assigned at least one database connection</b>.</li><li>You have <b>Claude Desktop</b> installed and are signed in to Claude.</li></ul>
+  <div class="tip"><span class="k">Know your server URL.</span> Ask your administrator for the exact MCP URL (the direct <code>:18493/mcp</code> or the public proxy path). You'll paste it in the next step.</div>
+</section><section class="step">
+  <div class="step-head"><div class="num">2</div><h2>Add the Process Mining connector</h2></div>
+  <p class="body">Claude Desktop calls MCP servers <b>Connectors</b>. Add the Process Mining server as a custom connector once; it stays available afterwards.</p>
+  <div class="mock">
+      <table class="tbl">
+        <tr><th>#</th><th>In Claude Desktop</th></tr>
+        <tr><td>1</td><td>Open <b>Settings → Connectors</b>.</td></tr>
+        <tr><td>2</td><td>Click <b>Add custom connector</b>.</td></tr>
+        <tr><td>3</td><td><b>Name</b>: <code>Process Mining</code>.</td></tr>
+        <tr><td>4</td><td><b>URL</b>: the MCP endpoint your admin gave you, e.g. <code>https://&lt;host&gt;:18493/mcp</code>.</td></tr>
+        <tr><td>5</td><td>Click <b>Add</b> / <b>Save</b>, then <b>Connect</b>.</td></tr>
+      </table>
+      <p class="cap">Claude reads the server's <code>/.well-known/oauth-protected-resource</code>
+        document, discovers your OAuth provider, and opens its sign-in page.</p>
+    </div>
+</section><section class="step">
+  <div class="step-head"><div class="num">3</div><h2>Sign in with OAuth</h2></div>
+  <p class="body">Connecting triggers the standard OAuth flow — the same as signing in to any web app. Your database password is never involved.</p>
+  <div class="mock">
+      <pre class="calc">Connect ─▶ OAuth provider sign-in opens ─▶ you approve ─▶ Claude stores the token
+                                                     └─ the Process Mining tools appear</pre>
+      <p class="cap">After you approve, the connector shows as connected and its tools
+        (list_connections, get_process_map, find_journeys, …) become available in chats.</p>
+    </div>
+  <div class="tip"><span class="k">Signed in as you.</span> Whoever authenticates must match an enabled Process Mining user. Claude then sees exactly that user's assigned connections — nothing more. If sign-in fails or says no user matches, see Troubleshooting.</div>
+</section><section class="step">
+  <div class="step-head"><div class="num">4</div><h2>Enable it in a chat</h2></div>
+  <p class="body">Connectors are enabled per conversation. Start a new chat, switch the <b>Process Mining</b> connector on (the connector/tools control in the message box), and you're ready to ask. The first time the agent calls a tool, Claude may ask you to allow it — approve it to continue.</p>
+  <div class="tip"><span class="k">Reads freely, writes only notes.</span> Every Process Mining tool only reads, except <code>create_note</code> and <code>update_note</code>, which add or change notes as you (rate-limited and logged). If your client lets you set permissions per tool, keep approval on for those two and let the read tools run without asking.</div>
+</section><section class="step">
+  <div class="step-head"><div class="num">5</div><h2>Start asking — example queries</h2></div>
+  <p class="body">You never name the tools; ask in plain language and the agent picks them. Good openers, roughly in the order you'd explore a new process:</p>
+  <div class="mock">
+      <p class="cap"><b>Orient yourself</b></p>
+      <pre class="calc">"List my process-mining connections and the projects on each."
+"Which project has the most journeys?"
+"What do the meta attributes mean in project 1, and what date range does the data cover?"</pre>
+      <p class="cap"><b>Understand the process</b></p>
+      <pre class="calc">"Show me the process map for project 1 on connection Prod."
+"What are the ten most common paths, and how often does each happen?"
+"Which transitions are the slowest by median time?"</pre>
+      <p class="cap"><b>KPIs &amp; health</b></p>
+      <pre class="calc">"How many journeys in the last 30 days, and what's the process-goodness score?"
+"Give me the average and median end-to-end duration."</pre>
+      <p class="cap"><b>Drill down to real cases</b></p>
+      <pre class="calc">"List the five slowest cases that visited 'Payment Failed', with their paths."
+"Show me the full trace of the first one."</pre>
+      <p class="cap"><b>Notes &amp; review</b></p>
+      <pre class="calc">"What open notes are on this process, grouped by severity?"
+"Show me the shared URGENT and IMPORTANT notes, but not my personal ones."</pre>
+    </div>
+  <div class="tip"><span class="k">Name the connection and project.</span> When you have more than one (&ldquo;on connection <i>Prod</i>, project 1&rdquo;) so the agent doesn't have to guess.</div>
+</section><section class="step">
+  <div class="step-head"><div class="num">6</div><h2>Keep the conversation going</h2></div>
+  <p class="body">The value is in the follow-ups — each answer sets up the next question, and the agent chains the tools for you across the whole chat.</p>
+  <ul><li><b>Narrow it</b> — &ldquo;only March&rdquo;, &ldquo;just the cases where department = Finance&rdquo;, &ldquo;exclude journeys that hit <i>Cancelled</i>&rdquo;.</li><li><b>Compare</b> — &ldquo;how does the sample set compare with the full data?&rdquo;</li><li><b>Explain</b> — &ldquo;why is that transition slow — show me a few example cases&rdquo;.</li><li><b>Summarise</b> — &ldquo;write a short bottleneck summary I can paste into a ticket&rdquo;.</li></ul>
+</section><section class="step">
+  <div class="step-head"><div class="num">7</div><h2>Troubleshooting</h2></div>
+  <p class="body">If a connection or a query doesn't behave, it's almost always one of these:</p>
+  <div class="mock">
+      <table class="tbl">
+        <tr><th>Symptom</th><th>Likely cause / fix</th></tr>
+        <tr><td>Connector won't connect / keeps asking to sign in</td><td>The MCP server may be disabled or unreachable, or the OAuth settings are off. Ask your admin to check the <b>MCP Server</b> tab (guide 15) and press <b>Test provider</b>.</td></tr>
+        <tr><td>&ldquo;No enabled Process Mining user matches …&rdquo;</td><td>Your token's username doesn't match a Process Mining account. Ask your admin to create the user with that exact name (or align the <b>Username claim</b>, e.g. to email).</td></tr>
+        <tr><td>&ldquo;…not in the group required&rdquo;</td><td>Your account isn't in the OAuth provider group required for MCP access — ask your admin to add you.</td></tr>
+        <tr><td>&ldquo;Connection … is not assigned to you&rdquo;</td><td>That database connection isn't assigned to your user — ask your admin to assign it.</td></tr>
+        <tr><td>The agent won't call a tool</td><td>Make sure the <b>Process Mining</b> connector is switched on in this chat, and approve the tool call when Claude asks.</td></tr>
+      </table>
+    </div>
+  <div class="tip"><span class="k">Two-minute smoke test.</span> An admin can confirm the server from a shell: <code>curl -k https://&lt;host&gt;:18493/health</code> should return <code>{&quot;ok&quot;:true,&quot;enabled&quot;:true}</code>.</div>
+</section>
+
+  <div class="beyond">
+    <h2>Good to know</h2>
+    <ul>
+      <li><b>New to the idea?</b> Guide <b>60 · Working with an AI Agent</b> explains what Conversational Process Mining is and what you can ask, without the setup detail.</li>
+      <li><b>Admin/operator side.</b> Guide <b>15 · Installation of MCP Server</b> covers enabling the server and wiring it to your OAuth provider.</li>
+      <li><b>Other clients to follow.</b> Claude Desktop is the worked example; any client that supports remote HTTP MCP servers with OAuth connects the same way — point it at the same <code>…/mcp</code> URL.</li>
+    </ul>
+    <p class="note">Once connected, everything is a conversation — ask, read the answer, drill
+      in, and follow up.</p>
+  </div>
+
+  <footer>Process Mining Demonstrator · Suite — Conversational Process Mining with Claude Desktop</footer>
+</div>
+</body></html>

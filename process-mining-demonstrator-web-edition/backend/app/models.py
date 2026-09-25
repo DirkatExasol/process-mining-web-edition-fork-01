@@ -66,9 +66,10 @@ class ConnectionProfile(Base):
 
 
 class Project(Base):
-    projectId: str
+    projectId: int  # PROJECT_ID is a SMALLINT (an allocated integer)
     title: str
     description: str = ""
+    titleShort: str = ""  # human-readable code; '#'-prefix = aggregate detail, 'Σ' = high-level
 
 
 class StepInfo(Base):
@@ -88,6 +89,7 @@ class ProcessTransition(Base):
     toStep: str
     occurrences: int
     avgSecs: float | None = None
+    medianSecs: float | None = None
     minSecs: float | None = None
     maxSecs: float | None = None
     stdDevSecs: float | None = None
@@ -101,6 +103,7 @@ class ProcessTransition(Base):
             return float(self.occurrences)
         return {
             TransitionMetric.avgTime: self.avgSecs,
+            TransitionMetric.medianTime: self.medianSecs,
             TransitionMetric.minTime: self.minSecs,
             TransitionMetric.maxTime: self.maxSecs,
             TransitionMetric.stdDev: self.stdDevSecs,
@@ -147,6 +150,7 @@ class JourneyTimePoint(Base):
 class TransitionMetric(str, Enum):
     count = "Count"
     avgTime = "Avg Time"
+    medianTime = "Median Time"
     minTime = "Min Time"
     maxTime = "Max Time"
     stdDev = "Std Dev"
@@ -211,6 +215,15 @@ class FilterSpec(Base):
     meta1: str = ""
     meta2: str = ""
     meta3: str = ""
+    # List-based META value include/exclude (from the node "Meta Infos" panel), mirroring
+    # includedSteps/excludedSteps: a journey is kept when it has ≥1 event whose META_n is
+    # in the included set, and none whose META_n is in the excluded set.
+    includedMeta1: list[str] = Field(default_factory=list)
+    excludedMeta1: list[str] = Field(default_factory=list)
+    includedMeta2: list[str] = Field(default_factory=list)
+    excludedMeta2: list[str] = Field(default_factory=list)
+    includedMeta3: list[str] = Field(default_factory=list)
+    excludedMeta3: list[str] = Field(default_factory=list)
     minSteps: int = 0
     maxSteps: int = INT_MAX
     minJourneyTime: int = 0
@@ -230,6 +243,12 @@ class FilterGroup(Base):
     meta1: str = ""
     meta2: str = ""
     meta3: str = ""
+    includedMeta1: list[str] = Field(default_factory=list)
+    excludedMeta1: list[str] = Field(default_factory=list)
+    includedMeta2: list[str] = Field(default_factory=list)
+    excludedMeta2: list[str] = Field(default_factory=list)
+    includedMeta3: list[str] = Field(default_factory=list)
+    excludedMeta3: list[str] = Field(default_factory=list)
     minSteps: int = 0
     maxSteps: int = INT_MAX
     minJourneyTime: int = 0
@@ -347,6 +366,19 @@ class ProcessNote(Base):
 # ── Simulation ────────────────────────────────────────────────────────────────
 
 
+class EdgeDurationOverride(Base):
+    """A what-if override of one transition's (from→to) duration, for resource
+    analysis. ``meanSecs`` sets the transition's mean time outright; ``multiplier``
+    scales the observed mean (0.5 = twice the resources → half the time). If both are
+    given, ``meanSecs`` sets the level and ``multiplier`` then scales it. Either may be
+    omitted; an override that sets neither is a no-op."""
+
+    fromStep: str
+    toStep: str
+    multiplier: float | None = None
+    meanSecs: float | None = None
+
+
 class SimulationConfig(Base):
     journeyCount: int = 200
     startDate: datetime = Field(default_factory=datetime.now)
@@ -354,6 +386,12 @@ class SimulationConfig(Base):
     excludedSteps: list[str] = Field(default_factory=list)
     requiredSteps: list[str] = Field(default_factory=list)
     maxStepsPerJourney: int = 60
+    # What-if resource levers (direct time override). A per-step factor scales ALL of
+    # that step's outgoing transition durations (models resources dedicated to a step:
+    # 0.5 = twice the resources → half the time); per-edge overrides fine-tune single
+    # transitions. Empty = simulate the observed process unchanged.
+    stepResourceFactors: dict[str, float] = Field(default_factory=dict)
+    edgeOverrides: list[EdgeDurationOverride] = Field(default_factory=list)
 
 
 class SimulatedEvent(Base):
@@ -388,6 +426,7 @@ class SimulationResult(Base):
 class DurationStats(Base):
     minSecs: float | None = None
     avgSecs: float | None = None
+    medianSecs: float | None = None
     stdDevSecs: float | None = None
     maxSecs: float | None = None
 

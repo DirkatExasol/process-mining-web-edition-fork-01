@@ -111,9 +111,9 @@ const database: HelpTopic = {
 
 CREATE TABLE JOURNEYS (
   PROJECT_ID  VARCHAR(100) NOT NULL,
-  EVENT_ID    VARCHAR(200) NOT NULL,   -- one journey = rows sharing an EVENT_ID
+  EVENT_ID    HASHTYPE(16 BYTE) NOT NULL, -- MD5 id; one journey = rows sharing an EVENT_ID
   STEP        VARCHAR(200) NOT NULL,   -- activity name → a node in the map
-  STEP_ID     DECIMAL(18,0),           -- tie-breaker when EVENT_TIME is equal
+  STEP_ID     DECIMAL(18,0),           -- activity id of STEP (joins STEPS.STEP_ID)
   EVENT_TIME  TIMESTAMP    NOT NULL,   -- orders steps; drives date filters
   META_1      VARCHAR(500),
   META_2      VARCHAR(500),
@@ -123,6 +123,7 @@ CREATE TABLE JOURNEYS (
 CREATE TABLE STEPS (
   PROJECT_ID     VARCHAR(100) NOT NULL,
   STEP           VARCHAR(200) NOT NULL,
+  STEP_ID        DECIMAL(18,0),         -- stable activity id; JOURNEYS.STEP_ID matches it
   DESCRIPTION    VARCHAR(500),
   BG_COLOR       VARCHAR(50),          -- colour name or 6-digit hex (e.g. FF8000)
   FG_COLOR       VARCHAR(50),
@@ -1055,6 +1056,7 @@ const simulation: HelpTopic = {
         def('Start Date', 'The date assigned to the first simulated journey’s opening event. Subsequent events are timestamped relative to this anchor using the inter-arrival times and step durations.'),
         def('Max Steps per Journey', 'Hard cap on the number of steps per journey — prevents rework loops from running forever. If a journey hits the cap it is included as-is, with a potentially incomplete path. The default (60) suits most real-world processes.'),
         tip('If you see many journeys with exactly 60 steps in the Variants table, the Max Steps cap is being hit. Increase it if your process genuinely contains long rework loops, or add the looping step to the Excluded Steps list.'),
+        tip('The whole configuration is kept when you switch to another view and back — counts, dates, excluded/required steps, the resource levers and which sections are open. Nothing resets between visits, so you can move between Simulation, the charts and A/B Comparison without re-entering anything.'),
       ],
     },
     {
@@ -1063,6 +1065,16 @@ const simulation: HelpTopic = {
         def('Excluded steps', 'Removed from the Markov model entirely before simulation begins — all transitions to and from them are discarded. Use this to model a process improvement, e.g. removing a manual approval step to see the flow when it is automated away. Steps that become unreachable as a result are automatically excluded too, transitively.'),
         def('Required steps', 'A post-simulation filter: only journeys that visit every required step at least once are kept. The engine generates the full configured count and then discards those that do not qualify, so the reported total can be lower than the configured Journey Count if the required steps are rare.'),
         p('The two lists are mutually exclusive — a step chosen as excluded cannot also be required.'),
+      ],
+    },
+    {
+      heading: 'Resource levers — transition-time what-ifs',
+      body: [
+        p('Excluding a step models removing work. The resource levers model the other kind of change: keeping the process shape but altering how long parts of it take — to see the effect of throwing more (or fewer) resources at a step, without touching the database. The routing probabilities are untouched; only the durations change, and the whole graph — cycle time, bottlenecks, variant timing — responds.'),
+        def('Resources per step', 'A factor on the time of every transition leaving a step. Below 1 means more resources (faster); above 1 means fewer (slower). A factor of 0.5 on “Manual Review” says “double its capacity”, halving the time cases spend leaving that step; 2.0 says “halve its capacity”.'),
+        def('Transition time overrides', 'Change one from→to transition directly, for finer control than a whole step. Either × the observed mean (×0.5 = twice the resources on that specific hand-off) or set an absolute mean time in minutes when you know the target. A step’s resource factor still applies on top of an edge override, so the two compose.'),
+        p('Mechanically, each transition’s duration is drawn from its fitted lognormal distribution; a lever multiplies that draw. Because scaling a lognormal by a constant scales its mean by the same constant while preserving its shape, the spread and right-skew stay realistic — you are not collapsing every case to a single number, just shifting the whole distribution faster or slower. An absolute override re-centres the mean on your target and keeps the same relative spread.'),
+        tip('Run the unchanged process into one slot (Sim-A) and the what-if — with your levers — into the other (Sim-B), then select them as the A and B data sources in the Sampling section. A/B Comparison then quantifies the effect side by side, including a Process Similarity score. Levers that resolve to no change (a factor of 1, or an invalid value) are ignored.'),
       ],
     },
     {
@@ -1136,7 +1148,7 @@ avg ≈ 7 min, and a single-peaked (unimodal) cycle-time histogram.`,
         p('The simulator is a first-order Markov model: each routing decision depends only on the current step, not on what came before. If your real process has strong history-dependent routing — for example, cases rejected once behaving very differently on retry — the model will not capture this.'),
         ul(
           'Long-range dependencies and case attributes (META_1–3) are not modelled — there is no concept of a customer segment or region that influences routing.',
-          'Resource constraints and queues are not modelled. Cycle times are sampled independently per event; doubling volume does not increase waiting time.',
+          'Resource contention emerges only if you model it. The resource levers let you scale transition times directly (a per-step factor or per-edge override), but this is a direct what-if, not an emergent queue: cycle times are still sampled independently per event, so raising the Journey Count or inter-arrival rate alone does not increase waiting time. To study “more volume → longer waits”, set the levers yourself.',
           'The model calibrates from the visible graph only. If the active filter excludes date ranges or step types, the model reflects only that subset.',
           'Very rare transitions may have unreliable duration estimates — a standard deviation estimated from two or three observations is noisy.',
         ),
@@ -1401,7 +1413,15 @@ const integrationConsole: HelpTopic = {
         p('The Integration Console is a separate surface for loading event data into a database connection. It runs on its own port (the admin port + 10 — 8100 for HTTP, 8463 for HTTPS by default) and reuses the same sign-in as the main app. It is reachable by developers and administrators only (power users may not enter it).'),
         p('At its heart is an abstraction layer: pluggable extractors read some source (today, a file) and push the parsed records into the schema of the connection you are connected to — creating the process-mining tables as needed. You define two things and then run an import.'),
         def('Source type', 'A reusable recipe for parsing one file format: an example record plus the selectors that pull out the timestamp, case id, step and up to three meta fields — regular expressions for Text, or JSON/XML paths for semi-structured files.'),
-        def('Source', 'A concrete thing to import — currently a File (a path + encoding) linked to a source type.'),
+        def('Source', 'A concrete thing to import — a File (a path + encoding) linked to a source type, or an API Server - Event Receiver (see below).'),
+      ],
+    },
+    {
+      heading: 'API Server - Event Receiver',
+      body: [
+        p('Besides files, a source can be a live HTTP/HTTPS ingestion server that AI agents (or any client) POST journey entries to as JSON. Add one under Sources → + → API Server - Event Receiver: pick the destination connection, a project code (TITLE_SHORT — entries land in that project, created if new) and a free port from the pool. On save you are shown a bearer token once (only its hash is stored) — copy it then.'),
+        p('Each sink runs on its own port from a fixed pool (the admin port + 30 onwards — 8120–8129 by default; under Docker the published host port is that + 10000). POST a JSON object or an array to /ingest with header Authorization: Bearer <token>. Each entry needs eventId (the case / correlation id) and step; eventTime (ISO-8601, defaults to now) and meta1–3 are optional. Any unknown step is created automatically.'),
+        warn('The module is off by default — an administrator must enable “API Server - Event Receiver” in the admin interface (Event Receiver tab). While it is off, the ports stay open but return 503.'),
       ],
     },
     {
