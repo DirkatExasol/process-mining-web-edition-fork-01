@@ -32,7 +32,7 @@ STEPS = [
             "The <b>MCP server is enabled</b> and reachable over <b>HTTPS</b> (e.g. "
             "<code>https://&lt;host&gt;:18493/mcp</code> or a proxied "
             "<code>https://pm.example.com/mcp</code>).",
-            "It is wired to your organisation's <b>OAuth provider</b> (Authentik) — the same "
+            "It is wired to your organisation's <b>OAuth provider</b> — the same "
             "sign-in you already use.",
             "You have a <b>Process Mining account</b> that is enabled and <b>assigned at least "
             "one database connection</b>.",
@@ -66,7 +66,7 @@ STEPS = [
         "Connecting triggers the standard OAuth flow — the same as signing in to any web app. "
         "Your database password is never involved.",
         """<div class="mock">
-      <pre class="calc">Connect ─▶ Authentik sign-in opens ─▶ you approve ─▶ Claude stores the token
+      <pre class="calc">Connect ─▶ OAuth provider sign-in opens ─▶ you approve ─▶ Claude stores the token
                                                      └─ the Process Mining tools appear</pre>
       <p class="cap">After you approve, the connector shows as connected and its tools
         (list_connections, get_process_map, find_journeys, …) become available in chats.</p>
@@ -139,9 +139,9 @@ STEPS = [
         """<div class="mock">
       <table class="tbl">
         <tr><th>Symptom</th><th>Likely cause / fix</th></tr>
-        <tr><td>Connector won't connect / keeps asking to sign in</td><td>The MCP server may be disabled or unreachable, or the OAuth settings are off. Ask your admin to check the <b>MCP Server</b> tab (guide 15) and press <b>Test Authentik</b>.</td></tr>
+        <tr><td>Connector won't connect / keeps asking to sign in</td><td>The MCP server may be disabled or unreachable, or the OAuth settings are off. Ask your admin to check the <b>MCP Server</b> tab (guide 15) and press <b>Test provider</b>.</td></tr>
         <tr><td>&ldquo;No enabled Process Mining user matches …&rdquo;</td><td>Your token's username doesn't match a Process Mining account. Ask your admin to create the user with that exact name (or align the <b>Username claim</b>, e.g. to email).</td></tr>
-        <tr><td>&ldquo;…not in the group required&rdquo;</td><td>Your account isn't in the Authentik group required for MCP access — ask your admin to add you.</td></tr>
+        <tr><td>&ldquo;…not in the group required&rdquo;</td><td>Your account isn't in the OAuth provider group required for MCP access — ask your admin to add you.</td></tr>
         <tr><td>&ldquo;Connection … is not assigned to you&rdquo;</td><td>That database connection isn't assigned to your user — ask your admin to assign it.</td></tr>
         <tr><td>The agent won't call a tool</td><td>Make sure the <b>Process Mining</b> connector is switched on in this chat, and approve the tool call when Claude asks.</td></tr>
       </table>
@@ -157,7 +157,7 @@ BEYOND = [
     "<b>New to the idea?</b> Guide <b>60 · Working with an AI Agent</b> explains what "
     "Conversational Process Mining is and what you can ask, without the setup detail.",
     "<b>Admin/operator side.</b> Guide <b>15 · Installation of MCP Server</b> covers enabling "
-    "the server and wiring it to Authentik (Keycloak to follow).",
+    "the server and wiring it to your OAuth provider.",
     "<b>Other clients to follow.</b> Claude Desktop is the worked example; any client that "
     "supports remote HTTP MCP servers with OAuth connects the same way — point it at the same "
     "<code>…/mcp</code> URL.",
