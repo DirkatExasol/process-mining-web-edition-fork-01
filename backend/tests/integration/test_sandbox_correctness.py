@@ -367,3 +367,62 @@ def test_power_tools_require_the_power_role(repo, mcpmod):
     for tool in ("_tool_get_bottlenecks", "_tool_get_trend", "_tool_compare_segments"):
         with pytest.raises(mcpmod.ToolError):
             _run(getattr(mcpmod, tool)(plain, dict(_ARGS)))
+
+
+# ── "Everyone" tools + node occurrences ─────────────────────────────────────────
+
+def test_node_occurrences(repo):
+    res = _run(repo.db.execute(
+        "SELECT STEP, COUNT(*) FROM JOURNEYS WHERE PROJECT_ID = 1 "
+        "AND (SAMPLE_SET = 'ORIGINAL' OR SAMPLE_SET IS NULL) GROUP BY STEP"))
+    got = {r[0]: int(r[1]) for r in res.rows}
+    assert got == {"S01": 6, "S02": 7, "S03": 4, "S04": 5, "S05": 5,
+                   "S06": 5, "S07": 5, "S08": 5, "S09": 5, "S10": 6}
+
+
+def test_mcp_metadata(repo, mcpmod):
+    md = _run(mcpmod._tool_get_metadata(_USER, dict(_ARGS)))
+    assert md["metaTitles"] == {"meta1": "Region", "meta2": "Segment", "meta3": "Channel"}
+    assert set(md["steps"]) == {f"S{i:02d}" for i in range(1, 11)}
+    assert md["dateRange"]["from"].startswith("2026-01-05T09:00:00")
+    assert md["dateRange"]["to"].startswith("2026-03-01T10:50:00")   # P5 closes last
+
+
+def test_mcp_attribute_values(repo, mcpmod):
+    out = _run(mcpmod._tool_get_attribute_values(_USER, {**_ARGS, "meta": "all"}))
+    by_meta = {a["meta"]: {v["value"]: v["journeys"] for v in a["values"]} for a in out["attributes"]}
+    assert by_meta["meta1"] == {"EU": 3, "US": 3}
+    assert by_meta["meta2"] == {"Gold": 3, "Silver": 3}
+    assert by_meta["meta3"] == {"Web": 3, "App": 3}
+
+
+def test_mcp_process_map(repo, mcpmod):
+    g = _run(mcpmod._tool_get_process_map(_USER, dict(_ARGS)))
+    assert set(g["steps"]) == {f"S{i:02d}" for i in range(1, 11)}
+    edges = {(t["fromStep"], t["toStep"]): t for t in g["transitions"]}
+    assert len(edges) == 12
+    assert edges[("S08", "S09")]["occurrences"] == 5
+    assert abs(edges[("S08", "S09")]["avgSecs"] - 3600) < 1e-6
+    assert edges[("S01", "S02")]["occurrences"] == 6
+
+
+def test_mcp_get_journey(repo, mcpmod):
+    j = _run(mcpmod._tool_get_journey(_USER, {**_ARGS, "eventId": "P5"}))
+    assert j["stepCount"] == 11
+    assert abs(j["durationSecs"] - 6600) < 1e-6
+    assert j["meta"] == {"Region": "EU", "Segment": "Gold", "Channel": "App"}
+    steps = [e["step"] for e in j["events"]]
+    assert steps == ["S01", "S02", "S03", "S02", "S04", "S05", "S06", "S07", "S08", "S09", "S10"]
+
+
+def test_mcp_find_journey(repo, mcpmod, monkeypatch):
+    monkeypatch.setattr(mcpmod.store, "connections_for_user",
+                        lambda u: [_NS(id="sbx", name="Sandbox")])
+    out = _run(mcpmod._tool_find_journey(_USER, {"eventId": "P5"}))
+    assert len(out["matches"]) == 1
+    m = out["matches"][0]
+    assert m["projectId"] == 1 and m["stepCount"] == 11
+    assert abs(m["durationSecs"] - 6600) < 1e-6
+    # An id that exists nowhere → no matches.
+    none = _run(mcpmod._tool_find_journey(_USER, {"eventId": "NOPE-999"}))
+    assert none["matches"] == []
