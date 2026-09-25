@@ -169,6 +169,15 @@ app licensed. You can also drop a newer `data/license.json` in by hand, or uploa
 one from the admin panel's **App Control** tab, at any time. The private signing
 key lives only in an offline issuer, so licenses cannot be forged.
 
+> **Current license file — [`Program_License_File/license.json`](Program_License_File/license.json).**
+> A ready-to-use signed program license is kept in the repository at
+> `Program_License_File/`. It is a distribution copy (the app reads its live license from
+> `data/license.json`), so to license an install either **copy it to `data/license.json`**
+> or **upload it in App Control → License**. It carries only the public license terms
+> (licensee, issued/expires dates, version) and its Ed25519 signature — no secret — so it is
+> safe to keep in version control. Replace it with a newer file from the same directory when
+> the `expires` date approaches.
+
 ## 🚀 The Launcher — your starting point
 
 > [!TIP]
