@@ -28,3 +28,6 @@ Background Images/
 # The published PDF is committed at docs/Process-Mining-Demonstrator-Manual.pdf.
 docs/manual/manual.html
 docs/manual/*.pdf
+
+# Security & conformance statement — kept out of version control (generated/attested artifact).
+SECURITY.md
