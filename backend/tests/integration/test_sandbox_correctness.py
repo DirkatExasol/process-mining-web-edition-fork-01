@@ -186,3 +186,109 @@ def test_happy_path_conformance(repo):
     variants = _run(repo.load_journey_paths(str(PID), F0, 50))
     hp = HappyPath(name="full", nodes=[HappyPathNode(step=s) for s in STEPS])
     assert abs(happy_path_conformance(hp, variants) - 0.7963) < 0.001
+
+
+# ── Filters (F1–F14): count + variant multiset per surviving set ────────────────
+
+from datetime import datetime as _dt
+
+def _fs(**kw):
+    return FilterSpec(sampleSet=SampleSet.original, **kw)
+
+# name -> (FilterSpec, expected journey count, sorted variant-count multiset)
+FILTERS = {
+    "F1_fromDate":   (_fs(fromDate=_dt(2026, 2, 1)),                 4, [1, 1, 1, 1]),
+    "F2_toDate":     (_fs(toDate=_dt(2026, 1, 31)),                  2, [2]),
+    "F3_incl_S03":   (_fs(includedSteps=["S03"]),                    4, [1, 3]),
+    "F4_excl_S03":   (_fs(excludedSteps=["S03"]),                    2, [1, 1]),
+    "F5_incl_S07":   (_fs(includedSteps=["S07"]),                    5, [1, 1, 3]),
+    "F6_meta1_EU":   (_fs(meta1="EU"),                               3, [1, 2]),
+    "F7_meta3_App":  (_fs(meta3="App"),                              3, [1, 1, 1]),
+    "F8_minSteps10": (_fs(minSteps=10),                              4, [1, 3]),
+    "F9_maxSteps9":  (_fs(maxSteps=9),                               2, [1, 1]),
+    "F10_minTime":   (_fs(minJourneyTime=5000),                      5, [1, 1, 3]),
+    "F11_maxTime":   (_fs(maxJourneyTime=5700),                      4, [1, 1, 2]),
+    "F12_minScore":  (_fs(minScore=55),                              4, [1, 3]),
+    "F13_maxScore":  (_fs(maxScore=52),                              2, [1, 1]),
+    "F14_date_meta": (_fs(fromDate=_dt(2026, 2, 1), meta1="EU"),     2, [1, 1]),
+}
+
+
+@pytest.mark.parametrize("name", list(FILTERS))
+def test_filter_count_and_variants(repo, name):
+    spec, exp_count, exp_variants = FILTERS[name]
+    assert _run(repo.load_journey_count(str(PID), spec)) == exp_count, f"{name} count"
+    variants = _run(repo.load_journey_paths(str(PID), spec, 50))
+    assert sorted(v.journeyCount for v in variants) == exp_variants, f"{name} variants"
+
+
+def test_filter_worked_duration_stats(repo):
+    # F3 (includedSteps=[S03] -> P1,P2,P3,P5): durations {5100,5640,6240,6600}.
+    d = _run(repo.load_journey_duration_stats(str(PID), _fs(includedSteps=["S03"])))
+    assert abs(d.minSecs - 5100) < 1e-6 and abs(d.maxSecs - 6600) < 1e-6
+    assert abs(d.avgSecs - 5895) < 1e-6 and abs(d.medianSecs - 5940) < 1e-6
+    assert abs(d.stdDevSecs - 661.59) < 0.05
+    # F1 (date window -> P3,P4,P5,P6, whole journeys): durations {6240,5640,6600,960}.
+    d2 = _run(repo.load_journey_duration_stats(str(PID), _fs(fromDate=_dt(2026, 2, 1))))
+    assert abs(d2.minSecs - 960) < 1e-6 and abs(d2.maxSecs - 6600) < 1e-6
+    assert abs(d2.avgSecs - 4860) < 1e-6 and abs(d2.medianSecs - 5940) < 1e-6
+
+
+# ── MCP-surface equivalence (REST == MCP through the tool handlers) ─────────────
+
+import importlib.util as _ilu
+from pathlib import Path as _Path
+from types import SimpleNamespace as _NS
+
+_USER = _NS(username="tester", is_enabled=True, is_power=True, is_admin=True)
+
+
+@pytest.fixture(scope="module")
+def mcpmod(repo):
+    spec = _ilu.spec_from_file_location(
+        "mcp_server_it", _Path(__file__).resolve().parents[3] / "mcp" / "server.py")
+    m = _ilu.module_from_spec(spec); spec.loader.exec_module(m)
+
+    class _Ctx:
+        def __init__(self, username, connection_id, sample):
+            self._sample = sample
+        async def __aenter__(self):
+            repo.active_sample_set = self._sample
+            return repo
+        async def __aexit__(self, *exc):
+            return None
+    m._Repo = _Ctx
+    return m
+
+
+_ARGS = {"connectionId": "sbx", "projectId": PID}
+
+
+def test_mcp_transitions_equal_rest(repo, mcpmod):
+    mcp_rows = _run(mcpmod._tool_get_transition_metrics(_USER, dict(_ARGS)))
+    rest = {(t.fromStep, t.toStep): t for t in _run(repo.load_transitions(str(PID), F0))}
+    assert len(mcp_rows) == len(rest)
+    for row in mcp_rows:
+        t = rest[(row["fromStep"], row["toStep"])]
+        assert row["occurrences"] == t.occurrences
+        assert abs(row["avgSecs"] - t.avgSecs) < 1e-6
+        assert abs((row["medianSecs"] or 0) - (t.medianSecs or 0)) < 1e-6
+        assert abs((row["stdDevSecs"] or 0) - (t.stdDevSecs or 0)) < 1e-6
+
+
+def test_mcp_statistics_equal_rest_raw_goodness(repo, mcpmod):
+    stats = _run(mcpmod._tool_get_statistics(_USER, dict(_ARGS)))
+    assert stats["journeyCount"] == _run(repo.load_journey_count(str(PID), F0))
+    raw, _ = _run(repo.load_process_goodness(str(PID), F0))
+    # MCP get_statistics returns the RAW goodness (no coverage penalty) — §11 finding.
+    assert abs(stats["processGoodness"] - raw) < 1e-6
+    d = _run(repo.load_journey_duration_stats(str(PID), F0))
+    assert abs(stats["durations"]["medianSecs"] - d.medianSecs) < 1e-6
+
+
+def test_mcp_variants_equal_rest_under_filter(repo, mcpmod):
+    args = {**_ARGS, "includedSteps": ["S03"]}
+    mcp_v = _run(mcpmod._tool_get_variants(_USER, args))
+    rest_v = _run(repo.load_journey_paths(str(PID), _fs(includedSteps=["S03"]), 100))
+    assert sorted(v["journeyCount"] for v in mcp_v) == sorted(v.journeyCount for v in rest_v)
+    assert sum(v["journeyCount"] for v in mcp_v) == 4
