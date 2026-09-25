@@ -8,6 +8,9 @@
 #     a runner that allows privileged/dind. If your runners don't, give that job
 #     a matching `tags:` or swap it for Kaniko — the rest of the pipeline is
 #     unaffected.
+#   * `correctness` runs a disposable Exasol Nano as a service container, so it
+#     needs a runner that permits services. It provisions and drops its own schema
+#     and never touches other data.
 
 stages: [lint, test, build]
 
@@ -80,9 +83,9 @@ backend:
     paths: [.cache/pip]
   script:
     - pip install -r requirements-dev.txt
-    # Same invocation as ./test.sh backend — run from backend/ so pytest.ini
-    # (testpaths=tests) and the app package resolve as they do locally.
-    - cd backend && python -m pytest
+    # Fast unit suite (no DB). Integration tests are excluded here and run in the
+    # `correctness` job against a live Exasol Nano.
+    - cd backend && python -m pytest -m "not integration"
 
 frontend:
   stage: test
@@ -100,6 +103,44 @@ frontend:
     # so a type error fails CI just as it would break a real build.
     - npm run build
     - npm test
+
+correctness:
+  stage: test
+  image: python:3.13-slim
+  # A disposable Exasol Nano (multi-arch: ARM64 + x86) as a service, discarded with
+  # the job. Needs a runner that allows service containers (see the header note).
+  services:
+    - name: exasol/nano:latest
+      alias: exasol
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+    PMW_SANDBOX_HOST: exasol
+    PMW_SANDBOX_PORT: "8563"
+    PMW_SANDBOX_USER: sys
+    PMW_SANDBOX_PASSWORD: exasol
+  cache:
+    key:
+      files: [requirements-dev.txt]
+    paths: [.cache/pip]
+  script:
+    - pip install -r requirements-dev.txt
+    # Wait for Exasol Nano to accept SQL (it boots in parallel with this job).
+    - |
+      python - <<'PY'
+      import time, sys, pyexasol
+      for _ in range(60):
+          try:
+              c = pyexasol.connect(dsn="exasol:8563", user="sys", password="exasol",
+                                   encryption=True, websocket_sslopt={"cert_reqs": 0})
+              c.execute("SELECT 1"); c.close(); print("exasol ready"); break
+          except Exception as e:
+              print("waiting for exasol:", str(e)[:80]); time.sleep(5)
+      else:
+          sys.exit("Exasol Nano did not become ready in time")
+      PY
+    # Correctness suite: provisions its own throwaway schema, ingests the fixture,
+    # asserts every metric against the calibrated ground truth (docs/CORRECTNESS-TEST-PLAN.md).
+    - cd backend && python -m pytest -m integration
 
 # ── build stage ───────────────────────────────────────────────────────────────
 

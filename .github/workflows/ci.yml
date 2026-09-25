@@ -76,10 +76,55 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
       - name: pytest
-        # Same invocation as ./test.sh backend — run from backend/ so pytest.ini
-        # (testpaths=tests) and the app package resolve as they do locally.
+        # Fast unit suite (no DB). Integration tests are excluded here and run in
+        # the `correctness` job against a live Exasol Nano.
         working-directory: backend
-        run: python -m pytest
+        run: python -m pytest -m "not integration"
+
+  correctness:
+    name: Correctness tests (Exasol Nano)
+    runs-on: ubuntu-latest
+    # A disposable Exasol Nano (multi-arch: ARM64 + x86) service container, mapped to
+    # localhost and discarded with the job. The tests provision their own throwaway
+    # schema, ingest the fixture, and assert every metric against the calibrated
+    # ground truth (docs/CORRECTNESS-TEST-PLAN.md) — no other data is touched.
+    services:
+      exasol:
+        image: exasol/nano:latest
+        ports:
+          - 8563:8563
+    env:
+      PMW_SANDBOX_HOST: 127.0.0.1
+      PMW_SANDBOX_PORT: '8563'
+      PMW_SANDBOX_USER: sys
+      PMW_SANDBOX_PASSWORD: exasol
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Wait for Exasol Nano
+        # It boots in parallel with the job; poll until it accepts SQL.
+        run: |
+          python - <<'PY'
+          import time, sys, pyexasol
+          for _ in range(60):
+              try:
+                  c = pyexasol.connect(dsn="127.0.0.1:8563", user="sys", password="exasol",
+                                       encryption=True, websocket_sslopt={"cert_reqs": 0})
+                  c.execute("SELECT 1"); c.close(); print("exasol ready"); break
+              except Exception as e:
+                  print("waiting for exasol:", str(e)[:80]); time.sleep(5)
+          else:
+              sys.exit("Exasol Nano did not become ready in time")
+          PY
+      - name: Correctness (pytest -m integration)
+        working-directory: backend
+        run: python -m pytest -m integration
 
   frontend:
     name: Frontend build + tests (tsc, vite, vitest)
