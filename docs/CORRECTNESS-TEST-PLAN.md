@@ -118,8 +118,9 @@ interpolation.)
   (3·1 + 7/9 + 8/9 + 1/9)/6 = **0.7963 (79.63%)**. (Confirmed by running
   `analytics.happy_path_conformance` on the fixture.)
 - **Process goodness (raw)** = AVG over journeys of `total_score/√path_length − 0.01·duration_s`
-  = **−34.5996** (baseline). REST applies a coverage penalty `raw·(filtered/total)^0.5`;
-  **MCP returns the raw value** → they agree only when unfiltered (see §7 finding).
+  = **−34.5996** (baseline). Both REST and MCP apply the coverage penalty
+  `raw·(filtered/total)^0.5`, so at baseline goodness == raw and under a filter it is the
+  penalised value on both surfaces (see the §11 finding — now resolved).
 
 ---
 
@@ -278,10 +279,11 @@ queries only — no schema/table/data touched).
 | **Process goodness (raw)** | **−34.5996** baseline (`total_score/√len − 0.01·dur`, averaged) | source formula + Python |
 
 **Findings (not just calibration):**
-- **REST ≠ MCP for goodness under filters** — REST applies the coverage penalty
-  `raw·(filtered/total)^0.5`; MCP `get_statistics` returns **raw**. They agree only unfiltered.
-  Decision needed: make MCP apply coverage, or document the divergence (and relax the §7
-  equivalence check for goodness).
+- **REST vs MCP goodness under filters — RESOLVED.** Calibration found that REST applied the
+  coverage penalty `raw·(filtered/total)^0.5` while MCP `get_statistics` returned the raw
+  value, so they diverged under a filter. Fixed: `get_statistics` now applies the same penalty
+  (total = the project's unfiltered journey count on the sample set), so REST == MCP everywhere.
+  An integration test asserts equality at baseline *and* under a filter.
 
 **Decisions validated by running them:**
 - **D3 (MCP auth):** an in-process stub-OIDC RS256 keypair drives the real `_authenticate`

@@ -276,14 +276,26 @@ def test_mcp_transitions_equal_rest(repo, mcpmod):
         assert abs((row["stdDevSecs"] or 0) - (t.stdDevSecs or 0)) < 1e-6
 
 
-def test_mcp_statistics_equal_rest_raw_goodness(repo, mcpmod):
+def test_mcp_statistics_applies_goodness_coverage_like_rest(repo, mcpmod):
+    from app.services.analytics import apply_goodness_coverage
+    total = _run(repo.load_journey_count(str(PID), F0))
+    # Baseline: filtered == total → coverage factor 1 → MCP goodness == raw.
     stats = _run(mcpmod._tool_get_statistics(_USER, dict(_ARGS)))
-    assert stats["journeyCount"] == _run(repo.load_journey_count(str(PID), F0))
-    raw, _ = _run(repo.load_process_goodness(str(PID), F0))
-    # MCP get_statistics returns the RAW goodness (no coverage penalty) — §11 finding.
-    assert abs(stats["processGoodness"] - raw) < 1e-6
+    assert stats["journeyCount"] == total
+    raw0, filt0 = _run(repo.load_process_goodness(str(PID), F0))
+    assert abs(stats["processGoodness"] - apply_goodness_coverage(raw0, filt0, total)) < 1e-6
     d = _run(repo.load_journey_duration_stats(str(PID), F0))
     assert abs(stats["durations"]["medianSecs"] - d.medianSecs) < 1e-6
+
+    # Under a filter (P1,P2,P3,P5 -> 4 of 6): MCP now applies the same coverage penalty
+    # as REST, so its goodness is the penalised value, not the raw one.
+    fargs = {**_ARGS, "includedSteps": ["S03"]}
+    fspec = _fs(includedSteps=["S03"])
+    fstats = _run(mcpmod._tool_get_statistics(_USER, fargs))
+    raw, filt = _run(repo.load_process_goodness(str(PID), fspec))
+    rest_goodness = apply_goodness_coverage(raw, filt, total)
+    assert abs(fstats["processGoodness"] - rest_goodness) < 1e-6
+    assert abs(fstats["processGoodness"] - raw) > 1e-6            # differs from raw (penalised)
 
 
 def test_mcp_variants_equal_rest_under_filter(repo, mcpmod):

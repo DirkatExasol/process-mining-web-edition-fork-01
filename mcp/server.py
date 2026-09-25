@@ -54,6 +54,7 @@ from app.config import (  # noqa: E402
 from app.db.analysis import MAX_RULES, META_COLUMNS, TREND_UNITS, Analysis, Rule  # noqa: E402
 from app.db.manager import DatabaseManager, friendly_error  # noqa: E402
 from app.db.repository import JOURNEY_ORDERS, ProcessRepository  # noqa: E402
+from app.services.analytics import apply_goodness_coverage  # noqa: E402
 from app.models import (  # noqa: E402
     NOTE_IMPORTANCE,
     FilterSnapshot,
@@ -376,10 +377,15 @@ async def _tool_get_statistics(user, args) -> Any:
         count = await repo.load_journey_count(pid, spec)
         durations = await repo.load_journey_duration_stats(pid, spec)
         goodness = await repo.load_process_goodness(pid, spec)
+        # Apply the app's coverage penalty (raw × (filtered/total)^0.5) so a heavily
+        # filtered view is penalised the same way here as in the app — total is the
+        # project's unfiltered journey count on the same sample set.
+        total = await repo.load_journey_count(pid, FilterSpec(sampleSet=spec.sampleSet))
         return {
             "journeyCount": count,
             "durations": _dump(durations),
-            "processGoodness": None if goodness is None else goodness[0],
+            "processGoodness": (None if goodness is None
+                                else apply_goodness_coverage(goodness[0], goodness[1], total)),
         }
 
 
