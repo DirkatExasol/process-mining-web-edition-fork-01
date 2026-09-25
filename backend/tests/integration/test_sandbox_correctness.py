@@ -507,3 +507,56 @@ def test_in_db_sampling_invariants(repo):
         project_id="1", count=10, method="random", sample_set=S2))
     assert r2["ok"] and r2["journeys"] == 6, r2
     _run(repo.delete_sample("1", S2))
+
+
+# ── Simulation invariants (seeded Monte-Carlo over the observed graph) ───────────
+
+import random as _rnd
+from collections import defaultdict as _dd
+from app.services import simulation as _sim
+from app.models import SimulationConfig
+
+
+def _sim_edges(result):
+    return {(t.fromStep, t.toStep): t for t in result.simProcessGraph.transitions}
+
+
+def test_simulation_structural_invariants(repo):
+    graph = _run(repo.load_graph("1", F0))
+    _rnd.seed(20260925)
+    cfg = SimulationConfig(journeyCount=200, maxStepsPerJourney=60)
+    res = _sim.simulate(graph, graph.steps, cfg)
+
+    assert res.totalJourneys == 200 and len(res.cycleTimes) == 200
+    reachable = {t.toStep for t in graph.transitions} | {t.fromStep for t in graph.transitions}
+    seq = _dd(list)
+    for e in res.events:
+        seq[e.journeyId].append((e.timestamp, e.step))
+    for evs in seq.values():
+        evs.sort()
+        assert evs[0][1] == "S01"                                     # always starts at S01
+        # ends at the terminal S10, or was cut at the max-steps cap
+        assert evs[-1][1] == "S10" or len(evs) == cfg.maxStepsPerJourney + 1
+        assert all(step in reachable for _, step in evs)              # only observed steps
+
+    assert res.minCycleTimeSecs > 0
+    assert res.minCycleTimeSecs <= res.avgCycleTimeSecs <= res.maxCycleTimeSecs
+    assert res.stdDevCycleTimeSecs >= 0
+
+    # σ=0 edge (S08->S09, all observed gaps == 3600) is deterministic in the sim log.
+    e = _sim_edges(res)[("S08", "S09")]
+    assert abs(e.avgSecs - 3600) < 1e-6
+    assert abs(e.minSecs - 3600) < 1e-6 and abs(e.maxSecs - 3600) < 1e-6
+
+
+def test_simulation_resource_lever_exact_on_sigma0_edge(repo):
+    graph = _run(repo.load_graph("1", F0))
+    _rnd.seed(1)
+    # A 0.5 resource factor on S08 halves its outgoing S08->S09 time (3600 -> 1800),
+    # exactly, because that edge has zero variance.
+    cfg = SimulationConfig(journeyCount=200, maxStepsPerJourney=60,
+                           stepResourceFactors={"S08": 0.5})
+    res = _sim.simulate(graph, graph.steps, cfg)
+    e = _sim_edges(res)[("S08", "S09")]
+    assert abs(e.avgSecs - 1800) < 1e-6
+    assert abs(e.minSecs - 1800) < 1e-6 and abs(e.maxSecs - 1800) < 1e-6
