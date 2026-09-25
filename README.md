@@ -1550,13 +1550,15 @@ continuous updates (the table is stale until rebuilt).
 
 ## Tests
 
-The suite has two parts: pure model & simulation logic (no database required) and
-a UI/launch smoke check. It is split across the two tech stacks.
+The suite has three parts: pure model & simulation logic and a UI/launch smoke check (both
+need no database), plus a database-backed **correctness** suite that runs against a live
+Exasol. The unit tiers are split across the two tech stacks; the correctness tier is opt-in.
 
 | Target | Framework | What it covers |
 |---|---|---|
 | **Backend** (`backend/tests/`) | pytest | Pure model, simulation, analytics, backup, SQL-builder and security (users/certs/TLS) logic — no Exasol connection. MCP: `test_mcp.py` (dispatch, auth, read tools), `test_mcp_notes_write.py` (security of the note-writing tools: validation, authorship, visibility, owner-only fields, append-only threads, SQL-injection escaping, rate limit, audit), `test_mcp_analysis_tools.py` (power-user gating, lookups, analysis SQL safety), `test_display_time.py` (display-timezone stamps) |
 | **Frontend** (`frontend/web/src/**/*.test.ts`) | Vitest + Testing Library | Ported pure TypeScript (layout, colours, formatting, model helpers) and a component render smoke test |
+| **Correctness** (`backend/tests/integration/`) | pytest + **Exasol Nano** | End-to-end metric correctness against a live database, checked against an independently hand-computed ground truth (a 10-step fixture). Provisions a throwaway schema, ingests via both direct load and the real `/ingest` sink, then asserts every metric — baseline **and** all filters (count, variants, transitions, durations, goodness, happy-path), the MCP power tools (bottlenecks, trend, outcome drivers, conformance, segment compare), REST↔MCP equivalence, materialized == live transitions, in-DB == app-side sampling, and simulation invariants. Opt-in via the `integration` marker; auto-skips when no Exasol is reachable. See [`docs/CORRECTNESS-TEST-PLAN.md`](docs/CORRECTNESS-TEST-PLAN.md). |
 
 Run everything (installs test deps on first run):
 
@@ -1569,14 +1571,22 @@ Run everything (installs test deps on first run):
 Or invoke each stack directly:
 
 ```bash
-# backend
+# backend — unit tiers (DB-free); the correctness tier auto-skips without an Exasol
 .venv/bin/pip install -r requirements-dev.txt   # once
-cd backend && ../.venv/bin/python -m pytest
+cd backend && ../.venv/bin/python -m pytest -m "not integration"
+
+# correctness tier — needs a reachable Exasol (defaults to Exasol Nano at 127.0.0.1:8563,
+# sys/exasol; override with PMW_SANDBOX_HOST / _PORT / _USER / _PASSWORD)
+cd backend && ../.venv/bin/python -m pytest -m integration
 
 # frontend
 cd frontend/web && npm test        # single run
 cd frontend/web && npm run test:watch
 ```
+
+In CI both the unit tiers and the correctness tier run: the backend job runs
+`-m "not integration"`, and a dedicated `correctness` job starts a disposable
+**Exasol Nano** (ARM64 + x86) service and runs `-m integration`.
 
 Both runners are **verbose by default** — pytest lists each test with its
 outcome and the ten slowest tests, and Vitest prints every `suite > test` name
