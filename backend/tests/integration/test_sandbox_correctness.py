@@ -292,3 +292,78 @@ def test_mcp_variants_equal_rest_under_filter(repo, mcpmod):
     rest_v = _run(repo.load_journey_paths(str(PID), _fs(includedSteps=["S03"]), 100))
     assert sorted(v["journeyCount"] for v in mcp_v) == sorted(v.journeyCount for v in rest_v)
     assert sum(v["journeyCount"] for v in mcp_v) == 4
+
+
+# ── Deeper-analysis power tools (MCP-only; exact values from §5) ─────────────────
+
+def test_mcp_bottlenecks(repo, mcpmod):
+    out = _run(mcpmod._tool_get_bottlenecks(_USER, dict(_ARGS)))
+    assert abs(out["totalWaitSecs"] - 30180) < 1e-6                 # Σ = Σ journey durations
+    wait = {(r["fromStep"], r["toStep"]): r["totalWaitSecs"] for r in out["byTotalWaitTime"]}
+    assert wait[("S08", "S09")] == 18000                            # invoice→payment dominates
+    assert out["byTotalWaitTime"][0]["fromStep"] == "S08"          # ranked #1
+    for edge, w in {("S01", "S02"): 1800, ("S03", "S04"): 1800, ("S04", "S05"): 1800,
+                    ("S07", "S08"): 1500, ("S05", "S06"): 900}.items():
+        assert wait[edge] == w, edge
+    rework = {r["step"]: (r["journeys"], r["extraVisits"]) for r in out["rework"]}
+    assert rework == {"S02": (1, 1)}                                # S02 repeats once, in P5
+    assert out["selfLoops"] == []
+
+
+def test_mcp_trend_by_month(repo, mcpmod):
+    out = _run(mcpmod._tool_get_trend(_USER, {**_ARGS, "granularity": "month"}))
+    by = {p["period"]: p for p in out["periods"]}
+    exp = {"2026-01-01": (2, 5370, 5370), "2026-02-01": (2, 5940, 5940),
+           "2026-03-01": (2, 3780, 3780)}
+    assert set(by) == set(exp)
+    for period, (n, avg, med) in exp.items():
+        p = by[period]
+        assert p["journeys"] == n
+        assert abs(p["avgDurationSecs"] - avg) < 1e-6
+        assert abs(p["medianDurationSecs"] - med) < 1e-6
+
+
+def test_mcp_outcome_drivers_reach_ship(repo, mcpmod):
+    # minSupport=1: the default (30) would filter out every factor on a 6-journey fixture.
+    out = _run(mcpmod._tool_get_outcome_drivers(
+        _USER, {**_ARGS, "outcomeSteps": ["S07"], "minSupport": 1}))
+    assert out["journeys"] == 6 and out["outcomeJourneys"] == 5
+    assert abs(out["outcomeRate"] - 0.8333) < 1e-4
+    ups = {a["value"]: a for a in out["raisesOutcome"]["attributes"]}
+    downs = {a["value"]: a for a in out["lowersOutcome"]["attributes"]}
+    assert abs(ups["EU"]["outcomeRate"] - 1.0) < 1e-6 and abs(ups["EU"]["lift"] - 1.2) < 1e-3
+    assert abs(downs["US"]["outcomeRate"] - 0.6667) < 1e-4 and abs(downs["US"]["lift"] - 0.8) < 1e-3
+
+
+def test_mcp_check_conformance(repo, mcpmod):
+    rules = [
+        {"type": "forbidden", "step": "S03"},
+        {"type": "requires", "step": "S04"},
+        {"type": "precedes", "before": "S03", "after": "S04"},
+        {"type": "max_duration", "maxSecs": 6000},
+        {"type": "max_gap", "fromStep": "S08", "toStep": "S09", "maxSecs": 3000},
+    ]
+    out = _run(mcpmod._tool_check_conformance(_USER, {**_ARGS, "rules": rules}))
+    assert out["journeysChecked"] == 6
+    got = [r["violations"] for r in out["rules"]]
+    assert got == [4, 1, 1, 2, 5]
+
+
+def test_mcp_compare_segments_eu_vs_us(repo, mcpmod):
+    out = _run(mcpmod._tool_compare_segments(_USER, {
+        **_ARGS, "segmentA": {"meta1": "EU", "label": "EU"},
+        "segmentB": {"meta1": "US", "label": "US"}}))
+    eu, us = out["segments"]
+    assert eu["label"] == "EU" and eu["journeyCount"] == 3
+    assert abs(eu["durations"]["avgSecs"] - 5980) < 1e-6
+    assert abs(eu["durations"]["medianSecs"] - 6240) < 1e-6
+    assert us["label"] == "US" and us["journeyCount"] == 3
+    assert abs(us["durations"]["avgSecs"] - 4080) < 1e-6
+    assert abs(us["durations"]["medianSecs"] - 5640) < 1e-6
+
+
+def test_power_tools_require_the_power_role(repo, mcpmod):
+    plain = _NS(username="plain", is_enabled=True, is_power=False, is_admin=False)
+    for tool in ("_tool_get_bottlenecks", "_tool_get_trend", "_tool_compare_segments"):
+        with pytest.raises(mcpmod.ToolError):
+            _run(getattr(mcpmod, tool)(plain, dict(_ARGS)))
