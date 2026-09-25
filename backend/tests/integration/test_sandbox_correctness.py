@@ -426,3 +426,84 @@ def test_mcp_find_journey(repo, mcpmod, monkeypatch):
     # An id that exists nowhere → no matches.
     none = _run(mcpmod._tool_find_journey(_USER, {"eventId": "NOPE-999"}))
     assert none["matches"] == []
+
+
+# ── Mode equivalence & sampling invariants ──────────────────────────────────────
+
+from app.services.analytics import random_sample
+
+
+def _counts_by_id(repo, where):
+    res = _run(repo.db.execute(
+        f"SELECT EVENT_ID, COUNT(*) FROM JOURNEYS WHERE PROJECT_ID = 1 AND {where} GROUP BY EVENT_ID"))
+    return {r[0]: int(r[1]) for r in res.rows}
+
+
+_ORIG = "(SAMPLE_SET = 'ORIGINAL' OR SAMPLE_SET IS NULL)"
+
+
+def test_materialized_transitions_equal_live(repo):
+    live = {(t.fromStep, t.toStep): t for t in _run(repo.load_transitions("1", F0))}
+    r = _run(schema_ddl.rebuild_materialized_transitions(
+        host=HOST, port=PORT, username=USER, password=PW, schema=SCHEMA,
+        use_tls=True, cert_mode="insecure"))
+    assert r["ok"], r
+    repo.db.use_materialized_transitions = True
+    try:
+        mat = {(t.fromStep, t.toStep): t for t in _run(repo.load_transitions("1", F0))}
+    finally:
+        repo.db.use_materialized_transitions = False
+    assert set(mat) == set(live)
+    for edge, lt in live.items():
+        mt = mat[edge]
+        assert mt.occurrences == lt.occurrences, edge
+        assert abs(mt.avgSecs - lt.avgSecs) < 1e-6, edge
+        assert abs((mt.medianSecs or 0) - (lt.medianSecs or 0)) < 1e-6, edge
+        assert abs((mt.stdDevSecs or 0) - (lt.stdDevSecs or 0)) < 1e-6, edge
+        assert abs(mt.minSecs - lt.minSecs) < 1e-6 and abs(mt.maxSecs - lt.maxSecs) < 1e-6, edge
+
+
+def _assert_sample_invariants(repo, slot_sql, n):
+    orig = _counts_by_id(repo, _ORIG)
+    samp = _counts_by_id(repo, slot_sql)
+    assert len(samp) == n
+    assert set(samp) <= set(orig)                      # subset of ORIGINAL
+    for eid, c in samp.items():
+        assert c == orig[eid]                          # each case fully copied
+    assert _counts_by_id(repo, _ORIG) == orig          # ORIGINAL untouched
+    assert sum(orig.values()) == 53 and len(orig) == 6
+
+
+def test_app_side_sampling_invariants(repo):
+    S1 = SampleSet.sample1
+    _run(repo.ensure_sample_set_column())
+    _run(repo.delete_sample("1", S1))
+    ids = _run(repo.load_all_event_ids_for_sampling("1"))
+    assert len(ids) == 6
+    selected = random_sample(ids, 3)
+    assert len(selected) == 3 and set(selected) <= set(ids)
+    _run(repo.insert_sample_journeys("1", selected, S1))
+    _assert_sample_invariants(repo, "SAMPLE_SET = 'SAMPLE_1'", 3)
+    # count >= population → all 6
+    _run(repo.delete_sample("1", S1))
+    _run(repo.insert_sample_journeys("1", random_sample(ids, 10), S1))
+    assert _run(repo.load_sample_journey_counts("1")).get("SAMPLE_1") == 6
+    _run(repo.delete_sample("1", S1))
+
+
+def test_in_db_sampling_invariants(repo):
+    S2 = SampleSet.sample2
+    _run(repo.delete_sample("1", S2))
+    r = _run(schema_ddl.build_sample_in_db(
+        host=HOST, port=PORT, username=USER, password=PW, schema=SCHEMA,
+        use_tls=True, cert_mode="insecure",
+        project_id="1", count=3, method="random", sample_set=S2))
+    assert r["ok"] and r["journeys"] == 3, r
+    _assert_sample_invariants(repo, "SAMPLE_SET = 'SAMPLE_2'", 3)
+    # count >= population → all 6
+    r2 = _run(schema_ddl.build_sample_in_db(
+        host=HOST, port=PORT, username=USER, password=PW, schema=SCHEMA,
+        use_tls=True, cert_mode="insecure",
+        project_id="1", count=10, method="random", sample_set=S2))
+    assert r2["ok"] and r2["journeys"] == 6, r2
+    _run(repo.delete_sample("1", S2))
