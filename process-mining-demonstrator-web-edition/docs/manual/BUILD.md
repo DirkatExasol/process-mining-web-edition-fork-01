@@ -48,6 +48,19 @@ cp docs/manual/*.pdf docs/Process-Mining-Demonstrator-Manual.pdf
 > this `docs/manual/` directory and the repo `logo.svg`. (Chapters, `manual.css` and
 > `screenshots/` are all here; `LOGO` is `frontend/web/public/logo.svg`.)
 
+## Generated block: the MCP tool reference (chapter 27)
+
+The per-tool reference with examples in `chapters/27-mcp-server.html` (between the
+`MCP-TOOL-REFERENCE` markers) is **generated** — so are the matching blocks in `README.md`
+and `MCP-SERVER.md`, and the tools step of `docs/15-Installation-MCP-Server.html`. Edit the
+`TOOLS` list in `docs/mcp_tool_reference.py`, then:
+
+```bash
+python3 docs/mcp_tool_reference.py          # README.md, MCP-SERVER.md, chapter 27
+python3 docs/15-build-mcp-install-guide.py   # the HTML guide
+/tmp/manualvenv/bin/python docs/manual/assemble.py && cp docs/manual/*.pdf docs/
+```
+
 ## Add or update a chapter
 
 1. Copy the shape of an existing fragment: `<section class="chapter" id="ch-SLUG"

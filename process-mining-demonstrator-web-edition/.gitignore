@@ -1,5 +1,15 @@
 .venv/
-data/
+# Runtime state under data/ is ignored. The signed program license is committed once,
+# under Program_License_File/ (see its README); the app reads/writes its own copy at
+# data/license.json at runtime (seeded from that file / uploaded via admin App Control),
+# so the runtime copy is NOT tracked — it would drift and churn on every upload.
+data/*
+# Stray runtime/test SQLite databases (e.g. a security store written to the repo root
+# when a test runs without PMW_DATA_DIR) — never repo content.
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
 node_modules/
 dist/
 __pycache__/
@@ -19,3 +29,6 @@ Background Images/
 # The published PDF is committed at docs/Process-Mining-Demonstrator-Manual.pdf.
 docs/manual/manual.html
 docs/manual/*.pdf
+
+# Security & conformance statement — kept out of version control (generated/attested artifact).
+SECURITY.md

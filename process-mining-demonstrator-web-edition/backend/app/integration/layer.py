@@ -134,6 +134,15 @@ class _Session:
     def existing_keys(self, table: str, key_columns: Sequence[str]) -> set[tuple[str, ...]]:
         return self._backend.existing_keys(self._schema, table, list(key_columns))
 
+    def existing_step_ids(self, project_id: int | None = None) -> dict[str, int]:
+        """STEP name → activity id already stored for this project (for id reuse on re-import).
+        Scope to ``project_id`` — STEP_IDs are unique only within a project."""
+        return self._backend.existing_step_ids(self._schema, project_id)
+
+    def existing_project_ids(self) -> dict[str, int]:
+        """TITLE_SHORT code → PROJECT_ID already stored for this schema (for id reuse)."""
+        return self._backend.existing_project_ids(self._schema)
+
 
 class AbstractionLayer:
     """Registry of extractors + per-user run status. A process-wide singleton

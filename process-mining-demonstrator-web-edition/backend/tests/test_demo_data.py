@@ -11,22 +11,47 @@ from __future__ import annotations
 import asyncio
 import random
 from collections import defaultdict
+from datetime import datetime
 
 from app.db import demo_data as d
 from app.db import manager
+
+
+class _Result:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchval(self):
+        return self._rows[0][0] if self._rows else None
 
 
 class FakeConn:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.committed = False
+        self.commit_count = 0
+        self.rolled_back = False
+        self.autocommit = True
         self.closed = False
 
-    def execute(self, sql: str) -> None:
+    def execute(self, sql: str):
         self.calls.append(sql)
+        if "MAX(PROJECT_ID)" in sql:
+            return _Result([[0]])          # empty PROJECTS → next id = 1
+        return _Result([])                 # e.g. no existing project for this TITLE_SHORT
+
+    def set_autocommit(self, value: bool) -> None:
+        self.autocommit = value
 
     def commit(self) -> None:
         self.committed = True
+        self.commit_count += 1
+
+    def rollback(self) -> None:
+        self.rolled_back = True
 
     def close(self) -> None:
         self.closed = True
@@ -54,9 +79,14 @@ def _by_journey(rows):
 def test_retail_journeys_start_with_login_and_are_ordered():
     grouped = _by_journey(d.generate_retail_rows(40, random.Random(1)))
     assert len(grouped) == 40
+    ids = d.step_id_map(d._RETAIL_STEP_DEFS)
     for events in grouped.values():
         assert events[0].step == "Login"
-        assert [e.step_id for e in events] == list(range(1, len(events) + 1))
+        # STEP_ID is now the stable activity id (not a 1..N sequence); ordering is
+        # carried by strictly-increasing timestamps.
+        times = [e.event_time for e in events]
+        assert times == sorted(times) and len(set(times)) == len(times)
+        assert all(e.step_id == ids[e.step] for e in events)
         assert events[0].meta1 in {"Credit Card", "PayPal", "Bank Transfer"}
 
 
@@ -129,7 +159,7 @@ def test_loader_provisions_and_loads_retail(monkeypatch):
     assert conn.calls[0] == 'CREATE SCHEMA IF NOT EXISTS "PM"'
     for tbl in ("PROJECTS", "JOURNEYS", "STEPS", "METAS", "NOTES"):
         assert f"CREATE TABLE IF NOT EXISTS {tbl}" in joined
-    assert "PROJECT_ID = 'BOOKSTORE'" in joined and "Online Bookstore" in joined
+    assert "PROJECT_ID = 1" in joined and "BOOKSTORE" in joined and "Online Bookstore" in joined
     assert joined.count("INSERT INTO STEPS") == 24
     assert conn.committed and conn.closed
 
@@ -139,7 +169,7 @@ def test_loader_provisions_and_loads_finance(monkeypatch):
     res = _run(monkeypatch, conn, dataset="finance", journeys=3)
     assert res["ok"] and res["project"] == "Online Credit Application"
     joined = "\n".join(conn.calls)
-    assert "PROJECT_ID = 'CREDIT'" in joined
+    assert "PROJECT_ID = 1" in joined and "CREDIT" in joined
     assert "Applied Credit Sum" in joined  # META titles inserted
     assert joined.count("INSERT INTO STEPS") == len(d._FINANCE_STEP_DEFS)
     assert "INSERT INTO JOURNEYS" in joined
@@ -150,7 +180,7 @@ def test_loader_touches_only_the_dataset_project(monkeypatch):
     _run(monkeypatch, conn, dataset="finance", journeys=1)
     for verb in ("DELETE FROM PROJECTS", "DELETE FROM METAS", "DELETE FROM JOURNEYS"):
         stmts = [c for c in conn.calls if c.startswith(verb)]
-        assert stmts and all("PROJECT_ID = 'CREDIT'" in s for s in stmts)
+        assert stmts and all("PROJECT_ID = 1" in s for s in stmts)
 
 
 def test_loader_rejects_unknown_dataset(monkeypatch):
@@ -183,15 +213,41 @@ def test_loader_validates_schema_and_count(monkeypatch):
 
 def test_loader_reports_a_friendly_error(monkeypatch):
     class BoomConn(FakeConn):
-        def execute(self, sql: str) -> None:
-            super().execute(sql)
+        def execute(self, sql: str):
+            r = super().execute(sql)
             if "INSERT INTO JOURNEYS" in sql:
                 raise RuntimeError("insufficient privileges: INSERT denied")
+            return r
 
     conn = BoomConn()
     res = _run(monkeypatch, conn, journeys=2)
     assert res["ok"] is False and "insufficient privileges" in res["error"]
     assert conn.closed
+    # A failed load is rolled back so the project is never left half-populated.
+    assert conn.rolled_back
+
+
+def test_loader_uses_explicit_transactions_not_autocommit(monkeypatch):
+    # Every data generator writes with autocommit OFF, committing every _TXN_ROWS rows.
+    # Shrink the batch/transaction sizes so a tiny fake load still spans several commits.
+    monkeypatch.setattr(d, "_BATCH_SIZE", 10)
+    monkeypatch.setattr(d, "_TXN_ROWS", 10)
+
+    def _fake(count, rng=None):
+        # 55 event rows → six 10-row INSERT batches (last is 5): five full-transaction
+        # commits plus a final partial one.
+        ev = d.JEvent("EVID", "Step", 1, datetime(2024, 1, 1, 0, 0, 0), "-", "-", "-")
+        return [ev] * 55
+
+    monkeypatch.setattr(d.DATASETS["retail"], "generate", _fake)
+    conn = FakeConn()
+    res = _run(monkeypatch, conn, dataset="retail", journeys=55)
+
+    assert res["ok"] is True
+    assert conn.autocommit is False           # per-statement autocommit was turned OFF
+    assert conn.rolled_back is False           # a clean load never rolls back
+    # 1 setup commit + 5 full 10-row transactions + 1 final partial = 7.
+    assert conn.commit_count == 7
 
 
 # ── transportation: Flight Booking & Management ───────────────────────────────
@@ -199,7 +255,7 @@ def test_loader_reports_a_friendly_error(monkeypatch):
 
 def test_transportation_structure_and_metas():
     spec = d.DATASETS["transportation"]
-    assert spec.project_id == "FLIGHTS"
+    assert spec.title_short == "FLIGHTS"
     assert spec.meta_titles == ("Journey Type", "Airline", "Payment Method")
 
     grouped = _by_journey(d.generate_transportation_rows(1200, random.Random(3)))
@@ -246,9 +302,80 @@ def test_loader_provisions_and_loads_transportation(monkeypatch):
     assert res["project"] == "Flight Booking & Management"
     assert res["dataset"] == "transportation"
     joined = "\n".join(conn.calls)
-    assert "PROJECT_ID = 'FLIGHTS'" in joined
+    assert "PROJECT_ID = 1" in joined and "FLIGHTS" in joined
     assert joined.count("INSERT INTO STEPS") == 15
     assert conn.committed and conn.closed
+
+
+# ── transportation: Airport Passenger Flow ────────────────────────────────────
+
+
+def test_airport_step_defs_shape():
+    # 10 pre-airside steps + 9 airside/boarding steps each for the Dom and Int sides.
+    assert len(d._AIRPORT_STEP_DEFS) == 28
+
+
+def test_airport_topology_and_dom_int_split():
+    grouped = _by_journey(d.generate_airport_rows(500, random.Random(11)))
+    assert grouped
+    saw_dom = saw_int = saw_denied = saw_early_exit = False
+    for evs in grouped.values():
+        steps = [e.step for e in evs]
+        assert steps[0] == "ENTER Departure Hall"
+        assert all(e.meta1.startswith("Terminal-") for e in evs)
+        assert all(e.meta2 == "-" and e.meta3 == "-" for e in evs)
+        assert [e.event_time for e in evs] == sorted(e.event_time for e in evs)
+        # A passenger is on exactly one airside: the Int variant iff they cleared
+        # Passport Control, the Dom variant otherwise (or neither, if they left early).
+        has_passport = "ENTER Passport Control" in steps
+        dom = [s for s in steps if s.endswith(" Dom")]
+        intl = [s for s in steps if s.endswith(" Int")]
+        if has_passport:
+            assert intl and not dom
+        else:
+            assert not intl
+        assert steps[-1].startswith(("BOARD Aircraft", "DENIED Boarding", "LEAVE Departure Hall"))
+        saw_dom = saw_dom or bool(dom)
+        saw_int = saw_int or bool(intl)
+        saw_denied = saw_denied or any(s.startswith("DENIED Boarding") for s in steps)
+        saw_early_exit = saw_early_exit or steps == ["ENTER Departure Hall", "LEAVE Departure Hall"]
+    assert saw_dom and saw_int and saw_denied and saw_early_exit
+
+
+def test_airport_streams_through_the_per_journey_generator(monkeypatch):
+    # The airport dataset carries a per-journey generator; the loader must stream
+    # through it (never the batch `generate`) and still load the APF project.
+    spec = d.DATASETS["airport"]
+    assert spec.generate_one is not None and spec.title_short == "APF"
+
+    def _boom(*_a, **_k):
+        raise AssertionError("batch generate path used for a streamed dataset")
+
+    monkeypatch.setattr(spec, "generate", _boom)
+    conn = FakeConn()
+    res = _run(monkeypatch, conn, dataset="airport", journeys=3)
+    assert res["ok"] and res["journeys"] == 3 and res["dataset"] == "airport"
+    joined = "\n".join(conn.calls)
+    assert "APF" in joined and "PROJECT_ID = 1" in joined and "INSERT INTO JOURNEYS" in joined
+    assert conn.committed and conn.closed
+
+
+def test_airport_uses_the_streamed_ceiling(monkeypatch):
+    # Streamed datasets clamp to MAX_JOURNEYS_STREAMED, not the in-memory limit.
+    # Shrink the ceiling so the assertion stays fast.
+    monkeypatch.setattr(d, "MAX_JOURNEYS_STREAMED", 5)
+    spec = d.DATASETS["airport"]
+    calls = {"n": 0}
+    real = spec.generate_one
+
+    def _counting(i, rng):
+        calls["n"] += 1
+        return real(i, rng)
+
+    monkeypatch.setattr(spec, "generate_one", _counting)
+    conn = FakeConn()
+    res = _run(monkeypatch, conn, dataset="airport", journeys=1000)
+    assert res["journeys"] == 5 and calls["n"] == 5
 
 
 # ── cross-dataset invariants (guards every dataset, incl. future ones) ────────
@@ -270,12 +397,15 @@ def test_dataset_is_well_formed(key):
     defined = set(names)
     grouped = _by_journey(spec.generate(200, random.Random(123)))
     assert grouped
+    ids = d.step_id_map(spec.step_defs)
     for evs in grouped.values():
-        ordered = sorted(evs, key=lambda r: r.step_id)
-        # sequential 1..N step ids, only defined steps, three meta values each.
-        assert [e.step_id for e in ordered] == list(range(1, len(ordered) + 1))
-        for e in ordered:
+        # STEP_ID is the stable activity id for the step name; events are emitted in
+        # (strictly increasing) time order. Only defined steps, three meta values each.
+        times = [e.event_time for e in evs]
+        assert times == sorted(times), f"{key} journey is not time-ordered"
+        for e in evs:
             assert e.step in defined, f"{key} emits undefined step {e.step!r}"
+            assert e.step_id == ids[e.step], f"{key} step_id != activity id for {e.step!r}"
             assert e.meta1 is not None and e.meta2 is not None and e.meta3 is not None
 
 
@@ -287,3 +417,26 @@ def test_dataset_generation_is_deterministic(key):
     assert [(r.event_id, r.step, r.step_id, r.meta1) for r in a] == [
         (r.event_id, r.step, r.step_id, r.meta1) for r in b
     ]
+
+
+def test_airport_seasonality():
+    """Airport arrivals are seasonal: summer holidays (Jul/Aug) and Christmas (Dec) peak,
+    September high, May low, the rest normal (see _APF_MONTH_WEIGHTS)."""
+    rng = random.Random(42)
+    rows = d.generate_airport_rows(4000, rng)
+    # journey start = earliest event time per case
+    starts: dict[str, object] = {}
+    for e in rows:
+        if e.event_id not in starts or e.event_time < starts[e.event_id]:
+            starts[e.event_id] = e.event_time
+    by_month = defaultdict(int)
+    for dt in starts.values():
+        by_month[dt.month] += 1
+
+    may = by_month[5]
+    assert may == min(by_month.values())               # May is the low season
+    for peak in (7, 8, 12):                             # summer holidays + Christmas
+        assert by_month[peak] > 1.5 * may
+    assert by_month[9] > may                            # September is high
+    assert by_month[7] > by_month[1] and by_month[9] > by_month[1]   # peaks/high > a normal month
+    assert min(starts.values()).year == 2024 and max(starts.values()).year == 2024

@@ -281,7 +281,7 @@ fingerprint, or change the certificate mode.</code></pre>
     </tbody>
   </table>
 
-  <div class="warn"><strong>Warning</strong> The journey count is hard-capped at 20,000 on the server and a larger request is clamped <em>silently</em> — ask for 50,000 and you get exactly 20,000 with a success message. Rows are inserted in batches of 200 journeys per statement.</div>
+  <div class="warn"><strong>Warning</strong> The in-memory datasets are hard-capped at 20,000 journeys on the server and a larger request is clamped <em>silently</em> — ask for 50,000 and you get exactly 20,000 with a success message. (The streamed Airport Passenger Flow dataset allows far more.) Rows are inserted in batches per statement and committed in transactions of about 25,000 rows, with autocommit off; a load that fails part-way is rolled back so the project is never left half-written.</div>
 
   <p>Other error messages you may see: <i>“Unknown demo dataset '&lt;x&gt;'.”</i>, <i>“A schema name is required.”</i> and <i>“Enter how many journeys to generate.”</i> (when the count is below 1), plus the ordinary connection errors listed in section 7.2.</p>
 
