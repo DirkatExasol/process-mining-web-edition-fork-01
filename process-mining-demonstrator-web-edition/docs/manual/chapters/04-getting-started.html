@@ -200,7 +200,7 @@
 
 <h3 id="gs-demo">Generating a demo dataset</h3>
 
-<p>The <b>Demo Content</b> tab loads a complete, realistic dataset into the connection's schema, creating the schema and tables first if they are missing. Three datasets are offered.</p>
+<p>The <b>Demo Content</b> tab loads a complete, realistic dataset into the connection's schema, creating the schema and tables first if they are missing. Four datasets are offered.</p>
 
 <table>
 <thead><tr><th>Group</th><th>Dataset</th><th>Project ID</th><th>Meta attributes 1 / 2 / 3</th></tr></thead>
@@ -208,12 +208,17 @@
 <tr><td>Retail</td><td>📚 Online Bookstore</td><td><code>BOOKSTORE</code></td><td>Payment Method / Customer Segment / Order Value</td></tr>
 <tr><td>Finance/Insurance</td><td>💶 Online Credit Application</td><td><code>CREDIT</code></td><td>Applied Credit Sum / Income Class / Channel</td></tr>
 <tr><td>Transportation</td><td>✈️ Flight Booking &amp; Management</td><td><code>FLIGHTS</code></td><td>Journey Type / Airline / Payment Method</td></tr>
+<tr><td>Transportation</td><td>🛫 Airport Passenger Flow</td><td><code>APF</code></td><td>Terminal / — / —</td></tr>
 </tbody>
 </table>
 
 <p><b>Online Bookstore</b> generates an order lifecycle — login, browse, basket, checkout, payment, fulfilment, delivery — with roughly 5&nbsp;% of orders taking a returns flow and a deliberately unreliable bank-transfer path that fails about 35&nbsp;% of the time per attempt and retries. Its 24 steps are grouped into Customer Interaction, Purchase Process, Payment, Fulfilment and Returns, with scores from −10 (Payment Failed, Return Initiated) to +15 (Delivered) — which means the Process Goodness KPI works out of the box.</p>
 
-<p><b>Online Credit Application</b> models bank and affiliate intake, an application check with a rework loop, credit assessment, and a score- and sum-driven decision with agent-review loops, ending in payment or rejection. <b>Flight Booking &amp; Management</b> models a Star Alliance-style booking: 80&nbsp;% new bookings (with a modify loop in search, and 50&nbsp;% interline itineraries that query a partner airline's system) and 20&nbsp;% manage-booking journeys. In every dataset, event times are spread randomly between 2024-01-01 08:00 and 2024-12-31 22:00.</p>
+<p><b>Online Credit Application</b> models bank and affiliate intake, an application check with a rework loop, credit assessment, and a score- and sum-driven decision with agent-review loops, ending in payment or rejection. <b>Flight Booking &amp; Management</b> models a Star Alliance-style booking: 80&nbsp;% new bookings (with a modify loop in search, and 50&nbsp;% interline itineraries that query a partner airline's system) and 20&nbsp;% manage-booking journeys.</p>
+
+<p><b>Airport Passenger Flow</b> models a departing passenger's walk through the terminal — departure hall, baggage drop / check-in, security, then the airside amenities (duty free, lounge, dining) in any order before boarding — where Passport Control switches the airside and boarding steps from their domestic (Dom) to their international (Int) variant, 2&nbsp;% leave the hall without travelling, and 5&nbsp;% of boardings are denied. It is a <em>streamed</em> dataset, so it scales far beyond the others. Unlike the other three, its passenger volume is <b>seasonal across the year</b>: the summer holidays (July and August) and Christmas (December) are peak months, September is high (travel resumes after the summer), May is a low month, and the remaining months are normal — so the <b>journeys-over-time</b> chart shows a realistic seasonal pattern rather than a flat line. Within each month the day and time of day are spread uniformly across the departure hall's active window (08:00–21:59).</p>
+
+<p>In every dataset, event times fall in 2024. For Bookstore, Credit and Flights they are spread uniformly between 2024-01-01 08:00 and 2024-12-31 22:00; for Airport Passenger Flow the month is drawn in proportion to the seasonal weights above (the day and time of day still uniform).</p>
 
 <ol class="steps">
 <li>Open the <b>Demo Content</b> tab of the connection editor.</li>
@@ -225,13 +230,14 @@
 
 <div class="note"><strong>Note</strong> Generation replaces only that dataset's own project: its PROJECTS row, its METAS row and <b>all</b> of its JOURNEYS rows, including any sample sets. Other projects in the schema are untouched. STEPS rows are only <em>added</em> where missing, so colours, shapes and scores you have customised in the Step Editor survive a regeneration.</div>
 
-<div class="note"><strong>Note</strong> The journey count is hard-capped at 20,000 on the server and a larger request is silently clamped to exactly that. Rows are inserted in batches of 200 journeys.</div>
+<div class="note"><strong>Note</strong> The in-memory datasets are hard-capped at 20,000 journeys on the server and a larger request is silently clamped to exactly that (the streamed Airport Passenger Flow allows far more). Generation runs with autocommit <em>off</em>: rows are inserted in batches and committed in transactions of about 25,000 rows each, so a large load is durable in bounded chunks rather than one giant transaction — and a load that fails part-way is rolled back, leaving the project untouched.</div>
 
 <p>Demo journeys do not use plain order numbers as case keys. Each <code>EVENT_ID</code> is the MD5 hash of a synthetic reference built from the dataset prefix and a 1-based, zero-padded six-digit sequence number:</p>
 
 <pre><code>Online Bookstore (BOOKSTORE):          EVENT_ID = md5("ORD-000001"), md5("ORD-000002"), …
 Online Credit Application (CREDIT):    EVENT_ID = md5("CRA-000001"), …
 Flight Booking &amp; Management (FLIGHTS): EVENT_ID = md5("FLT-000001"), …
+Airport Passenger Flow (APF):          EVENT_ID = md5("APF-0000001"), …   (7-digit sequence)
 
 # reproduce a specific ID from a shell:
 printf 'ORD-%06d' 1  | md5      # macOS  → the stored 32-char hex EVENT_ID
@@ -303,7 +309,7 @@ printf 'FLT-%06d' 42 | md5sum   # Linux</code></pre>
 <tbody>
 <tr><td>Connections</td><td>Pick the database you work against. Header shows a count when there is at least one.</td><td>Everyone</td></tr>
 <tr><td>Projects</td><td>Pick the project inside that database.</td><td>Everyone</td></tr>
-<tr><td>Metrics</td><td>Choose the transition metric: <b># Count</b> (default), <b>⏱ Avg Time</b>, <b>⌄ Min Time</b>, <b>⌃ Max Time</b>, <b>〰 Std Dev</b>.</td><td>Hidden in Individual Journey</td></tr>
+<tr><td>Metrics</td><td>Choose the transition metric: <b># Count</b> (default), <b>⏱ Avg Time</b>, <b>½ Median Time</b>, <b>⌄ Min Time</b>, <b>⌃ Max Time</b>, <b>〰 Std Dev</b>.</td><td>Hidden in Individual Journey</td></tr>
 <tr><td>Filters</td><td>Date, Include Steps, Exclude Steps, Num Steps, Journey Time, Journey Score and Meta 1–3, plus Reset, Save Preset… and Apply.</td><td>Everyone</td></tr>
 <tr><td>Sampling</td><td>Create up to three shared sample sets and choose the data source for the A and B charts.</td><td>Power and Administrator only</td></tr>
 <tr><td>Configuration</td><td>Step groups, font sizes, KPI order, the Step Editor, display toggles, default date window and the LLM prompt.</td><td>Everyone</td></tr>

@@ -13,6 +13,7 @@ from collections import defaultdict
 from datetime import timedelta
 
 from ..models import (
+    EdgeDurationOverride,
     ProcessGraph,
     ProcessTransition,
     SimulatedEvent,
@@ -23,6 +24,18 @@ from ..models import (
 )
 
 
+def _pos_finite(value: float | None) -> float | None:
+    """A strictly-positive finite float, or None — so a stray 0, negative or inf/nan
+    resource lever is ignored (treated as 'no change') rather than distorting the run."""
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) and v > 0.0 else None
+
+
 class MarkovModel:
     """Transition probabilities, edge-duration distributions and entry points."""
 
@@ -31,6 +44,8 @@ class MarkovModel:
         graph: ProcessGraph,
         step_infos: dict[str, StepInfo],
         excluded: set[str],
+        step_factors: dict[str, float] | None = None,
+        edge_overrides: list[EdgeDurationOverride] | None = None,
     ) -> None:
         # 1. Entry points come from the ORIGINAL graph. Deriving them after
         #    exclusions would make any step that only received edges from an
@@ -110,6 +125,38 @@ class MarkovModel:
             else:
                 self.duration_params[key] = (math.log(3600.0), 0.5)
 
+        # 5b. What-if duration scales per edge (direct time override). Multiplying every
+        #     sampled duration by a constant scales the lognormal's mean by that constant
+        #     while preserving its shape (coefficient of variation), so the spread stays
+        #     realistic. The scale composes: the SOURCE step's resource factor (applied to
+        #     all its outgoing edges) × the edge's own override. An absolute meanSecs sets
+        #     the level (scale = meanSecs / observed_mean); a multiplier scales relative to
+        #     the observed mean; both may combine (meanSecs first, then multiplier).
+        factors = {
+            k: f for k, v in (step_factors or {}).items()
+            if (f := _pos_finite(v)) is not None
+        }
+        overrides: dict[tuple[str, str], EdgeDurationOverride] = {
+            (o.fromStep, o.toStep): o for o in (edge_overrides or [])
+        }
+        self.duration_scale: dict[str, float] = {}
+        for t in valid:
+            key = f"{t.fromStep}→{t.toStep}"
+            scale = factors.get(t.fromStep, 1.0)
+            ov = overrides.get((t.fromStep, t.toStep))
+            if ov is not None:
+                mean_secs = _pos_finite(ov.meanSecs)
+                if mean_secs is not None:
+                    mu, sigma = self.duration_params.get(key, (math.log(3600.0), 0.5))
+                    base_mean = math.exp(mu + sigma * sigma / 2.0)  # lognormal mean
+                    if base_mean > 0:
+                        scale *= mean_secs / base_mean
+                mult = _pos_finite(ov.multiplier)
+                if mult is not None:
+                    scale *= mult
+            if scale != 1.0:
+                self.duration_scale[key] = scale
+
         # 6. Start weights re-derived from the pruned graph so an excluded step's
         #    share is redistributed rather than left as a gap.
         pruned_out: dict[str, int] = defaultdict(int)
@@ -144,17 +191,20 @@ class MarkovModel:
         return entries[-1][0]
 
     def sample_duration(self, frm: str, to: str) -> float:
-        params = self.duration_params.get(f"{frm}→{to}")
+        key = f"{frm}→{to}"
+        params = self.duration_params.get(key)
+        scale = self.duration_scale.get(key, 1.0)
         if params is None:
-            return 3600.0
+            return 3600.0 * scale
         mu, sigma = params
         if sigma <= 0:
-            return max(60.0, math.exp(mu))
+            return max(60.0, math.exp(mu) * scale)
         # Box–Muller transform → standard normal → lognormal
         u1 = random.uniform(1e-10, 1.0)
         u2 = random.random()
         z = math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2)
-        return max(60.0, math.exp(mu + sigma * z))
+        # Scaling the sample scales the lognormal mean by `scale`, shape unchanged.
+        return max(60.0, math.exp(mu + sigma * z) * scale)
 
 
 def build_graph(
@@ -248,7 +298,13 @@ def _simulate_journey(
 def simulate(
     graph: ProcessGraph, step_infos: dict[str, StepInfo], config: SimulationConfig
 ) -> SimulationResult:
-    model = MarkovModel(graph, step_infos, set(config.excludedSteps))
+    model = MarkovModel(
+        graph,
+        step_infos,
+        set(config.excludedSteps),
+        step_factors=config.stepResourceFactors,
+        edge_overrides=config.edgeOverrides,
+    )
     if not model.start_steps:
         return SimulationResult()
 

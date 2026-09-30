@@ -76,10 +76,14 @@ def config(
     excluded: list[str] | None = None,
     required: list[str] | None = None,
     max_steps: int = 60,
+    step_factors: dict[str, float] | None = None,
+    edge_overrides: list | None = None,
 ) -> SimulationConfig:
     return SimulationConfig(
         journeyCount=journey_count,
         excludedSteps=excluded or [],
         requiredSteps=required or [],
         maxStepsPerJourney=max_steps,
+        stepResourceFactors=step_factors or {},
+        edgeOverrides=edge_overrides or [],
     )

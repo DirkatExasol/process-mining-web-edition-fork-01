@@ -29,9 +29,12 @@ _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _SQL_TYPE = {
     ColumnType.STRING: "VARCHAR(2000000)",
     ColumnType.INT: "DECIMAL(18,0)",
+    ColumnType.SMALLINT: "SMALLINT",
     ColumnType.DECIMAL: "DECIMAL(36,6)",
     ColumnType.TIMESTAMP: "TIMESTAMP",
     ColumnType.BOOL: "BOOLEAN",
+    # 16-byte HASHTYPE for MD5 ids; hex-string values convert on insert.
+    ColumnType.HASH: "HASHTYPE(16 BYTE)",
 }
 
 _MAX_BATCH = 1000  # rows per INSERT statement
@@ -79,6 +82,20 @@ class IngestBackend(Protocol):
     def existing_keys(
         self, schema: str, table: str, key_columns: Sequence[str]
     ) -> set[tuple[str, ...]]:
+        ...
+
+    def existing_step_ids(self, schema: str, project_id: int | None = None) -> dict[str, int]:
+        """Existing STEP name → STEP_ID for the schema's STEPS table (activity ids), so a
+        re-import reuses ids. MUST be scoped to ``project_id`` when writing into a specific
+        project: STEP_IDs are unique only WITHIN a project, so a schema-wide map collapses
+        different projects' ids by step name and the transition query (which joins JOURNEYS
+        to STEPS on PROJECT_ID + STEP_ID) then draws edges between the wrong steps. Empty
+        when STEPS is absent or has no ids yet."""
+        ...
+
+    def existing_project_ids(self, schema: str) -> dict[str, int]:
+        """Existing TITLE_SHORT code → PROJECT_ID for the schema's PROJECTS table, so an
+        import can reuse a project's id (append) or allocate the next free one."""
         ...
 
     def commit(self) -> None:
@@ -132,6 +149,36 @@ class InMemoryIngestBackend:
             tuple("" if r.get(k) is None else str(r.get(k)) for k in key_columns)
             for r in tbl["rows"]
         }
+
+    def existing_step_ids(self, schema, project_id: int | None = None) -> dict[str, int]:
+        tbl = self._table(schema, "STEPS")
+        if tbl is None:
+            return {}
+        out: dict[str, int] = {}
+        for r in tbl["rows"]:
+            if project_id is not None and str(r.get("PROJECT_ID")) != str(project_id):
+                continue
+            name, sid = r.get("STEP"), r.get("STEP_ID")
+            if name is not None and sid is not None:
+                try:
+                    out[str(name)] = int(sid)
+                except (TypeError, ValueError):
+                    pass
+        return out
+
+    def existing_project_ids(self, schema) -> dict[str, int]:
+        tbl = self._table(schema, "PROJECTS")
+        if tbl is None:
+            return {}
+        out: dict[str, int] = {}
+        for r in tbl["rows"]:
+            short, pid = r.get("TITLE_SHORT"), r.get("PROJECT_ID")
+            if short and pid is not None:
+                try:
+                    out[str(short)] = int(pid)
+                except (TypeError, ValueError):
+                    pass
+        return out
 
     def commit(self) -> None:
         """No transactions in memory — recorded so tests can assert the bracketing."""
@@ -197,6 +244,40 @@ class SqlIngestBackend:
         cols = ", ".join(f'"{valid_identifier(c)}"' for c in key_columns)
         rows = self._run(f"SELECT {cols} FROM {q}") or []
         return {tuple("" if v is None else str(v) for v in row) for row in rows}
+
+    def existing_step_ids(self, schema, project_id: int | None = None) -> dict[str, int]:
+        q = self._qualified(schema, "STEPS")
+        where = "STEP_ID IS NOT NULL"
+        if project_id is not None:
+            where += f" AND PROJECT_ID = {int(project_id)}"
+        try:
+            rows = self._run(f"SELECT STEP, STEP_ID FROM {q} WHERE {where}") or []
+        except Exception:  # noqa: BLE001 — a pre-migration STEPS may lack the column
+            return {}
+        out: dict[str, int] = {}
+        for name, sid in rows:
+            try:
+                out[str(name)] = int(sid)
+            except (TypeError, ValueError):
+                pass
+        return out
+
+    def existing_project_ids(self, schema) -> dict[str, int]:
+        q = self._qualified(schema, "PROJECTS")
+        try:
+            rows = self._run(
+                f"SELECT TITLE_SHORT, PROJECT_ID FROM {q} WHERE TITLE_SHORT IS NOT NULL"
+            ) or []
+        except Exception:  # noqa: BLE001 — PROJECTS absent / no TITLE_SHORT yet
+            return {}
+        out: dict[str, int] = {}
+        for short, pid in rows:
+            if short and pid is not None:
+                try:
+                    out[str(short)] = int(pid)
+                except (TypeError, ValueError):
+                    pass
+        return out
 
     def commit(self) -> None:
         if self._commit is not None:

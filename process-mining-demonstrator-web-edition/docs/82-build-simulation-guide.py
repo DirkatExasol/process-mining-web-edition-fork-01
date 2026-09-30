@@ -226,14 +226,48 @@ retry variants        ~9 %              0 %</pre>
         ],
         None,
     ),
+    (
+        "Resource levers — change the time, not the shape",
+        "Excluding a step models removing work. The <b>resource levers</b> model the other "
+        "kind of change: keep the process exactly as it runs, but alter how long parts of it "
+        "take — to see what throwing more (or fewer) resources at a step does to the whole "
+        "graph. Routing is untouched; only durations move, and cycle time, bottlenecks and "
+        "variant timing all respond.",
+        """<div class="mock">
+      <table class="tbl">
+        <tr><th>Lever</th><th>What it does</th></tr>
+        <tr><td><b>Resources per step</b></td><td>A factor on the time of <b>every</b> transition leaving a step. <code>0.5</code> = double its capacity (half the time); <code>2.0</code> = halve it.</td></tr>
+        <tr><td><b>Transition override</b></td><td>Change one <code>from → to</code> hand-off directly: <code>×</code> the observed mean, or <code>=</code> an absolute mean in minutes. A step factor still applies on top.</td></tr>
+      </table>
+      <pre class="calc">              baseline    Manual Review ×0.5 (twice the staff)
+avg cycle time   8.55 h            6.90 h        (−19 %)
+Manual Review    2.10 h            1.05 h  (leaving-time halved)</pre>
+      <p class="cap">Each transition's duration is drawn from its fitted lognormal; a lever
+        multiplies that draw, so the mean scales while the spread and skew stay realistic —
+        the distribution shifts faster or slower, it doesn't collapse to a point.</p>
+    </div>""",
+        [
+            "<b>Set it, then compare.</b> Run the unchanged process into Sim-A and the "
+            "lever-adjusted one into Sim-B, then compare them in A/B — including a Process "
+            "Similarity score.",
+            "<b>Levers compose</b> — a per-step factor and a per-edge override on the same "
+            "transition multiply together; a lever that resolves to no change (factor 1, or an "
+            "invalid value) is ignored.",
+        ],
+        '<span class="k">Direct, not emergent.</span> This is a direct time what-if, not a '
+        "queue: raising the journey count or arrival rate alone still won't create waiting. To "
+        "study contention, set the levers to the slower times you expect under load.",
+    ),
 ]
 
 BEYOND = [
     "<b>The Markov assumption is a simplification.</b> The next step depends only on the "
     "current step — a journey that already failed payment twice rolls the same die as a "
     "first-timer. Processes with strong history effects will simulate slightly “too smooth”.",
-    "<b>No queueing or resources.</b> Durations are drawn independently per edge; the model "
-    "does not know that ten journeys hitting the warehouse at once would slow each other down.",
+    "<b>Resource changes are a direct lever, not an emergent queue.</b> You can scale any "
+    "transition's time (per step or per edge) to model more or fewer resources, but durations "
+    "are still drawn independently per edge — the model won't discover on its own that ten "
+    "journeys hitting the warehouse at once slow each other down; you set that slowdown.",
     "<b>Loops are capped, not solved.</b> A journey that keeps rolling into a loop is cut off "
     "at the max-steps limit (default 60) rather than walking forever.",
     "<b>Nothing is written.</b> Simulation reads the on-screen graph, generates in memory, and "
