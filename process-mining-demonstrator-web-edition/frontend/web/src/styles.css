@@ -3299,3 +3299,31 @@ textarea.text-input {
   flex-direction: column;
   gap: 4px;
 }
+
+/* A-Chart auto-refresh countdown ring (Configuration → Auto-refresh). */
+.ar-ring {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+}
+.ar-ring .ar-track {
+  fill: none;
+  stroke: var(--separator);
+  stroke-width: 2.5;
+}
+.ar-ring .ar-prog {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.2s linear;
+}
+.ar-ring .ar-count {
+  position: absolute;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+}

@@ -229,8 +229,12 @@ connecting.
    to users. Open **Connections** in the sidebar — you'll see only the connections
    assigned to you.
 2. Click a connection card to connect (click again to disconnect).
-3. Open **Projects** and pick one. Explore the ten views from the **☰** menu:
-   A-Chart, B-Chart, A/B Comparison, Individual Journey, AI Documentation,
+3. A direct sign-in lands on the **Dashboard** — a cross-connection overview of every
+   process you can see (one card each with events, last-ingest time and a weekly ingest
+   sparkline, plus an overall totals card; click a card to open that process). Launching a
+   process from the `/home` launcher skips the Dashboard and opens it directly.
+4. Open **Projects** and pick one. Explore the eleven views from the **☰** menu:
+   Dashboard, A-Chart, B-Chart, A/B Comparison, Individual Journey, AI Documentation,
    Statistics, Conformance Check, Happy Path, Notes and Simulation.
    *Individual Journey* has an in-canvas switch (top-centre) between the **flowchart**
    (loops drawn as back-edges) and a **swimlane** — the journey laid out strictly
@@ -497,6 +501,29 @@ each with schema · journeys · Generate in one row:
 Each provisions the schema + tables (if needed) and loads into that dataset's own
 project, replacing only that project's journeys. Needs `CREATE SCHEMA` / `CREATE TABLE` /
 `INSERT` rights (DBA-granted). The generators live in `backend/app/db/demo_data.py`.
+
+**Live demo-event generator (`generator/`).** A standalone background process that keeps a
+process "alive" for demos: it learns an **existing** project's structure (the same Markov
+directly-follows model the Simulation view fits — transition probabilities, per-edge timing,
+entry/end steps and the META value mix) and then, every few seconds, emits **one full
+synthetic journey** into a target project's `JOURNEYS`. Point an A-Chart (with auto-refresh
+on) or the Dashboard at that project and you watch data arrive in real time.
+
+```bash
+# every 5–60 s, append a journey shaped like project 1 of schema PM_PROD, into project 1
+python generator/launch.py --host 127.0.0.1 --port 8563 --user sys --password exasol \
+    --schema PM_PROD --project 1 --insecure --min 5 --max 60
+
+# write into a different project, go faster, stop after 100 journeys
+python generator/launch.py ... --project 1 --target-project 2 --min 2 --max 8 --count 100
+```
+
+Runs as a single process on the shell (or in Docker — it needs only the backend on the
+`PYTHONPATH`, the same image the stack uses: `docker run --rm pm-web python generator/launch.py …`).
+It takes DB params on the CLI (or the `PMG_*` env vars), draws the interval uniformly in
+`[--min, --max]` seconds, caps a journey at `--max-steps` (safe on cyclic graphs), and stops
+cleanly on Ctrl-C / SIGTERM; a transient DB blip is logged and retried on the next tick.
+Run `python generator/launch.py --help` for all options.
 
 *Event-ID format.* In every dataset the stored `EVENT_ID` (the case/journey key that
 ties a journey's rows together) is an **MD5 hash** of a simple synthetic reference —

@@ -48,6 +48,12 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   'processmap.kpiExpanded': true,
   'abComparison.valveOpen': true,
   'legal.accepted': false,
+  // A-Chart auto-refresh interval in seconds (0 = off). Reloads the A-Chart on a timer.
+  'achart.autoRefreshSecs': 0,
+  'sidebar.configRefreshExpanded': false,
+  // Dashboard: the extra per-card metrics the user has added (ordered, max 3). Events,
+  // Last log entry and the ingest sparkline are always shown and are not in this list.
+  'dashboard.extraMetrics': [],
   'sidebar.filtersDateExpanded': true,
   'sidebar.filtersMetaExpanded': false,
   'sidebar.filtersIncludeExpanded': false,

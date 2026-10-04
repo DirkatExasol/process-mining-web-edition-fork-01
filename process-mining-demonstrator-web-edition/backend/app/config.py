@@ -26,7 +26,7 @@ def _read_app_version() -> str:
             return first_line[:120]
     except (OSError, IndexError):
         pass
-    return "V 1.0.0 - Mount Maunganui"
+    return "2027.1.0 - Tongariro"
 
 
 APP_VERSION = _read_app_version()

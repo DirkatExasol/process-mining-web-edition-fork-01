@@ -160,6 +160,13 @@ PROCESS_MINING_TABLES: list[tuple[str, str]] = [
 TABLE_NAMES: list[str] = [name for name, _ in PROCESS_MINING_TABLES]
 
 
+def is_aggregate_project(title_short: str) -> bool:
+    """True for a DERIVED aggregate project, by the TITLE_SHORT convention: a 'Σ…' high-level
+    map or a '#…' detail/sub-flow. Base (source) flows carry neither prefix. Used to keep the
+    Dashboard to base flows only (mirrors the sidebar's aggregateKind)."""
+    return (title_short or "")[:1] in ("#", "Σ")
+
+
 # ── in-place schema migration for installs provisioned by an older version ──────
 # `CREATE TABLE IF NOT EXISTS` never alters an existing table, so a schema created
 # before STEP_ID / SAMPLE_SET were introduced keeps the old shape and the current
@@ -691,6 +698,171 @@ async def list_projects_with_counts(
                     "journeys": journeys,
                     "events": events,
                     "lastEventAt": last_event,
+                })
+            return out
+        finally:
+            conn.close()
+
+    try:
+        projects = await asyncio.to_thread(_run)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": friendly_error(exc), "projects": []}
+    return {"ok": True, "error": None, "projects": projects}
+
+
+async def dashboard_overview(
+    *,
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    schema: str,
+    use_tls: bool = False,
+    cert_mode: str = "verify",
+    fingerprint: str = "",
+    min_rsa_bits: int = 2048,
+    weeks: int = 12,
+    app_user: str = "",
+) -> dict:
+    """Richer per-project overview for the Dashboard surface: on top of what
+    ``list_projects_with_counts`` returns (journeys / events / lastEventAt), it adds the
+    FIRST event time, the number of defined steps, a weekly **ingest timeline** (a fixed
+    series of the last ``weeks`` ISO-week buckets ending at the current week, zeros filled so
+    a gap up to today renders as a flat tail), and the count of **open notes by severity**
+    (RESOLVED = FALSE, grouped by IMPORTANCE), scoped to what ``app_user`` may see — their own
+    notes plus unowned/shared ones, mirroring the app's note visibility.
+
+    Returns ``{"ok","error","projects":[{projectId,title,titleShort,journeys,events,
+    firstEventAt,lastEventAt,steps,timeline:[{week,events}],openNotes:{IMPORTANCE:count}}]}``.
+    All ORIGINAL data only. Fully failure-tolerant; a missing table never raises past the
+    per-call guards."""
+    import asyncio
+    from datetime import date, datetime, timedelta
+
+    from .manager import DatabaseManager, friendly_error
+
+    schema = (schema or "").strip()
+    if not schema:
+        return {"ok": False, "error": "A schema name is required.", "projects": []}
+    weeks = max(1, min(int(weeks or 12), 104))
+
+    server = _server_for(
+        schema, host=host, port=port, username=username, use_tls=use_tls,
+        cert_mode=cert_mode, fingerprint=fingerprint, min_rsa_bits=min_rsa_bits,
+    )
+    mgr = DatabaseManager.__new__(DatabaseManager)  # no store side effects
+    ident = _quote_ident(schema)
+
+    # The last `weeks` ISO-week starts (Mondays), oldest→newest, ending at this week.
+    this_monday = date.today() - timedelta(days=date.today().weekday())
+    buckets = [this_monday - timedelta(weeks=weeks - 1 - i) for i in range(weeks)]
+    bucket_index = {b: i for i, b in enumerate(buckets)}
+
+    def _as_iso(v) -> str | None:
+        return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v is not None else None)
+
+    def _to_date(v):
+        """Normalise a week-start value (pyexasol may hand back a datetime, a date, or a
+        'YYYY-MM-DD hh:mm:ss[.ffffff]' string) to a date for bucket matching."""
+        if isinstance(v, datetime):
+            return v.date()
+        if isinstance(v, date):
+            return v
+        try:
+            return datetime.fromisoformat(str(v).replace(" ", "T")[:19]).date()
+        except ValueError:
+            return None
+
+    def _run() -> list[dict]:
+        conn = mgr._open(server, password)
+        try:
+            conn.execute(f"OPEN SCHEMA {ident}")
+            titles: dict[int, tuple[str, str]] = {}
+            try:
+                for row in conn.execute("SELECT PROJECT_ID, TITLE, TITLE_SHORT FROM PROJECTS").fetchall():
+                    if row[0] is not None:
+                        titles[int(row[0])] = (row[1] or "", row[2] or "")
+            except Exception:  # noqa: BLE001 — PROJECTS may be absent
+                pass
+            # events, journeys, first + last event time, per project.
+            aggs: dict[int, tuple[int, int, str | None, str | None]] = {}
+            try:
+                for row in conn.execute(
+                    "SELECT PROJECT_ID, COUNT(*), COUNT(DISTINCT EVENT_ID), "
+                    "MIN(EVENT_TIME), MAX(EVENT_TIME) "
+                    "FROM JOURNEYS WHERE SAMPLE_SET = 'ORIGINAL' GROUP BY PROJECT_ID"
+                ).fetchall():
+                    if row[0] is not None:
+                        aggs[int(row[0])] = (int(row[1] or 0), int(row[2] or 0),
+                                             _as_iso(row[3]), _as_iso(row[4]))
+            except Exception:  # noqa: BLE001 — JOURNEYS may be absent
+                pass
+            steps: dict[int, int] = {}
+            try:
+                for row in conn.execute("SELECT PROJECT_ID, COUNT(*) FROM STEPS GROUP BY PROJECT_ID").fetchall():
+                    if row[0] is not None:
+                        steps[int(row[0])] = int(row[1] or 0)
+            except Exception:  # noqa: BLE001 — STEPS may be absent
+                pass
+            # Weekly ingest timeline: one GROUP BY, truncated to the ISO-week start in SQL
+            # (TRUNC(..,'IW') = Monday) so only one row per project-week crosses the wire.
+            series: dict[int, list[int]] = {}
+            try:
+                for row in conn.execute(
+                    "SELECT PROJECT_ID, TRUNC(EVENT_TIME,'IW') AS WK, COUNT(*) "
+                    "FROM JOURNEYS WHERE SAMPLE_SET = 'ORIGINAL' GROUP BY PROJECT_ID, TRUNC(EVENT_TIME,'IW')"
+                ).fetchall():
+                    if row[0] is None or row[1] is None:
+                        continue
+                    pid = int(row[0])
+                    idx = bucket_index.get(_to_date(row[1]))
+                    if idx is None:
+                        continue  # outside the shown window (older than `weeks`)
+                    series.setdefault(pid, [0] * weeks)[idx] += int(row[2] or 0)
+            except Exception:  # noqa: BLE001 — JOURNEYS may be absent
+                pass
+
+            # Open notes (RESOLVED = FALSE) by IMPORTANCE, visibility-scoped to app_user —
+            # their own notes plus unowned/shared ones (never another user's private notes),
+            # mirroring ProcessRepository.load_notes. NOTES is created lazily, so may be absent.
+            safe_user = (app_user or "").upper().replace("'", "''")
+            open_notes: dict[int, dict[str, int]] = {}
+            try:
+                for row in conn.execute(
+                    "SELECT PROJECT_ID, IMPORTANCE, COUNT(*) FROM NOTES "
+                    "WHERE RESOLVED = FALSE AND "
+                    f"(UPPER(NOTE_USER) = '{safe_user}' OR NOTE_USER = '' OR IS_SHARED = TRUE) "
+                    "GROUP BY PROJECT_ID, IMPORTANCE"
+                ).fetchall():
+                    if row[0] is None:
+                        continue
+                    imp = (str(row[1]).upper() if row[1] else "NORMAL")
+                    open_notes.setdefault(int(row[0]), {})[imp] = int(row[2] or 0)
+            except Exception:  # noqa: BLE001 — NOTES may be absent
+                pass
+
+            out: list[dict] = []
+            for pid in sorted(set(titles) | set(aggs)):
+                events, journeys, first_event, last_event = aggs.get(pid, (0, 0, None, None))
+                title, short = titles.get(pid, ("", ""))
+                # Show only BASE flows: skip aggregate projects (a Σ-prefixed high-level map
+                # or a #-prefixed detail/sub-flow). Their derived data would otherwise
+                # double-count against the base process on the Dashboard.
+                if is_aggregate_project(short):
+                    continue
+                counts = series.get(pid, [0] * weeks)
+                out.append({
+                    "projectId": pid,
+                    "title": title or short or str(pid),
+                    "titleShort": short,
+                    "journeys": journeys,
+                    "events": events,
+                    "firstEventAt": first_event,
+                    "lastEventAt": last_event,
+                    "steps": steps.get(pid, 0),
+                    "timeline": [{"week": b.isoformat(), "events": counts[i]}
+                                 for i, b in enumerate(buckets)],
+                    "openNotes": open_notes.get(pid, {}),
                 })
             return out
         finally:

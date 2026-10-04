@@ -288,6 +288,18 @@
 
   <p>With data present, a right-aligned footer reads "Query time: N ms" (or "N.NN s" for longer queries). Its tooltip — "Server-side execution time of the queries behind this view" — is a reminder that this figure measures the database, not the browser.</p>
 
+  <h3 id="ch9-autorefresh">Automatic refresh</h3>
+
+  <p>The A-Chart can reload itself on a timer — useful when the underlying data is growing while you watch (a live feed, or the background demo-event generator). The controls live in <b>Configuration → Auto-refresh</b> in the sidebar, and the section appears <b>only while you are in the A-Chart</b> (no other view auto-refreshes).</p>
+
+  <ul>
+    <li><b>Refresh every</b> — a dropdown: <b>Off</b> (the default), <b>5s</b>, <b>10s</b>, <b>30s</b>, <b>1m</b>, <b>2m</b>, <b>5m</b>. With an interval chosen, the A-Chart reloads on that cadence using the current filters.</li>
+    <li>A round <b>countdown ring</b> next to the dropdown shows the seconds remaining until the next reload.</li>
+    <li><b>↻ Refresh now</b> reloads the A-Chart immediately and restarts the countdown. It works even when the interval is <b>Off</b>, as a one-click manual reload.</li>
+  </ul>
+
+  <p>The timer keeps running while you work in other sidebar sections or collapse the sidebar; it is paused automatically the moment you switch to any other view mode, and resumes when you return to the A-Chart. The chosen interval is remembered per user.</p>
+
   <h3 id="ch9-sankey">Flowchart orientation, or Sankey</h3>
 
   <p>A small switch floats at the top of the A-Chart and B-Chart canvas with three options — <b>🕸 Flowchart</b> / <b>➡ Horizontal</b> / <b>🌊 Sankey</b>. It flips the same data between renderings; your choice is remembered per user and applies to both charts.</p>

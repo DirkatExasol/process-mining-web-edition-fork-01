@@ -2,7 +2,7 @@
 
 <h1><span class="chnum">6</span> The Application: Orientation</h1>
 
-<p class="chintro">This chapter is your map of the application window. It explains what happens between opening the address and seeing your first process map, describes every permanent element of the shell — sidebar, detail pane, title capsule, toolbar, alerts and theme — and then covers the two controls you will use most often: the <strong>view-mode menu</strong>, which switches the detail pane between the ten analysis modes, and the <strong>KPI strip</strong>, the band of figures above the chart. It is written for every user of the application, whatever their role; where a feature is restricted to power users or administrators this is stated explicitly. Later chapters describe each view mode and each sidebar section in detail.</p>
+<p class="chintro">This chapter is your map of the application window. It explains what happens between opening the address and seeing your first process map, describes every permanent element of the shell — sidebar, detail pane, title capsule, toolbar, alerts and theme — and then covers the two controls you will use most often: the <strong>view-mode menu</strong>, which switches the detail pane between the eleven modes (the Dashboard overview plus ten analysis modes), and the <strong>KPI strip</strong>, the band of figures above the chart. It is written for every user of the application, whatever their role; where a feature is restricted to power users or administrators this is stated explicitly. Later chapters describe each view mode and each sidebar section in detail.</p>
 
 <figure data-fig="app-01-shell"><figcaption>The application shell: sidebar on the left, detail pane on the right with the title capsule, toolbar, KPI strip and process map.</figcaption></figure>
 
@@ -18,12 +18,12 @@
   <li>While the application boots it shows a large spinner with the text <strong>Starting…</strong>. Nothing is interactive at this point.</li>
   <li>If the administrator has made login mandatory and you have no valid session, the <strong>Login</strong> view is shown instead of the application. The Login view also stays up during a forced two-factor enrolment, until your recovery codes have been displayed and acknowledged.</li>
   <li>The <strong>legal gate</strong> appears next. You must accept it before any part of the application UI is shown.</li>
-  <li>The shell appears: sidebar on the left with the <strong>Connections</strong> section already open, detail pane on the right.</li>
+  <li>The shell appears: sidebar on the left with the <strong>Connections</strong> section already open, and the <strong>Dashboard</strong> in the detail pane on the right — the overview of every process available to you. (Opening a specific process from the <code>/home</code> launcher skips the Dashboard and drops you straight onto that process map.)</li>
 </ol>
 
 <div class="warn"><strong>Warning</strong> Declining the legal gate signs you out and returns you to the Login view. There is no way past the gate other than accepting it; if you cannot accept the terms, contact your administrator.</div>
 
-<p>Until you connect to a database, every view mode shows the same placeholder in the detail pane: the glyph <strong>⛁</strong>, the title <strong>Not Connected</strong> and the text “Add a connection in the sidebar and tap it to connect to your Exasol database.” This is a global state, not a per-mode error — switching modes will not make it go away.</p>
+<p>The Dashboard reads across all your connections and needs none selected. The other view modes do: until you connect to a database and select a project, each shows the placeholder glyph <strong>⛁</strong>, the title <strong>Not Connected</strong> and the text “Add a connection in the sidebar and tap it to connect to your Exasol database.” This is a global state, not a per-mode error — switching among those modes will not make it go away (the Dashboard remains available throughout).</p>
 
 <h2 id="app-shell">The application shell</h2>
 
@@ -102,10 +102,10 @@
 
 <h2 id="app-view-modes">Switching view modes</h2>
 
-<p>The detail pane can display ten different analysis modes. You change between them with the toolbar’s view-switch button.</p>
+<p>The detail pane can display the Dashboard overview plus ten analysis modes. You change between them with the toolbar’s view-switch button.</p>
 
 <ol class="steps">
-  <li>Connect to a database and select a project in the sidebar. The <strong>☰ &lt;mode icon&gt;</strong> button (tooltip “Switch view”) appears in the toolbar only when you are connected <em>and</em> a project is selected.</li>
+  <li>The <strong>☰ &lt;mode icon&gt;</strong> button (tooltip “Switch view”) is available on the Dashboard (your landing screen) and whenever you are connected with a project selected — so you can always return to the Dashboard and switch away from it.</li>
   <li>Click <strong>☰</strong>. A popover menu lists the available view modes; the current mode is marked with a <strong>✓</strong>.</li>
   <li>Click a mode to switch to it. Clicking anywhere outside the menu closes it without changing the mode.</li>
 </ol>
@@ -115,6 +115,7 @@
 <table>
   <thead><tr><th>Mode</th><th>Icon</th><th>Purpose</th><th>Who can see it</th></tr></thead>
   <tbody>
+    <tr><td><strong>Dashboard</strong></td><td>🧭</td><td>Cross-connection overview of every process you can see; the landing screen on a direct sign-in</td><td>All users</td></tr>
     <tr><td><strong>A-Chart</strong></td><td>📈</td><td>The primary process map with its own filter set</td><td>All users</td></tr>
     <tr><td><strong>B-Chart</strong></td><td>📉</td><td>A second, fully independent process map</td><td>All users</td></tr>
     <tr><td><strong>A/B Comparison</strong></td><td>⇄</td><td>A and B side by side with a similarity score</td><td>All users</td></tr>
@@ -129,6 +130,24 @@
 </table>
 
 <div class="role">Requires: <b>Power user</b> or <b>Administrator</b> — Conformance Check, Happy Path and Simulation. For plain users these three entries are not merely disabled, they are absent from the menu.</div>
+
+<h3 id="app-dashboard">The Dashboard</h3>
+
+<p>The <strong>Dashboard</strong> is the first entry in the <strong>☰</strong> menu and the screen you land on after a direct sign-in to the application. (If you instead launched a specific process from the <code>/home</code> launcher, the application skips the Dashboard and opens that process directly.) Unlike every other mode, the Dashboard does not need a connection or a selected project — it reads across <em>all</em> the connections assigned to you at once, so it is a true overview rather than a view of one process.</p>
+
+<p>The Dashboard lists only <strong>base process flows</strong>. Derived aggregate projects — a high-level <strong>Σ</strong> map or a <strong>#</strong> detail / sub-flow produced by the Aggregate designer — are not shown, so their copied data never double-counts against the base process.</p>
+
+<p>It is laid out as cards:</p>
+<ul>
+  <li>An <strong>Overview</strong> card totals your <strong>processes</strong>, <strong>connections</strong> and <strong>events</strong>, with a sparkline of all ingests combined.</li>
+  <li>One card per <strong>process</strong>, grouped under the connection it lives in. Each card always shows the number of <strong>events</strong>, when the <strong>last log</strong> entry was recorded, and a weekly <strong>ingest sparkline</strong>. <strong>Clicking a card connects to that process and opens its A-Chart.</strong></li>
+</ul>
+
+<p>The <strong>ingest sparkline</strong> plots how many events were ingested per week over the recent weeks, ending at the current week. When the most recent weeks have no new events, the line ends in a flat, dashed segment running up to today — so a stalled or finished feed is obvious at a glance.</p>
+
+<p>Events, Last log and the sparkline are always shown. The <strong>Metrics</strong> toolbar lets you add up to <strong>three</strong> more metrics — <em>Journeys</em>, <em>Days since last ingest</em>, <em>Active span (days)</em>, <em>Avg events / journey</em> and <em>Open notes</em> — which then appear on <em>every</em> process card. Use the ◀ ▶ controls to reorder a chosen metric and ✕ to remove it. The selection is saved per user. A connection whose schema cannot be read shows a small warning in its group instead of failing the whole Dashboard.</p>
+
+<p><strong>Open notes</strong> shows the project's unresolved notes broken down by severity, as small coloured counts (red = Urgent, orange = Important, blue = Info, grey = Normal), or a muted <code>0</code> when there are none. As in the Notes view, it counts only the notes you may see — your own plus shared notes — never another user's private notes.</p>
 
 <h3 id="app-filter-memory">Per-mode filter memory</h3>
 

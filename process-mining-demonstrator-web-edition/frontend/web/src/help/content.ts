@@ -80,11 +80,44 @@ const overview: HelpTopic = {
       ],
     },
     {
-      heading: 'The ten views',
+      heading: 'The eleven views',
       body: [
-        p('Open the ☰ menu (top-right) to switch between: A-Chart, B-Chart, A/B Comparison, Individual Journey, AI supported Documentation, Statistics, Conformance Check, Happy Path, Notes and Simulation. A checkmark marks the active view, and the title capsule shows it on a second line so you always know your context.'),
+        p('Open the ☰ menu (top-right) to switch between: Dashboard, A-Chart, B-Chart, A/B Comparison, Individual Journey, AI supported Documentation, Statistics, Conformance Check, Happy Path, Notes and Simulation. A checkmark marks the active view, and the title capsule shows it on a second line so you always know your context.'),
         tip('Conformance Check, Happy Path and Simulation are advanced-analysis views shown only to Power users (and administrators). Plain users do not see them in the ☰ menu.'),
         tip('Press ⌘/ (or Ctrl+/) at any time to open or close this Help panel. It floats, and can be dragged by its title bar and resized from the bottom-right corner.'),
+      ],
+    },
+  ],
+}
+
+// ── Dashboard ───────────────────────────────────────────────────────────────
+
+const dashboard: HelpTopic = {
+  id: 'dashboard',
+  title: 'Dashboard',
+  subtitle: 'A cross-connection overview of every process you can see',
+  icon: '🧭',
+  sections: [
+    {
+      heading: 'What it shows',
+      body: [
+        p('The Dashboard is the first entry in the ☰ view menu and the landing screen when you sign in directly to the Work-Bench. It gives a bird’s-eye view of every process available to you, across all of your connections — without opening any single one.'),
+        p('Processes are shown as cards, grouped by the connection they live in. Each card shows the number of events and when the last event was logged, plus a weekly ingest sparkline. A separate Overview card at the top totals your processes, connections and events.'),
+        tip('Clicking a process card connects to it and opens its A-Chart — the same as picking it from the sidebar, but one step. Launching a process from the /home launcher skips the Dashboard and opens that process directly.'),
+        p('The Dashboard lists only base process flows. Derived aggregate projects — a high-level Σ map or a # detail / sub-flow produced by the Aggregate designer — are not shown, so their copied data does not double-count against the base process.'),
+      ],
+    },
+    {
+      heading: 'The ingest sparkline',
+      body: [
+        p('Every card carries a small sparkline of how many events were ingested per week over the recent weeks, ending at the current week. A run of flat, dashed line at the end means no new events since then — so you can spot a stalled or finished feed at a glance. The Overview card’s sparkline sums the ingests of all your processes.'),
+      ],
+    },
+    {
+      heading: 'Adding metrics',
+      body: [
+        p('Events, Last log and the sparkline are always shown. Using the Metrics toolbar you can add up to three more metrics — Journeys, Days since last ingest, Active span (days), Avg events / journey and Open notes — which then appear on every process card. Use the ◀ ▶ controls on a selected metric to reorder them and ✕ to remove one. Your choice is remembered per user.'),
+        p('“Open notes” shows the project’s unresolved notes broken down by severity, as small coloured counts (red = Urgent, orange = Important, blue = Info, grey = Normal), or a muted 0 when there are none. It counts only the notes you can see — your own plus shared notes — exactly like the Notes view.'),
       ],
     },
   ],
@@ -497,6 +530,7 @@ const chartViews: HelpTopic = {
       body: [
         p('The primary process map. Shows all journeys matching the current filter set as an aggregated directly-follows graph; arrow thickness reflects the selected transition metric. When a project is first selected, A-Chart loads automatically using the last N days of data — N defaults to 30 and is set in Configuration → Dates and Times → Default date window (0 shows the full range).'),
         tip('A date slider sits above the map, in the Date & Metrics card. In Range mode it has two independently draggable thumbs — drag either to move the window start or end; in Day mode a single thumb selects one calendar day. Both thumbs also respond to the arrow keys once focused. Switch modes with the Range / Day control at the right of the metric row, just below the slider.'),
+        p('Auto-refresh (A-Chart only): Configuration → Auto-refresh adds a Refresh now button, an interval dropdown (Off / 5s / 10s / 30s / 1m / 2m / 5m) and a round countdown to the next reload. With an interval set, the A-Chart reloads itself on that cadence — handy for watching a live feed (e.g. the demo-event generator) arrive. The timer keeps running while you work in other sidebar sections; it is paused automatically whenever you leave the A-Chart. Refresh now reloads immediately and restarts the countdown, and works even when auto is Off.'),
       ],
     },
     {
@@ -1665,6 +1699,7 @@ const actions: HelpTopic = {
 
 export const HELP_TOPICS: HelpTopic[] = [
   overview,
+  dashboard,
   database,
   connecting,
   roles,

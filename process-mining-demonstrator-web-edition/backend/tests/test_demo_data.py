@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import random
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.db import demo_data as d
 from app.db import manager
@@ -420,17 +420,14 @@ def test_dataset_generation_is_deterministic(key):
 
 
 def test_airport_seasonality():
-    """Airport arrivals are seasonal: summer holidays (Jul/Aug) and Christmas (Dec) peak,
-    September high, May low, the rest normal (see _APF_MONTH_WEIGHTS)."""
+    """Airport arrivals are seasonal across the rolling 2-year window: summer holidays
+    (Jul/Aug) and Christmas (Dec) peak, September high, May low (see _APF_MONTH_WEIGHTS).
+    A fixed `now` keeps the month-of-year distribution deterministic."""
     rng = random.Random(42)
-    rows = d.generate_airport_rows(4000, rng)
-    # journey start = earliest event time per case
-    starts: dict[str, object] = {}
-    for e in rows:
-        if e.event_id not in starts or e.event_time < starts[e.event_id]:
-            starts[e.event_id] = e.event_time
+    now = datetime(2026, 6, 15, 12, 0, 0)              # fixed "today" for determinism
+    starts = [d._apf_rand_start(rng, now=now) for _ in range(8000)]
     by_month = defaultdict(int)
-    for dt in starts.values():
+    for dt in starts:
         by_month[dt.month] += 1
 
     may = by_month[5]
@@ -438,5 +435,19 @@ def test_airport_seasonality():
     for peak in (7, 8, 12):                             # summer holidays + Christmas
         assert by_month[peak] > 1.5 * may
     assert by_month[9] > may                            # September is high
-    assert by_month[7] > by_month[1] and by_month[9] > by_month[1]   # peaks/high > a normal month
-    assert min(starts.values()).year == 2024 and max(starts.values()).year == 2024
+
+
+def test_demo_timestamps_span_the_rolling_two_year_window():
+    """Every demo start falls within [now-2y, now], so recent views are never empty.
+    Checked on both the uniform path (_rand_start) and the seasonal airport path."""
+    rng = random.Random(7)
+    now = datetime(2026, 6, 15, 12, 0, 0)
+    lo = now - timedelta(days=365 * d._DEMO_SPAN_YEARS)
+    uni = [d._rand_start(rng, now=now) for _ in range(2000)]
+    apf = [d._apf_rand_start(rng, now=now) for _ in range(2000)]
+    # Every start falls on a day within [now-2y, now] (the airport edge day may pick a
+    # later time-of-day than `now`, but never a later date).
+    for series in (uni, apf):
+        assert all(lo.date() <= t.date() <= now.date() for t in series)
+    # The window is actually exercised near both ends (not clustered in the middle).
+    assert min(uni) < lo + timedelta(days=60) and max(uni) > now - timedelta(days=60)

@@ -279,6 +279,7 @@ export const SAMPLING_METHODS: {
 ]
 
 export const DETAIL_VIEW_MODES = [
+  'Dashboard',
   'A-Chart',
   'B-Chart',
   'A/B Comparison',
@@ -293,6 +294,7 @@ export const DETAIL_VIEW_MODES = [
 export type DetailViewMode = (typeof DETAIL_VIEW_MODES)[number]
 
 export const VIEW_MODE_ICONS: Record<DetailViewMode, string> = {
+  Dashboard: '🧭',
   'A-Chart': '📈',
   'B-Chart': '📉',
   'A/B Comparison': '⇄',
@@ -748,6 +750,57 @@ export interface PortalConnection {
   error: string | null
   projects: PortalProcess[]
 }
+
+/** One weekly bucket of the ingest timeline (sparkline): the ISO-week start and its count. */
+export interface IngestWeek {
+  week: string
+  events: number
+}
+
+/** A process on the Dashboard — PortalProcess plus the extra overview metrics. */
+export interface DashboardProcess extends PortalProcess {
+  firstEventAt: string | null
+  steps: number
+  timeline: IngestWeek[]
+  /** Count of OPEN (unresolved) notes visible to the user, keyed by IMPORTANCE. */
+  openNotes: Record<string, number>
+}
+
+/** The user's processes in one connection, enriched for the Dashboard. */
+export interface DashboardConnection {
+  id: string
+  name: string
+  schema: string | null
+  error: string | null
+  projects: DashboardProcess[]
+}
+
+/** The extra per-card metrics a user can add to the Dashboard (max 3, reorderable). The
+ *  always-on metrics (Events, Last log entry, ingest sparkline) are not in this set. */
+export const DASHBOARD_METRICS = [
+  'journeys',
+  'daysSinceLast',
+  'spanDays',
+  'avgEvents',
+  'openNotes',
+] as const
+export type DashboardMetric = (typeof DASHBOARD_METRICS)[number]
+export const DASHBOARD_METRIC_LABELS: Record<DashboardMetric, string> = {
+  journeys: 'Journeys',
+  daysSinceLast: 'Days since last ingest',
+  spanDays: 'Active span (days)',
+  avgEvents: 'Avg events / journey',
+  openNotes: 'Open notes',
+}
+
+/** Note importance levels, highest → lowest, with a theme colour token for the Dashboard's
+ *  open-notes-by-severity metric. Mirrors backend NOTE_IMPORTANCE. */
+export const NOTE_SEVERITIES: { key: string; label: string; color: string }[] = [
+  { key: 'URGENT', label: 'Urgent', color: 'var(--red)' },
+  { key: 'IMPORTANT', label: 'Important', color: 'var(--orange)' },
+  { key: 'INFO', label: 'Info', color: 'var(--blue)' },
+  { key: 'NORMAL', label: 'Normal', color: 'var(--secondary)' },
+]
 
 /** "aux" is a helper field: extracted like the others but written to no column — it
  *  exists so a compound-step rule can match on a value (an HTTP status, a result code)

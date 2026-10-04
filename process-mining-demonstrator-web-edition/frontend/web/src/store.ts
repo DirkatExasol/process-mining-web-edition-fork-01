@@ -242,6 +242,10 @@ export interface AppState {
 
   // ── active chart ────────────────────────────────────────────────────────
   activeChartMode: DetailViewMode
+  /** A-Chart auto-refresh: epoch-ms of the next scheduled reload (null = not scheduled),
+   *  and a counter the "Refresh now" button bumps to restart the controller's cycle. */
+  autoRefreshNextAt: number | null
+  autoRefreshKick: number
   savedChartStates: Partial<Record<DetailViewMode, ChartFilterState>>
 
   processGraph: ProcessGraph
@@ -611,6 +615,8 @@ const INITIAL_STATE: AppState = {
   projectMinDate: today,
 
   activeChartMode: 'A-Chart',
+  autoRefreshNextAt: null,
+  autoRefreshKick: 0,
   savedChartStates: {},
 
   processGraph: EMPTY_GRAPH,

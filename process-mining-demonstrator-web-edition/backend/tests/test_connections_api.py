@@ -136,6 +136,43 @@ def test_portal_is_empty_for_a_user_with_no_connections(backend):
     assert data == {"connections": []}
 
 
+# ── Dashboard overview: /api/dashboard ────────────────────────────────────────
+
+
+def test_dashboard_groups_processes_with_timeline_and_degrades_one_connection(backend, monkeypatch):
+    import app.db.schema_ddl as schema_ddl
+
+    app, store, _ = backend
+    store.create_user("alice", "pw", is_admin=False)
+    store.create_user("bob", "pw", is_admin=False)
+    _make_conn(store, name="Prod", schema="MINING", assignments=["alice"])
+    _make_conn(store, name="Sandbox", schema="SBX", assignments=["alice"])
+    _make_conn(store, name="Bob only", assignments=["bob"])  # must not leak to alice
+
+    async def fake_overview(**kwargs):
+        if kwargs["schema"] == "MINING":
+            return {"ok": True, "error": None, "projects": [
+                {"projectId": 1, "title": "Bookstore", "titleShort": "BOOK",
+                 "journeys": 10, "events": 40, "firstEventAt": "2026-07-01T09:00:00",
+                 "lastEventAt": "2026-09-14T10:00:00", "steps": 6,
+                 "timeline": [{"week": "2026-09-07", "events": 40}],
+                 "openNotes": {"URGENT": 2, "INFO": 1}},
+            ]}
+        return {"ok": False, "error": "schema unreachable", "projects": []}
+
+    monkeypatch.setattr(schema_ddl, "dashboard_overview", fake_overview)
+
+    data = TestClient(app).get("/api/dashboard", headers={"X-PMW-User": "alice"}).json()
+    groups = {g["name"]: g for g in data["connections"]}
+    assert set(groups) == {"Prod", "Sandbox"}            # only alice's connections
+    proj = groups["Prod"]["projects"][0]
+    assert proj["title"] == "Bookstore" and proj["steps"] == 6
+    assert proj["timeline"][0]["events"] == 40 and proj["firstEventAt"].startswith("2026-07-01")
+    assert proj["openNotes"] == {"URGENT": 2, "INFO": 1}        # open notes by severity
+    # A connection that can't be read degrades to a per-group error, never a 500.
+    assert groups["Sandbox"]["projects"] == [] and groups["Sandbox"]["error"] == "schema unreachable"
+
+
 # ── Connect authorization gate ────────────────────────────────────────────────
 
 

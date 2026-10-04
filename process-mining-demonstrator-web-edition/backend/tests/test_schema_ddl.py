@@ -113,6 +113,15 @@ def test_provision_migrates_a_legacy_schema_missing_step_id(monkeypatch):
         assert entry in res["created"]
 
 
+def test_is_aggregate_project_flags_only_derived_projects():
+    # The Dashboard shows base flows only; Σ (high-level) and # (detail/sub-flow) are excluded.
+    assert schema_ddl.is_aggregate_project("Σ ORD")   # high-level
+    assert schema_ddl.is_aggregate_project("# ORD")        # detail / sub-flow
+    assert not schema_ddl.is_aggregate_project("ORD")      # base
+    assert not schema_ddl.is_aggregate_project("")
+    assert not schema_ddl.is_aggregate_project(None)       # tolerate missing
+
+
 def test_provision_distributes_an_existing_journeys_not_yet_keyed(monkeypatch):
     # CREATE TABLE IF NOT EXISTS won't re-key a pre-existing JOURNEYS, so provisioning
     # issues the ALTER when EVENT_ID isn't already the distribution key.

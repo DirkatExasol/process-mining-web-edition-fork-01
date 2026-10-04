@@ -87,12 +87,12 @@ export function App() {
     if (useStore.getState().connection.isConnected) {
       await useStore.getState().loadProjects()
     }
-    // A launch-page tile opened this tab at a specific process → open it and skip the resume.
+    // A launch-page tile opened this tab at a specific process → open it (A-Chart) and skip
+    // the dashboard landing.
     if (await openFromUrlParams()) return
-    // Resume where the user left off: reconnect to the last connection, reopen the last
-    // project and restore the last view. Reads the per-user snapshot hydrated above, so
-    // it works both on a cold boot with a live session and after an inactivity re-login.
-    await useStore.getState().restoreLastSession()
+    // A direct login (not launched at a specific process from /home) lands on the Dashboard
+    // overview rather than auto-diving into the last process.
+    useStore.setState({ activeChartMode: 'Dashboard' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openFromUrlParams])
 

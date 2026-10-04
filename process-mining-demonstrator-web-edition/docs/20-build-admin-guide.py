@@ -104,7 +104,7 @@ STEPS = [
         "Customize the login panels",
         "Set the look of every sign-in panel: a solid background colour or an uploaded image, shared by "
         "the app, admin, integration and Actions surfaces. The freely-editable version line (e.g. "
-        "&ldquo;V 1.0.0 &ndash; Mount Maunganui&rdquo;) also appears under the title.",
+        "&ldquo;2027.1.0 &ndash; Tongariro&rdquo;) also appears under the title.",
         None,
     ),
     (

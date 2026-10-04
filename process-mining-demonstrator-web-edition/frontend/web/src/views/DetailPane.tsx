@@ -2,6 +2,7 @@
  *  title capsule, view-mode menu, KPI strip and the active-view switcher. */
 
 import { useState } from 'react'
+import { AutoRefreshController } from '../components/AutoRefresh'
 import { JourneyKpiStrip, KpiStrip } from '../components/KpiStrip'
 import { Chevron, Unavailable } from '../components/ui'
 import { FlowChart } from '../flow/FlowChart'
@@ -11,6 +12,7 @@ import { useStore } from '../store'
 import { DETAIL_VIEW_MODES, VIEW_MODE_ICONS, type DetailViewMode } from '../types'
 import { ABComparison } from './ABComparison'
 import { AIDocumentationView } from './AIDocumentationView'
+import { DashboardView } from './DashboardView'
 import { ChartView } from './ChartView'
 import { ConformanceView } from './ConformanceView'
 import { HappyPathView } from './HappyPathView'
@@ -28,6 +30,7 @@ const POWER_ONLY_MODES: DetailViewMode[] = [
 
 /** Modes that render their own header instead of the shared KPI strip. */
 const SELF_MANAGED: DetailViewMode[] = [
+  'Dashboard',
   'A/B Comparison',
   'Statistics',
   'Notes',
@@ -52,6 +55,9 @@ export function DetailPane({
 
   const mode = store.activeChartMode
   const connected = store.connection.isConnected && store.selectedProject != null
+  // The view-mode menu is reachable from the Dashboard too (so a user can return to it and
+  // switch away), not only when a project is open.
+  const menuAvailable = connected || mode === 'Dashboard'
 
   // Power users (and admins) get the advanced-analysis views; plain users don't.
   const canSeePowerModes = store.authIsPower || store.authIsAdmin
@@ -79,8 +85,10 @@ export function DetailPane({
       )}
 
       <div className="title-capsule">
-        <div className="t-name">{store.selectedProject?.title ?? 'Process Map'}</div>
-        <div className="t-mode" style={{ opacity: store.selectedProject ? 1 : 0 }}>
+        <div className="t-name">
+          {store.selectedProject?.title ?? (mode === 'Dashboard' ? 'Dashboard' : 'Process Map')}
+        </div>
+        <div className="t-mode" style={{ opacity: store.selectedProject || mode === 'Dashboard' ? 1 : 0 }}>
           {mode}
         </div>
       </div>
@@ -89,7 +97,7 @@ export function DetailPane({
         <button className="btn small" onClick={onShowHelp} title="Help">
           ？
         </button>
-        {connected && (
+        {menuAvailable && (
           <div style={{ position: 'relative' }}>
             <button
               className="btn small"
@@ -183,12 +191,21 @@ export function DetailPane({
       )}
 
       <ActiveView />
+      {/* Always mounted so the A-Chart auto-refresh schedule survives sidebar/panel collapse;
+          it goes idle outside A-Chart and renders nothing. */}
+      <AutoRefreshController />
     </main>
   )
 }
 
 function ActiveView() {
   const store = useStore()
+
+  // The Dashboard is a cross-connection overview — it fetches its own data and must render
+  // even with no active connection / selected project (the direct-login landing).
+  if (store.activeChartMode === 'Dashboard') {
+    return <DashboardView />
+  }
 
   if (!store.connection.isConnected) {
     return (

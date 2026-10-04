@@ -23,6 +23,7 @@ import type {
   IntegrationStatus,
   RecordDetection,
   SampleSet,
+  DashboardConnection,
   PortalConnection,
   SinkMonitor,
   Source,
@@ -162,6 +163,7 @@ export const api = {
     post<ConnectionStatus>(`/api/connections/${enc(id)}/connect`),
   // End-user launch page: the user's processes grouped by connection.
   portal: () => get<{ connections: PortalConnection[] }>('/api/portal'),
+  dashboard: () => get<{ connections: DashboardConnection[] }>('/api/dashboard'),
   // The training-guide index (same list the suite launcher shows), for the launch page.
   guides: () => get<{ file: string; title: string; type: string }[]>('/guides/index.json'),
 

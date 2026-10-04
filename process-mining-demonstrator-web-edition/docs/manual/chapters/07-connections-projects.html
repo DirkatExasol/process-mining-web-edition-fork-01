@@ -268,7 +268,7 @@ fingerprint, or change the certificate mode.</code></pre>
     <li>Connect to the database and open the new project from the <b>Projects</b> section.</li>
   </ol>
 
-  <p>Event times are spread randomly across 1 January 2024 08:00 to 31 December 2024 22:00, so the generated data always falls in a fixed, predictable window. Each EVENT_ID is the MD5 hash of a synthetic key — <code>ORD-000001</code>, <code>ORD-000002</code>, … for the bookstore, <code>CRA-000001</code>… for credit applications, and <code>FLT-000001</code>… for flights — which is why event identifiers look like long hexadecimal strings in the Individual Journey view and in its autocomplete suggestions.</p>
+  <p>Event times are spread across a <strong>rolling two-year window ending on the generation day</strong> (today back to two years ago), so freshly generated data always includes recent activity — the Dashboard sparklines and the journeys-over-time chart are never empty. Each EVENT_ID is the MD5 hash of a synthetic key — <code>ORD-000001</code>, <code>ORD-000002</code>, … for the bookstore, <code>CRA-000001</code>… for credit applications, and <code>FLT-000001</code>… for flights — which is why event identifiers look like long hexadecimal strings in the Individual Journey view and in its autocomplete suggestions.</p>
 
   <table>
     <thead><tr><th>What generation touches</th><th>Effect</th></tr></thead>

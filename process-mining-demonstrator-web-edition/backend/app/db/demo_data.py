@@ -92,9 +92,17 @@ def _md5_id(raw: str) -> str:
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
-def _rand_start(rng: random.Random) -> datetime:
-    start = datetime(2024, 1, 1, 8)
-    end = datetime(2024, 12, 31, 22)
+# Demo datasets are spread over a rolling window ending at the moment the data is
+# generated, so the newest events always reach "today" and recent views (the Dashboard's
+# ingest sparklines, the journeys-over-time chart) are never empty. The window length:
+_DEMO_SPAN_YEARS = 2
+
+
+def _rand_start(rng: random.Random, now: datetime | None = None) -> datetime:
+    """A uniform start timestamp in the last ``_DEMO_SPAN_YEARS`` years, ending now.
+    ``now`` defaults to the current wall-clock time (passed explicitly only by tests)."""
+    end = (now or datetime.now()).replace(microsecond=0)
+    start = end - timedelta(days=365 * _DEMO_SPAN_YEARS)
     span = (end - start).total_seconds()
     return start + timedelta(seconds=rng.uniform(0, span))
 
@@ -514,19 +522,39 @@ _APF_TERMINALS = [("Terminal-1", 0.40), ("Terminal-2", 0.40), ("Terminal-3", 0.2
 _APF_MONTH_WEIGHTS = (1.0, 1.0, 1.0, 1.0, 0.5, 1.0, 1.8, 1.8, 1.4, 1.0, 1.0, 1.7)
 
 
-def _apf_rand_start(rng: random.Random) -> datetime:
-    """A 2024 arrival timestamp whose MONTH is drawn in proportion to _APF_MONTH_WEIGHTS
-    (peak seasons carry more passengers), with the day-of-month and the time of day
-    (08:00–21:59, the departure hall's active window) uniform within it."""
-    r = rng.uniform(0, sum(_APF_MONTH_WEIGHTS))
-    cum, month = 0.0, 12
-    for m, w in enumerate(_APF_MONTH_WEIGHTS, start=1):
+def _apf_rand_start(rng: random.Random, now: datetime | None = None) -> datetime:
+    """An arrival timestamp in the last ``_DEMO_SPAN_YEARS`` years (ending now) whose MONTH
+    is drawn in proportion to _APF_MONTH_WEIGHTS (peak seasons carry more passengers). Each
+    calendar month overlapping the window is a candidate, weighted by its month-of-year
+    weight; the day-of-month and the time of day (08:00–21:59, the departure hall's active
+    window) are uniform within the chosen month (clamped to the window at the two edges).
+    ``now`` defaults to the current wall-clock time (passed explicitly only by tests)."""
+    end = (now or datetime.now()).replace(microsecond=0)
+    start = end - timedelta(days=365 * _DEMO_SPAN_YEARS)
+    # Enumerate (year, month) from the window start to its end, with each month's weight.
+    months: list[tuple[int, int]] = []
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        months.append((y, m))
+        m, y = (1, y + 1) if m == 12 else (m + 1, y)
+    weights = [_APF_MONTH_WEIGHTS[mm - 1] for _, mm in months]
+    r = rng.uniform(0, sum(weights))
+    cum = 0.0
+    yy, mm = months[-1]
+    for (cy, cm), w in zip(months, weights):
         cum += w
         if r <= cum:
-            month = m
+            yy, mm = cy, cm
             break
-    day = rng.randint(1, calendar.monthrange(2024, month)[1])
-    return datetime(2024, month, day, rng.randint(8, 21), rng.randint(0, 59))
+    # Day range within the chosen month, clamped to the window at the first/last month.
+    d_lo, d_hi = 1, calendar.monthrange(yy, mm)[1]
+    if (yy, mm) == (start.year, start.month):
+        d_lo = max(d_lo, start.day)
+    if (yy, mm) == (end.year, end.month):
+        d_hi = min(d_hi, end.day)
+    if d_hi < d_lo:
+        d_hi = d_lo
+    return datetime(yy, mm, rng.randint(d_lo, d_hi), rng.randint(8, 21), rng.randint(0, 59))
 
 _APF_PRE_STEP_DEFS: list[StepDef] = [
     ("ENTER Departure Hall", "Passenger enters the departure hall", "2C3E50", "FFFFFF", 0, "round", 0, "Departure Hall"),
