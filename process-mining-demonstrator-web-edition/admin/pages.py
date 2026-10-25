@@ -674,6 +674,7 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       <button data-tab="sink" onclick="selectTab('sink')">Event Receiver</button>
       <button data-tab="mcp" onclick="selectTab('mcp')">MCP Server</button>
       <button data-tab="actions" onclick="selectTab('actions')">Actions</button>
+      <button data-tab="notifications" onclick="selectTab('notifications')">Notifications</button>
       <button data-tab="reporting" onclick="selectTab('reporting')">Reporting</button>
       <button data-tab="customize" onclick="selectTab('customize')">Customize</button>
     </div>
@@ -736,6 +737,19 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       <button class="btn primary" onclick="saveDisplayTimezone()">Save</button>
     </div>
     <div class="muted" id="tzPreview" style="font-size:13px; margin-top:8px"></div>
+  </div>
+  <div class="card">
+    <h2>Mobile</h2>
+    <p class="muted" style="margin-top:0"><strong>WorkBench Mobile</strong> is a compact, touch-friendly
+      layout the main application shows on <strong>phones</strong> (iPhone / Android handsets): a hamburger
+      drawer for the controls and a bottom-sheet view switcher, supporting the Dashboard, A-Chart, Individual
+      Journey, Notes and AI&nbsp;Documentation. iPads and other tablets always use the normal desktop layout.</p>
+    <div class="banner info" style="display:flex; align-items:center; gap:10px">
+      <label class="row" style="font-size:13px; cursor:pointer">
+        <input type="checkbox" id="mobileEnabled" style="width:auto" onchange="saveMobileEnabled()"> Use WorkBench Mobile on phones
+      </label>
+      <span class="subtle" id="mobileEnabledHint"></span>
+    </div>
   </div>
   </div><!-- /tab-appcontrol -->
 
@@ -814,6 +828,12 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       </label>
       <button class="btn small" onclick="saveMaxFailedLogins()">Save</button>
       <span class="subtle" id="maxFailedLoginsHint"></span>
+    </div>
+    <!-- Directory (LDAP) roster sync — shown only when a directory is enabled. -->
+    <div class="banner info" id="dirSyncRow" style="display:none; align-items:center; gap:10px; flex-wrap:wrap">
+      <span style="font-size:13px"><strong>Directory sync</strong></span>
+      <button class="btn small" id="dirSyncBtn" onclick="syncDirectory()">↻ Refresh from directory</button>
+      <span class="subtle" id="dirSyncInfo" style="font-size:12px"></span>
     </div>
     <div class="row" style="margin:12px 0 6px; gap:10px; flex-wrap:wrap; align-items:center">
       <div class="seg" id="userFilter"></div>
@@ -1006,9 +1026,9 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
   <div class="card">
     <h2>Directory (LDAP / Active Directory)</h2>
     <p class="muted" style="margin-top:0">When enabled, the <strong>main application</strong> also accepts sign-ins from an
-      LDAP directory (search&nbsp;+&nbsp;bind). Directory users are created here automatically on first login as
-      plain, enabled users — grant them a role or database connections like any other user. Local accounts always keep
-      working.</p>
+      LDAP directory (search&nbsp;+&nbsp;bind). Directory users are created here on first login — or ahead of time by the
+      <strong>user-list sync</strong> below — as plain, enabled users; grant them a role or database connections like any
+      other user. Local accounts always keep working.</p>
     <div class="banner info" style="display:flex; flex-direction:column; align-items:flex-start; gap:10px">
       <label class="row" style="font-size:13px; cursor:pointer">
         <input type="checkbox" id="l_enabled" style="width:auto"> Enable directory sign-in for the main app
@@ -1023,6 +1043,13 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
       </label>
       <p class="subtle" style="margin:0">When on, both the app and admin sign-in panels display a live LED that reports whether the
         directory server is reachable. Turn it off to hide that indicator from users.</p>
+      <label class="row" style="font-size:13px; cursor:pointer">
+        <input type="checkbox" id="l_syncEnabled" style="width:auto"> Automatically <strong>sync the user list</strong> from the directory
+        every <input type="number" id="l_syncInterval" min="1" max="1440" step="1" style="width:70px"> minutes
+      </label>
+      <p class="subtle" style="margin:0">When on, a background job mirrors the directory into the Users tab, so new, changed and removed
+        accounts appear without waiting for each person to sign in. A user removed from the directory is
+        <strong>disabled and flagged</strong> (never deleted). You can also refresh on demand from the Users tab.</p>
     </div>
     <div class="grid2" style="margin-top:14px; border-bottom:1px solid var(--border); padding-bottom:18px; align-items:stretch">
       <div class="col">
@@ -1414,6 +1441,79 @@ def dashboard_page(username: str, http_port: int, https_port: int) -> str:
   </div>
   </div><!-- /tab-sink -->
 
+  <div class="tabpanel" id="tab-notifications">
+  <div class="card">
+    <h2>Dashboard notifications</h2>
+    <p class="muted" style="margin-top:0">
+      Lets users define <strong>notification rules</strong> on the <strong>Dashboard</strong> — a
+      background engine checks each rule on its own interval (e.g. the average time from one
+      step to the next exceeding a threshold) and shows a coloured alert on the affected
+      process tile. Rules are <strong>shared per connection</strong>: everyone assigned to a
+      connection sees its alerts, and <strong>power users, developers and admins</strong> create,
+      edit and toggle them.
+    </p>
+    <label class="row" style="font-size:14px; cursor:pointer; gap:8px; align-items:center">
+      <input type="checkbox" id="notif_enabled" style="width:auto" onchange="toggleNotificationsEnabled()">
+      Enable Dashboard notifications
+    </label>
+    <div id="notif_status" class="col" style="margin-top:12px; gap:6px"></div>
+    <p class="subtle" style="margin-top:10px">
+      Enabling/disabling takes effect <strong>immediately</strong> (no restart) — while off, the
+      engine idles and the Dashboard hides the Notifications section. Opt-in, so off by default.
+    </p>
+    <hr style="border:none; border-top:1px solid var(--border); margin:16px 0">
+    <h3 style="margin:0 0 6px">Web Push contact (VAPID)</h3>
+    <p class="muted" style="margin-top:0">
+      The contact sent with each browser push (the VAPID <code>sub</code> claim). Push services
+      &mdash; <strong>notably Apple / Safari</strong> &mdash; can reject a push whose contact isn&rsquo;t a
+      valid <code>mailto:</code> email or <code>https://</code> URL, so set a real one.
+    </p>
+    <div class="row" style="gap:8px; align-items:center; max-width:560px">
+      <input type="text" id="notif_subject" style="flex:1"
+             placeholder="mailto:ops@example.com">
+      <button class="btn" onclick="savePushSubject()">Save</button>
+    </div>
+    <hr style="border:none; border-top:1px solid var(--border); margin:16px 0">
+    <h3 style="margin:0 0 6px">Email (SMTP)</h3>
+    <p class="muted" style="margin-top:0">
+      The mail server used to deliver notifications by email. A rule with the <strong>Email</strong>
+      channel on sends to its listed recipients, or &mdash; when it lists none &mdash; to the email
+      addresses of the users assigned to its connection.
+    </p>
+    <div class="form-grid" style="max-width:620px; display:grid; grid-template-columns:1fr 1fr; gap:10px">
+      <label class="field" style="grid-column:1 / span 2">Host
+        <input type="text" id="smtp_host" placeholder="smtp.example.com"></label>
+      <label class="field">Port
+        <input type="number" id="smtp_port" value="587"></label>
+      <label class="field">Security
+        <select id="smtp_security">
+          <option value="starttls">STARTTLS</option>
+          <option value="ssl">SSL/TLS</option>
+          <option value="none">None</option>
+        </select></label>
+      <label class="field">Username
+        <input type="text" id="smtp_username" placeholder="(optional)"></label>
+      <label class="field">Password
+        <input type="password" id="smtp_password" placeholder="(unchanged)" autocomplete="new-password"></label>
+      <label class="field">From address
+        <input type="text" id="smtp_from" placeholder="alerts@example.com"></label>
+      <label class="field">From name
+        <input type="text" id="smtp_fromname" placeholder="Process Mining Alerts"></label>
+    </div>
+    <div class="row" style="gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap">
+      <button class="btn" onclick="saveSmtp()">Save SMTP settings</button>
+      <span style="color:var(--muted)">·</span>
+      <input type="text" id="smtp_test_to" placeholder="test-to@example.com" style="width:220px">
+      <button class="btn" onclick="testSmtp()">Send test email</button>
+      <span id="smtp_test_result" class="subtle"></span>
+    </div>
+    <p class="subtle" style="margin-top:8px">
+      SMTP changes take effect <strong>immediately</strong> (no restart). The password is stored
+      encrypted; leave it blank to keep the current one.
+    </p>
+  </div>
+  </div><!-- /tab-notifications -->
+
   <div class="tabpanel" id="tab-mcp">
   <div class="card">
     <h2>MCP Server</h2>
@@ -1586,7 +1686,22 @@ async function loadSession() {
   _populateTzSelect();
   $('displayTz').value = DISPLAY_TZ;
   previewTz();
+  const mobileOn = s.mobileEnabled !== false; // default on
+  $('mobileEnabled').checked = mobileOn;
+  $('mobileEnabledHint').textContent = mobileOn
+    ? 'Phones get the compact mobile layout.'
+    : 'Disabled — phones use the normal desktop layout.';
   renderLicense(s.license);
+}
+async function saveMobileEnabled() {
+  const enabled = $('mobileEnabled').checked;
+  try {
+    await api('/api/access/mobile-enabled', { method: 'POST', body: JSON.stringify({ enabled }) });
+    $('mobileEnabledHint').textContent = enabled
+      ? 'Phones get the compact mobile layout.'
+      : 'Disabled — phones use the normal desktop layout.';
+    toast(enabled ? 'WorkBench Mobile enabled' : 'WorkBench Mobile disabled');
+  } catch (e) { toast(e.message, true); await loadSession(); }
 }
 function renderLicense(lic) {
   const el = $('licenseStatus');
@@ -1777,6 +1892,51 @@ let USER_FILTER = 'all';  // 'all' | 'local' | 'ldap'
 async function loadUsers() {
   USERS = await api('/api/users');
   renderUsers();
+  refreshDirSyncRow();
+}
+// The directory-sync banner (Users tab): shown only when a directory is enabled, with the
+// last run's time + outcome and a manual "Refresh from directory" button.
+async function refreshDirSyncRow() {
+  const row = $('dirSyncRow');
+  if (!row) return;
+  try {
+    const c = await api('/api/ldap');
+    if (!c.enabled) { row.style.display = 'none'; return; }
+    row.style.display = 'flex';
+    $('dirSyncInfo').innerHTML = dirSyncSummary(c);
+  } catch (e) { row.style.display = 'none'; }
+}
+function dirSyncSummary(c) {
+  const parts = [];
+  parts.push(c.syncEnabled ? ('Auto-sync on, every ' + (c.syncIntervalMins || 5) + ' min')
+                           : 'Auto-sync off');
+  if (c.lastSyncedAt) {
+    parts.push('last run ' + fmtDate(c.lastSyncedAt));
+    try {
+      const r = JSON.parse(c.lastSyncResult || '{}');
+      if (r.ok === false && r.error) parts.push('⚠ ' + esc(r.error));
+      else if (r.ok) parts.push(`${r.total || 0} in directory · +${r.added || 0} new · ` +
+        `${r.updated || 0} updated · ${r.removed || 0} removed` +
+        (r.reappeared ? ` · ${r.reappeared} returned` : '') +
+        (r.skipped ? ` · ${r.skipped} name-clash skipped` : ''));
+    } catch (e) {}
+  } else {
+    parts.push('never run — click Refresh, or enable auto-sync in the Directory tab');
+  }
+  return parts.join(' — ');
+}
+async function syncDirectory() {
+  const btn = $('dirSyncBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+  try {
+    const res = await api('/api/ldap/sync', { method: 'POST' });
+    const r = res.result || {};
+    if (r.ok === false) toast('Sync failed: ' + (r.error || 'unknown error'), true);
+    else toast(`Directory synced — +${r.added || 0} new, ${r.updated || 0} updated, ` +
+      `${r.removed || 0} removed`);
+    await loadUsers();
+  } catch (e) { toast(e.message, true); }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = '↻ Refresh from directory'; } }
 }
 // The role cell. Every role the account holds is shown as one segment of a single
 // badge: the base level (admin, else power, else user) followed by any add-on roles
@@ -1848,6 +2008,7 @@ function renderUsers() {
       `<div class="u-ident"><strong>${du}</strong>` +
         (u.displayName ? `<span class="u-real">${esc(u.displayName)}</span>` : '') + '</div>' +
       (isLdap ? '<span class="pill ldap">LDAP</span>' : '<span class="pill neutral">local</span>') +
+      (u.directoryMissing ? '<span class="pill off" title="This account was no longer found in the directory on the last sync, so it was disabled. It is kept (with its roles and connections) in case it returns.">removed from directory</span>' : '') +
       roleBadge(u) + access +
       '<span class="spacer" style="flex:1"></span>' +
       `<label class="perm" title="Allow this user to enrol and sign in with a passkey">` +
@@ -1857,7 +2018,7 @@ function renderUsers() {
       '</div>';
     // Line 2 — last sign-in and the action buttons.
     h += '<div class="row2"><span class="muted" style="font-size:12px">Last sign-in: ' +
-      fmtDate(u.lastLogin) + '</span><span class="spacer" style="flex:1"></span>' +
+      (u.lastLogin ? fmtDate(u.lastLogin) : '<em>Never signed in</em>') + '</span><span class="spacer" style="flex:1"></span>' +
       (isBuiltin
         ? (u.loginLocked
             ? `<button class="btn small" data-user="${du}" onclick="toggleEnabled(this.dataset.user,true)">Unlock</button> `
@@ -1868,6 +2029,14 @@ function renderUsers() {
       (isBuiltin ? '' : `<button class="btn small" data-user="${du}" onclick="toggleDeveloper(this.dataset.user,${!u.isDeveloper})">${u.isDeveloper ? 'Remove developer' : 'Make developer'}</button> `) +
       (isLdap ? '' : `<button class="btn small" data-user="${du}" onclick="resetPw(this.dataset.user)">Reset password</button> `) +
       (isBuiltin ? '<span class="subtle" title="The built-in administrator cannot be disabled, demoted or deleted.">built-in admin</span>' : `<button class="btn small danger" data-user="${du}" onclick="delUser(this.dataset.user)">Delete</button>`) +
+      '</div>';
+    // Line 3 — email (used for notification email delivery).
+    h += '<div class="row2">' +
+      '<span class="perm" style="min-width:44px">Email</span>' +
+      `<input type="text" data-user="${du}" value="${esc(u.email || '')}" ` +
+        `placeholder="name@example.com — for notification email" style="width:320px" ` +
+        `onchange="setUserEmail(this.dataset.user, this.value)">` +
+      (isLdap ? '<span class="subtle" style="font-size:11px">directory-synced — may be overwritten on next sync</span>' : '') +
       '</div></div>';
   }
   $('userTable').innerHTML = h + '</div>';
@@ -1889,6 +2058,10 @@ async function toggleAdmin(u, isAdmin) {
 async function togglePower(u, isPower) {
   try { await api('/api/users/' + encodeURIComponent(u) + '/power', { method: 'POST', body: JSON.stringify({ isPower }) });
     toast('Updated'); await loadUsers(); } catch (e) { toast(e.message, true); }
+}
+async function setUserEmail(u, email) {
+  try { await api('/api/users/' + encodeURIComponent(u) + '/email', { method: 'POST', body: JSON.stringify({ email: email.trim() }) });
+    toast('Email saved'); } catch (e) { toast(e.message, true); await loadUsers(); }
 }
 async function togglePasskey(u, allowed) {
   try { await api('/api/users/' + encodeURIComponent(u) + '/passkey-allowed', { method: 'POST', body: JSON.stringify({ allowed }) });
@@ -1958,6 +2131,7 @@ function selectTab(name) {
   if (name === 'backup') loadSchedule().catch(e => toast(e.message, true));
   if (name === 'integration') loadIntegration().catch(e => toast(e.message, true));
   if (name === 'actions') loadActions().catch(e => toast(e.message, true));
+  if (name === 'notifications') loadNotifications().catch(e => toast(e.message, true));
   if (name === 'sink') loadSink().catch(e => toast(e.message, true));
   if (name === 'mcp') loadMcp().catch(e => toast(e.message, true));
 }
@@ -2311,6 +2485,67 @@ async function toggleActionsEnabled() {
                   : 'Actions disabled — restart to apply');
     await loadActions();
   } catch (e) { toast(e.message, true); $('act_enabled').checked = !enabled; }
+}
+async function loadNotifications() {
+  const s = await api('/api/notifications');
+  $('notif_enabled').checked = !!s.enabled;
+  $('notif_status').innerHTML =
+    '<div class="subtle">' + s.ruleCount + ' rule(s) defined across all connections</div>';
+  if ($('notif_subject')) $('notif_subject').value = s.pushSubject || '';
+  loadSmtp().catch(() => {});
+}
+async function savePushSubject() {
+  const subject = $('notif_subject').value.trim();
+  try {
+    const r = await api('/api/notifications/push-subject',
+      { method: 'POST', body: JSON.stringify({ subject }) });
+    $('notif_subject').value = r.pushSubject || '';
+    toast('Web Push contact saved');
+  } catch (e) { toast(e.message, true); }
+}
+async function loadSmtp() {
+  const s = await api('/api/smtp');
+  $('smtp_host').value = s.host || '';
+  $('smtp_port').value = s.port || 587;
+  $('smtp_security').value = s.security || 'starttls';
+  $('smtp_username').value = s.username || '';
+  $('smtp_from').value = s.from || '';
+  $('smtp_fromname').value = s.fromName || '';
+  $('smtp_password').placeholder = s.hasPassword ? '(unchanged — a password is set)' : '(none)';
+}
+async function saveSmtp() {
+  const body = {
+    host: $('smtp_host').value.trim(),
+    port: parseInt($('smtp_port').value, 10) || 587,
+    security: $('smtp_security').value,
+    username: $('smtp_username').value.trim(),
+    from: $('smtp_from').value.trim(),
+    fromName: $('smtp_fromname').value.trim(),
+  };
+  const pw = $('smtp_password').value;
+  if (pw) body.password = pw;
+  try {
+    await api('/api/smtp', { method: 'POST', body: JSON.stringify(body) });
+    $('smtp_password').value = '';
+    await loadSmtp();
+    toast('SMTP settings saved');
+  } catch (e) { toast(e.message, true); }
+}
+async function testSmtp() {
+  $('smtp_test_result').textContent = 'Sending…';
+  try {
+    const r = await api('/api/smtp/test',
+      { method: 'POST', body: JSON.stringify({ to: $('smtp_test_to').value.trim() }) });
+    $('smtp_test_result').textContent = r.ok ? ('Sent to ' + r.sentTo) : ('Failed: ' + r.error);
+  } catch (e) { $('smtp_test_result').textContent = 'Failed: ' + e.message; }
+}
+async function toggleNotificationsEnabled() {
+  const enabled = $('notif_enabled').checked;
+  try {
+    await api('/api/notifications/enabled', { method: 'POST', body: JSON.stringify({ enabled }) });
+    toast(enabled ? 'Dashboard notifications enabled' : 'Dashboard notifications disabled');
+    await loadNotifications();
+  } catch (e) { toast(e.message, true); $('notif_enabled').checked = !enabled; }
 }
 async function loadSink() {
   const s = await api('/api/sink');
@@ -2973,6 +3208,8 @@ async function loadLdap() {
   $('l_loginAttr').value = c.loginAttr || 'uid';
   $('l_emailAttr').value = c.emailAttr || 'mail';
   $('l_displayAttr').value = c.displayAttr || 'cn';
+  $('l_syncEnabled').checked = !!c.syncEnabled;
+  $('l_syncInterval').value = c.syncIntervalMins || 5;
   $('l_testResult').innerHTML = '';
 }
 function ldapBody() {
@@ -2990,6 +3227,8 @@ function ldapBody() {
     loginAttr: $('l_loginAttr').value.trim() || 'uid',
     emailAttr: $('l_emailAttr').value.trim() || 'mail',
     displayAttr: $('l_displayAttr').value.trim() || 'cn',
+    syncEnabled: $('l_syncEnabled').checked,
+    syncIntervalMins: Math.max(1, Math.min(1440, parseInt($('l_syncInterval').value, 10) || 5)),
   };
   if ($('l_bindPw').value) body.bindPassword = $('l_bindPw').value;
   return body;
@@ -3612,7 +3851,8 @@ const ADMIN_HELP = [
     <h2>Directory (LDAP)</h2>
     <p>When enabled, the main-app login also accepts directory accounts via search + bind. Set the server URI, service-account bind DN/password, base DN, user filter and attributes. Test server connection checks the server alone; Test a user login also resolves and signs in an account.</p>
     <p>Directory users are created locally on first sign-in as plain, enabled accounts. The admin interface stays local-only unless you tick &ldquo;Also allow directory sign-in to this admin interface&rdquo; &mdash; and even then only after a directory account is promoted to admin.</p>
-    <div class="note">Admin is never granted from the directory; a local admin must promote the user.</div>` },
+    <p><strong>User-list sync.</strong> Turn on &ldquo;Automatically sync the user list&rdquo; to have a background job mirror the directory into the Users tab every few minutes, so new, changed and removed accounts appear without waiting for each person to sign in &mdash; and you can click &ldquo;Refresh from directory&rdquo; in the Users tab to run it on demand. A user removed from the directory is <strong>disabled and flagged</strong> &ldquo;removed from directory&rdquo; (never deleted, so their role and connection assignments survive if they return); one that reappears is re-enabled. Each user&rsquo;s row shows their last sign-in, or &ldquo;Never signed in&rdquo;.</p>
+    <div class="note">Admin is never granted from the directory; a local admin must promote the user. Local accounts are never touched by a sync.</div>` },
   { id: 'logging', icon: '🧾', title: 'Logging', html: `
     <h2>Logging</h2>
     <p>A shared, structured log written by all three servers. Each entry records a timestamp, severity, client IP, user, operation and message. Severity is a cumulative ladder &mdash; INFO, USAGE, WARN, ERROR, DEBUG; pick the maximum level to record. Filter by severity, client IP or operation, search by regular expression, page through, and Download or Clear.</p>

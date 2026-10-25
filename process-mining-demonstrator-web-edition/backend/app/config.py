@@ -26,7 +26,7 @@ def _read_app_version() -> str:
             return first_line[:120]
     except (OSError, IndexError):
         pass
-    return "V 1.0.0 - Mount Maunganui"
+    return "2027.1.0 - Tongariro"
 
 
 APP_VERSION = _read_app_version()
@@ -197,6 +197,16 @@ INTEGRATION_WATCHDOG_ENABLED = os.environ.get(
 ).strip().lower() in ("1", "true", "yes", "on")
 INTEGRATION_WATCHDOG_TICK_SECS = max(
     5, int(os.environ.get("PMW_INTEGRATION_WATCHDOG_TICK", "10"))
+)
+
+# Dashboard notifications engine: how often the background loop wakes to re-check which
+# rules are due (each rule still only evaluates on its own 1m..1d interval). Kept small so
+# a 1-minute rule fires close to on time; bounded below to avoid a hot loop.
+NOTIFICATIONS_ENGINE_ENABLED = os.environ.get(
+    "PMW_NOTIFICATIONS_ENGINE", "1"
+).strip().lower() in ("1", "true", "yes", "on")
+NOTIFICATIONS_TICK_SECS = max(
+    10, int(os.environ.get("PMW_NOTIFICATIONS_TICK", "30"))
 )
 
 # Admin session lifetime.

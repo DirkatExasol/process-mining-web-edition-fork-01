@@ -26,7 +26,8 @@ qrcode==8.2
 # MCP server: offline validation of the OAuth provider access token — verifies the
 # RS256 JWT against the issuer's JWKS (PyJWKClient fetches + caches the signing keys).
 # The [crypto] extra pulls in the RSA verification backend (already have `cryptography`).
-PyJWT[crypto]==2.14.0
+#PyJWT[crypto]==2.14.0
+pyjwt>=2.15.0,<3
 
 # XXE-safe XML parsing for semi-structured (XML) integration source files — user
 # files are parsed only through defusedxml (no external entities, DTDs or billion-laughs).

@@ -14,6 +14,8 @@ import { hydrateSettings, useSetting } from './settings'
 import { useStore } from './store'
 import type { AssignedConnection, PortalProcess } from './types'
 import { DetailPane } from './views/DetailPane'
+import { useDeviceClass } from './mobile/device'
+import { MobileWorkbench } from './mobile/MobileWorkbench'
 
 /** True on the end-user launch page route (/home), tolerant of a trailing slash. */
 const isPortalPath = (path: string) => path.replace(/\/+$/, '') === '/home'
@@ -23,6 +25,9 @@ export function App() {
   const [ready, setReady] = useState(false)
   const [sidebarHidden, setSidebarHidden] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  // Phone vs desktop: phones run the compact WorkBench Mobile shell; iPads/tablets/desktop
+  // keep the normal split layout. Kept in sync with the viewport (store.isPhone).
+  const isPhone = useDeviceClass()
   // Client-side route so /home renders the end-user launch page (LaunchPortal) after the
   // same sign-in, while / stays the Work-Bench. Kept in sync with the Back/Forward buttons.
   const [route, setRoute] = useState(() => window.location.pathname)
@@ -87,12 +92,12 @@ export function App() {
     if (useStore.getState().connection.isConnected) {
       await useStore.getState().loadProjects()
     }
-    // A launch-page tile opened this tab at a specific process → open it and skip the resume.
+    // A launch-page tile opened this tab at a specific process → open it (A-Chart) and skip
+    // the dashboard landing.
     if (await openFromUrlParams()) return
-    // Resume where the user left off: reconnect to the last connection, reopen the last
-    // project and restore the last view. Reads the per-user snapshot hydrated above, so
-    // it works both on a cold boot with a live session and after an inactivity re-login.
-    await useStore.getState().restoreLastSession()
+    // A direct login (not launched at a specific process from /home) lands on the Dashboard
+    // overview rather than auto-diving into the last process.
+    useStore.setState({ activeChartMode: 'Dashboard' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openFromUrlParams])
 
@@ -164,14 +169,18 @@ export function App() {
     <>
       <ThemeSync />
       <LegalGateHost>
-        <div className="app">
-          {!sidebarHidden && <Sidebar onCollapse={() => setSidebarHidden(true)} />}
-          <DetailPane
-            sidebarHidden={sidebarHidden}
-            onShowSidebar={() => setSidebarHidden(false)}
-            onShowHelp={() => setShowHelp(true)}
-          />
-        </div>
+        {isPhone && store.mobileEnabled ? (
+          <MobileWorkbench onShowHelp={() => setShowHelp(true)} />
+        ) : (
+          <div className="app">
+            {!sidebarHidden && <Sidebar onCollapse={() => setSidebarHidden(true)} />}
+            <DetailPane
+              sidebarHidden={sidebarHidden}
+              onShowSidebar={() => setSidebarHidden(false)}
+              onShowHelp={() => setShowHelp(true)}
+            />
+          </div>
+        )}
       </LegalGateHost>
 
       {showHelp && <HelpPanel onClose={() => setShowHelp(false)} />}

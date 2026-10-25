@@ -14,6 +14,7 @@ import type {
   JourneyPath,
   MetaEntry,
   ProcessGraph,
+  NotificationRule,
   ProcessNote,
   Project,
   ProjectBootstrap,
@@ -23,6 +24,7 @@ import type {
   IntegrationStatus,
   RecordDetection,
   SampleSet,
+  DashboardConnection,
   PortalConnection,
   SinkMonitor,
   Source,
@@ -121,6 +123,8 @@ export const api = {
       requireLogin: boolean
       idleTimeoutMins: number
       actionsEnabled: boolean
+      notificationsEnabled: boolean
+      mobileEnabled: boolean
       passkeyAllowed: boolean
       mfaAllowed: boolean
       mfaEnabled: boolean
@@ -162,6 +166,7 @@ export const api = {
     post<ConnectionStatus>(`/api/connections/${enc(id)}/connect`),
   // End-user launch page: the user's processes grouped by connection.
   portal: () => get<{ connections: PortalConnection[] }>('/api/portal'),
+  dashboard: () => get<{ connections: DashboardConnection[] }>('/api/dashboard'),
   // The training-guide index (same list the suite launcher shows), for the launch page.
   guides: () => get<{ file: string; title: string; type: string }[]>('/guides/index.json'),
 
@@ -390,6 +395,90 @@ export const api = {
     post<ProcessNote>(`/api/projects/${projectId}/notes/${enc(noteId)}`, body),
   deleteNote: (projectId: number, noteId: string) =>
     del<void>(`/api/projects/${projectId}/notes/${enc(noteId)}`),
+
+  // ── dashboard notifications (rules shared per connection) ──────────────────
+  listNotifications: () =>
+    get<{ rules: NotificationRule[]; canManage: boolean }>('/api/notifications'),
+  saveNotification: (body: {
+    connectionId: string
+    projectId: number
+    projectTitle: string
+    kind: string
+    name: string
+    severity: string
+    intervalSecs: number
+    enabled: boolean
+    config: Record<string, unknown>
+    delivery: Record<string, unknown>
+  }) => post<NotificationRule>('/api/notifications', body),
+  updateNotification: (
+    ruleId: string,
+    body: {
+      connectionId: string
+      projectId: number
+      projectTitle: string
+      kind: string
+      name: string
+      severity: string
+      intervalSecs: number
+      enabled: boolean
+      config: Record<string, unknown>
+      delivery: Record<string, unknown>
+    },
+  ) => put<NotificationRule>(`/api/notifications/${enc(ruleId)}`, body),
+  deleteNotification: (ruleId: string) =>
+    del<void>(`/api/notifications/${enc(ruleId)}`),
+  setNotificationEnabled: (ruleId: string, enabled: boolean) =>
+    post<{ id: string; enabled: boolean }>(
+      `/api/notifications/${enc(ruleId)}/enabled`,
+      { enabled },
+    ),
+  checkNotification: (ruleId: string) =>
+    post<NotificationRule>(`/api/notifications/${enc(ruleId)}/check`, {}),
+  ackNotification: (ruleId: string) =>
+    post<NotificationRule>(`/api/notifications/${enc(ruleId)}/ack`, {}),
+  checkAllNotifications: () =>
+    post<{ rules: NotificationRule[]; canManage: boolean }>('/api/notifications/check-all', {}),
+  // Web Push: the VAPID key to subscribe with, and register/unregister a browser subscription.
+  pushKey: () => get<{ publicKey: string }>('/api/notifications/push/key'),
+  pushSubscribe: (body: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
+    post<{ subscribed: boolean }>('/api/notifications/push/subscribe', body),
+  pushUnsubscribe: (body: { endpoint: string }) =>
+    post<{ subscribed: boolean }>('/api/notifications/push/unsubscribe', body),
+  pushTest: () =>
+    post<{ sent: number; failed: number; errors: string[] }>('/api/notifications/push/test', {}),
+  toggleProjectNotifications: (
+    connectionId: string,
+    projectId: number,
+    enabled: boolean,
+  ) =>
+    post<{ changed: number; enabled: boolean }>('/api/notifications/project-toggle', {
+      connectionId,
+      projectId,
+      enabled,
+    }),
+  notificationSteps: (connectionId: string, projectId: number) =>
+    get<{ steps: string[] }>(
+      `/api/notifications/steps?connectionId=${enc(connectionId)}&projectId=${projectId}`,
+    ),
+  testNotification: (body: {
+    connectionId: string
+    projectId: number
+    projectTitle: string
+    kind: string
+    name: string
+    severity: string
+    intervalSecs: number
+    enabled: boolean
+    config: Record<string, unknown>
+  }) =>
+    post<{
+      ok: boolean
+      value: number | null
+      triggered: boolean
+      hasData: boolean
+      error: string | null
+    }>('/api/notifications/test', body),
 
   // ── sampling ─────────────────────────────────────────────────────────────
   sampleCounts: (projectId: number) =>

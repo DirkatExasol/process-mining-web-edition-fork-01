@@ -1301,3 +1301,74 @@ def test_unknown_cert_mode_falls_back_to_verify(security):
             "schema": "S", "certModeRaw": bad, "useTLS": True,
         })
         assert conn.cert_mode == expected, f"{bad!r} → {conn.cert_mode!r}"
+
+
+# ── Directory (LDAP) roster sync ────────────────────────────────────────────────
+
+from dataclasses import dataclass
+
+
+@dataclass
+class _DirUser:
+    """Stand-in for ldap_auth.LdapUser (only the fields sync_ldap_users reads)."""
+    username: str
+    email: str = ""
+    display_name: str = ""
+    dn: str = ""
+
+
+def test_sync_creates_new_directory_users_who_have_never_logged_in(security):
+    store = security.store
+    res = store.sync_ldap_users([
+        _DirUser("alice", "alice@example.com", "Alice Anders"),
+        _DirUser("bob", "bob@example.com", "Bob Baker"),
+    ])
+    assert res["added"] == 2 and res["total"] == 2 and res["ok"] is True
+    alice = store.get_user("alice")
+    assert alice is not None and alice.auth_source == "ldap" and alice.is_enabled
+    assert alice.email == "alice@example.com" and alice.display_name == "Alice Anders"
+    assert alice.last_login is None  # appears before any sign-in → shown as "Never"
+    assert alice.directory_missing is False
+
+
+def test_sync_updates_changed_attributes_only(security):
+    store = security.store
+    store.sync_ldap_users([_DirUser("alice", "a@old.com", "Alice")])
+    res = store.sync_ldap_users([_DirUser("alice", "a@new.com", "Alice Anders")])
+    assert res["updated"] == 1 and res["added"] == 0
+    alice = store.get_user("alice")
+    assert alice.email == "a@new.com" and alice.display_name == "Alice Anders"
+    # A second identical sync changes nothing.
+    again = store.sync_ldap_users([_DirUser("alice", "a@new.com", "Alice Anders")])
+    assert again["unchanged"] == 1 and again["updated"] == 0
+
+
+def test_sync_disables_and_flags_removed_users_then_reenables_on_return(security):
+    store = security.store
+    store.sync_ldap_users([_DirUser("alice", "a@x.com", "A"), _DirUser("bob", "b@x.com", "B")])
+    store.set_power("alice", True)  # a role we must preserve across a removal
+    # bob vanishes from the directory.
+    res = store.sync_ldap_users([_DirUser("alice", "a@x.com", "A")])
+    assert res["removed"] == 1
+    bob = store.get_user("bob")
+    assert bob is not None and bob.directory_missing is True and bob.is_enabled is False
+    # A second sync does not re-flag an already-removed user.
+    assert store.sync_ldap_users([_DirUser("alice", "a@x.com", "A")])["removed"] == 0
+    # bob returns → un-flagged and re-enabled.
+    back = store.sync_ldap_users([_DirUser("alice", "a@x.com", "A"), _DirUser("bob", "b@x.com", "B")])
+    assert back["reappeared"] == 1
+    bob = store.get_user("bob")
+    assert bob.directory_missing is False and bob.is_enabled is True
+    assert store.get_user("alice").is_power is True  # role preserved throughout
+
+
+def test_sync_never_touches_local_accounts(security):
+    store = security.store
+    store.create_user("alice", "pw", is_admin=False)  # a LOCAL alice
+    res = store.sync_ldap_users([_DirUser("alice", "dir@x.com", "Dir Alice")])
+    assert res["skipped"] == 1 and res["added"] == 0
+    alice = store.get_user("alice")
+    assert alice.auth_source == "local" and alice.email == ""  # untouched
+    # A sync that omits the local Administrator must not disable it.
+    store.sync_ldap_users([_DirUser("someoneelse", "s@x.com", "S")])
+    assert store.get_user("Administrator").is_enabled is True

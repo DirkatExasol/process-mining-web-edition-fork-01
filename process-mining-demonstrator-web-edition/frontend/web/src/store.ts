@@ -185,6 +185,11 @@ export interface AppState {
   idleTimeoutMins: number
   /** Whether the admin has enabled the Actions feature (gates the node-menu submenu). */
   actionsEnabled: boolean
+  /** Whether the admin has enabled Dashboard notifications (gates the Dashboard section). */
+  notificationsEnabled: boolean
+  /** Whether the admin allows WorkBench Mobile (the compact phone shell). Default on; when
+   *  off, phones fall back to the desktop layout. iPads/tablets are desktop either way. */
+  mobileEnabled: boolean
   /** Saved actions for the open (connection, project), enabled-only — listed in node menus. */
   projectActions: SavedAction[]
   /** Aggregate links for the open project — a Σ step drills down into its detail project. */
@@ -242,6 +247,17 @@ export interface AppState {
 
   // ── active chart ────────────────────────────────────────────────────────
   activeChartMode: DetailViewMode
+  /** True on a phone (iPhone / Android handset) — the app runs the compact WorkBench Mobile
+   *  shell and the process map adapts for touch. iPads/tablets stay desktop (false). Set once
+   *  at boot and on resize/orientation change. */
+  isPhone: boolean
+  /** A note id the Notes view should open/scroll to on mount (set by a Dashboard note
+   *  notification's "open the note" click); the view clears it once consumed. */
+  pendingNoteId: string | null
+  /** A-Chart auto-refresh: epoch-ms of the next scheduled reload (null = not scheduled),
+   *  and a counter the "Refresh now" button bumps to restart the controller's cycle. */
+  autoRefreshNextAt: number | null
+  autoRefreshKick: number
   savedChartStates: Partial<Record<DetailViewMode, ChartFilterState>>
 
   processGraph: ProcessGraph
@@ -413,6 +429,10 @@ export interface AppActions {
   patch: (values: Partial<AppState>) => void
   setTransitionMetric: (metric: TransitionMetric) => void
   switchChartMode: (mode: DetailViewMode) => void
+  /** Switch to the Notes view and ask it to open/scroll to `noteId` (Dashboard deep-link). */
+  goToNote: (noteId: string) => void
+  /** Clear the pending note id once the Notes view has consumed it. */
+  clearPendingNote: () => void
   switchABSide: (side: ABSide) => void
   setABMetric: (metric: TransitionMetric, side: ABSide) => void
 
@@ -438,6 +458,10 @@ export interface AppActions {
    *  high-level map reloads, so the drilled numbers track the date window). */
   refreshDrill: () => Promise<void>
   reloadGraph: () => Promise<void>
+  /** A-Chart auto-refresh / "Refresh now": slide the date window forward to include "now"
+   *  (only when it currently ends in the past, preserving its span) so just-arrived
+   *  journeys appear, then reload the A-Chart. */
+  autoRefreshReload: () => Promise<void>
   reloadGraphForDay: (day: string) => Promise<string | null>
   reloadABSide: (side: ABSide, from: string, to: string) => Promise<void>
   reloadABSideForDay: (side: ABSide, day: string) => Promise<string | null>
@@ -572,6 +596,8 @@ const INITIAL_STATE: AppState = {
   requireLogin: true,
   idleTimeoutMins: 0,
   actionsEnabled: false,
+  notificationsEnabled: false,
+  mobileEnabled: true,
   projectActions: [],
   projectAggregates: [],
   drillReturn: null,
@@ -611,6 +637,10 @@ const INITIAL_STATE: AppState = {
   projectMinDate: today,
 
   activeChartMode: 'A-Chart',
+  isPhone: false,
+  pendingNoteId: null,
+  autoRefreshNextAt: null,
+  autoRefreshKick: 0,
   savedChartStates: {},
 
   processGraph: EMPTY_GRAPH,
@@ -983,6 +1013,7 @@ export const useStore = create<Store>((set, get) => {
         requireLogin: s.requireLogin,
         idleTimeoutMins: s.idleTimeoutMins,
         actionsEnabled: s.actionsEnabled,
+        notificationsEnabled: s.notificationsEnabled,
         connections: s.connections,
         manageableConnections: s.manageableConnections,
         assignableUsers: s.assignableUsers,
@@ -1099,6 +1130,8 @@ export const useStore = create<Store>((set, get) => {
           requireLogin: s.requireLogin,
           idleTimeoutMins: s.idleTimeoutMins ?? 0,
           actionsEnabled: s.actionsEnabled ?? false,
+          notificationsEnabled: s.notificationsEnabled ?? false,
+          mobileEnabled: s.mobileEnabled ?? true,
         })
         if (s.authenticated) void get().refreshManageable()
       } catch {
@@ -1559,6 +1592,13 @@ export const useStore = create<Store>((set, get) => {
       }
     },
 
+    goToNote: (noteId) => {
+      set({ pendingNoteId: noteId || null })
+      get().switchChartMode('Notes')
+    },
+
+    clearPendingNote: () => set({ pendingNoteId: null }),
+
     switchABSide: (side) => {
       const s = get()
       if (side === s.abActiveSide) return
@@ -1879,6 +1919,41 @@ export const useStore = create<Store>((set, get) => {
         minScoreFilter: s.scoreBoundsMin,
         maxScoreFilter: s.scoreBoundsMax,
       })
+    },
+
+    autoRefreshReload: async () => {
+      const s = get()
+      if (!s.selectedProject) return
+      // Follow "now": if the window ends in the past, slide it forward to today so journeys
+      // that arrived after the last load fall inside it. Preserve the span; never pull a
+      // future end date back. (A fresh page re-bootstraps the bounds — this gives the same
+      // effect without a round trip, which is why auto-refresh previously missed new rows.)
+      const nowIso = toISODate(new Date())
+      const from = fromISODate(s.fromDate)
+      const to = fromISODate(s.toDate)
+      if (s.toDate < nowIso && from && to) {
+        const spanDays = Math.max(0, Math.round((to.getTime() - from.getTime()) / 86_400_000))
+        let newFrom = toISODate(addDays(new Date(), -spanDays))
+        if (newFrom < s.projectMinDate) newFrom = s.projectMinDate
+        set({ fromDate: newFrom, toDate: nowIso })
+      }
+      // Refresh the UNFILTERED totals too: reloadGraph only updates the filtered numbers, so
+      // the "Total Journeys" tile and the Active-Sample tile (which read totalJourneyCount /
+      // sampleCounts, set once at project load) would otherwise never move as events flow in.
+      try {
+        const gen = get().connectionGen
+        const sc = await api.sampleCounts(s.selectedProject.projectId)
+        if (get().connectionGen === gen) {
+          set({
+            sampleCounts: sc.counts,
+            // "Total Journeys" always counts ORIGINAL rows (never a sample's size).
+            totalJourneyCount: sc.counts.ORIGINAL ?? get().totalJourneyCount,
+          })
+        }
+      } catch {
+        // Non-fatal: keep the previous counts and still reload the graph below.
+      }
+      await get().reloadGraph()
     },
 
     reloadGraph: async () => {

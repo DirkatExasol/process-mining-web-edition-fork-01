@@ -268,7 +268,7 @@ fingerprint, or change the certificate mode.</code></pre>
     <li>Connect to the database and open the new project from the <b>Projects</b> section.</li>
   </ol>
 
-  <p>Event times are spread randomly across 1 January 2024 08:00 to 31 December 2024 22:00, so the generated data always falls in a fixed, predictable window. Each EVENT_ID is the MD5 hash of a synthetic key — <code>ORD-000001</code>, <code>ORD-000002</code>, … for the bookstore, <code>CRA-000001</code>… for credit applications, and <code>FLT-000001</code>… for flights — which is why event identifiers look like long hexadecimal strings in the Individual Journey view and in its autocomplete suggestions.</p>
+  <p>Event times are spread across a <strong>rolling two-year window ending on the generation day</strong> (today back to two years ago), so freshly generated data always includes recent activity — the Dashboard sparklines and the journeys-over-time chart are never empty. Each EVENT_ID is the MD5 hash of a synthetic key — <code>ORD-000001</code>, <code>ORD-000002</code>, … for the bookstore, <code>CRA-000001</code>… for credit applications, and <code>FLT-000001</code>… for flights — which is why event identifiers look like long hexadecimal strings in the Individual Journey view and in its autocomplete suggestions.</p>
 
   <table>
     <thead><tr><th>What generation touches</th><th>Effect</th></tr></thead>
@@ -286,6 +286,34 @@ fingerprint, or change the certificate mode.</code></pre>
   <p>Other error messages you may see: <i>“Unknown demo dataset '&lt;x&gt;'.”</i>, <i>“A schema name is required.”</i> and <i>“Enter how many journeys to generate.”</i> (when the count is below 1), plus the ordinary connection errors listed in section 7.2.</p>
 
   <div class="note"><strong>Note</strong> If the connection uses pre-materialised transitions, generated data does <em>not</em> rebuild the TRANSITIONS_RAW table. Until an administrator rebuilds it, the chart header shows the pill <b>⚠ Live (not built)</b> and the map is computed live. That is a performance matter only — the results are identical.</div>
+
+  <h2 id="ch7-live-generator">Keeping a process live — the demo-event generator</h2>
+
+  <p>The Demo Content tab loads a fixed batch of history. For a <em>live</em> demo — journeys trickling in while you watch — there is a separate standalone tool, <code>generator/launch.py</code>, run from a shell (or in Docker) rather than from the app. It <b>learns an existing project's structure</b> — the same Markov directly-follows model the Simulation view fits (transition probabilities, per-edge timing, entry and end steps) plus the project's META value mix — and then, every few seconds, writes <b>one full synthetic journey</b> into a target project's <code>JOURNEYS</code>. Point an A-Chart with <b>Auto-refresh</b> on (chapter 9), or the Dashboard, at that project and you watch data arrive in real time.</p>
+
+  <pre><code># every 5–60 s, append a journey shaped like project 1 of schema PM_PROD, into project 1
+python generator/launch.py --host 127.0.0.1 --port 8563 --user sys --password exasol \
+    --schema PM_PROD --project 1 --insecure --min 5 --max 60
+
+# write into a different project, faster, and stop after 100 journeys
+python generator/launch.py … --project 1 --target-project 2 --min 2 --max 8 --count 100</code></pre>
+
+  <table>
+    <thead><tr><th>Option</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>--schema</code> / <code>--project</code></td><td>The source project to <b>learn</b> the structure from (and, by default, write into).</td></tr>
+      <tr><td><code>--target-project</code></td><td>Write the journeys into a <em>different</em> project than the one learned from. Default: the same project.</td></tr>
+      <tr><td><code>--min</code> / <code>--max</code></td><td>Seconds between journeys, drawn uniformly in that range (default 5–60).</td></tr>
+      <tr><td><code>--max-steps</code></td><td>Safety cap on a single journey's length — important when the learned graph has loops (default 60).</td></tr>
+      <tr><td><code>--count</code></td><td>Stop after N journeys; <code>0</code> (the default) runs forever until Ctrl-C / SIGTERM.</td></tr>
+      <tr><td><code>--tls</code> / <code>--no-tls</code> / <code>--insecure</code> / <code>--fingerprint</code></td><td>TLS to Exasol, mirroring a connection's certificate mode.</td></tr>
+      <tr><td><code>--seed</code></td><td>Deterministic RNG, for a reproducible demo.</td></tr>
+    </tbody>
+  </table>
+
+  <p>Every journey is anchored so its <b>last event is “now”</b> (its events run up to the present, never into the future), so an A-Chart whose auto-refresh window slides to today shows the whole just-finished journey immediately. The tool needs the same database rights as any writer (<code>INSERT</code>), draws its connection details from the command line or the <code>PMG_*</code> environment variables, logs each journey it emits, retries a transient database error on the next tick, and stops cleanly on Ctrl-C. Run <code>python generator/launch.py --help</code> for the full list of options.</p>
+
+  <div class="note"><strong>Note</strong> It is a <b>demo / load-shaping</b> tool: the generated journeys are synthetic, tagged <code>ORIGINAL</code> like real data, and append to the project — they are not de-duplicated and there is no undo other than deleting the project's journeys. Learn from, and write into, a demo or sandbox project, not a project holding real customer data.</div>
 
   <h2 id="ch7-projects-tab">Managing the projects in a connection</h2>
 

@@ -29,6 +29,7 @@
   --green: #34c759;
   --orange: #ff9500;
   --yellow: #ffd60a;
+  --amber: #b17d00;
   --blue: #007aff;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
@@ -77,6 +78,7 @@
   --green: #32d74b;
   --orange: #ff9f0a;
   --yellow: #ffd60a;
+  --amber: #ffc93d;
   --blue: #0a84ff;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -1701,6 +1703,53 @@ textarea.text-input {
   gap: 8px;
   z-index: 10;
 }
+
+/* Corner controls are hidden until the pointer enters that bottom corner of the canvas
+   (the reveal is driven by a container mousemove, so nothing blocks the canvas while
+   hidden). `pointer-events: none` when hidden keeps the invisible controls unclickable. */
+.corner-ctl {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+/* Faint resting affordance shown in a bottom corner while its controls are hidden, so the
+   reveal-on-hover is discoverable. Styled like the controls (.table-btn chrome) but dimmed;
+   purely visual (pointer-events:none) — the container mousemove does the revealing. */
+.corner-handle {
+  position: absolute;
+  bottom: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--radius);
+  background: var(--material-thin);
+  backdrop-filter: blur(20px);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--primary);
+  opacity: 0.32;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+.corner-handle-left {
+  left: 12px;
+}
+.corner-handle-right {
+  right: 12px;
+}
+.corner-handle.hide {
+  opacity: 0;
+}
+
+.corner-ctl.show {
+  opacity: 1;
+  pointer-events: auto;
+}
 /* Outlined badge showing the sampling strategy used for a sample set. */
 .sample-method-tag {
   display: inline-flex;
@@ -3298,4 +3347,59 @@ textarea.text-input {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* A-Chart auto-refresh countdown ring (Configuration → Auto-refresh). */
+.ar-ring {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+}
+.ar-ring .ar-track {
+  fill: none;
+  stroke: var(--separator);
+  stroke-width: 2.5;
+}
+.ar-ring .ar-prog {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.2s linear;
+}
+.ar-ring .ar-count {
+  position: absolute;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A-Chart auto-refresh pill — a control in the flow-overlay cluster (between the ▦
+   Transitions button and the zoom controls), matching .table-btn / .zoom-controls. */
+.ar-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 6px 0 7px;
+  border-radius: var(--radius);
+  background: var(--material-thin);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+.ar-pill .ar-now {
+  border: none;
+  background: none;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 4px;
+  height: 100%;
+}
+.ar-pill .ar-now:hover {
+  color: var(--accent);
 }

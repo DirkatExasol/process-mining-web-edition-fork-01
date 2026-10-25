@@ -1,0 +1,64 @@
+# Example Docker Compose for the live demo-data generator.
+#
+# It builds the image from generator/Dockerfile (build context = the repo root, one level
+# up) and drives EVERY parameter through the `environment:` block below. Edit the values
+# here, then from this directory run:
+#
+#   docker compose -f docker-compose.example.yml up --build
+#
+# The generator connects straight to Exasol (not to the app), learns PMG_PROJECT's
+# structure, and writes synthetic journeys into PMG_TARGET_PROJECT every PMG_MIN..PMG_MAX
+# seconds. Point an A-Chart (auto-refresh on) or the Dashboard at that project to watch
+# them arrive. Stop with Ctrl-C, or `docker compose -f docker-compose.example.yml down`.
+
+services:
+  generator:
+    build:
+      context: ..                       # repo root — the image needs backend/ + generator/
+      dockerfile: generator/Dockerfile
+    image: process-mining-generator:latest
+    container_name: process-mining-generator
+    init: true                          # clean SIGTERM handling (the generator stops gracefully)
+    restart: unless-stopped
+
+    # ── All parameters are controlled here, as environment variables ───────────
+    environment:
+      # Exasol connection -------------------------------------------------------
+      # Host/port of the Exasol database the journeys are written to. From inside a
+      # container, a database on the Docker HOST is reachable as `host.docker.internal`
+      # (Docker Desktop) or the host's LAN IP; a database running as another compose
+      # service is reachable by its service name on a shared network (see below).
+      PMG_HOST: "host.docker.internal"
+      PMG_PORT: "8563"
+      PMG_USER: "sys"
+      PMG_PASSWORD: "exasol"
+      PMG_SCHEMA: "PM_PROD"             # the schema that holds the project(s)
+
+      # What to generate --------------------------------------------------------
+      PMG_PROJECT: "1"                  # learn the process structure from this project id
+      # PMG_TARGET_PROJECT: "1"         # write journeys here (default: same as PMG_PROJECT)
+      PMG_MIN: "5"                      # seconds between journeys — lower bound
+      PMG_MAX: "60"                     # seconds between journeys — upper (uniform in [min,max])
+      PMG_MAX_STEPS: "60"               # safety cap on one journey's length (cyclic graphs)
+      PMG_COUNT: "0"                    # stop after N journeys (0 = run forever)
+      # PMG_SEED: "42"                  # deterministic RNG for a reproducible demo
+
+      # TLS to Exasol -----------------------------------------------------------
+      PMG_TLS: "true"                   # "false" for a plain (non-TLS) Exasol connection
+      PMG_INSECURE: "true"              # skip cert verification (typical for a self-signed demo DB)
+      # PMG_FINGERPRINT: ""             # instead of PMG_INSECURE: pin the server cert SHA-256 (hex)
+      # PMG_MIN_RSA_BITS: "2048"        # minimum server-key size when verifying
+
+    # Lets `host.docker.internal` resolve on Linux (automatic on Docker Desktop).
+    # Harmless when the database is reached another way.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # If Exasol (and the app) run in ANOTHER compose project on a shared network, join it
+    # here and set PMG_HOST to the database's service name instead of host.docker.internal:
+    # networks:
+    #   - pmw
+# networks:
+#   pmw:
+#     external: true
+#     name: process-mining-web_default

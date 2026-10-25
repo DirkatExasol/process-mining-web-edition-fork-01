@@ -166,19 +166,53 @@ async def _backup_scheduler() -> None:
         await asyncio.sleep(15)
 
 
+async def _ldap_sync_scheduler() -> None:
+    """Every ~30 s, run a directory sync if auto-sync is enabled and its configured
+    interval has elapsed since the last run. The heavy LDAP + DB work runs in a thread so
+    the event loop stays responsive; a bad tick never kills the loop."""
+    while True:
+        try:
+            if store.ldap_sync_enabled:
+                cfg = store.ldap_admin_public()
+                interval = max(1, int(cfg.get("syncIntervalMins") or 5)) * 60
+                last = cfg.get("lastSyncedAt") or ""
+                due = True
+                if last:
+                    try:
+                        last_dt = datetime.datetime.fromisoformat(last)
+                        if last_dt.tzinfo is None:
+                            last_dt = last_dt.replace(tzinfo=datetime.timezone.utc)
+                        elapsed = (datetime.datetime.now(datetime.timezone.utc) - last_dt).total_seconds()
+                        due = elapsed >= interval
+                    except (ValueError, TypeError):
+                        due = True
+                if due:
+                    await asyncio.to_thread(_run_ldap_sync, "scheduled")
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a bad tick must never kill the loop
+            _scheduler_log.exception("LDAP sync scheduler tick failed")
+        await asyncio.sleep(30)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     _apply_display_timezone()  # render logs in the configured zone from startup
     # Re-created cleanly on every TLS restart (the launcher re-runs the lifespan).
-    task = asyncio.create_task(_backup_scheduler())
+    tasks = [
+        asyncio.create_task(_backup_scheduler()),
+        asyncio.create_task(_ldap_sync_scheduler()),
+    ]
     try:
         yield
     finally:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(
@@ -857,6 +891,7 @@ def api_session(request: Request, response: Response, user: User = Depends(requi
         "adminIdleTimeoutMins": store.admin_idle_timeout_mins,
         "maxFailedLogins": store.max_failed_logins,
         "displayTimezone": store.display_timezone,
+        "mobileEnabled": store.mobile_enabled,
         "builtinAdmin": DEFAULT_ADMIN_USERNAME,
         "license": licensing.evaluate().public(),
     }
@@ -870,6 +905,22 @@ class RequireLoginBody(BaseModel):
 def api_require_login(body: RequireLoginBody, user: User = Depends(require_admin)):
     store.set_require_login(body.requireLogin)
     return {"ok": True, "requireLogin": store.require_login}
+
+
+class MobileEnabledBody(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/access/mobile-enabled")
+def api_set_mobile_enabled(body: MobileEnabledBody, user: User = Depends(require_admin)):
+    """Enable/disable WorkBench Mobile — the compact phone shell. When off, phones fall back to
+    the normal desktop layout. iPads/tablets are unaffected either way."""
+    store.set_mobile_enabled(body.enabled)
+    logx.usage(
+        f"admin {user.username} {'enabled' if body.enabled else 'disabled'} WorkBench Mobile",
+        username=user.username, operation="config",
+    )
+    return {"ok": True, "mobileEnabled": store.mobile_enabled}
 
 
 class IdleTimeoutBody(BaseModel):
@@ -1393,6 +1444,21 @@ def api_set_power(username: str, body: PowerBody, user: User = Depends(require_a
     return {"ok": True}
 
 
+class EmailBody(BaseModel):
+    email: str = ""
+
+
+@app.post("/api/users/{username}/email")
+def api_set_user_email(username: str, body: EmailBody, user: User = Depends(require_admin)):
+    """Set (or clear) a user's email — the address notification emails are sent to when a rule
+    on a connection they're assigned to lists no explicit recipients."""
+    try:
+        store.set_user_email(username, body.email)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "email": (store.get_user(username).email if store.get_user(username) else "")}
+
+
 class DeveloperBody(BaseModel):
     isDeveloper: bool
 
@@ -1783,6 +1849,108 @@ def api_set_actions_enabled(
         username=user.username, operation="config",
     )
     return {"ok": True, "enabled": store.actions_enabled}
+
+
+class NotificationsEnabledBody(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/notifications")
+def api_notifications_status(user: User = Depends(require_admin)):
+    """State of the Dashboard notifications feature: whether it's enabled, how many rules are
+    defined, and the VAPID contact (push `sub` claim) used for Web Push."""
+    return {
+        "enabled": store.notifications_enabled,
+        "ruleCount": len(store.list_all_notification_rules()),
+        "pushSubject": store.push_subject,
+    }
+
+
+@app.post("/api/notifications/enabled")
+def api_set_notifications_enabled(
+    body: NotificationsEnabledBody, user: User = Depends(require_admin)
+):
+    store.set_notifications_enabled(body.enabled)
+    logx.usage(
+        f"admin {user.username} {'enabled' if body.enabled else 'disabled'} "
+        f"Dashboard notifications",
+        username=user.username, operation="config",
+    )
+    return {"ok": True, "enabled": store.notifications_enabled}
+
+
+class PushSubjectBody(BaseModel):
+    subject: str
+
+
+@app.post("/api/notifications/push-subject")
+def api_set_push_subject(body: PushSubjectBody, user: User = Depends(require_admin)):
+    """Set the VAPID contact (the push `sub` claim). Push services (notably Apple/Safari) can
+    reject a token whose contact isn't a valid mailto: or https: URL, so it must be one."""
+    subject = (body.subject or "").strip()
+    if not (subject.startswith("mailto:") or subject.startswith("https://")):
+        raise HTTPException(
+            status_code=400,
+            detail="The contact must be a mailto: email or an https:// URL.",
+        )
+    store.set_push_subject(subject)
+    logx.usage(
+        f"admin {user.username} set the Web Push contact to {subject}",
+        username=user.username, operation="config",
+    )
+    return {"ok": True, "pushSubject": store.push_subject}
+
+
+class SmtpTestBody(BaseModel):
+    to: str = ""
+
+
+@app.get("/api/smtp")
+def api_smtp_status(user: User = Depends(require_admin)):
+    """The SMTP (email) settings used for notification delivery — never the password itself,
+    only whether one is stored."""
+    return store.smtp_settings()
+
+
+@app.post("/api/smtp")
+async def api_set_smtp(request: Request, user: User = Depends(require_admin)):
+    """Save the SMTP settings. A blank password keeps the stored one; `clearPassword` removes
+    it. `security` is none | starttls | ssl."""
+    try:
+        data = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="Invalid JSON.")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Invalid body.")
+    if (data.get("security") or "starttls") not in ("none", "starttls", "ssl"):
+        raise HTTPException(status_code=400, detail="security must be none, starttls or ssl.")
+    store.set_smtp_settings(data)
+    logx.usage(f"admin {user.username} updated the SMTP settings",
+               username=user.username, operation="config")
+    return store.smtp_settings()
+
+
+@app.post("/api/smtp/test")
+async def api_smtp_test(body: SmtpTestBody, user: User = Depends(require_admin)):
+    """Send a test email to `to` (or the admin's own email) using the stored settings, and
+    report success or the exact SMTP error."""
+    settings = store.smtp_settings(with_secret=True)
+    if not settings.get("configured"):
+        return {"ok": False, "error": "SMTP is not configured (host and From are required)."}
+    to = (body.to or "").strip() or (user.email or "").strip()
+    if not to or "@" not in to:
+        return {"ok": False, "error": "Enter a recipient email address for the test."}
+    from app.notifications import smtp as smtp_mod
+
+    try:
+        await asyncio.to_thread(
+            smtp_mod.send_email, settings, [to],
+            "Process Mining Demonstrator — SMTP test",
+            "This is a test email. Your SMTP settings for notifications are working.",
+        )
+    except Exception as exc:  # noqa: BLE001 — report the reason
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "sentTo": to}
 
 
 class SinkEnabledBody(BaseModel):
@@ -2299,6 +2467,8 @@ class LdapConfigBody(BaseModel):
     displayAttr: str = "cn"
     adminLoginEnabled: bool = False
     showStatusOnLogin: bool = True
+    syncEnabled: bool = False
+    syncIntervalMins: int = 5
 
 
 class LdapTestBody(LdapConfigBody):
@@ -2321,15 +2491,51 @@ def _ldap_payload(body: LdapConfigBody) -> dict:
         "displayAttr": body.displayAttr,
         "adminLoginEnabled": body.adminLoginEnabled,
         "showStatusOnLogin": body.showStatusOnLogin,
+        "syncEnabled": body.syncEnabled,
+        "syncIntervalMins": body.syncIntervalMins,
     }
     if body.bindPassword is not None:
         data["bindPassword"] = body.bindPassword
     return data
 
 
+def _run_ldap_sync(trigger: str) -> dict:
+    """Enumerate the directory and mirror its roster into the user store. Shared by the
+    manual-refresh endpoint and the background scheduler. Failure-tolerant: a bad config or
+    unreachable server records an error result rather than raising. Returns the result dict."""
+    from app.services.ldap_auth import LdapError, list_directory_users
+
+    if not store.ldap_enabled:
+        return {"ok": False, "error": "The directory (LDAP) is not enabled."}
+    try:
+        users = list_directory_users(store.ldap_settings())
+    except LdapError as exc:
+        result = {"ok": False, "error": str(exc), "at": None}
+        store.record_ldap_sync(result)
+        logx.warn(f"LDAP sync ({trigger}) failed: {exc}", operation="ldap")
+        return result
+    result = store.sync_ldap_users(users)
+    logx.info(
+        f"LDAP sync ({trigger}): {result.get('total', 0)} in directory — "
+        f"+{result.get('added', 0)} new, {result.get('updated', 0)} updated, "
+        f"{result.get('removed', 0)} removed, {result.get('reappeared', 0)} returned",
+        operation="ldap",
+    )
+    return result
+
+
 @app.get("/api/ldap")
 def api_ldap(user: User = Depends(require_admin)):
     return store.ldap_admin_public()
+
+
+@app.post("/api/ldap/sync")
+async def api_ldap_sync(user: User = Depends(require_admin)):
+    """Refresh the user roster from the directory now — the Users tab's "Refresh from
+    directory" button. Returns the sync result plus the refreshed LDAP settings (so the UI
+    gets the new last-synced time)."""
+    result = await asyncio.to_thread(_run_ldap_sync, f"manual by {user.username}")
+    return {"result": result, "ldap": store.ldap_admin_public()}
 
 
 @app.post("/api/ldap")

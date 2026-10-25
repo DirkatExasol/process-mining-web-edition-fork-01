@@ -572,6 +572,10 @@ and per-scope counts.
 - Each MCP user must **already exist and be enabled** in Process Mining (Users tab) with the
   **same username** the token will carry (see “username claim” below), and must be
   **assigned the connection(s)** they should query (Database Connections tab).
+- **One Authentik group for all MCP users.** Create a single group (e.g.
+  `process-mining-users`), add every MCP user to it, and put **that exact group name** in the
+  MCP server's **Required group** field. The group is the access gate for the whole surface;
+  the per-user PM record and its connection assignments then decide what each member can see.
 
 ---
 
@@ -595,14 +599,36 @@ and per-scope counts.
      refresh tokens).
    - Save, then open the provider and note its **Client ID** (and secret, if confidential).
 
-2. **Create an Application** bound to that provider
+2. **Create one group for all MCP users** *(important)*
+   *Directory → Groups → Create.*
+   - **Name**: e.g. `process-mining-users`. **This single group holds every user who may use
+     the MCP server**, and its **exact name** is what you will type into the MCP server's
+     **Required group** field in Part B. Pick the name now and keep it consistent.
+   - **Add every MCP user to this group** (Directory → Groups → *process-mining-users* →
+     Users). A user who is not in it is refused with `403 …not in the group required`, no
+     matter what else is configured. (Each user must *also* exist and be enabled in Process
+     Mining — see *Prerequisites* — the group controls MCP access, the PM user record controls
+     which connections they see.)
+
+3. **Create an Application** bound to that provider
    *Applications → Applications → Create.*
    - **Name**: `Process Mining MCP`, **Slug**: e.g. `process-mining-mcp`.
    - **Provider**: the provider from step 1.
-   - Under **Policy / Group / User Bindings**, restrict who may use it (e.g. bind a group
-     `process-mining-users`). You can enforce the same group again in the MCP server settings.
+   - Under **Policy / Group / User Bindings**, bind the **`process-mining-users`** group so
+     only its members can obtain a token for this application. This is the same group you
+     enforce again in the MCP server settings (Part B → **Required group**) — binding it here
+     is belt-and-braces; the MCP server's own check is what actually gates each request.
 
-3. **Note the endpoints.** With the slug above, Authentik publishes (all under
+   > **The token must carry a `groups` claim.** The MCP server reads the user's groups from
+   > the access token's `groups` claim and requires your group name to appear in it *exactly*
+   > (no substring matching). Authentik only includes that claim when the provider emits it, so
+   > add the **`groups`** scope mapping to the provider (OAuth2/OpenID Provider → *Advanced
+   > protocol settings* → **Scopes** → include the built-in **`groups`** mapping), and make the
+   > client request the `groups` scope. If the claim is missing, every request fails the group
+   > check even for users who are in the group. Leaving **Required group** blank in Part B skips
+   > the check entirely (then any mapped, enabled PM user may connect).
+
+4. **Note the endpoints.** With the slug above, Authentik publishes (all under
    `https://authentik.example.com:19443/application/o/process-mining-mcp/`):
    - **Issuer**: `.../application/o/process-mining-mcp/`
    - **Discovery**: `…/.well-known/openid-configuration`
@@ -631,8 +657,11 @@ and per-scope counts.
    - **JWKS URL** — leave blank to auto-discover from the issuer, or paste `…/jwks/`.
    - **Audience / Client ID** — the client id, once you've configured the token's `aud`
      (recommended). Blank skips the `aud` check and accepts any token from the issuer.
-   - **Required group** — optional; only members of this Authentik group may connect
-     (matched against the token's `groups` claim).
+   - **Required group** — the name of the **single Authentik group that holds all MCP users**
+     (the `process-mining-users` group from Part A, step 2). Only members of this group may
+     connect: the server requires this **exact** name to appear in the token's `groups` claim
+     (no substring matching), so type it exactly as named in Authentik. Leave it blank only if
+     you want *any* mapped, enabled PM user to connect without a group check.
    - **Username claim** — the JWT claim matched (case-insensitively) to a Process Mining
      username. Default `preferred_username`; use `email` if your usernames are email
      addresses.
@@ -727,7 +756,7 @@ curl -k -X POST https://<your-host>:18493/mcp \
 | `503 The MCP server is disabled` | Enable it in the admin MCP tab. |
 | `401` + a `WWW-Authenticate` header | No/invalid token — the client should run the OAuth flow. Check the issuer/JWKS in the MCP tab and press **Test Authentik**. |
 | `403 No enabled Process Mining user matches '…'` | The token's username claim doesn't match an enabled PM user. Create the user (Users tab) with that exact name, or change the **Username claim** (e.g. to `email`). |
-| `403 …not in the group required` | The user isn't in the configured **Required group** in Authentik. |
+| `403 …not in the group required` | The user isn't in the configured **Required group**, or the token carries no `groups` claim. Add the user to that single group (Directory → Groups), and make sure the provider emits the **`groups`** scope so the claim is present (Part A, step 3) — the server needs the exact group name in the token's `groups` list. |
 | `Connection … is not assigned to you` | Assign the connection to the user (Database Connections tab). |
 | `Sorry — … reserved for power users` | The user lacks the power-user role. Grant it in the admin console (Users tab → **Make power**) if they should run the deeper-analysis tools. |
 | `You have reached the limit of N note changes per minute` | A client is writing notes in a loop. Wait a minute; raise `PMW_MCP_NOTE_WRITES_PER_MIN` only if the volume is intended. |

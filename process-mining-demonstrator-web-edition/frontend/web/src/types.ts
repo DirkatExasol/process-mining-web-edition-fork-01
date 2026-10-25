@@ -279,6 +279,7 @@ export const SAMPLING_METHODS: {
 ]
 
 export const DETAIL_VIEW_MODES = [
+  'Dashboard',
   'A-Chart',
   'B-Chart',
   'A/B Comparison',
@@ -293,6 +294,7 @@ export const DETAIL_VIEW_MODES = [
 export type DetailViewMode = (typeof DETAIL_VIEW_MODES)[number]
 
 export const VIEW_MODE_ICONS: Record<DetailViewMode, string> = {
+  Dashboard: '🧭',
   'A-Chart': '📈',
   'B-Chart': '📉',
   'A/B Comparison': '⇄',
@@ -747,6 +749,240 @@ export interface PortalConnection {
   /** Set when the connection's schema couldn't be read (its tile group shows the note). */
   error: string | null
   projects: PortalProcess[]
+}
+
+/** One weekly bucket of the ingest timeline (sparkline): the ISO-week start and its count. */
+export interface IngestWeek {
+  week: string
+  events: number
+}
+
+/** A process on the Dashboard — PortalProcess plus the extra overview metrics. */
+export interface DashboardProcess extends PortalProcess {
+  firstEventAt: string | null
+  steps: number
+  timeline: IngestWeek[]
+  /** Count of OPEN (unresolved) notes visible to the user, keyed by IMPORTANCE. */
+  openNotes: Record<string, number>
+}
+
+/** The user's processes in one connection, enriched for the Dashboard. */
+export interface DashboardConnection {
+  id: string
+  name: string
+  schema: string | null
+  error: string | null
+  projects: DashboardProcess[]
+}
+
+/** The extra per-card metrics a user can add to the Dashboard (max 3, reorderable). The
+ *  always-on metrics (Events, Last log entry, ingest sparkline) are not in this set. */
+export const DASHBOARD_METRICS = [
+  'journeys',
+  'daysSinceLast',
+  'spanDays',
+  'avgEvents',
+  'openNotes',
+] as const
+export type DashboardMetric = (typeof DASHBOARD_METRICS)[number]
+export const DASHBOARD_METRIC_LABELS: Record<DashboardMetric, string> = {
+  journeys: 'Journeys',
+  daysSinceLast: 'Days since last ingest',
+  spanDays: 'Active span (days)',
+  avgEvents: 'Avg events / journey',
+  openNotes: 'Open notes',
+}
+
+/** Note importance levels, highest → lowest, with a theme colour token for the Dashboard's
+ *  open-notes-by-severity metric. Mirrors backend NOTE_IMPORTANCE. */
+export const NOTE_SEVERITIES: { key: string; label: string; color: string }[] = [
+  { key: 'URGENT', label: 'Urgent', color: 'var(--red)' },
+  { key: 'IMPORTANT', label: 'Important', color: 'var(--orange)' },
+  { key: 'INFO', label: 'Info', color: 'var(--blue)' },
+  { key: 'NORMAL', label: 'Normal', color: 'var(--secondary)' },
+]
+
+// ── Dashboard notifications ──────────────────────────────────────────────────
+
+/** Notification severities, highest urgency first (reuses the note-severity colours). The
+ *  Dashboard sorts triggered notifications by this rank, then by time. Mirrors backend
+ *  spec.SEVERITIES. */
+export const NOTIFICATION_SEVERITIES: { key: string; label: string; color: string }[] = [
+  { key: 'URGENT', label: 'Urgent', color: 'var(--red)' },
+  { key: 'IMPORTANT', label: 'Important', color: 'var(--orange)' },
+  { key: 'INFO', label: 'Info', color: 'var(--blue)' },
+]
+export const NOTIFICATION_SEVERITY_RANK: Record<string, number> = {
+  URGENT: 3,
+  IMPORTANT: 2,
+  INFO: 1,
+}
+
+/** The check types a rule can be. `transition_metric` measures a metric on the transition
+ *  between two steps; `journey_duration` measures a time aggregate of the whole case's
+ *  end-to-end duration (no steps). Mirrors backend spec.RULE_KINDS. */
+export const NOTIFICATION_KINDS: { kind: string; label: string; help: string }[] = [
+  {
+    kind: 'transition_metric',
+    label: 'Transition between two steps',
+    help: 'Watch a metric on the step-to-step transition (e.g. the average time from A to B).',
+  },
+  {
+    kind: 'journey_duration',
+    label: 'Journey duration (whole case)',
+    help: 'Watch how long a whole journey takes end to end (e.g. the median case duration).',
+  },
+  {
+    kind: 'note',
+    label: 'Notes & comments',
+    help: 'Watch for notes/comments on a process — new notes, open notes, resolutions or new comments.',
+  },
+]
+
+/** What note activity a "note" rule watches. Mirrors backend spec.NOTE_EVENTS. */
+export const NOTIFICATION_NOTE_EVENTS: { event: string; label: string; help: string }[] = [
+  { event: 'created', label: 'New notes', help: 'A note is newly created within the window.' },
+  { event: 'open', label: 'All open notes', help: 'Any matching note is still open (unresolved).' },
+  { event: 'resolved', label: 'Resolved / acknowledged', help: 'A note is marked resolved within the window.' },
+  { event: 'commented', label: 'New comments', help: 'A comment is added to an existing note within the window.' },
+]
+
+/** Which notes a rule watches. "shared" is the safe default (the engine can't see private
+ *  notes); "all" also surfaces everyone's personal notes. Mirrors backend spec.NOTE_SCOPES. */
+export const NOTIFICATION_NOTE_SCOPES: { scope: string; label: string }[] = [
+  { scope: 'shared', label: 'Shared notes only' },
+  { scope: 'all', label: 'All notes (incl. personal)' },
+]
+
+/** Transition metrics a rule can measure — the TransitionMetric enum values, with a short
+ *  note on whether the value is a duration (shown as a time) or a plain count. */
+export const NOTIFICATION_METRICS = [
+  'Count',
+  'Avg Time',
+  'Median Time',
+  'Min Time',
+  'Max Time',
+  'Std Dev',
+] as const
+export type NotificationMetric = (typeof NOTIFICATION_METRICS)[number]
+
+/** The metrics a journey_duration rule may measure — the time aggregates only (a whole-case
+ *  duration has no "Count"). Mirrors backend spec.JOURNEY_METRIC_NAMES. */
+export const NOTIFICATION_JOURNEY_METRICS = [
+  'Avg Time',
+  'Median Time',
+  'Min Time',
+  'Max Time',
+  'Std Dev',
+] as const
+/** The time-based metrics (their threshold is a duration in seconds; Count is a plain number). */
+export const NOTIFICATION_TIME_METRICS: ReadonlySet<string> = new Set([
+  'Avg Time',
+  'Median Time',
+  'Min Time',
+  'Max Time',
+  'Std Dev',
+])
+
+/** Comparators the criteria may use, with a human label. Mirrors backend spec.COMPARATORS. */
+export const NOTIFICATION_COMPARATORS: { op: string; label: string }[] = [
+  { op: '>', label: 'is greater than' },
+  { op: '>=', label: 'is at least' },
+  { op: '<', label: 'is less than' },
+  { op: '<=', label: 'is at most' },
+]
+
+/** Check intervals offered in the wizard. Mirrors backend spec.INTERVAL_CHOICES. */
+export const NOTIFICATION_INTERVALS: { secs: number; label: string }[] = [
+  { secs: 60, label: '1 minute' },
+  { secs: 300, label: '5 minutes' },
+  { secs: 900, label: '15 minutes' },
+  { secs: 3600, label: '1 hour' },
+  { secs: 7200, label: '2 hours' },
+  { secs: 18000, label: '5 hours' },
+  { secs: 86400, label: '1 day' },
+]
+
+/** How far back a rule looks for events as the base of its measurement. */
+export const NOTIFICATION_LOOKBACK_UNITS: { unit: string; label: string }[] = [
+  { unit: 'all', label: 'All history' },
+  { unit: 'minutes', label: 'Minutes' },
+  { unit: 'days', label: 'Days' },
+  { unit: 'months', label: 'Months' },
+  { unit: 'years', label: 'Years' },
+]
+
+/** A rule's config. The criterion fields (metric/comparator/threshold/lookback) are shared by
+ *  the metric kinds; `fromStep`/`toStep` are present only for `transition_metric`. A `note`
+ *  rule instead carries `event`/`minImportance`/`scope` (and comparator/threshold as a
+ *  minimum match count). `metric` is optional so the one shape serves every kind. */
+export interface TransitionMetricConfig {
+  fromStep?: string
+  toStep?: string
+  metric?: NotificationMetric
+  comparator: string
+  threshold: number
+  /** Measurement window: look back `lookbackValue` of `lookbackUnit` (or "all" = no bound). */
+  lookbackUnit?: string
+  lookbackValue?: number
+  // note kind:
+  event?: string // created | open | resolved | commented
+  minImportance?: string // NORMAL | INFO | IMPORTANT | URGENT
+  scope?: string // shared | all
+}
+
+/** The triggering note carried on a note rule's run state, so the card can deep-link to it. */
+export interface NotificationNote {
+  noteId: string
+  title: string
+  target: string
+  at: string
+  importance: string
+  count: number
+  scope: string
+  event: string
+}
+
+/** The engine's current run state for a rule. Empty ({}) until it has run once. */
+export interface NotificationState {
+  lastRunAt?: string | null
+  lastValue?: number | null
+  triggered?: boolean
+  triggeredAt?: string | null
+  clearedAt?: string | null
+  lastError?: string | null
+  /** The current alert has been acknowledged (hidden until it clears and triggers again). */
+  acknowledged?: boolean
+  /** The triggering note for a `note` rule (null for metric kinds). */
+  note?: NotificationNote | null
+}
+
+/** Remote delivery channels a rule fires when it triggers (extensible: webpush + smtp today,
+ *  more later). `smtp.recipients` empty = the users assigned to the connection. */
+export interface NotificationDelivery {
+  webpush?: boolean
+  smtp?: { recipients: string[] } | false
+}
+
+/** A notification rule as returned by GET /api/notifications. `kind` selects the check
+ *  type ("transition_metric" today); `config` is kind-specific; `delivery` is the remote
+ *  channels it also fires. */
+export interface NotificationRule {
+  id: string
+  connectionId: string
+  connectionName?: string
+  projectId: number
+  projectTitle: string
+  kind: string
+  name: string
+  severity: string
+  intervalSecs: number
+  enabled: boolean
+  config: TransitionMetricConfig
+  delivery?: NotificationDelivery
+  createdBy?: string
+  createdAt?: string
+  state: NotificationState
 }
 
 /** "aux" is a helper field: extracted like the others but written to no column — it

@@ -111,6 +111,8 @@ def test_session_reports_unauthenticated_and_require_login(gui):
         "requireLogin": True,
         "idleTimeoutMins": 0,
         "actionsEnabled": False,
+        "notificationsEnabled": False,
+        "mobileEnabled": True,
         "passkeyAllowed": False,
         "mfaAllowed": False,
         "mfaEnabled": False,
@@ -124,6 +126,17 @@ def test_session_reports_actions_enabled_flag(gui):
     assert client.get("/auth/session").json()["actionsEnabled"] is False
     store.set_actions_enabled(True)
     assert client.get("/auth/session").json()["actionsEnabled"] is True
+
+
+def test_session_reports_mobile_enabled_flag(gui):
+    server, store = gui
+    client = TestClient(server.app)
+    # WorkBench Mobile defaults ON (phones get it unless an admin disables it).
+    assert client.get("/auth/session").json()["mobileEnabled"] is True
+    store.set_mobile_enabled(False)
+    assert client.get("/auth/session").json()["mobileEnabled"] is False
+    store.set_mobile_enabled(True)
+    assert client.get("/auth/session").json()["mobileEnabled"] is True
 
 
 def test_session_reports_and_refreshes_with_idle_timeout(gui):

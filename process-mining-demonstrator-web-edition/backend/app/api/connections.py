@@ -80,6 +80,38 @@ async def portal_processes(request: Request) -> dict:
     return {"connections": groups}
 
 
+@router.get("/dashboard")
+async def dashboard(request: Request) -> dict:
+    """The Dashboard overview: every process visible to the signed-in user, grouped by its
+    connection, with per-process journey/event counts, first/last event time, step count and
+    a weekly ingest timeline (for the sparkline). Same assignment gate and failure-tolerance
+    as /portal — a connection whose schema can't be read yields a per-group ``error``, never
+    a 500. Heavier than /portal (it adds the timeline), so it powers only the Dashboard."""
+    from ..db.schema_ddl import dashboard_overview
+
+    user = _request_user(request)
+    groups: list[dict] = []
+    for c in security_store.connections_for_user(user):
+        group = {"id": c.id, "name": c.name, "schema": c.schema, "projects": [], "error": None}
+        conn = security_store.get_connection(c.id, with_secrets=True)
+        if conn is None:
+            group["error"] = "Connection not found."
+            groups.append(group)
+            continue
+        result = await dashboard_overview(
+            host=conn.host, port=conn.port, username=conn.username, password=conn.password,
+            schema=conn.schema, use_tls=conn.use_tls, cert_mode=conn.cert_mode,
+            fingerprint=conn.fingerprint, min_rsa_bits=conn.min_rsa_bits,
+            app_user=user,
+        )
+        if result.get("ok"):
+            group["projects"] = result.get("projects", [])
+        else:
+            group["error"] = result.get("error") or "Could not read the database."
+        groups.append(group)
+    return {"connections": groups}
+
+
 @router.post("/connections/{conn_id}/connect", response_model=ConnectionStatus)
 async def connect_connection(conn_id: str, request: Request) -> ConnectionStatus:
     user = _request_user(request)

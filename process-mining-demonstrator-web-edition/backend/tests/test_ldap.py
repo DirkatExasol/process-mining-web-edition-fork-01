@@ -116,3 +116,18 @@ def test_test_settings_reports_service_and_user(mock_ldap):
 
     bad = ldap_auth.test_settings(mock_ldap, "alice", "wrong")
     assert bad["ok"] is True and bad["userOk"] is False
+
+
+def test_list_directory_users_enumerates_the_roster(mock_ldap):
+    users = ldap_auth.list_directory_users(mock_ldap)
+    by_name = {u.username: u for u in users}
+    assert sorted(by_name) == ["alice", "bob"]  # svc is outside the people base DN
+    assert by_name["alice"].email == "alice@example.com"
+    assert by_name["alice"].display_name == "Alice Anders"
+    assert by_name["bob"].dn == "uid=bob,ou=people,dc=example,dc=com"
+
+
+def test_list_directory_users_requires_base_dn(mock_ldap):
+    mock_ldap.base_dn = ""
+    with pytest.raises(ldap_auth.LdapError):
+        ldap_auth.list_directory_users(mock_ldap)

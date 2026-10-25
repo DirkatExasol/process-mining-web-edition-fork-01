@@ -80,11 +80,59 @@ const overview: HelpTopic = {
       ],
     },
     {
-      heading: 'The ten views',
+      heading: 'The eleven views',
       body: [
-        p('Open the ☰ menu (top-right) to switch between: A-Chart, B-Chart, A/B Comparison, Individual Journey, AI supported Documentation, Statistics, Conformance Check, Happy Path, Notes and Simulation. A checkmark marks the active view, and the title capsule shows it on a second line so you always know your context.'),
+        p('Open the ☰ menu (top-right) to switch between: Dashboard, A-Chart, B-Chart, A/B Comparison, Individual Journey, AI supported Documentation, Statistics, Conformance Check, Happy Path, Notes and Simulation. A checkmark marks the active view, and the title capsule shows it on a second line so you always know your context.'),
         tip('Conformance Check, Happy Path and Simulation are advanced-analysis views shown only to Power users (and administrators). Plain users do not see them in the ☰ menu.'),
         tip('Press ⌘/ (or Ctrl+/) at any time to open or close this Help panel. It floats, and can be dragged by its title bar and resized from the bottom-right corner.'),
+        tip('On a phone the app switches to WorkBench Mobile: a compact shell with a ☰ hamburger that opens the controls as a drawer and a bottom-sheet view switcher. It supports Dashboard, A-Chart (touch pan/zoom), Individual Journey, Notes and AI Documentation; other views open the Dashboard with a note — use a tablet or desktop for those. iPads and tablets keep the full desktop layout.'),
+      ],
+    },
+  ],
+}
+
+// ── Dashboard ───────────────────────────────────────────────────────────────
+
+const dashboard: HelpTopic = {
+  id: 'dashboard',
+  title: 'Dashboard',
+  subtitle: 'A cross-connection overview of every process you can see',
+  icon: '🧭',
+  sections: [
+    {
+      heading: 'What it shows',
+      body: [
+        p('The Dashboard is the first entry in the ☰ view menu and the landing screen when you sign in directly to the Work-Bench. It gives a bird’s-eye view of every process available to you, across all of your connections — without opening any single one.'),
+        p('Processes are shown as a flat set of tiles. Each tile carries its connection as a coloured pill in its upper-left corner (tiles of the same connection share a colour and a matching left edge), the number of events, when the last event was logged, and a weekly ingest sparkline. A separate Overview card at the top totals your processes, connections and events.'),
+        tip('Drag a tile (by anywhere on it — the ⠿ grip marks it as draggable) to rearrange the tiles into any order you like; your arrangement is saved per user. A connection whose schema can’t be read is listed in a small note under the tiles.'),
+        tip('Clicking a process card connects to it and opens its A-Chart — the same as picking it from the sidebar, but one step. Launching a process from the /home launcher skips the Dashboard and opens that process directly.'),
+        p('The Dashboard lists only base process flows. Derived aggregate projects — a high-level Σ map or a # detail / sub-flow produced by the Aggregate designer — are not shown, so their copied data does not double-count against the base process.'),
+        p('Auto-refresh: in the header, pick an interval (10s / 30s / 1m / 2m / 5m, or Off) to reload the whole Dashboard on a timer — the process tiles and, when enabled, the Notifications section — so a live feed shows up without reopening the view. A small countdown ring shows the time to the next refresh, and the ↻ Refresh button beside it reloads everything immediately. The interval is remembered per user. (This re-reads the current data; it does not re-run the notification checks — that is the background engine, or the Notifications “Refresh all”.)'),
+      ],
+    },
+    {
+      heading: 'The ingest sparkline',
+      body: [
+        p('Every card carries a small sparkline of how many events were ingested per week over the recent weeks, ending at the current week. A run of flat, dashed line at the end means no new events since then — so you can spot a stalled or finished feed at a glance. The Overview card’s sparkline sums the ingests of all your processes.'),
+      ],
+    },
+    {
+      heading: 'Adding metrics',
+      body: [
+        p('Events, Last log and the sparkline are always shown. Using the Metrics toolbar you can add up to three more metrics — Journeys, Days since last ingest, Active span (days), Avg events / journey and Open notes — which then appear on every process card. Use the ◀ ▶ controls on a selected metric to reorder them and ✕ to remove one. Your choice is remembered per user.'),
+        p('“Open notes” shows the project’s unresolved notes broken down by severity, as small coloured counts (red = Urgent, orange = Important, blue = Info, grey = Normal), or a muted 0 when there are none. It counts only the notes you can see — your own plus shared notes — exactly like the Notes view.'),
+      ],
+    },
+    {
+      heading: 'Notifications',
+      body: [
+        p('When an administrator has enabled it, a second “Notifications” section appears below the process tiles. A notification rule has a check type. A transition rule watches the transition from one step to a following one — if a chosen metric (average, median, minimum or maximum time, standard deviation, or the plain count) crosses a threshold you set, the rule triggers. A journey duration rule instead watches how long a whole case takes end to end — a chosen time aggregate of the case duration (average, median, minimum or maximum time, or standard deviation; no count) against a threshold, with no steps to pick. A notes & comments rule watches the process’s notes — new notes, all open notes, resolutions/acknowledgements, or new comments — at a minimum importance and scope. A background engine checks each rule on its own interval (1 minute up to 1 day); you don’t need the page open for it to run.'),
+        p('A note rule’s card carries a yellow 🗒️ sticker instead of the bell and shows the number of matching notes and the latest one (title, importance and target). Click anywhere on the card to jump straight to that note — the app connects, opens the process and lands on its note. Because the engine runs without a signed-in user it watches shared notes by default; a rule can opt into “all notes (incl. personal)”.'),
+        p('A blue summary strip heads the section with the headline counts — rules, triggered, enabled, connections watched and urgent — and a “Refresh all” button that re-checks every rule against the current data at once. Below it, each rule is a card, ordered by urgency then time so a firing alert floats to the top. A card shows the rule’s criterion, a status pill (Triggered / OK / Off / Error) and a severity pill (Urgent / Important / Info), a bar of the measured value against its limit, and four figures: the last value, how far over (or under) the limit it is, when it triggered, and the check interval. A ↻ button re-runs the check against the current data on demand (any viewer), and a per-card switch enables or disables that one rule (managers only).'),
+        p('A filter row below the strip narrows which cards are shown (your view only — it changes nothing for anyone else): by Type (Event / Note), by severity (Urgent / Important / Info), by whether a rule is currently triggered (Yes / No), by whether it is enabled (Yes / No), and by how recently it triggered — “Triggered at” Last hour / Last 24 hours / Last week / Last month / All. When any note rules exist, two more refine the note notifications: Note scope (Shared / Personal) and Note severity (Normal / Info / Important / Urgent). The count beside the row shows how many of the total are visible; “Clear filters” resets them.'),
+        tip('Rules are shared per connection — everyone assigned to the connection sees the same alerts — and are created, edited and toggled by power users, developers and administrators.'),
+        p('Use the “＋ Create / Edit” button in the section header to open the wizard: pick a connection and process, the check type (transition between two steps, journey duration, or notes & comments). For a note rule you choose what to watch (new notes / all open notes / resolved / new comments), a minimum importance, which notes (shared, or all incl. personal), how many matching notes should fire it, and how recent the activity must be. Otherwise — for a transition rule — the from-step and the following to-step, the metric, the comparison and threshold (with a time unit for duration metrics), a base period (how far back to look for events — a number of minutes / days / months / years, or all history), the check interval, a severity and an optional name. The base period narrows the measurement to recent events: e.g. “Avg Time over the last 7 days > 2h” only averages transitions from the past week, not the whole log. A “Test now” button evaluates the rule against the current data immediately — without saving — and shows the measured value and whether it would trigger, so you can check a threshold before committing to it. The same rules can be listed and toggled through the MCP server (list_notifications, set_notification_enabled).'),
+        p('Remote notifications: besides the Dashboard card, a rule can send a Web browser push when it triggers. Turn on “Web browser push” in the wizard’s Remote notifications section. Each person enables push once per device (the wizard offers it; a secure https connection is required, and the browser asks permission); after that, a rule with push on pops a browser notification to everyone assigned to its connection who has enabled push — even when the app isn’t open. The push fires once when the rule crosses into triggered, not every check (so a Refresh on an already-triggered rule won’t re-send) — use “Send a test notification” in the Remote notifications section to check push works on your device. Administrators set the push contact under Admin → Notifications (Apple/Safari rejects a push whose contact isn’t a valid mailto: or https: URL). A rule can also deliver by Email — turn on Email and optionally list recipients (comma-separated); leave it blank to email everyone assigned to the connection who has an address on file (an administrator sets a user’s email in Admin → Users). Email needs an SMTP server configured by an administrator under Admin → Notifications → Email (SMTP), which also has a “send test email” button. The delivery layer is built to take more channels without changing the rule model.'),
       ],
     },
   ],
@@ -205,6 +253,8 @@ const connecting: HelpTopic = {
         p('You manage only the connections you create: an ✎ button appears on those cards so you can edit or delete them and change who they are assigned to. Every new connection is automatically assigned to you, so you can connect to it immediately. Passwords and API keys you enter are encrypted at rest and, once saved, are never sent back to the browser — leave those fields blank when editing to keep the stored secret unchanged.'),
         p('The editor has two tabs. “Database / LLM Details” holds the connection fields; it can also create a fresh process-mining schema for you — enter a schema name and the database credentials, then use “Create schema & tables” to build the schema and the required tables (PROJECTS, JOURNEYS, STEPS, METAS, NOTES) if they don’t already exist.'),
         p('The “Demo Content” tab generates a ready-made dataset into the schema. Four are offered: a Retail dataset (📚 “Online Bookstore” — a synthetic order lifecycle with a returns flow and a flaky bank-transfer path), a Finance/Insurance dataset (💶 “Online Credit Application” — bank/affiliate intake, an application-check rework loop, credit assessment, and score- and sum-driven approval with agent-review loops, ending in payment or rejection), and two Transportation datasets (✈️ “Flight Booking & Management” — Star Alliance-style login → search → select → book → pay → confirm, where 50% of bookings are interline and query a partner airline, and 20% only manage an existing booking; and 🛫 “Airport Passenger Flow” — a departing passenger’s terminal walk with a seasonal passenger volume across the year, peaking in the summer holidays and at Christmas, high in September and low in May, so the journeys-over-time chart shows a realistic pattern). For any of them, enter the schema and how many journeys, then Generate; it creates the schema and tables as needed and loads the journeys into that dataset’s own project (others are left untouched).'),
+        p('Demo data is spread over a rolling two-year window ending on the day you generate it, so the newest events always reach “today” and recent views — the Dashboard ingest sparklines and the journeys-over-time chart — are never empty.'),
+        tip('For a live demo (journeys arriving while you watch, rather than one fixed batch), there is a separate standalone tool, generator/launch.py, run from a shell. It learns an existing project’s structure and emits one synthetic journey every few seconds into a target project; point an A-Chart with Auto-refresh on, or the Dashboard, at it. See the README / manual (Connections & Projects) for how to run it.'),
         warn('Creating a schema or generating demo data needs a database account with CREATE SCHEMA / CREATE TABLE (and, for demo data, INSERT) rights. Only your database administrator can grant those — the application cannot authorise you.'),
         tip('Use Test in the editor to check the database (and LLM, if set) before saving.'),
       ],
@@ -497,6 +547,7 @@ const chartViews: HelpTopic = {
       body: [
         p('The primary process map. Shows all journeys matching the current filter set as an aggregated directly-follows graph; arrow thickness reflects the selected transition metric. When a project is first selected, A-Chart loads automatically using the last N days of data — N defaults to 30 and is set in Configuration → Dates and Times → Default date window (0 shows the full range).'),
         tip('A date slider sits above the map, in the Date & Metrics card. In Range mode it has two independently draggable thumbs — drag either to move the window start or end; in Day mode a single thumb selects one calendar day. Both thumbs also respond to the arrow keys once focused. Switch modes with the Range / Day control at the right of the metric row, just below the slider.'),
+        p('Auto-refresh (A-Chart only): choose the interval in Configuration → Auto-refresh (Off / 10s / 30s / 1m / 2m / 5m). Once an interval is set, a round countdown and a ↻ Refresh button appear in the A-Chart’s control cluster (bottom-right), between the ▦ Transitions button and the zoom controls — handy for watching a live feed (e.g. the demo-event generator) arrive. On each refresh the date window slides forward to include "now" when it was ending in the past, so journeys that arrived since the last load actually appear (a plain reload kept the old window and missed them); the window span is preserved and a window already covering today is left alone. The unfiltered totals in the KPI strip — Total Journeys and the active-sample count — are re-read too, so they keep up with the growing data (a plain filter-apply leaves them at their load-time values). The timer keeps running while you work in other sidebar sections and is paused automatically whenever you leave the A-Chart; Refresh reloads immediately and restarts the countdown.'),
       ],
     },
     {
@@ -651,6 +702,7 @@ const processMap: HelpTopic = {
           '↺ discards custom positions and reverts to the automatic layout.',
           '⤢ fits the graph; the ± buttons zoom precisely.',
         ),
+        tip('The bottom-corner controls stay hidden until you move the pointer into that corner, so they never cover the map — each is marked at rest by a dim corner handle (a small “⋯” at the lower-right, a “Σ” at the lower-left) so the reveal is easy to find. The view controls (zoom, ⤢ fit, ↺ reset, and — when enabled — ▦ Transitions) reveal near the lower-right, and the developer “Σ Select steps to aggregate” button reveals near the lower-left; move away and they fade back to the handle. The auto-refresh countdown ring is the exception: it stays visible on its own so you can watch a live feed at a glance.'),
         tip('The quality of the automatic layout depends on the “Optimise layout” toggle in Configuration — when on, crossing minimisation produces a cleaner arrangement on complex graphs.'),
         tip('Inspecting one step in a dense map: hover a node and hold still for the dwell time (one second by default). The node and its incoming and outgoing transitions light up while everything else fades back, so you can trace exactly what leads into and out of it. Move the pointer away (or click, pan or drag) to clear it. Set the delay — 1 s / 2 s / 3 s, or Off — with the “Highlight Trigger” control in Configuration → Steps. This spotlight is available on every process map except the Individual Journey, whose single trace is already sequential.'),
         tip('A 🕸 Flowchart / 🌊 Sankey switch floats at the top of the A-Chart and B-Chart. The Sankey view shows the same data as a left-to-right flow — band width follows the currently selected transition metric (Count, %, Journey %, Avg/Min/Max Time, Std Dev), so switching the metric re-weights the flows. To keep it readable it collapses each cluster of steps that loop among one another into a single ↺ node (named after their shared step group when they have one); hover any band for exact counts, or hover a collapsed node to highlight it and see the full list of steps grouped inside plus their internal-loop total. Your choice of flowchart or Sankey is remembered per user.'),
@@ -1665,6 +1717,7 @@ const actions: HelpTopic = {
 
 export const HELP_TOPICS: HelpTopic[] = [
   overview,
+  dashboard,
   database,
   connecting,
   roles,

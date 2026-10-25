@@ -171,7 +171,9 @@ def test_power_tools_are_labelled_in_tools_list():
         assert tools[name]["description"].startswith("POWER USERS ONLY")
     for name in ("create_note", "update_note"):
         assert tools[name]["description"].startswith("WRITE:")
-    assert len(tools) == 19
+    # The dashboard-notification tools are registered too.
+    assert "list_notifications" in tools and "set_notification_enabled" in tools
+    assert len(tools) == 21
 
 
 # ── lookups ───────────────────────────────────────────────────────────────────

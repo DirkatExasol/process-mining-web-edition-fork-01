@@ -1,7 +1,7 @@
 <section class="chapter" id="ch-mcp-server" data-title="The MCP Server" data-num="27">
 <h1><span class="chnum">27</span> The MCP Server</h1>
 
-<p class="chintro">The previous chapter described how an external program pushes data <em>into</em> the demonstrator. The <em>MCP Server</em> is the mirror image: an endpoint through which an AI client &mdash; Claude, ChatGPT or any other client that speaks the Model Context Protocol &mdash; asks the demonstrator questions and gets analysis back. It exposes nineteen tools covering connections, projects, metadata and attribute values, the process map, transition metrics, variants, statistics, journey search and lookup, notes, and &mdash; for power users &mdash; segment comparison, bottlenecks, trends, outcome drivers and conformance rules; most share the application's filter vocabulary. Its only writes are notes: there is no ingest, no event editing, no sampling. This chapter explains what the server is for, how an administrator turns it on, how the identity chain from an OAuth token to a Process Mining user works, how to configure Authentik and the server itself, what each tool returns, what to watch for behind a reverse proxy, and how to read its error codes.</p>
+<p class="chintro">The previous chapter described how an external program pushes data <em>into</em> the demonstrator. The <em>MCP Server</em> is the mirror image: an endpoint through which an AI client &mdash; Claude, ChatGPT or any other client that speaks the Model Context Protocol &mdash; asks the demonstrator questions and gets analysis back. It exposes twenty-one tools covering connections, projects, metadata and attribute values, the process map, transition metrics, variants, statistics, journey search and lookup, notes, dashboard notifications, and &mdash; for power users &mdash; segment comparison, bottlenecks, trends, outcome drivers and conformance rules; most share the application's filter vocabulary. Its only writes are notes and toggling a notification rule: there is no ingest, no event editing, no sampling. This chapter explains what the server is for, how an administrator turns it on, how the identity chain from an OAuth token to a Process Mining user works, how to configure Authentik and the server itself, what each tool returns, what to watch for behind a reverse proxy, and how to read its error codes.</p>
 
 <div class="role">Requires: <b>Administrator</b> to configure the OAuth settings and enable the module, in the admin interface (HTTP :8090, HTTPS :8453). Callers need no human role at the endpoint &mdash; they present an OAuth access token issued by your Authentik server, which is mapped to an existing Process Mining user. The module is <b>off</b> until an administrator enables it.</div>
 
@@ -20,7 +20,7 @@
 <tr><td>Authentication</td><td>A per-sink bearer token the demonstrator issues.</td><td>An OAuth access token your Authentik issues.</td></tr>
 <tr><td>Scope of access</td><td>One connection and one project, fixed per sink.</td><td>Every connection assigned to the mapped user.</td></tr>
 <tr><td>Ports</td><td>A pool: <code>8120&ndash;8129</code> / <code>8483&ndash;8492</code>.</td><td>A single pair: <code>8130</code> / <code>8493</code>.</td></tr>
-<tr><td>Can it change data?</td><td>Yes &mdash; that is its purpose.</td><td>Only notes, through <code>create_note</code> and <code>update_note</code>. Event data is never changed.</td></tr>
+<tr><td>Can it change data?</td><td>Yes &mdash; that is its purpose.</td><td>Only notes (<code>create_note</code>, <code>update_note</code>) and enabling/disabling a notification rule (<code>set_notification_enabled</code>). Event data is never changed.</td></tr>
 </tbody>
 </table>
 
@@ -81,7 +81,7 @@
 
 <h2 id="mcp-tools">27.6 The tools</h2>
 
-<p>The tools fall into five groups &mdash; discover, analyse, cases, notes and power analysis &mdash; and three access levels:</p>
+<p>The tools fall into six groups &mdash; discover, analyse, cases, notes, notifications and power analysis &mdash; and three access levels:</p>
 
 <dl>
 <dt>Everyone</dt><dd>Every user who can sign in to the MCP server may call the discovery, analysis, case and note-reading tools, always within their assigned connections.</dd>
@@ -110,6 +110,8 @@
 <tr><td style="white-space:nowrap"><code style="word-break:normal">get_notes</code></td><td>Everyone</td><td>The notes on a project&#x27;s steps and transitions — filter by severity, status and scope, optionally grouped; with a summary of counts. Times are local (Admin Console display zone) with the UTC offset.</td></tr>
 <tr><td style="white-space:nowrap"><code style="word-break:normal">create_note</code></td><td>Everyone — write</td><td>Create a note on a step (step) or a transition (fromStep + toStep). You become the author; id and time are set by the server. text required (≤ 4000), title ≤ 200, severity default NORMAL, scope default personal. Rate-limited per user, and capped at a maximum number of notes you may own per project.</td></tr>
 <tr><td style="white-space:nowrap"><code style="word-break:normal">update_note</code></td><td>Everyone — write</td><td>On a note YOU authored: add a comment (prepended to the thread, with an optional title), set status open/resolved, or change severity/scope. This tool edits only your own notes — you can read others&#x27; shared notes with get_notes and reply in the app, but it won&#x27;t edit another user&#x27;s note on your behalf. Existing text is never rewritten; a full thread (100,000 characters) takes no more comments. Rate-limited per user.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">list_notifications</code></td><td>Everyone</td><td>The dashboard notification rules on a connection: each rule&#x27;s target (fromStep → toStep), metric, comparator and threshold, severity, interval and enabled flag, plus its current state (triggered, last value, when). Ordered most-urgent, most-recently triggered first; optional projectId and triggeredOnly filters. Requires the feature to be enabled.</td></tr>
+<tr><td style="white-space:nowrap"><code style="word-break:normal">set_notification_enabled</code></td><td>Power / dev / admin — write</td><td>Enable or disable one rule by id (from list_notifications). A disabled rule is not evaluated and shows no alert; rules are shared per connection, so this affects everyone assigned. The id shape is validated, a missing rule and one on an unassigned connection return the same &ldquo;not found&rdquo;, and writes are rate-limited per user.</td></tr>
 <tr><td style="white-space:nowrap"><code style="word-break:normal">compare_segments</code></td><td>Power users &amp; admins</td><td>Two slices of one project side by side: each segment&#x27;s count, durations, goodness and end steps, then the biggest differences (B minus A) in end-step shares, transition times, transition frequency, and transitions found in only one segment.</td></tr>
 <tr><td style="white-space:nowrap"><code style="word-break:normal">get_bottlenecks</code></td><td>Power users &amp; admins</td><td>Where time is lost: transitions by total waiting time (occurrences × average), the slowest typical transitions (median), rework (steps repeated in a journey) and self-loops.</td></tr>
 <tr><td style="white-space:nowrap"><code style="word-break:normal">get_trend</code></td><td>Power users &amp; admins</td><td>The process over time: per day, week or month (by journey start) the journey count, average and median duration, and — with outcomeSteps — the reach rate of those steps.</td></tr>
@@ -305,7 +307,7 @@
   &quot;stepCount&quot;: 17, &quot;meta&quot;: {&quot;Payment Method&quot;: &quot;Bank Transfer&quot;, …},
   &quot;path&quot;: &quot;Login -&gt; Browse Catalog -&gt; … -&gt; Payment Failed -&gt; Payment Retry -&gt; …&quot;}, …]</code></pre>
 <h3>Notes</h3>
-<p>The human layer on the process. The two note-writing tools are the only writes on the MCP surface.</p>
+<p>The human layer on the process. The two note-writing tools, together with <code>set_notification_enabled</code>, are the only writes on the MCP surface.</p>
 <h4><code>get_notes</code> <small>&middot; Everyone</small></h4>
 <p>The notes on a project&#x27;s steps and transitions — filter by severity, status and scope, optionally grouped; with a summary of counts. Times are local (Admin Console display zone) with the UTC offset. <em>Parameters:</em> <code>connectionId, projectId, severity?, status?, scope?, groupBy?</code></p>
 <p><em>&ldquo;Show all closed notes, then all open notes, as separate groups.&rdquo;</em></p>

@@ -17,6 +17,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
 } from 'react'
 
 import {
@@ -26,6 +27,7 @@ import {
   type EdgeColorSchema,
 } from '../graph/colors'
 import { EdgeColorWizard } from './EdgeColorWizard'
+import { AutoRefreshOverlay } from '../components/AutoRefresh'
 import { actionMatchesNode } from '../actions/describe'
 import type { SavedAction } from '../actions/types'
 import type { AggregateLink } from '../aggregate/types'
@@ -52,6 +54,7 @@ import {
   useSetting,
   writeJSON,
 } from '../settings'
+import { useStore } from '../store'
 import {
   maxMetricValue,
   type GraphStartMode,
@@ -204,6 +207,11 @@ function FlowChartInner(props: FlowChartProps) {
     horizontal = false,
   } = props
 
+  // On a phone the map is touch-driven: nodes are NOT draggable (so a finger-drag pans the
+  // canvas rather than moving a node), and the corner controls stay visible (there is no hover
+  // to reveal them). Pinch-zoom / pan come from ReactFlow's defaults.
+  const touch = useStore((s) => s.isPhone)
+
   const flow = useReactFlow()
   const wrapRef = useRef<HTMLDivElement>(null)
 
@@ -280,6 +288,24 @@ function FlowChartInner(props: FlowChartProps) {
   const [zoom, setZoom] = useState(1)
   const [showColorWizard, setShowColorWizard] = useState(false)
   const [showTable, setShowTable] = useState(false)
+  // Corner controls (bottom-left aggregate button, bottom-right overlay cluster) are hidden
+  // by default and revealed while the pointer is in that bottom corner of the canvas. Tracked
+  // via a container mousemove so nothing blocks the canvas while the controls are hidden.
+  const [hoverCorner, setHoverCorner] = useState<'none' | 'left' | 'right'>('none')
+  const onCornerMove = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - r.left
+    const y = e.clientY - r.top
+    const CORNER_BAND = 120 // px up from the bottom edge
+    const LEFT_W = 240
+    const RIGHT_W = 320
+    let next: 'none' | 'left' | 'right' = 'none'
+    if (y >= r.height - CORNER_BAND) {
+      if (x >= r.width - RIGHT_W) next = 'right'
+      else if (x <= LEFT_W) next = 'left'
+    }
+    setHoverCorner((c) => (c === next ? c : next))
+  }, [])
   // Hover-dwell focus (null unless a node has been rested on long enough). Held as state so
   // only the leaf node/edge components that consume FlowFocusContext re-render when it
   // changes — the node arrays and their caches are untouched.
@@ -531,9 +557,9 @@ function FlowChartInner(props: FlowChartProps) {
   // are added/removed (collapse, project switch) — NOT while dragging — so edges
   // that depend on it stay referentially stable during a drag. ReactFlow re-routes
   // the edges from the live node positions itself, so they still follow the drag.
-  const positionedKey = Object.keys(positions).sort().join(' ')
+  const positionedKey = Object.keys(positions).sort().join('\u0000')
   const positionedIds = useMemo(
-    () => new Set(positionedKey ? positionedKey.split(' ') : []),
+    () => new Set(positionedKey ? positionedKey.split('\u0000') : []),
     [positionedKey],
   )
 
@@ -1091,7 +1117,7 @@ function FlowChartInner(props: FlowChartProps) {
   // layout keeps its own framing (persisted positions have priority). The re-computed
   // auto-layout (which already reacts to `graph`) is what re-optimises the node placement;
   // this just re-frames the viewport so the fresh layout is centred and its labels readable.
-  const nodeSig = useMemo(() => Object.keys(graph.steps).sort().join(' '), [graph.steps])
+  const nodeSig = useMemo(() => Object.keys(graph.steps).sort().join('\u0000'), [graph.steps])
   const prevNodeSig = useRef(nodeSig)
   useEffect(() => {
     if (prevNodeSig.current === nodeSig) return
@@ -1168,8 +1194,18 @@ function FlowChartInner(props: FlowChartProps) {
     menuDescription.length > 0 &&
     menuDescription !== menu?.node
 
+  // Reveal class for the individual right-corner controls. It lives on each control (not the
+  // .flow-overlay container) so the auto-refresh ring, which sits inside the same cluster, can
+  // stay visible while the zoom / Transitions / colour-legend controls hide.
+  const rightCtl = `corner-ctl${touch || hoverCorner === 'right' ? ' show' : ''}`
+
   return (
-    <div className={`flow-wrap${focus ? ' has-focus' : ''}`} ref={wrapRef}>
+    <div
+      className={`flow-wrap${focus ? ' has-focus' : ''}`}
+      ref={wrapRef}
+      onMouseMove={onCornerMove}
+      onMouseLeave={() => setHoverCorner('none')}
+    >
       <FlowFocusContext.Provider value={focus}>
       <AggregatePickContext.Provider value={pickValue}>
       <ReactFlow
@@ -1209,6 +1245,7 @@ function FlowChartInner(props: FlowChartProps) {
         snapToGrid
         snapGrid={[GRID_SIZE, GRID_SIZE]}
         nodesConnectable={false}
+        nodesDraggable={!touch}
         elementsSelectable
         proOptions={{ hideAttribution: false }}
         defaultEdgeOptions={{ type: 'metric' }}
@@ -1255,6 +1292,7 @@ function FlowChartInner(props: FlowChartProps) {
 
       {props.onCreateAggregate && !aggregateMode && (
         <div
+          className={`corner-ctl${touch || hoverCorner === 'left' ? ' show' : ''}`}
           style={{
             position: 'absolute',
             bottom: 12,
@@ -1272,6 +1310,18 @@ function FlowChartInner(props: FlowChartProps) {
           >
             Σ Select steps to aggregate
           </button>
+        </div>
+      )}
+
+      {/* Faint resting "handle" hinting that the aggregate control hides in this corner;
+          it fades out as the real button reveals on hover. Purely a visual cue — the
+          container mousemove does the revealing, so it stays pointer-events:none. */}
+      {props.onCreateAggregate && !aggregateMode && (
+        <div
+          className={`corner-handle corner-handle-left${touch || hoverCorner === 'left' ? ' hide' : ''}`}
+          aria-hidden="true"
+        >
+          Σ
         </div>
       )}
 
@@ -1340,7 +1390,7 @@ function FlowChartInner(props: FlowChartProps) {
       <div className="flow-overlay">
         {colorizeByWeight && (
           <button
-            className="color-scale color-scale-btn"
+            className={`color-scale color-scale-btn ${rightCtl}`}
             onClick={() => setShowColorWizard(true)}
             title="Configure edge colour schema per metric"
             aria-label="Configure edge colour schema"
@@ -1365,7 +1415,7 @@ function FlowChartInner(props: FlowChartProps) {
 
         {allowTransitionTable && showTableButton && (
           <button
-            className="table-btn"
+            className={`table-btn ${rightCtl}`}
             onClick={() => setShowTable(true)}
             title="Show the transition table behind this chart"
             aria-label="Show transition table"
@@ -1374,7 +1424,11 @@ function FlowChartInner(props: FlowChartProps) {
           </button>
         )}
 
-        <div className="zoom-controls">
+        {/* Auto-refresh pill (A-Chart only; visible when an interval is configured) sits
+            between the Transitions button and the zoom cluster. */}
+        {chartMode === 'A-Chart' && <AutoRefreshOverlay />}
+
+        <div className={`zoom-controls ${rightCtl}`}>
           <button onClick={() => zoomBy(1 / 1.3)} title="Zoom out">
             −
           </button>
@@ -1412,6 +1466,16 @@ function FlowChartInner(props: FlowChartProps) {
             </>
           )}
         </div>
+      </div>
+
+      {/* Faint resting "handle" hinting that the view controls (zoom, fit, reset, Transitions)
+          hide in this corner; it fades out as they reveal on hover. The auto-refresh ring, when
+          configured, stays visible on its own and is a stronger cue, so the handle is enough. */}
+      <div
+        className={`corner-handle corner-handle-right${touch || hoverCorner === 'right' ? ' hide' : ''}`}
+        aria-hidden="true"
+      >
+        ⋯
       </div>
 
       {menu?.kind === 'node' && menu.node && (onNodeAction || props.onDrillUp) && (

@@ -75,9 +75,9 @@
 
 <dl>
   <dt>Line 1</dt>
-  <dd>The username (with the smaller display name beside it for directory users), a source pill reading <b>local</b> or <b>LDAP</b>, the role badge, the access pill (<b>enabled</b> in green, <b>disabled</b> or <b>locked</b> in red), and the two per-user checkboxes <b>Passkey</b> and <b>2FA</b>.</dd>
+  <dd>The username (with the smaller display name beside it for directory users), a source pill reading <b>local</b> or <b>LDAP</b>, a <b>removed from directory</b> pill when a directory sync no longer finds the account, the role badge, the access pill (<b>enabled</b> in green, <b>disabled</b> or <b>locked</b> in red), and the two per-user checkboxes <b>Passkey</b> and <b>2FA</b>.</dd>
   <dt>Line 2</dt>
-  <dd>&ldquo;Last sign-in: &lt;date&gt;&rdquo; (or an em dash when the account has never signed in), followed by the action buttons described in the rest of this chapter.</dd>
+  <dd>&ldquo;Last sign-in: &lt;date&gt;&rdquo; — or <b>&ldquo;Never signed in&rdquo;</b> when the account has not yet signed in (common for directory accounts brought in by the user-list sync before their first login) — followed by the action buttons described in the rest of this chapter.</dd>
 </dl>
 
 <p>The role badge condenses the additive role flags into one label. The base segment is <em>admin</em> if the user is an administrator, otherwise <em>power</em>, otherwise <em>user</em>; administrators always show a second segment (<em>power</em> or <em>user</em>) so that you can see whether they also hold power privileges; the <em>dev</em> segment is appended as an add-on. A user with more than one role gets a single animated gradient pill such as <code>admin&middot;power</code> or <code>admin&middot;user&middot;dev</code>; a single role is a plain pill. The tooltip spells the roles out, for example &ldquo;Roles: administrator, power user (manages own connections), developer (integration console)&rdquo; or simply &ldquo;Regular user&rdquo;.</p>
@@ -105,6 +105,10 @@
 </table>
 
 <div class="note"><strong>Note</strong> You do not create directory users here. An LDAP account appears in the list automatically after its first successful sign-in, provisioned as a plain, enabled user. From that moment it behaves like any other row: you can grant it roles, allow passkeys and two-factor, assign database connections, disable it or delete it. Administrator rights are <em>never</em> granted by the directory — a local administrator must promote the account here.</div>
+
+<h3 id="ch13-dirsync">Keeping the list in step with the directory</h3>
+<p>Waiting for each person to sign in before their account appears can be confusing. Turn on <b>Automatically sync the user list</b> in the <b>Directory (LDAP)</b> tab (default <b>every 5 minutes</b>; the interval is configurable) and a background job mirrors the directory into this list: <b>new</b> accounts appear before anyone signs in, a <b>changed</b> email or display name is refreshed, and an account <b>removed</b> from the directory is <b>disabled and flagged &ldquo;removed from directory&rdquo;</b> — it is never deleted, so its role and database-connection assignments survive, and if the account returns to the directory it is automatically re-enabled. A directory name that collides with an existing <em>local</em> account is skipped, and local accounts are never changed by a sync.</p>
+<p>When a directory is enabled, the Users tab shows a <b>Directory sync</b> bar with a <b>&#8635; Refresh from directory</b> button to run the sync on demand, alongside the time and outcome of the last run (how many were added, updated and removed, or the error if the directory could not be reached). This is the same sync the background job runs; either way, no account can sign in unless it is enabled and, for the admin interface, promoted to administrator.</p>
 
 <h2 id="ch13-roles">13.5 Roles and what each one grants</h2>
 

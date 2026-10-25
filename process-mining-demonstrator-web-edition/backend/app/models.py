@@ -210,6 +210,9 @@ class FilterSpec(Base):
 
     fromDate: datetime | None = None
     toDate: datetime | None = None
+    # A precise lower bound (full timestamp), used when a sub-day window is needed — e.g. the
+    # notifications engine's "look back N minutes". Takes precedence over fromDate's day start.
+    fromInstant: datetime | None = None
     includedSteps: list[str] = Field(default_factory=list)
     excludedSteps: list[str] = Field(default_factory=list)
     meta1: str = ""

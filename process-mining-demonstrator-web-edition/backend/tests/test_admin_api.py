@@ -317,6 +317,55 @@ def test_ldap_endpoints_require_admin(admin):
     client = TestClient(server.app)
     assert client.get("/api/ldap").status_code == 401
     assert client.post("/api/ldap", json={"enabled": True}).status_code == 401
+    assert client.post("/api/ldap/sync").status_code == 401
+
+
+def test_ldap_sync_config_roundtrip(admin):
+    server, _ = admin
+    client = _login(server)
+    saved = client.post(
+        "/api/ldap",
+        json={"enabled": True, "serverURI": "ldap://x", "baseDN": "dc=x",
+              "syncEnabled": True, "syncIntervalMins": 15},
+    ).json()
+    assert saved["syncEnabled"] is True and saved["syncIntervalMins"] == 15
+    # Out-of-range interval is clamped (1..1440).
+    saved2 = client.post(
+        "/api/ldap", json={"enabled": True, "serverURI": "ldap://x", "syncIntervalMins": 99999},
+    ).json()
+    assert saved2["syncIntervalMins"] == 1440
+
+
+def test_ldap_sync_endpoint_mirrors_directory(admin, monkeypatch):
+    server, store = admin
+    client = _login(server)
+    store.set_ldap_config({"enabled": True, "serverURI": "ldap://x", "baseDN": "dc=x"})
+
+    import app.services.ldap_auth as ldap_auth
+    from app.services.ldap_auth import LdapUser
+
+    monkeypatch.setattr(
+        ldap_auth, "list_directory_users",
+        lambda settings, size_limit=5000: [
+            LdapUser(username="alice", email="alice@x.com", display_name="Alice"),
+            LdapUser(username="bob", email="bob@x.com", display_name="Bob"),
+        ],
+    )
+    r = client.post("/api/ldap/sync")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["result"]["ok"] is True and body["result"]["added"] == 2
+    assert body["ldap"]["lastSyncedAt"]  # surfaced for the UI
+    # The directory users now exist locally, before any of them has signed in.
+    alice = store.get_user("alice")
+    assert alice is not None and alice.auth_source == "ldap" and alice.last_login is None
+
+
+def test_ldap_sync_endpoint_reports_error_when_disabled(admin):
+    server, _ = admin
+    client = _login(server)  # LDAP not enabled in this store
+    body = client.post("/api/ldap/sync").json()
+    assert body["result"]["ok"] is False and "not enabled" in body["result"]["error"]
 
 
 # ── Admin panel login: admins only (local or LDAP-tagged) ─────────────────────
@@ -427,6 +476,25 @@ def test_admin_login_wrong_ldap_password(admin, monkeypatch):
     assert resp.status_code == 401
 
 
+def test_mobile_enabled_endpoint(admin):
+    server, store = admin
+    client = _login(server)
+    # Defaults ON; the session reports it and the endpoint flips it.
+    assert client.get("/api/session").json()["mobileEnabled"] is True
+    r = client.post("/api/access/mobile-enabled", json={"enabled": False})
+    assert r.status_code == 200 and r.json()["mobileEnabled"] is False
+    assert store.mobile_enabled is False
+    assert client.get("/api/session").json()["mobileEnabled"] is False
+    client.post("/api/access/mobile-enabled", json={"enabled": True})
+    assert store.mobile_enabled is True
+
+
+def test_mobile_enabled_requires_admin(admin):
+    server, _ = admin
+    client = TestClient(server.app)
+    assert client.post("/api/access/mobile-enabled", json={"enabled": False}).status_code == 401
+
+
 def test_idle_timeout_endpoint(admin):
     server, store = admin
     client = _login(server)
@@ -518,6 +586,89 @@ def test_actions_endpoints_toggle_and_require_admin(admin):
     assert client.get("/api/actions").json()["enabled"] is True
     client.post("/api/actions/enabled", json={"enabled": False})
     assert store.actions_enabled is False
+
+
+def test_notifications_toggle_and_push_subject(admin):
+    server, store = admin
+    anon = TestClient(server.app)
+    assert anon.get("/api/notifications").status_code == 401
+    assert anon.post("/api/notifications/push-subject",
+                     json={"subject": "mailto:x@y.z"}).status_code == 401
+
+    client = _login(server)
+    status = client.get("/api/notifications").json()
+    assert status["enabled"] is False and status["pushSubject"].startswith("mailto:")
+
+    client.post("/api/notifications/enabled", json={"enabled": True})
+    assert store.notifications_enabled is True
+
+    # The VAPID contact must be a mailto: or https: URL.
+    assert client.post("/api/notifications/push-subject",
+                       json={"subject": "nonsense"}).status_code == 400
+    r = client.post("/api/notifications/push-subject",
+                    json={"subject": "mailto:ops@example.com"})
+    assert r.status_code == 200 and r.json()["pushSubject"] == "mailto:ops@example.com"
+    assert store.push_subject == "mailto:ops@example.com"
+
+
+def test_set_user_email(admin):
+    server, store = admin
+    store.create_user("alice", "pw", is_admin=False)
+    client = _login(server)
+    r = client.post("/api/users/alice/email", json={"email": "alice@team.com"})
+    assert r.status_code == 200 and r.json()["email"] == "alice@team.com"
+    assert store.get_user("alice").email == "alice@team.com"
+    # A malformed address is rejected…
+    assert client.post("/api/users/alice/email", json={"email": "nope"}).status_code == 400
+    # …and a blank value clears it.
+    assert client.post("/api/users/alice/email", json={"email": ""}).status_code == 200
+    assert store.get_user("alice").email == ""
+    # The email surfaces in the user list.
+    users = {u["username"]: u for u in client.get("/api/users").json()}
+    assert "email" in users["alice"]
+
+
+def test_smtp_settings_get_set_and_test(admin, monkeypatch):
+    server, store = admin
+    assert TestClient(server.app).get("/api/smtp").status_code == 401
+    client = _login(server)
+
+    s = client.get("/api/smtp").json()
+    assert s["configured"] is False and s["security"] == "starttls" and s["hasPassword"] is False
+
+    r = client.post("/api/smtp", json={
+        "host": "smtp.test", "port": 465, "security": "ssl", "username": "u",
+        "password": "secret", "from": "a@test.com", "fromName": "PM"})
+    assert r.status_code == 200
+    s = r.json()
+    assert s["host"] == "smtp.test" and s["port"] == 465 and s["configured"] is True
+    assert s["hasPassword"] is True and "password" not in s  # never returned
+
+    assert client.post("/api/smtp", json={"security": "bogus"}).status_code == 400
+
+    sent = {}
+    import app.notifications.smtp as smtp_mod
+
+    def _fake(settings, to, subject, body):
+        sent.update(to=to, pw=settings.get("password"))
+
+    monkeypatch.setattr(smtp_mod, "send_email", _fake)
+    t = client.post("/api/smtp/test", json={"to": "me@test.com"}).json()
+    assert t["ok"] is True and sent["to"] == ["me@test.com"] and sent["pw"] == "secret"
+
+
+def test_smtp_test_reports_error(admin, monkeypatch):
+    server, store = admin
+    client = _login(server)
+    client.post("/api/smtp", json={"host": "smtp.test", "from": "a@test.com", "security": "none"})
+    import app.notifications.smtp as smtp_mod
+
+    def _boom(*a, **k):
+        raise OSError("Connection refused")
+
+    monkeypatch.setattr(smtp_mod, "send_email", _boom)
+    t = client.post("/api/smtp/test", json={"to": "me@test.com"}).json()
+    assert t["ok"] is False and "Connection refused" in t["error"]
 
 
 def test_provision_schema_requires_admin(admin):

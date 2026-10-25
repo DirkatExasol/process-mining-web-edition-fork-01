@@ -49,6 +49,21 @@ export function NotesView() {
   const [pageSize, setPageSize] = useState(5)
   const [page, setPage] = useState(0)
 
+  // Deep-link: a Dashboard note notification asked to open a specific note. Open its editor
+  // once the notes have loaded, then clear the request. If the note isn't among the loaded
+  // notes (deleted, or not visible to this user), just drop the request.
+  useEffect(() => {
+    const id = store.pendingNoteId
+    if (!id) return
+    const note = store.projectNotes.find((n) => n.id === id)
+    if (note) {
+      setEditing({ target: note.target, existing: note, snapshot: note.filterSnapshot })
+      store.clearPendingNote()
+    } else if (store.projectNotes.length > 0) {
+      store.clearPendingNote()
+    }
+  }, [store.pendingNoteId, store.projectNotes]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Distinct note authors (by stable login username), labelled with the real name.
   const authors = useMemo(() => {
     const byUser = new Map<string, string>()

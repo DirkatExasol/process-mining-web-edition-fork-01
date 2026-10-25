@@ -13,6 +13,7 @@ import type {
   ManagedConnection,
   TransitionMetric,
 } from '../types'
+import { AutoRefreshConfig } from './AutoRefresh'
 import { formatSecs } from '../graph/format'
 import { useSetting } from '../settings'
 import { api } from '../api'
@@ -1174,6 +1175,7 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
   const [edgeScale, setEdgeScale] = useSetting<number>('graph.edge.scale')
   const [groupScale, setGroupScale] = useSetting<number>('graph.group.scale')
   const [highlightMs, setHighlightMs] = useSetting<number>('graph.highlightTriggerMs')
+  const [refreshOpen, setRefreshOpen] = useSetting<boolean>('sidebar.configRefreshExpanded')
   const [groupsOpen, setGroupsOpen] = useSetting<boolean>('sidebar.configGroupsExpanded')
   const [kpisOpen, setKpisOpen] = useSetting<boolean>('sidebar.configKpisExpanded')
   const [stepsOpen, setStepsOpen] = useSetting<boolean>('sidebar.configStepsExpanded')
@@ -1226,6 +1228,23 @@ function ConfigSection({ onEditPrompt }: { onEditPrompt: () => void }) {
 
   return (
     <div className="col config-section" style={{ gap: 0 }}>
+      {/* Auto-refresh applies to the A-Chart only, so it is shown only in that mode. */}
+      {store.activeChartMode === 'A-Chart' && (
+        <>
+          <SubHeader
+            icon="↻"
+            title="Auto-refresh"
+            open={refreshOpen}
+            onToggle={() => setRefreshOpen(!refreshOpen)}
+          />
+          {refreshOpen && (
+            <div className="config-subbody">
+              <AutoRefreshConfig />
+            </div>
+          )}
+        </>
+      )}
+
       {/* Collapsible sections first */}
       <SubHeader
         icon="🗂"

@@ -21,7 +21,15 @@ from fastapi.responses import JSONResponse
 
 from . import licensing
 from . import log_events as logx
-from .api import actions, aggregates, connections, features, integration, projects
+from .api import (
+    actions,
+    aggregates,
+    connections,
+    features,
+    integration,
+    notifications,
+    projects,
+)
 from .config import LICENSE_GRACE_SECS, LICENSE_POLL_SECS, REQUIRE_PROXY_AUTH
 from .db.manager import db, registry, reset_current_user, set_current_user
 from .store.crypto import proxy_auth_secret
@@ -114,9 +122,15 @@ async def lifespan(app: FastAPI):
     from .integration.watchdog import watchdog_loop
 
     file_watchdog = asyncio.create_task(watchdog_loop())
+    # Dashboard notifications engine: evaluate rules on their intervals (gated by the
+    # admin "Enable Notifications" toggle, checked each tick).
+    from .notifications.engine import notifications_loop
+
+    notifications = asyncio.create_task(notifications_loop())
     yield
     watchdog.cancel()
     file_watchdog.cancel()
+    notifications.cancel()
     # Release every per-user Exasol connection (and the legacy one) on shutdown.
     await registry.disconnect_all()
     await db.disconnect()
@@ -197,6 +211,7 @@ app.include_router(features.router)
 app.include_router(integration.router)
 app.include_router(actions.router)
 app.include_router(aggregates.router)
+app.include_router(notifications.router)
 
 
 @app.get("/api/health")

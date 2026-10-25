@@ -185,6 +185,70 @@ def _search_users(search_conn, settings: LdapSettings, username: str) -> list[Ld
     ]
 
 
+def list_directory_users(settings: LdapSettings, size_limit: int = 5000) -> list[LdapUser]:
+    """Enumerate every user under the base DN — the roster the admin sync mirrors.
+
+    Binds with the service account and runs a paged search whose filter is the
+    configured ``user_filter`` with ``{username}`` replaced by ``*`` (so
+    ``(uid={username})`` becomes ``(uid=*)`` — every entry that has a login attribute).
+    Entries without a usable login attribute are skipped. Raises :class:`LdapError` for
+    configuration/connectivity problems, exactly like :func:`authenticate`."""
+    if not settings.base_dn.strip():
+        raise LdapError("No search base DN is configured.")
+    flt = (settings.user_filter or "(uid={username})").replace("{username}", "*")
+    attrs = [a for a in {settings.login_attr, settings.email_attr, settings.display_attr} if a]
+
+    with _ca_file(settings.ca_cert) as ca_path:
+        server = _server(settings, ca_path)
+        try:
+            conn = _open(server, settings, settings.bind_dn, settings.bind_password)
+        except LDAPException as exc:  # pragma: no cover - network/library errors
+            raise LdapError(f"Service bind failed: {exc}") from exc
+        try:
+            try:
+                entries = conn.extend.standard.paged_search(
+                    settings.base_dn, flt, search_scope=SUBTREE, attributes=attrs,
+                    paged_size=500, size_limit=size_limit, generator=False,
+                )
+            except LDAPException as exc:
+                raise LdapError(f"Directory search failed: {exc}") from exc
+            if conn.result.get("result") == 32:  # noSuchObject
+                raise LdapError(f"Base DN not found: {settings.base_dn!r}.")
+        finally:
+            conn.unbind()
+
+    users: list[LdapUser] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if entry.get("type") != "searchResEntry":
+            continue  # skip referrals / result markers the paged search yields
+        a = entry.get("attributes", {})
+        username = _paged_attr(a, settings.login_attr)
+        if not username:
+            continue
+        key = username.strip().lower()
+        if key in seen:
+            continue  # a filter like (uid=*) can return the same account twice
+        seen.add(key)
+        users.append(LdapUser(
+            username=username.strip(),
+            email=_paged_attr(a, settings.email_attr),
+            display_name=_paged_attr(a, settings.display_attr),
+            dn=entry.get("dn", ""),
+        ))
+    return users
+
+
+def _paged_attr(attrs: dict, name: str) -> str:
+    """Read one attribute from a paged_search result dict (values arrive as lists)."""
+    if not name:
+        return ""
+    value = attrs.get(name, "")
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else ""
+    return str(value or "").strip()
+
+
 def test_settings(
     settings: LdapSettings, test_username: str = "", test_password: str = ""
 ) -> dict:

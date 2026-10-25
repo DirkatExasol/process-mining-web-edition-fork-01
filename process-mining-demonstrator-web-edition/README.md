@@ -30,6 +30,49 @@ Analytical workloads are usually fed by transactional systems — orders, invoic
 
 ---
 
+## What's new in 2027.1.0 — "Tongariro"
+
+Highlights since the previous release (`1.0.0 – Mount Maunganui`). The full history is in
+**[CHANGELOG.md](./CHANGELOG.md)**.
+
+- **New version format** — calendar-style numbering `YYYY.MINOR.PATCH` with a landmark
+  codename (this release is `2027.1.0 – Tongariro`).
+- **Dashboard** — a cross-connection overview that is now the landing screen on a direct
+  sign-in: a flat, **drag-to-rearrange** set of process tiles (each carrying its connection
+  as a coloured pill), with events, last-ingest time and a weekly ingest sparkline, an
+  overall totals card, and up to three extra metrics (including open notes by severity).
+  Click a tile to open its A-Chart.
+- **Dashboard notifications** — define rules that watch a transition's metric (e.g. the average
+  time from one step to the next), a whole **journey's duration** (e.g. the median case time),
+  or the process's **notes & comments** (new notes, open notes, resolutions, new comments at a
+  chosen importance/scope); a background engine checks each on its own interval (1m–1d) and
+  raises an alert. A summary strip plus per-rule **gauge cards** (the measured value against its
+  limit, with last value / over-or-under limit / triggered-at / interval) are sorted by urgency
+  and time; each card has a one-click enable/disable, an on-demand ↻ refresh, and an
+  **Acknowledge** that hides it until it fires afresh. **Note** cards wear a yellow 🗒️ sticker,
+  show the latest matching note and are **click-through to open it**. The filter row narrows by
+  Type (Event/Note), severity, triggered/enabled/when, and — for notes — scope and note
+  severity. Rules are shared per connection and managed in a Create/Edit wizard with a **Test
+  now** button; the MCP server can list them and toggle them. A rule can also deliver a **Web
+  browser push** (in-house VAPID / Web Push) and/or an **Email** (admin-configured SMTP) when it
+  triggers; the delivery layer is a channel registry, extensible for more. Opt-in via an admin
+  toggle.
+- **Automatic refresh** — an optional, configurable auto-reload with a countdown ring and a
+  Refresh button. On the **A-Chart** the date window follows "now", so newly arrived journeys
+  appear live; the **Dashboard** has its own interval in the header that reloads the whole
+  view (process tiles + notifications) on a timer.
+- **A live demo-event generator** — a standalone tool (`generator/launch.py`) that learns an
+  existing process and injects synthetic journeys into it at **user-defined intervals**, so
+  an A-Chart (auto-refresh on) or the Dashboard shows data arriving in real time.
+- **WorkBench Mobile** — on a phone (iPhone / Android handset) the app runs a compact,
+  touch-friendly shell: a **☰ hamburger** drawer for the controls (no fixed sidebar), a
+  bottom-sheet view switcher, and a full-screen view in portrait or landscape. Supported on
+  phone: Dashboard, A-Chart (touch pan/zoom), Individual Journey, Notes, AI Documentation;
+  other views redirect to the Dashboard with a note. **iPads/tablets use the normal desktop
+  layout.**
+
+---
+
 ## Architecture
 
 Four independent Python processes:
@@ -229,14 +272,24 @@ connecting.
    to users. Open **Connections** in the sidebar — you'll see only the connections
    assigned to you.
 2. Click a connection card to connect (click again to disconnect).
-3. Open **Projects** and pick one. Explore the ten views from the **☰** menu:
-   A-Chart, B-Chart, A/B Comparison, Individual Journey, AI Documentation,
+3. A direct sign-in lands on the **Dashboard** — a cross-connection overview of every
+   process you can see (one card each with events, last-ingest time and a weekly ingest
+   sparkline, plus an overall totals card; click a card to open that process). Launching a
+   process from the `/home` launcher skips the Dashboard and opens it directly.
+4. Open **Projects** and pick one. Explore the eleven views from the **☰** menu:
+   Dashboard, A-Chart, B-Chart, A/B Comparison, Individual Journey, AI Documentation,
    Statistics, Conformance Check, Happy Path, Notes and Simulation.
    *Individual Journey* has an in-canvas switch (top-centre) between the **flowchart**
    (loops drawn as back-edges) and a **swimlane** — the journey laid out strictly
    left-to-right, one column per event, with a lane per node group (group-coloured), a
    date/time header row, and each edge labelled with the time to the next node. Loops are
    unrolled into repeated sequential nodes; the swimlane is single-journey only.
+5. *(A-Chart)* **Auto-refresh** — in **Configuration → Auto-refresh** pick an interval
+   (Off / 10s … 5m); a countdown ring and a **↻ Refresh** button then appear in the
+   A-Chart's control cluster (bottom-right), between the ▦ Transitions and zoom controls.
+   On each reload the date window slides forward to "now" (so journeys that arrived since the
+   last load appear) and the unfiltered KPI totals are re-read — ideal for watching the
+   live demo-event generator (below) feed a process. A-Chart only.
 
 > If the sign-in panel shows a **Demo Mode** banner, no license is installed yet.
 > The app runs for a limited grace period; an administrator applies a license in
@@ -498,6 +551,36 @@ Each provisions the schema + tables (if needed) and loads into that dataset's ow
 project, replacing only that project's journeys. Needs `CREATE SCHEMA` / `CREATE TABLE` /
 `INSERT` rights (DBA-granted). The generators live in `backend/app/db/demo_data.py`.
 
+**Live demo-event generator (`generator/`).** A standalone background process that keeps a
+process "alive" for demos: it learns an **existing** project's structure (the same Markov
+directly-follows model the Simulation view fits — transition probabilities, per-edge timing,
+entry/end steps and the META value mix) and then, every few seconds, emits **one full
+synthetic journey** into a target project's `JOURNEYS`. Point an A-Chart (with auto-refresh
+on) or the Dashboard at that project and you watch data arrive in real time.
+
+```bash
+# every 5–60 s, append a journey shaped like project 1 of schema PM_PROD, into project 1
+python generator/launch.py --host 127.0.0.1 --port 8563 --user sys --password exasol \
+    --schema PM_PROD --project 1 --insecure --min 5 --max 60
+
+# write into a different project, go faster, stop after 100 journeys
+python generator/launch.py ... --project 1 --target-project 2 --min 2 --max 8 --count 100
+```
+
+Runs as a single process on the shell, or **in its own container**. `generator/` ships a
+`Dockerfile` and an example `docker-compose.example.yml` whose `environment:` block controls
+**every** parameter via `PMG_*` variables (no arguments needed) — edit the values and
+`docker compose -f generator/docker-compose.example.yml up --build`. The build context is the
+repository root (the image bundles `backend/` so the generator's `import app.*` resolves); see
+[`generator/README.md`](generator/README.md) for the full variable table. It takes DB params
+on the CLI (or the `PMG_*` env vars), draws the interval uniformly in
+`[--min, --max]` seconds, caps a journey at `--max-steps` (safe on cyclic graphs), and stops
+cleanly on Ctrl-C / SIGTERM; a transient DB blip is logged and retried on the next tick.
+Each journey is anchored so its **last event is ~now** (events run up to the present, not into
+the future), so an A-Chart with auto-refresh — whose window slides to "now" on each reload —
+shows the whole just-finished journey immediately. Run `python generator/launch.py --help`
+for all options.
+
 *Event-ID format.* In every dataset the stored `EVENT_ID` (the case/journey key that
 ties a journey's rows together) is an **MD5 hash** of a simple synthetic reference —
 the dataset prefix plus a **1-based, zero-padded 6-digit sequence number**:
@@ -521,7 +604,13 @@ allowed for a lab), the service-account bind DN + password, the base DN, and the
 user/attribute names, then use **Test** to verify the service bind and a real user
 login. On first successful sign-in a directory user is **created locally as a plain,
 enabled account** (shown as *directory* in the Users tab) so you can assign database
-connections and, if you wish, the admin role to them. Key rules:
+connections and, if you wish, the admin role to them. You can also turn on
+**Automatically sync the user list** (default every 5 minutes, interval configurable;
+plus a **Refresh from directory** button on the Users tab) so the roster mirrors the
+directory *before* anyone signs in: new accounts appear, changed names refresh, and an
+account removed from the directory is **disabled and flagged** "removed from directory"
+(never deleted — its role and connection assignments survive if it returns). Each user's
+row shows their last sign-in, or **"Never signed in."** Key rules:
 
 - **Local accounts always work** (break-glass), and are checked first — a bad
   directory config can never lock out the local `Administrator`.

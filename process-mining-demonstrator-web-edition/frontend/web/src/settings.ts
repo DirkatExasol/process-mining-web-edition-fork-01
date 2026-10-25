@@ -48,6 +48,18 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   'processmap.kpiExpanded': true,
   'abComparison.valveOpen': true,
   'legal.accepted': false,
+  // A-Chart auto-refresh interval in seconds (0 = off). Reloads the A-Chart on a timer.
+  'achart.autoRefreshSecs': 0,
+  'sidebar.configRefreshExpanded': false,
+  // Dashboard: the extra per-card metrics the user has added (ordered, max 3). Events,
+  // Last log entry and the ingest sparkline are always shown and are not in this list.
+  'dashboard.extraMetrics': [],
+  // Dashboard: the user's manual tile order — a list of "<connId>::<projectId>" keys.
+  // Tiles not listed keep their server order, appended after the arranged ones.
+  'dashboard.tileOrder': [],
+  // Dashboard auto-refresh interval in seconds (0 = off). Re-fetches the process tiles
+  // and the notifications on a timer.
+  'dashboard.autoRefreshSecs': 0,
   'sidebar.filtersDateExpanded': true,
   'sidebar.filtersMetaExpanded': false,
   'sidebar.filtersIncludeExpanded': false,

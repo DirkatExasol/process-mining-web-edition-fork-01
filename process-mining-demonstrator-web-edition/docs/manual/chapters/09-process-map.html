@@ -236,6 +236,8 @@
 
   <p>The canvas has a dotted-grid background and an overlay of viewport controls along the bottom edge.</p>
 
+  <div class="note"><strong>Note</strong> To keep the map uncluttered, the bottom-corner controls stay <b>hidden until you move the pointer into that corner</b>, each marked at rest by a dim <b>corner handle</b> (a small <b>⋯</b> at the lower-right, a <b>Σ</b> at the lower-left) so the reveal is easy to find. The viewport/control cluster (zoom, ⤢ fit, ↺ reset, and — when enabled — <b>▦ Transitions</b>) reveals near the <b>lower-right</b>, and the developer <b>Σ Select steps to aggregate</b> button reveals near the <b>lower-left</b>; move away and they fade back to the handle. The <b>auto-refresh countdown ring</b> is the exception — it stays visible on its own so you can watch a live feed at a glance.</div>
+
   <table>
     <thead><tr><th>Control</th><th>Effect</th></tr></thead>
     <tbody>
@@ -287,6 +289,19 @@
   </table>
 
   <p>With data present, a right-aligned footer reads "Query time: N ms" (or "N.NN s" for longer queries). Its tooltip — "Server-side execution time of the queries behind this view" — is a reminder that this figure measures the database, not the browser.</p>
+
+  <h3 id="ch9-autorefresh">Automatic refresh</h3>
+
+  <p>The A-Chart can reload itself on a timer — useful when the underlying data is growing while you watch (a live feed, or the background demo-event generator). You set the interval in <b>Configuration → Auto-refresh</b> in the sidebar (that section appears <b>only while you are in the A-Chart</b>; no other view auto-refreshes), and the live controls then appear <b>on the A-Chart itself</b>.</p>
+
+  <ul>
+    <li><b>Refresh every</b> (Configuration → Auto-refresh) — a dropdown: <b>Off</b> (the default), <b>10s</b>, <b>30s</b>, <b>1m</b>, <b>2m</b>, <b>5m</b>.</li>
+    <li>Once an interval is chosen, a round <b>countdown ring</b> and a <b>↻ Refresh</b> button appear in the A-Chart's control cluster at the <b>bottom-right of the canvas</b>, between the <b>▦ Transitions</b> button and the zoom controls. The ring shows the seconds remaining; the button reloads immediately and restarts the countdown.</li>
+  </ul>
+
+  <p><b>The window follows "now".</b> On each refresh (timed or via the button), if the date window currently ends in the <em>past</em>, it slides forward so its end is <b>today</b> — keeping the same span — so journeys that arrived since the last load actually show. A window that already reaches today is left untouched. (This is why a plain reload previously missed new rows: it kept the window captured when the project was first loaded.) The unfiltered KPI tiles — <b>Total Journeys</b> and the active-sample count — are re-read on each auto-refresh as well, so they keep pace with the incoming data instead of sitting at their load-time values.</p>
+
+  <p>The timer keeps running while you work in other sidebar sections or collapse the sidebar; it is paused automatically the moment you switch to any other view mode, and resumes when you return to the A-Chart. The chosen interval is remembered per user.</p>
 
   <h3 id="ch9-sankey">Flowchart orientation, or Sankey</h3>
 

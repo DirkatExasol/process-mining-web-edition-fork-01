@@ -25,6 +25,7 @@ from ..models import (
     FilterSpec,
     JourneyPath,
     JourneyTimePoint,
+    NOTE_IMPORTANCE,
     NoteTarget,
     ProcessGraph,
     ProcessNote,
@@ -187,11 +188,15 @@ class ProcessRepository:
     def _sample_clause(self, alias: str | None = None) -> str:
         return f"\n                AND {self.active_sample_set.sql_fragment(alias)}"
 
-    def _date_clause(self, frm: datetime | None, to: datetime | None) -> str:
-        if frm is None and to is None:
+    def _date_clause(
+        self, frm: datetime | None, to: datetime | None, frm_instant: datetime | None = None
+    ) -> str:
+        if frm is None and to is None and frm_instant is None:
             return ""
         parts: list[str] = []
-        if frm is not None:
+        if frm_instant is not None:
+            parts.append(f"AND EVENT_TIME >= TIMESTAMP '{frm_instant:%Y-%m-%d %H:%M:%S}'")
+        elif frm is not None:
             parts.append(f"AND EVENT_TIME >= TIMESTAMP '{frm:%Y-%m-%d} 00:00:00'")
         if to is not None:
             parts.append(f"AND EVENT_TIME <= TIMESTAMP '{to:%Y-%m-%d} 23:59:59'")
@@ -237,7 +242,9 @@ class ProcessRepository:
         # old WHERE-based membership subquery).
         if include_date_meta:
             row: list[str] = []
-            if f.fromDate is not None:
+            if f.fromInstant is not None:
+                row.append(f"{p}EVENT_TIME >= TIMESTAMP '{f.fromInstant:%Y-%m-%d %H:%M:%S}'")
+            elif f.fromDate is not None:
                 row.append(f"{p}EVENT_TIME >= TIMESTAMP '{f.fromDate:%Y-%m-%d} 00:00:00'")
             if f.toDate is not None:
                 row.append(f"{p}EVENT_TIME <= TIMESTAMP '{f.toDate:%Y-%m-%d} 23:59:59'")
@@ -339,7 +346,7 @@ class ProcessRepository:
         safe = _pid(project_id)
         clauses = self._sample_clause()
         if date_only:
-            clauses += self._date_clause(f.fromDate, f.toDate)
+            clauses += self._date_clause(f.fromDate, f.toDate, f.fromInstant)
             clauses += self._meta_clause(f.meta1, f.meta2, f.meta3)
             clauses += self._journey_qualifier(safe, f, include_date_meta=False)
         else:
@@ -1455,6 +1462,53 @@ class ProcessRepository:
         for row in result.rows:
             return as_int(row[0])
         return 0
+
+    async def match_notes_for_notification(
+        self, project_id: str, *, event: str, min_importance: str,
+        shared_only: bool, cutoff,
+    ) -> list[ProcessNote]:
+        """Notes a note-notification rule matches, newest-first by the event's relevant date.
+
+        ``event`` selects what activity counts:
+          * ``created``  — a note created within the window (new notes),
+          * ``open``     — any unresolved note (window ignored — "all open notes"),
+          * ``resolved`` — a note resolved within the window (acknowledgements),
+          * ``commented``— a note edited after creation, within the window (new comments).
+        Filtered to notes of at least ``min_importance``; unless ``shared_only`` is False, only
+        shared notes (the engine is headless, so it cannot see any one user's private notes).
+        ``cutoff`` is the window's lower bound (a datetime), or None for "all history"."""
+        where = [f"PROJECT_ID = {_pid(project_id)}"]
+        if shared_only:
+            where.append("IS_SHARED = TRUE")
+        order = NOTE_IMPORTANCE  # NORMAL < INFO < IMPORTANT < URGENT
+        idx = order.index(min_importance) if min_importance in order else 0
+        if idx > 0:
+            where.append("IMPORTANCE IN (" + ",".join(f"'{lvl}'" for lvl in order[idx:]) + ")")
+        cut = f"TIMESTAMP '{cutoff:%Y-%m-%d %H:%M:%S}'" if cutoff is not None else None
+
+        if event == "open":
+            where.append("RESOLVED = FALSE")
+            date_col = "NOTES_DATE"
+        elif event == "resolved":
+            where.append("RESOLVED = TRUE")
+            if cut:
+                where.append(f"EDITED_DATE IS NOT NULL AND EDITED_DATE > {cut}")
+            date_col = "EDITED_DATE"
+        elif event == "commented":
+            where.append("EDITED_DATE IS NOT NULL AND EDITED_DATE > NOTES_DATE")
+            if cut:
+                where.append(f"EDITED_DATE > {cut}")
+            date_col = "EDITED_DATE"
+        else:  # "created"
+            if cut:
+                where.append(f"NOTES_DATE > {cut}")
+            date_col = "NOTES_DATE"
+
+        result = await self.db.execute(
+            f"SELECT {self._NOTE_COLUMNS} FROM NOTES "
+            f"WHERE {' AND '.join(where)} ORDER BY {date_col} DESC"
+        )
+        return [n for row in result.rows if (n := self._row_to_note(row)) is not None]
 
     async def get_note(self, note_id: str, project_id: str) -> ProcessNote | None:
         result = await self.db.execute(

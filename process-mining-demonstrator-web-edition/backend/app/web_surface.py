@@ -823,6 +823,8 @@ def build_surface_app(
             "requireLogin": store.require_login,
             "idleTimeoutMins": store.idle_timeout_mins,
             "actionsEnabled": store.actions_enabled,
+            "notificationsEnabled": store.notifications_enabled,
+            "mobileEnabled": store.mobile_enabled,
         }
         response = JSONResponse(payload)
         # Polling this (the client does so on activity) slides the idle window.

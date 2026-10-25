@@ -195,6 +195,54 @@ CREATE TABLE IF NOT EXISTS source_checkpoints (
     updated_at  TEXT NOT NULL DEFAULT '',
     last_error  TEXT NOT NULL DEFAULT ''
 );
+-- Dashboard notifications: a check ("case") on a connection's project, shared with
+-- everyone assigned to that connection. `kind` selects the check type (only
+-- "transition_metric" today — a metric on the transition from one step to a following
+-- one); `config` holds the kind-specific parameters as JSON, so new check kinds slot in
+-- without a schema change. The background engine evaluates each rule on its own interval.
+CREATE TABLE IF NOT EXISTS notification_rules (
+    id            TEXT PRIMARY KEY,
+    connection_id TEXT NOT NULL,
+    project_id    INTEGER NOT NULL,
+    project_title TEXT NOT NULL DEFAULT '',
+    kind          TEXT NOT NULL DEFAULT 'transition_metric',
+    name          TEXT NOT NULL DEFAULT '',
+    severity      TEXT NOT NULL DEFAULT 'IMPORTANT',
+    interval_secs INTEGER NOT NULL DEFAULT 300,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    config        TEXT NOT NULL DEFAULT '',
+    delivery      TEXT NOT NULL DEFAULT '',
+    created_by    TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL
+);
+-- Web Push subscriptions: one row per browser/device that opted into push, owned by a user.
+-- `endpoint` is the push service URL (unique); `p256dh`/`auth` are the subscription's keys
+-- used to encrypt a message to that device (RFC 8291).
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    endpoint   TEXT PRIMARY KEY,
+    username   TEXT NOT NULL,
+    p256dh     TEXT NOT NULL,
+    auth       TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+-- Per-rule run state written by the engine: when it last ran, the last measured value,
+-- whether the condition is currently met (triggered) and since when, and the last error.
+CREATE TABLE IF NOT EXISTS notification_state (
+    rule_id      TEXT PRIMARY KEY,
+    last_run_at  TEXT NOT NULL DEFAULT '',
+    last_value   REAL,
+    triggered    INTEGER NOT NULL DEFAULT 0,
+    triggered_at TEXT NOT NULL DEFAULT '',
+    cleared_at   TEXT NOT NULL DEFAULT '',
+    last_error   TEXT NOT NULL DEFAULT '',
+    -- Acknowledgement: the triggered_at value an operator acknowledged. While it equals the
+    -- current triggered_at the alert is "acknowledged" (hidden); a fresh trigger gives a new
+    -- triggered_at, so the acknowledgement lapses and the alert shows again.
+    ack_triggered_at TEXT NOT NULL DEFAULT '',
+    -- Optional per-evaluation metadata as JSON (e.g. the triggering note for a "note" rule, so
+    -- the Dashboard card can deep-link to it). Empty for metric kinds.
+    meta TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS ldap_config (
     id                INTEGER PRIMARY KEY CHECK (id = 1),
     enabled           INTEGER NOT NULL DEFAULT 0,
@@ -211,6 +259,10 @@ CREATE TABLE IF NOT EXISTS ldap_config (
     display_attr      TEXT NOT NULL DEFAULT 'cn',
     admin_login_enabled INTEGER NOT NULL DEFAULT 0,
     show_status_on_login INTEGER NOT NULL DEFAULT 1,
+    sync_enabled      INTEGER NOT NULL DEFAULT 0,
+    sync_interval_mins INTEGER NOT NULL DEFAULT 5,
+    last_synced_at    TEXT NOT NULL DEFAULT '',
+    last_sync_result  TEXT NOT NULL DEFAULT '',
     updated_at        TEXT NOT NULL DEFAULT ''
 );
 """
@@ -218,6 +270,19 @@ CREATE TABLE IF NOT EXISTS ldap_config (
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# Directory-sync interval bounds (minutes): at least 1, at most a day.
+_SYNC_INTERVAL_MIN = 1
+_SYNC_INTERVAL_MAX = 1440
+
+
+def _clamp_sync_interval(value, default: int = 5) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(_SYNC_INTERVAL_MIN, min(_SYNC_INTERVAL_MAX, n))
 
 
 @dataclass
@@ -238,6 +303,7 @@ class User:
     failed_logins: int = 0
     login_locked: bool = False  # disabled by the failed-sign-in lockout
     session_epoch: int = 0  # bumped on logout; stale-epoch tokens are rejected
+    directory_missing: bool = False  # an LDAP account no longer found by directory sync
 
     def public(self) -> dict:
         return {
@@ -256,6 +322,7 @@ class User:
             "passkeyAllowed": self.passkey_allowed,
             "mfaAllowed": self.mfa_allowed,
             "mfaEnabled": self.mfa_enabled,
+            "directoryMissing": self.directory_missing,
         }
 
 
@@ -356,6 +423,62 @@ class Source:
             "kind": self.kind,
             "config": cfg,
             "createdAt": self.created_at,
+        }
+
+
+@dataclass
+class NotificationRule:
+    """A dashboard notification check on a connection's project, shared with everyone
+    assigned to the connection. `kind` selects the check type and `config` carries its
+    kind-specific parameters as JSON (for "transition_metric": fromStep, toStep, metric,
+    comparator, threshold), so new check kinds slot in without a schema change."""
+
+    id: str
+    connection_id: str
+    project_id: int
+    project_title: str
+    kind: str
+    name: str
+    severity: str
+    interval_secs: int
+    enabled: bool
+    config: str
+    delivery: str
+    created_by: str
+    created_at: str
+
+    @staticmethod
+    def _json(value: str) -> dict:
+        if not value:
+            return {}
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    def config_dict(self) -> dict:
+        return self._json(self.config)
+
+    def delivery_dict(self) -> dict:
+        return self._json(self.delivery)
+
+    def public(self, state: dict | None = None) -> dict:
+        return {
+            "id": self.id,
+            "connectionId": self.connection_id,
+            "projectId": self.project_id,
+            "projectTitle": self.project_title,
+            "kind": self.kind,
+            "name": self.name,
+            "severity": self.severity,
+            "intervalSecs": self.interval_secs,
+            "enabled": self.enabled,
+            "config": self.config_dict(),
+            "delivery": self.delivery_dict(),
+            "createdBy": self.created_by,
+            "createdAt": self.created_at,
+            "state": state or {},
         }
 
 
@@ -485,6 +608,9 @@ class SecurityStore:
             ("login_locked_at", "login_locked_at TEXT NOT NULL DEFAULT ''"),
             # Bumped on logout to invalidate that user's outstanding session tokens.
             ("session_epoch", "session_epoch INTEGER NOT NULL DEFAULT 0"),
+            # Set when a directory (LDAP) sync no longer finds this account in the
+            # directory — the row is kept (and disabled) but flagged "removed from directory".
+            ("directory_missing", "directory_missing INTEGER NOT NULL DEFAULT 0"),
         ):
             if name not in cols:
                 self._conn.execute(f"ALTER TABLE users ADD COLUMN {ddl}")
@@ -522,6 +648,43 @@ class SecurityStore:
         if "show_status_on_login" not in ldap_cols:
             self._conn.execute(
                 "ALTER TABLE ldap_config ADD COLUMN show_status_on_login INTEGER NOT NULL DEFAULT 1"
+            )
+        # Background directory sync: periodically mirror the directory roster into the
+        # local users table so accounts appear before their first login. Off by default
+        # on existing installs; the interval is in minutes; the last run's time and a
+        # short JSON result are kept for the admin UI.
+        for name, ddl in (
+            ("sync_enabled", "sync_enabled INTEGER NOT NULL DEFAULT 0"),
+            ("sync_interval_mins", "sync_interval_mins INTEGER NOT NULL DEFAULT 5"),
+            ("last_synced_at", "last_synced_at TEXT NOT NULL DEFAULT ''"),
+            ("last_sync_result", "last_sync_result TEXT NOT NULL DEFAULT ''"),
+        ):
+            if name not in ldap_cols:
+                self._conn.execute(f"ALTER TABLE ldap_config ADD COLUMN {ddl}")
+        # Notification rules gained a `delivery` config (remote channels: web push, later SMTP).
+        nr_cols = {
+            r["name"] for r in self._conn.execute(
+                "PRAGMA table_info(notification_rules)"
+            ).fetchall()
+        }
+        if nr_cols and "delivery" not in nr_cols:
+            self._conn.execute(
+                "ALTER TABLE notification_rules ADD COLUMN delivery TEXT NOT NULL DEFAULT ''"
+            )
+        # Notification run state gained an acknowledgement marker (hide a firing alert until it
+        # clears and triggers again).
+        ns_cols = {
+            r["name"] for r in self._conn.execute(
+                "PRAGMA table_info(notification_state)"
+            ).fetchall()
+        }
+        if ns_cols and "ack_triggered_at" not in ns_cols:
+            self._conn.execute(
+                "ALTER TABLE notification_state ADD COLUMN ack_triggered_at TEXT NOT NULL DEFAULT ''"
+            )
+        if ns_cols and "meta" not in ns_cols:
+            self._conn.execute(
+                "ALTER TABLE notification_state ADD COLUMN meta TEXT NOT NULL DEFAULT ''"
             )
         # The former "connectors" table was renamed to "source_types" (a source type is
         # a name + extraction spec; the old source/source_type columns are dropped).
@@ -610,6 +773,32 @@ class SecurityStore:
     def set_sink_enabled(self, enabled: bool) -> None:
         with self._lock:
             self._set_config("sink_enabled", "1" if enabled else "0")
+            self._conn.commit()
+
+    @property
+    def notifications_enabled(self) -> bool:
+        """Whether the Dashboard notifications feature is available: the background engine
+        evaluates rules and the Dashboard shows the Notifications section. Opt-in, so OFF
+        by default until an admin turns it on."""
+        with self._lock:
+            return self._get_config("notifications_enabled") == "1"
+
+    def set_notifications_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._set_config("notifications_enabled", "1" if enabled else "0")
+            self._conn.commit()
+
+    @property
+    def mobile_enabled(self) -> bool:
+        """Whether WorkBench Mobile (the compact phone shell) is served to phones. Unlike the
+        opt-in feature toggles this defaults ON — a phone gets the mobile layout unless an admin
+        turns it off, in which case phones fall back to the normal desktop layout."""
+        with self._lock:
+            return self._get_config("mobile_enabled") != "0"
+
+    def set_mobile_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._set_config("mobile_enabled", "1" if enabled else "0")
             self._conn.commit()
 
     # ── MCP server ──────────────────────────────────────────────────────────
@@ -974,6 +1163,10 @@ class SecurityStore:
                 "displayAttr": "cn",
                 "adminLoginEnabled": False,
                 "showStatusOnLogin": True,
+                "syncEnabled": False,
+                "syncIntervalMins": 5,
+                "lastSyncedAt": "",
+                "lastSyncResult": "",
             }
         return {
             "enabled": bool(row["enabled"]),
@@ -990,6 +1183,10 @@ class SecurityStore:
             "displayAttr": row["display_attr"],
             "adminLoginEnabled": self._row_flag(row, "admin_login_enabled"),
             "showStatusOnLogin": self._row_flag(row, "show_status_on_login", default=True),
+            "syncEnabled": self._row_flag(row, "sync_enabled"),
+            "syncIntervalMins": (row["sync_interval_mins"] if "sync_interval_mins" in row.keys() else 5) or 5,
+            "lastSyncedAt": (row["last_synced_at"] if "last_synced_at" in row.keys() else "") or "",
+            "lastSyncResult": (row["last_sync_result"] if "last_sync_result" in row.keys() else "") or "",
         }
 
     @property
@@ -1056,8 +1253,9 @@ class SecurityStore:
                 INSERT INTO ldap_config
                     (id, enabled, server_uri, start_tls, verify_cert, ca_cert, bind_dn,
                      bind_password_enc, base_dn, user_filter, login_attr, email_attr,
-                     display_attr, admin_login_enabled, show_status_on_login, updated_at)
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     display_attr, admin_login_enabled, show_status_on_login,
+                     sync_enabled, sync_interval_mins, updated_at)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     enabled=excluded.enabled, server_uri=excluded.server_uri,
                     start_tls=excluded.start_tls, verify_cert=excluded.verify_cert,
@@ -1067,6 +1265,8 @@ class SecurityStore:
                     email_attr=excluded.email_attr, display_attr=excluded.display_attr,
                     admin_login_enabled=excluded.admin_login_enabled,
                     show_status_on_login=excluded.show_status_on_login,
+                    sync_enabled=excluded.sync_enabled,
+                    sync_interval_mins=excluded.sync_interval_mins,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -1084,6 +1284,8 @@ class SecurityStore:
                     (data.get("displayAttr") or "cn").strip(),
                     int(bool(data.get("adminLoginEnabled"))),
                     int(bool(data.get("showStatusOnLogin", True))),
+                    int(bool(data.get("syncEnabled"))),
+                    _clamp_sync_interval(data.get("syncIntervalMins")),
                     _now(),
                 ),
             )
@@ -1107,13 +1309,127 @@ class SecurityStore:
                 )
             else:
                 # Keep the directory-sourced attributes fresh; never touch role/enabled.
+                # A successful sign-in also proves the account is present, so clear any
+                # stale "removed from directory" flag a prior sync may have set.
                 self._conn.execute(
-                    "UPDATE users SET email = ?, display_name = ? "
+                    "UPDATE users SET email = ?, display_name = ?, directory_missing = 0 "
                     "WHERE LOWER(username) = LOWER(?)",
                     (email, display_name, username),
                 )
             self._conn.commit()
         return self.get_user(username)  # type: ignore[return-value]
+
+    @property
+    def ldap_sync_enabled(self) -> bool:
+        """Whether the background directory sync is on (requires the directory enabled)."""
+        with self._lock:
+            row = self._ldap_row()
+        return bool(row and row["enabled"] and self._row_flag(row, "sync_enabled"))
+
+    @property
+    def ldap_sync_interval_mins(self) -> int:
+        with self._lock:
+            row = self._ldap_row()
+        if not row or "sync_interval_mins" not in row.keys():
+            return 5
+        return _clamp_sync_interval(row["sync_interval_mins"])
+
+    def record_ldap_sync(self, result: dict) -> None:
+        """Persist the time + a short JSON summary of the last directory sync (admin UI)."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE ldap_config SET last_synced_at = ?, last_sync_result = ? WHERE id = 1",
+                (_now(), json.dumps(result)[:2000]),
+            )
+            self._conn.commit()
+
+    def sync_ldap_users(self, directory_users) -> dict:
+        """Mirror the directory roster into the ``users`` table, and return a counts summary
+        (also stored for the admin UI).
+
+        - **New** directory users are created (enabled, ``auth_source='ldap'``).
+        - **Existing** directory users have email/display-name refreshed; one previously
+          flagged "removed from directory" that reappears is un-flagged **and re-enabled**
+          (we only disabled it because it had vanished).
+        - Directory users that have **vanished** are **disabled and flagged**
+          ``directory_missing`` — never deleted, so their role and DB-connection
+          assignments survive if they return.
+
+        Local (non-directory) accounts are never touched; a directory name that collides
+        with a local account is skipped (never clobbered)."""
+        now = _now()
+        seen: dict[str, object] = {}
+        for du in directory_users:
+            name = (getattr(du, "username", "") or "").strip()
+            if name:
+                seen[name.lower()] = du  # de-dupe, last wins
+        added = updated = unchanged = removed = reappeared = skipped = 0
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM users").fetchall()
+            existing = {r["username"].lower(): r for r in rows}
+
+            # 1) Upsert everyone currently in the directory.
+            for key, du in seen.items():
+                row = existing.get(key)
+                email = (getattr(du, "email", "") or "")
+                display = (getattr(du, "display_name", "") or "")
+                if row is None:
+                    self._conn.execute(
+                        "INSERT INTO users (username, password_hash, is_admin, is_enabled, "
+                        "created_at, auth_source, email, display_name, directory_missing) "
+                        "VALUES (?, '', 0, 1, ?, 'ldap', ?, ?, 0)",
+                        (du.username.strip(), now, email, display),
+                    )
+                    added += 1
+                    continue
+                src = row["auth_source"] if "auth_source" in row.keys() else "local"
+                if src != "ldap":
+                    skipped += 1  # a local account shares this name — never clobber it
+                    continue
+                was_missing = bool(row["directory_missing"]) if "directory_missing" in row.keys() else False
+                changed = (row["email"] or "") != email or (row["display_name"] or "") != display
+                if was_missing:
+                    self._conn.execute(
+                        "UPDATE users SET email = ?, display_name = ?, directory_missing = 0, "
+                        "is_enabled = 1 WHERE LOWER(username) = LOWER(?)",
+                        (email, display, du.username),
+                    )
+                    reappeared += 1
+                elif changed:
+                    self._conn.execute(
+                        "UPDATE users SET email = ?, display_name = ? WHERE LOWER(username) = LOWER(?)",
+                        (email, display, du.username),
+                    )
+                    updated += 1
+                else:
+                    unchanged += 1
+
+            # 2) Flag + disable directory users who have vanished from the directory.
+            for key, row in existing.items():
+                src = row["auth_source"] if "auth_source" in row.keys() else "local"
+                if src != "ldap" or key in seen:
+                    continue
+                already = bool(row["directory_missing"]) if "directory_missing" in row.keys() else False
+                if already:
+                    continue  # already flagged on an earlier sync
+                self._conn.execute(
+                    "UPDATE users SET directory_missing = 1, is_enabled = 0 "
+                    "WHERE LOWER(username) = LOWER(?)",
+                    (row["username"],),
+                )
+                removed += 1
+
+            result = {
+                "ok": True, "at": now, "total": len(seen), "added": added,
+                "updated": updated, "reappeared": reappeared, "removed": removed,
+                "unchanged": unchanged, "skipped": skipped,
+            }
+            self._conn.execute(
+                "UPDATE ldap_config SET last_synced_at = ?, last_sync_result = ? WHERE id = 1",
+                (now, json.dumps(result)[:2000]),
+            )
+            self._conn.commit()
+        return result
 
     # ── config ────────────────────────────────────────────────────────────────
 
@@ -1727,6 +2043,7 @@ class SecurityStore:
             failed_logins=int(row["failed_logins"]) if "failed_logins" in keys else 0,
             login_locked=bool(row["login_locked"]) if "login_locked" in keys else False,
             session_epoch=int(row["session_epoch"]) if "session_epoch" in keys else 0,
+            directory_missing=bool(row["directory_missing"]) if "directory_missing" in keys else False,
         )
 
     def list_users(self) -> list[User]:
@@ -1867,6 +2184,21 @@ class SecurityStore:
     # secret (encrypted at rest) and a set of one-time recovery codes (hashed).
     # `mfa_active` — the login gate — is allowed AND enrolled, so revoking the
     # permission relaxes the second factor rather than locking the user out.
+
+    def set_user_email(self, username: str, email: str) -> None:
+        """Set (or clear) a user's email address — used for notification email delivery. For a
+        directory (LDAP) user this may be overwritten on the next directory sync."""
+        if self.get_user(username) is None:
+            raise ValueError("No such user.")
+        email = (email or "").strip()
+        if email and "@" not in email:
+            raise ValueError("Enter a valid email address, or leave it blank to clear it.")
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET email = ? WHERE LOWER(username) = LOWER(?)",
+                (email, username),
+            )
+            self._conn.commit()
 
     def set_mfa_allowed(self, username: str, allowed: bool) -> None:
         """Grant/revoke a user's permission to enrol two-factor authentication."""
@@ -2525,6 +2857,18 @@ class SecurityStore:
                 "DELETE FROM security_config WHERE key = ? OR key = ?",
                 (self._rebuild_token_key(conn_id), f"matview:{conn_id}"),
             )
+            # Remove notification rules (and their run state) tied to this connection, so
+            # a deleted connection leaves no orphaned, never-evaluated rules behind.
+            orphaned = self._conn.execute(
+                "SELECT id FROM notification_rules WHERE connection_id = ?", (conn_id,)
+            ).fetchall()
+            for r in orphaned:
+                self._conn.execute(
+                    "DELETE FROM notification_state WHERE rule_id = ?", (r["id"],)
+                )
+            self._conn.execute(
+                "DELETE FROM notification_rules WHERE connection_id = ?", (conn_id,)
+            )
             self._conn.commit()
 
     # ── integration source types (per-user extraction definitions) ────────────
@@ -2720,6 +3064,356 @@ class SecurityStore:
             self._conn.execute(
                 "DELETE FROM source_checkpoints WHERE source_id = ?", (source_id,)
             )
+            self._conn.commit()
+
+    # ── dashboard notification rules (shared per connection) ──────────────────
+
+    @staticmethod
+    def _row_to_rule(row: sqlite3.Row) -> NotificationRule:
+        keys = row.keys()
+        return NotificationRule(
+            id=row["id"], connection_id=row["connection_id"], project_id=row["project_id"],
+            project_title=row["project_title"], kind=row["kind"], name=row["name"],
+            severity=row["severity"], interval_secs=row["interval_secs"],
+            enabled=bool(row["enabled"]), config=row["config"],
+            delivery=row["delivery"] if "delivery" in keys else "",
+            created_by=row["created_by"], created_at=row["created_at"],
+        )
+
+    def list_rules_for_connections(self, conn_ids: list[str]) -> list[NotificationRule]:
+        """Every rule on any of the given connections (what a user who is assigned to
+        those connections may see). Empty list for no connections."""
+        if not conn_ids:
+            return []
+        placeholders = ",".join("?" for _ in conn_ids)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM notification_rules WHERE connection_id IN ({placeholders}) "
+                "ORDER BY created_at DESC",
+                tuple(conn_ids),
+            ).fetchall()
+        return [self._row_to_rule(r) for r in rows]
+
+    def get_rule(self, rule_id: str) -> NotificationRule | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM notification_rules WHERE id = ?", (rule_id,)
+            ).fetchone()
+        return self._row_to_rule(row) if row else None
+
+    def add_rule(
+        self, *, connection_id: str, project_id: int, project_title: str, kind: str,
+        name: str, severity: str, interval_secs: int, enabled: bool, config: str,
+        delivery: str = "", created_by: str,
+    ) -> NotificationRule:
+        rule = NotificationRule(
+            id=uuid.uuid4().hex, connection_id=connection_id, project_id=int(project_id),
+            project_title=project_title or "", kind=kind or "transition_metric",
+            name=name or "", severity=severity or "IMPORTANT",
+            interval_secs=int(interval_secs), enabled=bool(enabled), config=config or "",
+            delivery=delivery or "", created_by=created_by or "", created_at=_now(),
+        )
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO notification_rules (id, connection_id, project_id, "
+                "project_title, kind, name, severity, interval_secs, enabled, config, "
+                "delivery, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (rule.id, rule.connection_id, rule.project_id, rule.project_title,
+                 rule.kind, rule.name, rule.severity, rule.interval_secs,
+                 1 if rule.enabled else 0, rule.config, rule.delivery, rule.created_by,
+                 rule.created_at),
+            )
+            self._conn.commit()
+        return rule
+
+    def update_rule(
+        self, rule_id: str, *, project_id: int, project_title: str, kind: str, name: str,
+        severity: str, interval_secs: int, enabled: bool, config: str, delivery: str = "",
+    ) -> NotificationRule | None:
+        """Update a rule's definition (not its connection or creator). The engine's run
+        state is reset so the next tick re-evaluates against the new definition."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE notification_rules SET project_id = ?, project_title = ?, kind = ?, "
+                "name = ?, severity = ?, interval_secs = ?, enabled = ?, config = ?, "
+                "delivery = ? WHERE id = ?",
+                (int(project_id), project_title or "", kind or "transition_metric",
+                 name or "", severity or "IMPORTANT", int(interval_secs),
+                 1 if enabled else 0, config or "", delivery or "", rule_id),
+            )
+            if cur.rowcount:
+                self._conn.execute(
+                    "DELETE FROM notification_state WHERE rule_id = ?", (rule_id,)
+                )
+            self._conn.commit()
+            if cur.rowcount == 0:
+                return None
+            row = self._conn.execute(
+                "SELECT * FROM notification_rules WHERE id = ?", (rule_id,)
+            ).fetchone()
+        return self._row_to_rule(row) if row else None
+
+    def delete_rule(self, rule_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM notification_rules WHERE id = ?", (rule_id,)
+            )
+            if cur.rowcount:
+                self._conn.execute(
+                    "DELETE FROM notification_state WHERE rule_id = ?", (rule_id,)
+                )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def set_rule_enabled(self, rule_id: str, enabled: bool) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE notification_rules SET enabled = ? WHERE id = ?",
+                (1 if enabled else 0, rule_id),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def set_rules_enabled_for_project(
+        self, connection_id: str, project_id: int, enabled: bool
+    ) -> int:
+        """Enable/disable every rule on one project (the per-tile one-click toggle).
+        Returns the number of rules changed."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE notification_rules SET enabled = ? "
+                "WHERE connection_id = ? AND project_id = ?",
+                (1 if enabled else 0, connection_id, int(project_id)),
+            )
+            self._conn.commit()
+            return cur.rowcount
+
+    def list_all_notification_rules(self) -> list[NotificationRule]:
+        """Every rule across all connections — used by the background engine."""
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM notification_rules").fetchall()
+        return [self._row_to_rule(r) for r in rows]
+
+    def get_rule_state(self, rule_id: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM notification_state WHERE rule_id = ?", (rule_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return self._state_public(row)
+
+    @staticmethod
+    def _state_public(row: sqlite3.Row) -> dict:
+        keys = row.keys()
+        ack = (row["ack_triggered_at"] if "ack_triggered_at" in keys else "") or ""
+        triggered_at = row["triggered_at"] or ""
+        note = None
+        raw_meta = (row["meta"] if "meta" in keys else "") or ""
+        if raw_meta:
+            try:
+                note = json.loads(raw_meta)
+            except (json.JSONDecodeError, TypeError):
+                note = None
+        return {
+            "lastRunAt": row["last_run_at"] or None,
+            "lastValue": row["last_value"],
+            "triggered": bool(row["triggered"]),
+            "triggeredAt": triggered_at or None,
+            "clearedAt": row["cleared_at"] or None,
+            "lastError": row["last_error"] or None,
+            # "acknowledged" only while the ack still matches the live trigger episode.
+            "acknowledged": bool(row["triggered"]) and bool(ack) and ack == triggered_at,
+            # The triggering note for a "note" rule (id/title/target/at/importance/…), else None.
+            "note": note,
+        }
+
+    def get_rule_states(self, rule_ids: list[str]) -> dict[str, dict]:
+        """Run state for several rules at once, keyed by rule id (missing ones absent)."""
+        if not rule_ids:
+            return {}
+        placeholders = ",".join("?" for _ in rule_ids)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM notification_state WHERE rule_id IN ({placeholders})",
+                tuple(rule_ids),
+            ).fetchall()
+        return {r["rule_id"]: self._state_public(r) for r in rows}
+
+    def acknowledge_rule(self, rule_id: str) -> dict | None:
+        """Acknowledge a rule's current trigger: record the live ``triggered_at`` as acknowledged
+        so the alert is hidden until it clears and fires afresh. A no-op when the rule is not
+        currently triggered. Returns the refreshed state (or None if there is no state row)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT triggered, triggered_at FROM notification_state WHERE rule_id = ?",
+                (rule_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            if row["triggered"] and (row["triggered_at"] or ""):
+                self._conn.execute(
+                    "UPDATE notification_state SET ack_triggered_at = ? WHERE rule_id = ?",
+                    (row["triggered_at"], rule_id),
+                )
+                self._conn.commit()
+        return self.get_rule_state(rule_id)
+
+    def set_rule_state(
+        self, rule_id: str, *, last_value: float | None, triggered: bool,
+        triggered_at: str, cleared_at: str, last_error: str = "", meta: str = "",
+    ) -> None:
+        """Persist the engine's evaluation result for a rule (upsert). ``meta`` is optional JSON
+        (e.g. the triggering note for a note rule); ack_triggered_at is intentionally untouched."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO notification_state "
+                "(rule_id, last_run_at, last_value, triggered, triggered_at, cleared_at, "
+                "last_error, meta) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(rule_id) DO UPDATE SET last_run_at = excluded.last_run_at, "
+                "last_value = excluded.last_value, triggered = excluded.triggered, "
+                "triggered_at = excluded.triggered_at, cleared_at = excluded.cleared_at, "
+                "last_error = excluded.last_error, meta = excluded.meta",
+                (rule_id, _now(), last_value, 1 if triggered else 0, triggered_at or "",
+                 cleared_at or "", last_error or "", meta or ""),
+            )
+            self._conn.commit()
+
+    # ── Web Push: VAPID keys + per-device subscriptions ───────────────────────
+
+    def vapid_keys(self) -> tuple[str, bytes]:
+        """The VAPID (public key base64url, private key PEM) for Web Push — generated and
+        stored once on first use. The private key is Fernet-encrypted at rest."""
+        with self._lock:
+            pub = self._get_config("vapid_public")
+            enc = self._get_config("vapid_private_enc")
+        if pub and enc:
+            return pub, decrypt_text(enc).encode()
+        from ..notifications.webpush import generate_vapid
+
+        pem, pub_b64 = generate_vapid()
+        with self._lock:
+            self._set_config("vapid_public", pub_b64)
+            self._set_config("vapid_private_enc", encrypt_text(pem.decode()))
+            self._conn.commit()
+        return pub_b64, pem
+
+    @property
+    def push_subject(self) -> str:
+        """The VAPID `sub` claim — a contact for the push service, which must be a well-formed
+        mailto: or https: URL. Some services (notably Apple/Safari) reject a token whose
+        contact is invalid (e.g. a reserved `.local` address: "BadJwtToken"), so the default
+        is a valid-format placeholder that an admin should replace with a real contact."""
+        with self._lock:
+            return self._get_config("push_subject") or "mailto:admin@example.com"
+
+    def set_push_subject(self, value: str) -> None:
+        with self._lock:
+            self._set_config("push_subject", (value or "").strip())
+            self._conn.commit()
+
+    @staticmethod
+    def _sub_dict(row: sqlite3.Row) -> dict:
+        return {"endpoint": row["endpoint"], "username": row["username"],
+                "p256dh": row["p256dh"], "auth": row["auth"]}
+
+    def add_push_subscription(self, username: str, endpoint: str, p256dh: str, auth: str) -> None:
+        """Store (or refresh) a browser's push subscription, owned by `username`."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO push_subscriptions (endpoint, username, p256dh, auth, created_at) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET "
+                "username = excluded.username, p256dh = excluded.p256dh, auth = excluded.auth",
+                (endpoint, username or "", p256dh, auth, _now()),
+            )
+            self._conn.commit()
+
+    def delete_push_subscription(self, endpoint: str, username: str | None = None) -> None:
+        with self._lock:
+            if username is None:
+                self._conn.execute(
+                    "DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,)
+                )
+            else:
+                self._conn.execute(
+                    "DELETE FROM push_subscriptions WHERE endpoint = ? AND LOWER(username) = LOWER(?)",
+                    (endpoint, username),
+                )
+            self._conn.commit()
+
+    def list_push_subscriptions(self, username: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM push_subscriptions WHERE LOWER(username) = LOWER(?)",
+                (username or "",),
+            ).fetchall()
+        return [self._sub_dict(r) for r in rows]
+
+    def subscriptions_for_users(self, usernames: list[str]) -> list[dict]:
+        """Every push subscription owned by any of `usernames` — the recipients of a rule's
+        web push (the users assigned to its connection)."""
+        if not usernames:
+            return []
+        placeholders = ",".join("?" for _ in usernames)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM push_subscriptions WHERE LOWER(username) IN ({placeholders})",
+                tuple(u.lower() for u in usernames),
+            ).fetchall()
+        return [self._sub_dict(r) for r in rows]
+
+    def usernames_for_connection(self, conn_id: str) -> list[str]:
+        """Usernames assigned to a connection — who may receive its rules' push."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT username FROM connection_assignments WHERE connection_id = ?", (conn_id,)
+            ).fetchall()
+        return [r["username"] for r in rows]
+
+    def emails_for_connection(self, conn_id: str) -> list[str]:
+        """The email addresses on file for the users assigned to a connection — the default
+        recipients of a rule's email when it names none."""
+        out = []
+        for username in self.usernames_for_connection(conn_id):
+            user = self.get_user(username)
+            if user and (user.email or "").strip():
+                out.append(user.email.strip())
+        return out
+
+    # ── SMTP (email) settings for notification delivery ───────────────────────
+
+    _SMTP_KEYS = ("host", "port", "security", "username", "from", "fromName")
+
+    def smtp_settings(self, *, with_secret: bool = False) -> dict:
+        """The SMTP server settings. `security` is none | starttls | ssl. The password is
+        omitted unless `with_secret` (the delivery path needs it to authenticate)."""
+        with self._lock:
+            out = {k: (self._get_config(f"smtp_{k}") or "") for k in self._SMTP_KEYS}
+            enc = self._get_config("smtp_password_enc")
+        out["port"] = int(out["port"]) if str(out["port"]).isdigit() else 587
+        out["security"] = out["security"] or "starttls"
+        out["configured"] = bool(out["host"] and out["from"])
+        out["hasPassword"] = bool(enc)
+        if with_secret:
+            out["password"] = decrypt_text(enc) if enc else ""
+        return out
+
+    @property
+    def smtp_configured(self) -> bool:
+        s = self.smtp_settings()
+        return bool(s["configured"])
+
+    def set_smtp_settings(self, data: dict) -> None:
+        """Update the SMTP settings. A blank password is ignored (keeps the stored one);
+        pass clearPassword to remove it."""
+        with self._lock:
+            for k in self._SMTP_KEYS:
+                if k in data:
+                    self._set_config(f"smtp_{k}", str(data.get(k) or "").strip())
+            if data.get("password"):
+                self._set_config("smtp_password_enc", encrypt_text(str(data["password"])))
+            elif data.get("clearPassword"):
+                self._set_config("smtp_password_enc", "")
             self._conn.commit()
 
     # ── effective TLS plan (read by the GUI launcher) ─────────────────────────

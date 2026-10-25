@@ -969,6 +969,109 @@ async def _tool_update_note(user, args) -> Any:
     return {"updated": True, "changes": changes, "note": _note_dump(saved or note)}
 
 
+# ── dashboard notifications (read + enable/disable) ────────────────────────────
+
+# A notification rule id is the store's 32-char uuid4 hex — validate before any lookup.
+_RULE_ID_RE = re.compile(r"^[0-9a-fA-F]{32}$")
+
+_SEV_RANK = {"URGENT": 3, "IMPORTANT": 2, "INFO": 1}
+
+
+def _require_notifications() -> None:
+    if not store.notifications_enabled:
+        raise ToolError("Dashboard notifications are not enabled on this server.")
+
+
+def _rule_dump(rule, state: dict | None) -> dict:
+    cfg = rule.config_dict()
+    st = state or {}
+    return {
+        "id": rule.id,
+        "connectionId": rule.connection_id,
+        "projectId": rule.project_id,
+        "projectTitle": rule.project_title,
+        "name": rule.name,
+        "kind": rule.kind,
+        "severity": rule.severity,
+        "intervalSecs": rule.interval_secs,
+        "enabled": rule.enabled,
+        "metric": cfg.get("metric"),
+        "fromStep": cfg.get("fromStep"),
+        "toStep": cfg.get("toStep"),
+        "comparator": cfg.get("comparator"),
+        "threshold": cfg.get("threshold"),
+        "triggered": bool(st.get("triggered")),
+        "lastValue": st.get("lastValue"),
+        "triggeredAt": st.get("triggeredAt"),
+        "lastRunAt": st.get("lastRunAt"),
+        "lastError": st.get("lastError"),
+    }
+
+
+async def _tool_list_notifications(user, args) -> Any:
+    _require_notifications()
+    cid = _conn_id(args)
+    if not store.user_can_use(cid, user.username):
+        raise ToolError(f"Connection {cid!r} is not assigned to you.")
+    rules = store.list_rules_for_connections([cid])
+    pid = args.get("projectId")
+    if pid not in (None, ""):
+        rules = [r for r in rules if str(r.project_id) == str(pid)]
+    only_triggered = bool(args.get("triggeredOnly"))
+    states = store.get_rule_states([r.id for r in rules])
+    out = []
+    for r in rules:
+        st = states.get(r.id)
+        if only_triggered and not (r.enabled and st and st.get("triggered")):
+            continue
+        out.append(_rule_dump(r, st))
+    # Most urgent, most recently triggered first (mirrors the Dashboard ordering).
+    out.sort(
+        key=lambda d: (
+            1 if d["triggered"] else 0,
+            _SEV_RANK.get(d["severity"], 0),
+            d.get("triggeredAt") or "",
+        ),
+        reverse=True,
+    )
+    return {
+        "rules": out[:MCP_MAX_ROWS],
+        "summary": {"total": len(out), "triggered": sum(1 for d in out if d["triggered"])},
+    }
+
+
+async def _tool_set_notification_enabled(user, args) -> Any:
+    _require_notifications()
+    if not (
+        getattr(user, "is_power", False)
+        or getattr(user, "is_developer", False)
+        or getattr(user, "is_admin", False)
+    ):
+        raise ToolError(
+            "Enabling or disabling a notification rule is reserved for power users, "
+            "developers and administrators."
+        )
+    rid = str(args.get("ruleId") or "")
+    if not _RULE_ID_RE.match(rid):
+        raise ToolError("ruleId must be a notification rule id (see list_notifications).")
+    enabled = args.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ToolError("enabled must be true or false.")
+    _check_write_rate(user.username)
+    rule = store.get_rule(rid)
+    # Same message whether the rule is missing or on a connection you can't use — no id probing.
+    if rule is None or not store.user_can_use(rule.connection_id, user.username):
+        raise ToolError("That notification rule was not found.")
+    store.set_rule_enabled(rid, enabled)
+    msg = (
+        f"MCP set_notification_enabled: rule {rid} "
+        f"-> {'enabled' if enabled else 'disabled'} on connection {rule.connection_id}"
+    )
+    log.info("%s by %s", msg, user.username)
+    logx.usage(msg, username=user.username, operation="mcp_set_notification_enabled")
+    return {"updated": True, "rule": _rule_dump(store.get_rule(rid), store.get_rule_state(rid))}
+
+
 # ── deeper analysis — power users (and administrators) only ────────────────────
 
 
@@ -1402,6 +1505,36 @@ _TOOLS: list[dict] = [
          "severity": {"type": "string", "enum": list(NOTE_IMPORTANCE)},
          "scope": {"type": "string", "enum": ["personal", "shared"]}},
          "required": ["connectionId", "projectId", "noteId"]}},
+    {"name": "list_notifications", "handler": _tool_list_notifications,
+     "description": "The dashboard notification rules on a connection — automated checks that "
+                    "alert when a metric crosses a threshold. A rule's kind is either "
+                    "'transition_metric' (a metric on the transition from one step to the "
+                    "following one, e.g. the average time from A to B exceeds 2 hours) or "
+                    "'journey_duration' (a time aggregate of the whole case's end-to-end "
+                    "duration, e.g. the median journey takes over 2 hours; no steps). Each rule "
+                    "returns its kind, target (fromStep -> toStep, null for journey_duration), "
+                    "metric, comparator and threshold, its "
+                    "severity (INFO/IMPORTANT/URGENT) and check interval, whether it is enabled, "
+                    "and its current state: whether it is triggered right now, the last measured "
+                    "value, and when it last ran / first triggered. Rules are shared by everyone "
+                    "assigned to the connection; the list is ordered most-urgent, most-recently "
+                    "triggered first. Set triggeredOnly to see only the firing ones.",
+     "inputSchema": {"type": "object", "properties": {
+         **_CONN,
+         "projectId": {"type": "integer",
+                       "description": "Limit to one project (default all on the connection)."},
+         "triggeredOnly": {"type": "boolean",
+                           "description": "Only rules that are currently triggered (default false)."}},
+         "required": ["connectionId"]}},
+    {"name": "set_notification_enabled", "handler": _tool_set_notification_enabled,
+     "description": "WRITE (power users / developers / administrators): enable or disable one notification "
+                    "rule by id (from list_notifications). A disabled rule is not evaluated by "
+                    "the engine and shows no alert. Rules are shared per connection, so this "
+                    "affects everyone assigned to it. Rate-limited per user.",
+     "inputSchema": {"type": "object", "properties": {
+         "ruleId": {"type": "string", "description": "The rule id from list_notifications."},
+         "enabled": {"type": "boolean", "description": "true to enable, false to disable."}},
+         "required": ["ruleId", "enabled"]}},
     {"name": "compare_segments", "handler": _tool_compare_segments,
      "description": "POWER USERS ONLY. Compare two slices of one project side by side — "
                     "e.g. segmentA {meta1: 'Bank Transfer'} vs segmentB {meta1: 'PayPal'}. "
